@@ -208,7 +208,7 @@ impl CodeSearch for CodeSearchService {
 
         // Use read lock for concurrent search access
         let engine = self.engine.read().unwrap();
-        
+
         // Choose search method based on regex flag
         let matches = if is_regex {
             // Use regex search with optional path filtering

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
-use tree_sitter::{Language, Parser};
+use tree_sitter::Parser;
+use tree_sitter_language::LanguageFn;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolType {
@@ -45,7 +46,7 @@ pub enum ImportType {
 }
 
 pub struct SymbolExtractor {
-    language: Option<Language>,
+    language: Option<LanguageFn>,
     extension: String,
 }
 
@@ -63,14 +64,14 @@ impl SymbolExtractor {
         }
     }
 
-    fn language_for_file(path: &Path) -> Option<Language> {
+    fn language_for_file(path: &Path) -> Option<LanguageFn> {
         let extension = path.extension()?.to_str()?;
 
         match extension {
-            "rs" => Some(tree_sitter_rust::language()),
-            "py" => Some(tree_sitter_python::language()),
-            "js" | "jsx" => Some(tree_sitter_javascript::language()),
-            "ts" | "tsx" => Some(tree_sitter_typescript::language_typescript()),
+            "rs" => Some(tree_sitter_rust::LANGUAGE),
+            "py" => Some(tree_sitter_python::LANGUAGE),
+            "js" | "jsx" => Some(tree_sitter_javascript::LANGUAGE),
+            "ts" | "tsx" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
             _ => None,
         }
     }
@@ -82,7 +83,7 @@ impl SymbolExtractor {
         };
 
         let mut parser = Parser::new();
-        parser.set_language(language)?;
+        parser.set_language(&language.into())?;
 
         let tree = match parser.parse(source, None) {
             Some(tree) => tree,
@@ -146,7 +147,7 @@ impl SymbolExtractor {
         };
 
         let mut parser = Parser::new();
-        parser.set_language(language)?;
+        parser.set_language(&language.into())?;
 
         let tree = match parser.parse(source, None) {
             Some(tree) => tree,

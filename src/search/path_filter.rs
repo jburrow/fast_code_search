@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// - Exclude patterns: Files must not match any pattern
 ///
 /// Patterns are matched against relative paths from the indexed root.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PathFilter {
     /// Include patterns - file must match at least one (if non-empty)
     include: Option<GlobSet>,
@@ -141,15 +141,6 @@ impl PathFilter {
     }
 }
 
-impl Default for PathFilter {
-    fn default() -> Self {
-        Self {
-            include: None,
-            exclude: None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,11 +190,8 @@ mod tests {
 
     #[test]
     fn test_include_and_exclude() {
-        let filter = PathFilter::new(
-            &["src/**/*.rs".to_string()],
-            &["**/test/**".to_string()],
-        )
-        .unwrap();
+        let filter =
+            PathFilter::new(&["src/**/*.rs".to_string()], &["**/test/**".to_string()]).unwrap();
         assert!(filter.matches("src/main.rs"));
         assert!(filter.matches("src/lib/utils.rs"));
         assert!(!filter.matches("src/test/main.rs"));
@@ -225,11 +213,7 @@ mod tests {
 
     #[test]
     fn test_from_delimited() {
-        let filter = PathFilter::from_delimited(
-            "src/**/*.rs;lib/**",
-            "**/test/**",
-        )
-        .unwrap();
+        let filter = PathFilter::from_delimited("src/**/*.rs;lib/**", "**/test/**").unwrap();
         assert!(filter.matches("src/main.rs"));
         assert!(filter.matches("lib/anything.txt"));
         assert!(!filter.matches("src/test/main.rs"));

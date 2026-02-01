@@ -85,7 +85,7 @@ struct TestContext {
 async fn setup_test_server() -> Result<TestContext> {
     // Create temp directory with test files
     let temp_dir = TempDir::new()?;
-    
+
     std::fs::write(temp_dir.path().join("test_file.rs"), RUST_TEST_FILE)?;
     std::fs::write(temp_dir.path().join("test_file.py"), PYTHON_TEST_FILE)?;
     std::fs::write(temp_dir.path().join("test_file.js"), JS_TEST_FILE)?;
@@ -106,11 +106,13 @@ async fn setup_test_server() -> Result<TestContext> {
     let grpc_listener = TcpListener::bind("127.0.0.1:0").await?;
     let grpc_addr = grpc_listener.local_addr()?;
     let grpc_service = create_server_with_engine(engine.clone());
-    
+
     tokio::spawn(async move {
         Server::builder()
             .add_service(grpc_service)
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(grpc_listener))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(
+                grpc_listener,
+            ))
             .await
             .expect("gRPC server failed");
     });
@@ -119,7 +121,7 @@ async fn setup_test_server() -> Result<TestContext> {
     let http_listener = TcpListener::bind("127.0.0.1:0").await?;
     let http_addr = http_listener.local_addr()?;
     let router = create_router(engine, progress);
-    
+
     tokio::spawn(async move {
         axum::serve(http_listener, router)
             .await
@@ -145,7 +147,7 @@ async fn test_grpc_search_finds_rust_function() -> Result<()> {
     let ctx = setup_test_server().await?;
 
     let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
-    
+
     let request = SearchRequest {
         query: "find_me_in_search".to_string(),
         max_results: 10,
@@ -153,9 +155,9 @@ async fn test_grpc_search_finds_rust_function() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
     };
-    
+
     let mut stream = client.search(request).await?.into_inner();
-    
+
     let mut results = vec![];
     while let Some(result) = stream.message().await? {
         results.push(result);
@@ -180,7 +182,7 @@ async fn test_grpc_search_finds_python_function() -> Result<()> {
     let ctx = setup_test_server().await?;
 
     let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
-    
+
     let request = SearchRequest {
         query: "search_target_function".to_string(),
         max_results: 10,
@@ -188,9 +190,9 @@ async fn test_grpc_search_finds_python_function() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
     };
-    
+
     let mut stream = client.search(request).await?.into_inner();
-    
+
     let mut results = vec![];
     while let Some(result) = stream.message().await? {
         results.push(result);
@@ -211,7 +213,7 @@ async fn test_grpc_search_empty_query_returns_empty() -> Result<()> {
     let ctx = setup_test_server().await?;
 
     let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
-    
+
     let request = SearchRequest {
         query: "".to_string(),
         max_results: 10,
@@ -219,9 +221,9 @@ async fn test_grpc_search_empty_query_returns_empty() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
     };
-    
+
     let mut stream = client.search(request).await?.into_inner();
-    
+
     let mut results = vec![];
     while let Some(result) = stream.message().await? {
         results.push(result);
@@ -237,7 +239,7 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
     let ctx = setup_test_server().await?;
 
     let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
-    
+
     let request = SearchRequest {
         query: "this_string_definitely_does_not_exist_xyz123".to_string(),
         max_results: 10,
@@ -245,15 +247,18 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
     };
-    
+
     let mut stream = client.search(request).await?.into_inner();
-    
+
     let mut results = vec![];
     while let Some(result) = stream.message().await? {
         results.push(result);
     }
 
-    assert!(results.is_empty(), "Expected no results for non-matching query");
+    assert!(
+        results.is_empty(),
+        "Expected no results for non-matching query"
+    );
 
     Ok(())
 }
@@ -263,12 +268,12 @@ async fn test_grpc_index_request() -> Result<()> {
     let ctx = setup_test_server().await?;
 
     let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
-    
+
     // Index the temp directory (already indexed, but this tests the RPC)
     let request = IndexRequest {
         paths: vec![ctx._temp_dir.path().to_string_lossy().to_string()],
     };
-    
+
     let response = client.index(request).await?.into_inner();
 
     assert!(
@@ -298,7 +303,7 @@ async fn test_http_search_finds_results() -> Result<()> {
     assert!(response.status().is_success(), "Expected 200 OK");
 
     let body: serde_json::Value = response.json().await?;
-    
+
     assert!(
         body["total_results"].as_u64().unwrap() > 0,
         "Expected at least one result"
@@ -329,7 +334,7 @@ async fn test_http_search_empty_query() -> Result<()> {
     assert!(response.status().is_success(), "Expected 200 OK");
 
     let body: serde_json::Value = response.json().await?;
-    
+
     assert_eq!(
         body["total_results"].as_u64().unwrap(),
         0,
@@ -353,11 +358,14 @@ async fn test_http_search_javascript() -> Result<()> {
     assert!(response.status().is_success());
 
     let body: serde_json::Value = response.json().await?;
-    
+
     let results = body["results"].as_array().unwrap();
     assert!(!results.is_empty(), "Expected at least one JS result");
     assert!(
-        results[0]["file_path"].as_str().unwrap().contains("test_file.js"),
+        results[0]["file_path"]
+            .as_str()
+            .unwrap()
+            .contains("test_file.js"),
         "Expected result from test_file.js"
     );
 
@@ -377,7 +385,7 @@ async fn test_http_stats_endpoint() -> Result<()> {
     assert!(response.status().is_success(), "Expected 200 OK");
 
     let body: serde_json::Value = response.json().await?;
-    
+
     assert!(
         body["num_files"].as_u64().unwrap() >= 3,
         "Expected at least 3 indexed files"
@@ -403,16 +411,13 @@ async fn test_http_health_endpoint() -> Result<()> {
     assert!(response.status().is_success(), "Expected 200 OK");
 
     let body: serde_json::Value = response.json().await?;
-    
+
     assert_eq!(
         body["status"].as_str().unwrap(),
         "healthy",
         "Expected healthy status"
     );
-    assert!(
-        body["version"].as_str().is_some(),
-        "Expected version field"
-    );
+    assert!(body["version"].as_str().is_some(), "Expected version field");
 
     Ok(())
 }
@@ -430,12 +435,9 @@ async fn test_http_status_endpoint() -> Result<()> {
     assert!(response.status().is_success(), "Expected 200 OK");
 
     let body: serde_json::Value = response.json().await?;
-    
+
     // Status should indicate idle (not currently indexing)
-    assert!(
-        body["status"].as_str().is_some(),
-        "Expected status field"
-    );
+    assert!(body["status"].as_str().is_some(), "Expected status field");
     assert!(
         body.get("is_indexing").is_some(),
         "Expected is_indexing field"
@@ -453,7 +455,7 @@ async fn test_search_across_languages() -> Result<()> {
     let ctx = setup_test_server().await?;
 
     let client = reqwest::Client::new();
-    
+
     // Search for "class" which appears in all three files
     let response = client
         .get(format!("{}/api/search", ctx.http_url))
@@ -465,18 +467,18 @@ async fn test_search_across_languages() -> Result<()> {
 
     let body: serde_json::Value = response.json().await?;
     let results = body["results"].as_array().unwrap();
-    
+
     // Should find matches in multiple files
     let file_paths: Vec<&str> = results
         .iter()
         .map(|r| r["file_path"].as_str().unwrap())
         .collect();
-    
+
     // Verify we got results from different file types
     let has_rs = file_paths.iter().any(|p| p.ends_with(".rs"));
     let has_py = file_paths.iter().any(|p| p.ends_with(".py"));
     let has_js = file_paths.iter().any(|p| p.ends_with(".js"));
-    
+
     assert!(
         has_rs || has_py || has_js,
         "Expected results from at least one file type, got: {:?}",

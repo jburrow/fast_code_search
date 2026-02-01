@@ -28,8 +28,8 @@ impl RegexAnalysis {
     /// # Returns
     /// A `RegexAnalysis` containing the compiled regex and extracted literals.
     pub fn analyze(pattern: &str) -> Result<Self> {
-        let regex = Regex::new(pattern)
-            .with_context(|| format!("Invalid regex pattern: {}", pattern))?;
+        let regex =
+            Regex::new(pattern).with_context(|| format!("Invalid regex pattern: {}", pattern))?;
 
         let literals = match regex_syntax::parse(pattern) {
             Ok(hir) => extract_literals_from_hir(&hir),

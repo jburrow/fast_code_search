@@ -381,19 +381,13 @@ impl SearchEngine {
         for (line_num, line) in content.lines().enumerate() {
             if regex.is_match(line) {
                 // Calculate score
-                let score = self.calculate_score_regex(
-                    &path,
-                    line,
-                    regex,
-                    line_num,
-                    symbols,
-                    doc_id,
-                );
+                let score =
+                    self.calculate_score_regex(&path, line, regex, line_num, symbols, doc_id);
 
                 // Check if this is a symbol match
-                let is_symbol = symbols.iter().any(|s| {
-                    s.line == line_num && regex.is_match(&s.name)
-                });
+                let is_symbol = symbols
+                    .iter()
+                    .any(|s| s.line == line_num && regex.is_match(&s.name));
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
@@ -423,7 +417,10 @@ impl SearchEngine {
         let mut score = 1.0;
 
         // Boost for symbol definitions
-        if symbols.iter().any(|s| s.line == line_num && s.is_definition) {
+        if symbols
+            .iter()
+            .any(|s| s.line == line_num && s.is_definition)
+        {
             score *= 3.0;
         }
 

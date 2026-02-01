@@ -46,7 +46,7 @@ pub fn create_router(engine: AppState, progress: SharedIndexingProgress) -> Rout
         .route("/api/dependencies", get(api::dependencies_handler))
         // Static files
         .route("/", get(index_handler))
-        .route("/*file", get(static_handler))
+        .route("/{*file}", get(static_handler))
         .layer(cors)
         .with_state(state)
 }
