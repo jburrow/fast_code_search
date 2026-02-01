@@ -16,6 +16,35 @@ High-performance, in-memory code search service built in Rust. Designed to handl
 - **gRPC API** using `tonic` with streaming results
 - **Supports 10GB+ codebases** efficiently
 
+## Why an In-Memory Server?
+
+Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_search runs as an **always-on, in-memory server**. This architecture provides unique advantages:
+
+| Advantage | Impact |
+|-----------|--------|
+| **Zero cold-start** | Index always hot in RAM — no disk I/O on first query |
+| **Sub-millisecond search** | Memory access is 100-1000x faster than SSD |
+| **Warm CPU caches** | Repeated queries hit L1/L2 cache |
+| **Live dependency graph** | Track imports across the entire codebase |
+| **Concurrent access** | RwLock allows many simultaneous searches |
+| **Real-time streaming** | gRPC streams results to IDEs as they're found |
+
+### Best For
+
+- **IDE integration** — Sub-10ms latency enables "search as you type"
+- **Repeated queries** — Same patterns searched throughout a coding session
+- **Large codebases** — 10GB+ where per-query scanning takes seconds
+- **Dependency queries** — "What files import this module?"
+- **Team search** — Multiple developers querying the same codebase
+
+### When to Use Other Tools
+
+- **One-off searches**: ripgrep is instant for single searches, no server needed
+- **Disk-constrained**: Zoekt's persistent index survives restarts without rebuild
+- **Planet-scale**: GitHub Code Search scales horizontally across data centers
+
+📖 **See [PRIOR_ART.md](PRIOR_ART.md) for a detailed comparison with ripgrep, Zoekt, GitHub Code Search, and improvement roadmap.**
+
 ## Architecture
 
 ### Core Components
