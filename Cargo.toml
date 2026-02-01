@@ -3,6 +3,10 @@ name = "fast_code_search"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "fast_code_search"
+path = "src/lib.rs"
+
 [dependencies]
 memmap2 = "0.9"
 roaring = "0.10"

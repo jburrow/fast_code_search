@@ -1,8 +1,4 @@
-mod index;
-mod search;
-mod server;
-mod symbols;
-
+use fast_code_search::server;
 use anyhow::Result;
 use tonic::transport::Server;
 
