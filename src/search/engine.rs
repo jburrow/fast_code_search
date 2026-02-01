@@ -17,26 +17,57 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;
     }
-    if haystack.len() < needle_lower.len() {
+    let needle_len = needle_lower.len();
+    if haystack.len() < needle_len {
         return false;
     }
     
     let needle_bytes = needle_lower.as_bytes();
     let haystack_bytes = haystack.as_bytes();
+    let first_needle = needle_bytes[0];
+    // Also match uppercase variant of first byte for faster skip
+    let first_needle_upper = if first_needle.is_ascii_lowercase() {
+        first_needle - 32
+    } else {
+        first_needle
+    };
     
-    // Sliding window search
-    'outer: for i in 0..=(haystack_bytes.len() - needle_bytes.len()) {
-        for (j, &needle_byte) in needle_bytes.iter().enumerate() {
-            let h = haystack_bytes[i + j];
-            // ASCII lowercase comparison
-            let h_lower = if h.is_ascii_uppercase() { h + 32 } else { h };
-            if h_lower != needle_byte {
-                continue 'outer;
+    let mut i = 0;
+    let max_start = haystack_bytes.len() - needle_len;
+    
+    while i <= max_start {
+        let h = haystack_bytes[i];
+        // Quick first-byte check (handles both cases)
+        if h == first_needle || h == first_needle_upper {
+            // Check rest of needle
+            let mut matched = true;
+            for j in 1..needle_len {
+                let h = haystack_bytes[i + j];
+                let h_lower = if h.is_ascii_uppercase() { h + 32 } else { h };
+                if h_lower != needle_bytes[j] {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                return true;
             }
         }
-        return true;
+        i += 1;
     }
     false
+}
+
+/// Fast byte substring search
+#[inline]
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 #[derive(Debug, Clone)]
@@ -434,26 +465,31 @@ impl SearchEngine {
         // Get symbols for this file
         let symbols = self.symbol_cache.get(doc_id as usize)?;
 
-        // Get dependency count for this file
+        // Get dependency count for this file (cached lookup)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
 
-        // First pass: count matches to pre-allocate
-        let match_count = content.lines().filter(|line| regex.is_match(line)).count();
+        // Build a set of symbol definition lines for O(1) lookup
+        let symbol_def_lines: std::collections::HashSet<usize> = symbols
+            .iter()
+            .filter(|s| s.is_definition)
+            .map(|s| s.line)
+            .collect();
 
-        if match_count == 0 {
-            return Some(Vec::new());
-        }
-
-        // Only convert path to String if we have matches
-        let path = file.path.to_string_lossy().into_owned();
-        let mut matches = Vec::with_capacity(match_count);
+        // Single-pass search: collect matches directly
+        let mut matches = Vec::with_capacity(8);
+        let mut path: Option<String> = None;
 
         // Search in each line using regex
         for (line_num, line) in content.lines().enumerate() {
             if regex.is_match(line) {
-                // Calculate score
-                let score =
-                    self.calculate_score_regex(&path, line, regex, line_num, symbols, doc_id);
+                // Lazy initialize path only when we have at least one match
+                let path_ref = path.get_or_insert_with(|| {
+                    file.path.to_string_lossy().into_owned()
+                });
+
+                // Calculate score using pre-built symbol set
+                let is_symbol_def = symbol_def_lines.contains(&line_num);
+                let score = self.calculate_score_regex_fast(path_ref, line, regex, is_symbol_def, doc_id);
 
                 // Check if this is a symbol match
                 let is_symbol = symbols
@@ -462,7 +498,7 @@ impl SearchEngine {
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
-                    file_path: path.clone(),
+                    file_path: path_ref.clone(),
                     line_number: line_num + 1, // 1-based line numbers
                     content: line.to_string(),
                     score,
@@ -475,35 +511,33 @@ impl SearchEngine {
         Some(matches)
     }
 
-    /// Calculate score for a regex match
-    fn calculate_score_regex(
+    /// Optimized scoring for regex matches
+    #[inline]
+    fn calculate_score_regex_fast(
         &self,
         path: &str,
         line: &str,
         regex: &Regex,
-        line_num: usize,
-        symbols: &[Symbol],
+        is_symbol_def: bool,
         file_id: u32,
     ) -> f64 {
         let mut score = 1.0;
 
-        // Boost for symbol definitions
-        if symbols
-            .iter()
-            .any(|s| s.line == line_num && s.is_definition)
-        {
+        // Boost for symbol definitions (pre-computed)
+        if is_symbol_def {
             score *= 3.0;
         }
 
-        // Boost for primary source directories (support both Unix and Windows paths)
-        if path.contains("/src/") || path.contains("\\src\\")
-            || path.contains("/lib/") || path.contains("\\lib\\")
+        // Boost for primary source directories (byte search)
+        let path_bytes = path.as_bytes();
+        if contains_bytes(path_bytes, b"/src/") || contains_bytes(path_bytes, b"\\src\\")
+            || contains_bytes(path_bytes, b"/lib/") || contains_bytes(path_bytes, b"\\lib\\")
         {
             score *= 1.5;
         }
 
         // Boost for shorter lines (more relevant)
-        let line_len_factor = 1.0 / (1.0 + (line.len() as f64 / 100.0));
+        let line_len_factor = 1.0 / (1.0 + (line.len() as f64 * 0.01));
         score *= line_len_factor;
 
         // Boost for match at start of line
@@ -513,7 +547,7 @@ impl SearchEngine {
             }
         }
 
-        // Boost for files that are dependencies of many other files
+        // Boost for files that are dependencies of many other files (cached lookup)
         let import_count = self.dependency_index.get_import_count(file_id);
         if import_count > 0 {
             let dependency_boost = 1.0 + (import_count as f64).log10() * 0.5;
@@ -532,28 +566,32 @@ impl SearchEngine {
         // Get symbols for this file
         let symbols = self.symbol_cache.get(doc_id as usize)?;
 
-        // Get dependency count for this file
+        // Get dependency count for this file (cached lookup)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
 
-        // First pass: count matches to pre-allocate
-        let match_count = content
-            .lines()
-            .filter(|line| contains_case_insensitive(line, &query_lower))
-            .count();
+        // Build a set of symbol definition lines for O(1) lookup instead of O(n) iteration
+        let symbol_def_lines: std::collections::HashSet<usize> = symbols
+            .iter()
+            .filter(|s| s.is_definition)
+            .map(|s| s.line)
+            .collect();
 
-        if match_count == 0 {
-            return Some(Vec::new());
-        }
-
-        // Only convert path to String if we have matches
-        let path = file.path.to_string_lossy().into_owned();
-        let mut matches = Vec::with_capacity(match_count);
+        // Single-pass search: collect matches directly
+        // Use a reasonable initial capacity to avoid small reallocations
+        let mut matches = Vec::with_capacity(8);
+        let mut path: Option<String> = None;
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
             if contains_case_insensitive(line, &query_lower) {
-                // Calculate score (includes dependency boost)
-                let score = self.calculate_score(&path, line, &query_lower, line_num, symbols, doc_id);
+                // Lazy initialize path only when we have at least one match
+                let path_ref = path.get_or_insert_with(|| {
+                    file.path.to_string_lossy().into_owned()
+                });
+
+                // Calculate score using pre-built symbol set
+                let is_symbol_def = symbol_def_lines.contains(&line_num);
+                let score = self.calculate_score_fast(path_ref, line, &query_lower, is_symbol_def, doc_id);
 
                 // Check if this is a symbol match (case-insensitive without allocation)
                 let is_symbol = symbols
@@ -562,7 +600,7 @@ impl SearchEngine {
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
-                    file_path: path.clone(),
+                    file_path: path_ref.clone(),
                     line_number: line_num + 1, // 1-based line numbers
                     content: line.to_string(),
                     score,
@@ -575,42 +613,42 @@ impl SearchEngine {
         Some(matches)
     }
 
-    fn calculate_score(
+    /// Optimized scoring function that uses pre-computed symbol definition info
+    #[inline]
+    fn calculate_score_fast(
         &self,
         path: &str,
         line: &str,
         query_lower: &str,
-        line_num: usize,
-        symbols: &[Symbol],
+        is_symbol_def: bool,
         file_id: u32,
     ) -> f64 {
         let mut score = 1.0;
 
-        // Boost for exact case-sensitive matches (original case query is same as lowercase for this check)
-        if contains_case_insensitive(line, query_lower) && line.contains(query_lower) {
+        // Boost for exact case-sensitive matches
+        if line.contains(query_lower) {
             score *= 2.0;
         }
 
-        // Boost for symbol definitions
-        if symbols
-            .iter()
-            .any(|s| s.line == line_num && s.is_definition)
-        {
+        // Boost for symbol definitions (pre-computed)
+        if is_symbol_def {
             score *= 3.0;
         }
 
         // Boost for primary source directories (support both Unix and Windows paths)
-        if path.contains("/src/") || path.contains("\\src\\")
-            || path.contains("/lib/") || path.contains("\\lib\\")
+        // Use byte search for speed
+        let path_bytes = path.as_bytes();
+        if contains_bytes(path_bytes, b"/src/") || contains_bytes(path_bytes, b"\\src\\")
+            || contains_bytes(path_bytes, b"/lib/") || contains_bytes(path_bytes, b"\\lib\\")
         {
             score *= 1.5;
         }
 
         // Boost for shorter lines (more relevant)
-        let line_len_factor = 1.0 / (1.0 + (line.len() as f64 / 100.0));
+        let line_len_factor = 1.0 / (1.0 + (line.len() as f64 * 0.01));
         score *= line_len_factor;
 
-        // Boost for query appearing at the start of the line (case-insensitive without allocation)
+        // Boost for query appearing at the start of the line
         let trimmed = line.trim_start();
         if trimmed.len() >= query_lower.len() 
             && trimmed.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes()) 
@@ -618,8 +656,7 @@ impl SearchEngine {
             score *= 1.5;
         }
 
-        // Boost for files that are dependencies of many other files
-        // Uses log scale to prevent very popular files from dominating
+        // Boost for files that are dependencies of many other files (cached lookup)
         let import_count = self.dependency_index.get_import_count(file_id);
         if import_count > 0 {
             let dependency_boost = 1.0 + (import_count as f64).log10() * 0.5;
