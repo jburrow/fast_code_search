@@ -21,6 +21,11 @@ impl Trigram {
             None
         }
     }
+
+    /// Get the underlying bytes
+    pub fn as_bytes(&self) -> [u8; 3] {
+        self.0
+    }
 }
 
 /// Extract trigrams from text
@@ -185,6 +190,19 @@ impl TrigramIndex {
             all_docs |= docs;
         }
         all_docs
+    }
+
+    /// Get a reference to the internal trigram-to-docs map for persistence
+    pub fn get_trigram_map(&self) -> &FxHashMap<Trigram, RoaringBitmap> {
+        &self.trigram_to_docs
+    }
+
+    /// Restore the index from a persisted trigram map
+    pub fn from_trigram_map(trigram_to_docs: FxHashMap<Trigram, RoaringBitmap>) -> Self {
+        Self {
+            trigram_to_docs,
+            all_docs_cache: None,
+        }
     }
 }
 
