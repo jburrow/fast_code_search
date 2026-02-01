@@ -30,16 +30,6 @@ impl CodeSearchService {
         }
     }
 
-    /// Create a service with an existing shared engine
-    pub fn with_engine(engine: Arc<Mutex<SearchEngine>>) -> Self {
-        Self { engine }
-    }
-
-    /// Get the shared engine reference
-    pub fn engine(&self) -> Arc<Mutex<SearchEngine>> {
-        Arc::clone(&self.engine)
-    }
-
     /// Create a new service and perform initial indexing based on config
     pub fn new_with_indexing(indexer_config: &IndexerConfig) -> Self {
         let service = Self::new();
@@ -314,6 +304,18 @@ pub fn create_server_with_indexing(
     CodeSearchServer::new(CodeSearchService::new_with_indexing(indexer_config))
 }
 
+/// Create a shared engine with indexing, returns the Arc for sharing with web server
+pub fn create_indexed_engine(indexer_config: &IndexerConfig) -> Arc<Mutex<SearchEngine>> {
+    let service = CodeSearchService::new_with_indexing(indexer_config);
+    service.engine()
+}
+
+/// Create gRPC server with an existing shared engine
+pub fn create_server_with_engine(
+    engine: Arc<Mutex<SearchEngine>>,
+) -> CodeSearchServer<CodeSearchService> {
+    CodeSearchServer::new(CodeSearchService::with_engine(engine))
+}
 /// Create a shared engine with indexing, returns the Arc for sharing with web server
 pub fn create_indexed_engine(indexer_config: &IndexerConfig) -> Arc<Mutex<SearchEngine>> {
     let service = CodeSearchService::new_with_indexing(indexer_config);

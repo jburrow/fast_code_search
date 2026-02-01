@@ -5,6 +5,7 @@ mod api;
 use crate::search::SearchEngine;
 use axum::{
     body::Body,
+    extract::State,
     http::{header, Response, StatusCode},
     routing::get,
     Router,
