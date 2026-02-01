@@ -350,14 +350,73 @@ cargo bench
 
 ## Release Process
 
-1. Update version in `Cargo.toml`
-2. Update CHANGELOG.md
-3. Run full test suite: `cargo test`
-4. Run clippy: `cargo clippy -- -D warnings`
-5. Build release binary: `cargo build --release`
-6. Test release binary manually
-7. Create git tag: `git tag v0.2.0`
-8. Push tag: `git push origin v0.2.0`
+Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.
+
+### Steps to Release
+
+1. **Update version** in `Cargo.toml`:
+   ```toml
+   version = "0.2.0"
+   ```
+
+2. **Update CHANGELOG.md**:
+   - Move items from `[Unreleased]` to new version section
+   - Add release date
+   - Update comparison links at bottom of file
+
+3. **Run quality checks**:
+   ```bash
+   cargo test
+   cargo clippy -- -D warnings
+   cargo fmt --check
+   ```
+
+4. **Commit the version bump**:
+   ```bash
+   git add Cargo.toml CHANGELOG.md
+   git commit -m "chore: release v0.2.0"
+   ```
+
+5. **Create and push the tag**:
+   ```bash
+   git tag v0.2.0
+   git push origin main
+   git push origin v0.2.0
+   ```
+
+6. **Monitor the release workflow**: The [release workflow](/.github/workflows/release.yml) will:
+   - Build release binaries for Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64)
+   - Package each with config template, proto files, README, and LICENSE
+   - Generate SHA256 checksums
+   - Create a GitHub Release with changelog notes
+
+### Release Artifacts
+
+Each release includes platform-specific archives:
+
+| Platform | Archive |
+|----------|---------|
+| Linux x86_64 | `fast_code_search-v{VERSION}-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `fast_code_search-v{VERSION}-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS x86_64 | `fast_code_search-v{VERSION}-x86_64-apple-darwin.tar.gz` |
+| macOS ARM64 | `fast_code_search-v{VERSION}-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `fast_code_search-v{VERSION}-x86_64-pc-windows-msvc.zip` |
+
+Each archive contains:
+- `fast_code_search_server` (or `.exe` on Windows)
+- `config.toml.example`
+- `proto/search.proto`
+- `README.md`
+- `LICENSE`
+
+### Pre-release Versions
+
+For pre-release versions (alpha, beta, rc), use a hyphen in the version:
+```bash
+git tag v0.2.0-beta.1
+```
+
+These are automatically marked as pre-releases on GitHub.
 
 ## Useful Commands Reference
 

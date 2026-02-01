@@ -2,6 +2,21 @@
 name = "fast_code_search"
 version = "0.1.0"
 edition = "2021"
+authors = ["James Burrow"]
+description = "High-performance, in-memory code search service with trigram indexing and symbol awareness"
+license = "MIT"
+repository = "https://github.com/jburrow/fast_code_search"
+homepage = "https://github.com/jburrow/fast_code_search"
+documentation = "https://docs.rs/fast_code_search"
+readme = "README.md"
+keywords = ["search", "code-search", "trigram", "grpc", "indexing"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "test_corpus/**",
+    "target/**",
+    ".github/**",
+    "scripts/**",
+]
 
 [lib]
 name = "fast_code_search"
