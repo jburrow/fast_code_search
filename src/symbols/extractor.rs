@@ -269,7 +269,7 @@ impl SymbolExtractor {
         } else if text.starts_with("import ") {
             // import foo.bar
             let rest = text.strip_prefix("import ")?.trim();
-            let module = rest.split(|c| c == ',' || c == ' ').next()?;
+            let module = rest.split([',', ' ']).next()?;
             Some(module.to_string())
         } else {
             None

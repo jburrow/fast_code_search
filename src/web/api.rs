@@ -89,7 +89,7 @@ pub async fn search_handler(
         }));
     }
 
-    let max_results = params.max.min(1000).max(1);
+    let max_results = params.max.clamp(1, 1000);
 
     // Use read lock for concurrent search access
     let engine = state.engine.read().map_err(|e| {

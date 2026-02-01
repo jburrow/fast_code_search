@@ -201,7 +201,7 @@ impl CodeSearch for CodeSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query;
-        let max_results = req.max_results.max(1).min(1000) as usize;
+        let max_results = req.max_results.clamp(1, 1000) as usize;
 
         // Use read lock for concurrent search access
         let engine = self.engine.read().unwrap();

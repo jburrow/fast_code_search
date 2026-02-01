@@ -375,10 +375,11 @@ pub struct SearchStats {
 }
 
 /// Status of the indexing process
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexingStatus {
     /// No indexing is in progress
+    #[default]
     Idle,
     /// Discovering files to index
     Discovering,
@@ -388,12 +389,6 @@ pub enum IndexingStatus {
     ResolvingImports,
     /// Indexing completed successfully
     Completed,
-}
-
-impl Default for IndexingStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// Progress information for the indexing process

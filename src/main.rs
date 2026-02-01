@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
                         let count = discovery_files_discovered.fetch_add(1, Ordering::Relaxed) + 1;
                         
                         // Update progress periodically (every 1000 files)
-                        if count % 1000 == 0 {
+                        if count.is_multiple_of(1000) {
                             if let Ok(mut p) = discovery_progress.write() {
                                 p.files_discovered = count;
                                 p.message = format!("Discovering... {} files found", count);
@@ -289,7 +289,7 @@ async fn main() -> Result<()> {
                                 p.files_indexed = total_indexed;
                             }
                             
-                            if batch_num % 10 == 0 {
+                            if batch_num.is_multiple_of(10) {
                                 info!(
                                     batch = batch_num,
                                     files_indexed = total_indexed,
