@@ -127,6 +127,13 @@ async fn main() -> Result<()> {
         std::thread::spawn(move || {
             use rayon::prelude::*;
             use std::time::Instant;
+
+            // Configure rayon with larger stack size (8MB) to handle tree-sitter recursion
+            rayon::ThreadPoolBuilder::new()
+                .stack_size(8 * 1024 * 1024)
+                .build_global()
+                .ok(); // Ignore error if already initialized
+
             let total_start = Instant::now();
             info!("Background indexing {} path(s)", indexer_config.paths.len());
 

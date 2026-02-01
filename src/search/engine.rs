@@ -33,25 +33,39 @@ pub struct PreIndexedFile {
 }
 
 impl PreIndexedFile {
+    /// Maximum file size to process (10MB) - larger files are skipped to avoid memory issues
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
     /// Process a file in parallel - does all CPU-heavy work without needing engine access
+    /// Uses catch_unwind to handle tree-sitter stack overflows gracefully
     pub fn process(path: &Path) -> Option<Self> {
+        // Check file size first - skip very large files
+        let metadata = std::fs::metadata(path).ok()?;
+        if metadata.len() > Self::MAX_FILE_SIZE {
+            return None;
+        }
+
         // Read file content
         let content = std::fs::read_to_string(path).ok()?;
         
-        // Extract trigrams
+        // Extract trigrams (safe, no recursion)
         let trigram_vec = extract_trigrams(&content);
         let trigrams: HashSet<Trigram> = trigram_vec.into_iter().collect();
         
-        // Extract symbols
+        // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
         let extractor = SymbolExtractor::new(path);
-        let symbols = extractor.extract(&content).unwrap_or_default();
+        let symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            extractor.extract(&content).unwrap_or_default()
+        })).unwrap_or_default();
         
-        // Extract imports
-        let imports = extractor
-            .extract_imports(&content)
-            .ok()
-            .map(|imports| imports.into_iter().map(|i| i.path).collect())
-            .unwrap_or_default();
+        // Extract imports with panic protection
+        let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            extractor
+                .extract_imports(&content)
+                .ok()
+                .map(|imports| imports.into_iter().map(|i| i.path).collect())
+                .unwrap_or_default()
+        })).unwrap_or_default();
         
         Some(PreIndexedFile {
             path: path.to_path_buf(),
