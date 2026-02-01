@@ -4,6 +4,9 @@ This document outlines how to add support for **regex queries** and **path filte
 
 ## Table of Contents
 
+- [Deep Dive: How Regex and Trigrams Work Together](#deep-dive-how-regex-and-trigrams-work-together)
+- [Deep Dive: How Path Globs Work Performantly](#deep-dive-how-path-globs-work-performantly)
+
 - [Executive Summary](#executive-summary)
 - [Current Architecture Overview](#current-architecture-overview)
 - [Part 1: Regex Query Support](#part-1-regex-query-support)
@@ -730,3 +733,385 @@ This design enables powerful regex and path-filtered search while preserving the
 4. **Performance** is maintained by always filtering before scanning
 
 The implementation can be done in phases, starting with the lower-risk path filtering feature before tackling regex support.
+
+---
+
+## Deep Dive: How Regex and Trigrams Work Together
+
+### The Problem with Naive Regex Search
+
+Without optimization, regex search would be extremely slow:
+
+```
+Naive approach:
+  For each of 100,000 files:
+    For each of ~10,000 lines per file:
+      Run regex.is_match(line)
+      
+Total operations: 100,000 × 10,000 = 1 BILLION regex matches 😱
+```
+
+Even if each regex match takes 1 microsecond, that's 1000 seconds (16+ minutes) for a single search!
+
+### The Trigram Insight
+
+**Key observation**: Most useful regex patterns contain literal substrings.
+
+Consider the regex: `async\s+fn\s+(\w+)_handler`
+
+This pattern matches things like `async fn get_handler`, `async  fn  post_handler`, etc.
+
+But notice: **every match MUST contain the literal strings "async" and "handler"**. 
+
+The `\s+` and `(\w+)` parts are variable, but "async" and "handler" are fixed!
+
+### How Trigram Pre-filtering Works
+
+**Step 1: Extract literals from the regex**
+
+```
+Pattern: async\s+fn\s+(\w+)_handler
+              ↓ Parse regex AST ↓
+Literals found: ["async", "handler"]
+```
+
+**Step 2: Find candidate documents using trigrams**
+
+For "async":
+```
+Trigrams: ["asy", "syn", "ync"]
+
+Index lookup:
+  docs("asy") = {file_23, file_45, file_102, file_789, file_1024}
+  docs("syn") = {file_23, file_45, file_102, file_567, file_789}
+  docs("ync") = {file_23, file_45, file_102, file_789}
+  
+Intersection = {file_23, file_45, file_102, file_789}  ← Only 4 files contain "async"!
+```
+
+For "handler":
+```
+Trigrams: ["han", "and", "ndl", "dle", "ler"]
+
+Index lookup → Intersection = {file_23, file_45, file_501, file_789, file_890}
+```
+
+Combined candidates (union): `{file_23, file_45, file_102, file_501, file_789, file_890}` = **6 files**
+
+**Step 3: Run regex only on candidates**
+
+```
+Optimized approach:
+  For each of 6 candidate files:      ← Not 100,000!
+    For each line in file:
+      Run regex.is_match(line)
+
+Total: 6 files × 10,000 lines = 60,000 regex matches ✓
+```
+
+**Result**: 60,000 matches instead of 1 billion = **16,666x faster!**
+
+### Worked Example with Real Numbers
+
+Suppose we have a 10GB codebase:
+- 100,000 source files
+- Average 10,000 lines per file
+- 1 billion total lines
+
+**Query**: `impl\s+Display\s+for\s+(\w+)`
+
+**Without trigram acceleration**:
+```
+1 billion lines × 1μs per regex match = 1,000 seconds = 16.7 minutes
+```
+
+**With trigram acceleration**:
+
+1. Extract literal: `"impl"` (also "Display" and "for")
+2. Query trigram index: ~500 files contain all trigrams of "impl"
+3. Regex search only those files: 500 × 10,000 = 5 million lines
+4. Time: 5 million × 1μs = 5 seconds
+
+**Speedup: 200x faster** (16.7 minutes → 5 seconds)
+
+And that's conservative! If we also use "Display" for filtering, we might get down to 50 candidate files → 0.5 seconds.
+
+### Why Union (OR) Instead of Intersection (AND)?
+
+When we have multiple literals like `["impl", "Display", "for"]`, we use **union** (OR) of their candidate sets, not intersection (AND). Why?
+
+**Reason 1: Regex semantics**
+The literals might come from different branches of an alternation:
+```
+Pattern: (impl|pub)\s+fn
+Literals: ["impl", "fn"] and ["pub", "fn"]
+```
+A match only needs "impl" OR "pub", not both.
+
+**Reason 2: Conservative filtering**
+Using union ensures we never miss a true match. The parallel regex search will filter out false positives. Better to check a few extra files than miss valid results.
+
+**Reason 3: Single literal is already tight**
+For a single contiguous literal like "Display", the trigram index already does intersection internally:
+```
+"Display" → trigrams ["Dis", "isp", "spl", "pla", "lay"]
+              → candidates = docs("Dis") ∩ docs("isp") ∩ ... ∩ docs("lay")
+```
+This is already very selective.
+
+### What About Regex Patterns with No Literals?
+
+Some patterns have no extractable literals:
+```
+Pattern: [0-9]{3}-[0-9]{4}    (phone numbers)
+Pattern: \b\w{20,}\b          (long words)
+Pattern: .*                   (match anything)
+```
+
+For these, we **fall back to full scan** with a warning:
+```rust
+tracing::warn!("Regex has no extractable literals - falling back to full scan");
+```
+
+This is unavoidable, but rare. Most useful code search patterns contain literals.
+
+### Visual Summary
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    REGEX + TRIGRAMS FLOW                        │
+└──────────────────────────────────────────────────────────────────┘
+
+ Regex: impl\s+Display\s+for
+         ↓
+ ┌───────────────────────┐
+ │  Parse with           │
+ │  regex-syntax crate   │
+ └───────────┬───────────┘
+             ↓
+ ┌───────────────────────┐
+ │  Extract literals:    │
+ │  "impl", "Display"    │
+ └───────────┬───────────┘
+             ↓
+ ┌───────────────────────┐
+ │  For each literal:    │
+ │  Extract trigrams     │──────────┐
+ │  Query bitmap index   │          │
+ └───────────┬───────────┘          │
+             ↓                      │
+ ┌───────────────────────┐          │
+ │  Bitmap intersection  │          │ Existing trigram
+ │  per literal          │          │ infrastructure
+ └───────────┬───────────┘          │ (unchanged)
+             ↓                      │
+ ┌───────────────────────┐          │
+ │  Union of all         │──────────┘
+ │  literal candidates   │
+ └───────────┬───────────┘
+             ↓
+             ↓ 100,000 files → ~500 candidates
+             ↓
+ ┌───────────────────────┐
+ │  PARALLEL (rayon)     │
+ │  Regex.is_match()     │          Only here do we
+ │  on each candidate    │          actually run regex!
+ │  file's lines         │
+ └───────────┬───────────┘
+             ↓
+ ┌───────────────────────┐
+ │  Score & rank         │
+ │  Return top N         │
+ └───────────────────────┘
+```
+
+---
+
+## Deep Dive: How Path Globs Work Performantly
+
+### The Problem with Naive Path Filtering
+
+If we naively check glob patterns against every file on every search:
+
+```
+Naive approach:
+  User searches with include="src/**/*.rs"
+  For each of 100,000 files:
+    Check if path matches glob pattern
+    
+100,000 glob matches per search = slow!
+```
+
+### Why Glob Filtering is Actually Fast
+
+**Key insight 1: Filtering happens AFTER trigram pre-filtering**
+
+The trigram index already reduces 100,000 files to ~500 candidates. We only need to glob-match those 500 paths, not all 100,000.
+
+```
+                    Files at each stage
+                    ────────────────────
+All indexed files:  100,000
+After trigram:      500      (0.5% of total)
+After glob filter:  150      (30% of candidates)
+```
+
+**Key insight 2: GlobSet compiles patterns once**
+
+The `globset` crate compiles multiple patterns into a single state machine:
+
+```rust
+use globset::{Glob, GlobSetBuilder};
+
+// Compile once (done once per query)
+let mut builder = GlobSetBuilder::new();
+builder.add(Glob::new("src/**/*.rs")?);
+builder.add(Glob::new("lib/**/*.rs")?);
+let glob_set = builder.build()?;
+
+// Match is O(1) amortized per path
+glob_set.is_match("src/search/engine.rs")  // Very fast!
+```
+
+The compiled `GlobSet` uses a finite automaton that matches in O(path_length) time, regardless of how many patterns are in the set.
+
+**Key insight 3: Paths are short strings**
+
+Typical path: `/home/user/code/project/src/search/engine.rs` = 48 characters
+
+Matching a 48-character string against a compiled automaton takes ~50 nanoseconds.
+
+### Worked Example
+
+**Query**: Search for "SearchEngine" in Rust files under src/, excluding tests
+
+```
+include = ["src/**/*.rs"]
+exclude = ["**/test/**", "**/*_test.rs"]
+```
+
+**Step 1: Trigram filtering**
+
+```
+"SearchEngine" trigrams → 500 candidate files
+```
+
+**Step 2: Compile glob patterns** (once per query, ~1ms)
+
+```rust
+let include_set = GlobSet::new(["src/**/*.rs"]);
+let exclude_set = GlobSet::new(["**/test/**", "**/*_test.rs"]);
+```
+
+**Step 3: Filter candidates** (500 files × 50ns = 25μs)
+
+```
+Candidates            Path                           Include?  Exclude?  Keep?
+─────────────────────────────────────────────────────────────────────────────
+file_23    src/search/engine.rs                      ✓         ✗         ✓
+file_45    src/search/test/engine_test.rs            ✓         ✓         ✗
+file_102   lib/utils/search.rs                       ✗         ✗         ✗
+file_789   src/web/api.rs                            ✓         ✗         ✓
+...
+```
+
+**Result**: 500 candidates → 150 filtered candidates in 25 microseconds
+
+**Total overhead**: 1ms (compile) + 25μs (filter) = ~1ms = negligible
+
+### Performance Comparison
+
+| Stage | Files | Time |
+|-------|-------|------|
+| Trigram filtering | 100,000 → 500 | ~1ms |
+| **Glob filtering** | 500 → 150 | ~1ms |
+| Parallel search | 150 files | ~50ms |
+| **Total** | | ~52ms |
+
+Without trigram filtering (glob alone):
+| Stage | Files | Time |
+|-------|-------|------|
+| Glob filtering | 100,000 → 30,000 | ~5ms |
+| Parallel search | 30,000 files | ~10,000ms |
+| **Total** | | ~10 seconds |
+
+**Trigram + Glob = 200x faster** than glob alone!
+
+### Why Order Matters: Trigram THEN Glob
+
+We apply filters in this order:
+1. Trigram filtering (narrows to ~0.5% of files)
+2. Glob filtering (narrows by another ~70%)
+3. Content search (only on final candidates)
+
+This order is optimal because:
+- Trigram filtering is O(1) index lookups (bitmaps)
+- Glob matching is O(path_length) per file
+- Content search is O(file_size) per file
+
+By filtering most files with O(1) operations first, we minimize the expensive O(file_size) work.
+
+### Visual Summary
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    PATH GLOB FILTERING FLOW                      │
+└──────────────────────────────────────────────────────────────────┘
+
+ Query: "SearchEngine" + include="src/**/*.rs" + exclude="**/test/**"
+         ↓
+ ┌───────────────────────────────────────────┐
+ │  1. TRIGRAM INDEX                         │
+ │     Extract trigrams from "SearchEngine"  │
+ │     Bitmap intersection                   │
+ │     100,000 files → 500 candidates        │  ← O(1) lookups
+ └─────────────────────┬─────────────────────┘
+                       ↓
+ ┌───────────────────────────────────────────┐
+ │  2. COMPILE GLOB PATTERNS (once)          │
+ │     include: GlobSet(["src/**/*.rs"])     │  ← ~1ms, done once
+ │     exclude: GlobSet(["**/test/**"])      │
+ └─────────────────────┬─────────────────────┘
+                       ↓
+ ┌───────────────────────────────────────────┐
+ │  3. FILTER CANDIDATES                     │
+ │     For each of 500 candidates:           │
+ │       path = file_store.get_path(id)      │
+ │       if include.is_match(path)           │
+ │         && !exclude.is_match(path):       │  ← ~50ns per path
+ │         keep(id)                          │
+ │     500 candidates → 150 filtered         │
+ └─────────────────────┬─────────────────────┘
+                       ↓
+ ┌───────────────────────────────────────────┐
+ │  4. PARALLEL CONTENT SEARCH               │
+ │     Only 150 files searched               │  ← The expensive part
+ │     Uses rayon for parallelism            │    but now minimal files
+ └─────────────────────┬─────────────────────┘
+                       ↓
+                   Results
+
+ Performance:
+ ────────────
+ Step 1 (trigram):  ~1ms     (bitmap operations)
+ Step 2 (compile):  ~1ms     (one-time per query)
+ Step 3 (filter):   ~25μs    (500 × 50ns)
+ Step 4 (search):   ~50ms    (parallel line search on 150 files)
+ ─────────────────────────
+ Total:             ~52ms    ✓ Fast!
+```
+
+---
+
+### Key Takeaways
+
+1. **Regex + Trigrams**: Extract literal substrings from regex, use them for trigram pre-filtering, run actual regex only on the small candidate set. Most queries see 100-1000x speedup.
+
+2. **Path Globs**: Filter is applied AFTER trigram pre-filtering, so we only glob-match a few hundred paths, not 100,000. GlobSet compiles patterns into an efficient automaton for O(path_length) matching.
+
+3. **Composition**: Both filters stack multiplicatively:
+   - Trigram: 100,000 → 500 (99.5% filtered)
+   - Glob: 500 → 150 (70% of remainder filtered)  
+   - Net: 100,000 → 150 (99.85% filtered)
+
+4. **Worst Case**: Regex with no literals OR no path filters = falls back to current behavior (which is already fast due to trigram index).
