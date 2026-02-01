@@ -179,14 +179,31 @@ impl SearchEngine {
 
     /// Resolve all pending imports after indexing is complete.
     /// Call this after all files have been indexed to build the dependency graph.
+    /// 
+    /// Uses two-phase parallel resolution:
+    /// 1. Parallel path resolution using rayon (CPU-bound, thread-safe)
+    /// 2. Sequential graph insertion (requires &mut self)
     pub fn resolve_imports(&mut self) {
         let pending = std::mem::take(&mut self.pending_imports);
-        for (file_id, file_path, import_paths) in pending {
-            for import_path in import_paths {
-                self.dependency_index
-                    .add_import_from_path(file_id, &file_path, &import_path);
-            }
-        }
+        
+        // Phase 1: Parallel path resolution - collect (from_id, to_id) pairs
+        // Uses &self on dependency_index (thread-safe read-only methods)
+        let edges: Vec<(u32, u32)> = pending
+            .par_iter()
+            .flat_map(|(file_id, file_path, import_paths)| {
+                import_paths
+                    .par_iter()
+                    .filter_map(|import_path| {
+                        let resolved = self.dependency_index.resolve_import_path(file_path, import_path)?;
+                        let to_id = self.dependency_index.get_file_id(&resolved)?;
+                        Some((*file_id, to_id))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        // Phase 2: Sequential batch insert (requires &mut self)
+        self.dependency_index.add_imports_batch(edges);
     }
 
     /// Search for a query using parallel processing

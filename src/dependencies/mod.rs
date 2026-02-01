@@ -22,6 +22,8 @@ pub struct DependencyIndex {
     import_counts: HashMap<u32, u32>,
     /// Map from normalized path to file_id for import resolution
     path_to_id: HashMap<PathBuf, u32>,
+    /// Inverted index: filename -> list of full paths (for fast non-relative import lookup)
+    filename_to_paths: HashMap<String, Vec<PathBuf>>,
 }
 
 impl DependencyIndex {
@@ -32,12 +34,22 @@ impl DependencyIndex {
     /// Register a file path with its ID for import resolution
     pub fn register_file(&mut self, file_id: u32, path: &Path) {
         // Store normalized path for matching
-        if let Ok(canonical) = path.canonicalize() {
-            self.path_to_id.insert(canonical, file_id);
+        let stored_path = if let Ok(canonical) = path.canonicalize() {
+            canonical
         } else {
             // Fallback to the path as-is if canonicalization fails
-            self.path_to_id.insert(path.to_path_buf(), file_id);
+            path.to_path_buf()
+        };
+        
+        // Add to filename inverted index for fast non-relative lookups
+        if let Some(filename) = stored_path.file_name().and_then(|s| s.to_str()) {
+            self.filename_to_paths
+                .entry(filename.to_string())
+                .or_default()
+                .push(stored_path.clone());
         }
+        
+        self.path_to_id.insert(stored_path, file_id);
     }
 
     /// Add an import relationship: `from_file` imports `to_file`
@@ -72,8 +84,9 @@ impl DependencyIndex {
         Some(to_file_id)
     }
 
-    /// Resolve an import path relative to the importing file
-    fn resolve_import_path(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
+    /// Resolve an import path relative to the importing file.
+    /// This method is thread-safe and only requires &self.
+    pub fn resolve_import_path(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
         let parent = from_file.parent()?;
 
         // Handle relative imports
@@ -94,25 +107,54 @@ impl DependencyIndex {
             }
         }
 
-        // For non-relative imports, try to find by filename match
-        // This is a heuristic - full resolution would require understanding
-        // each language's module system
+        // For non-relative imports, use the filename inverted index (O(1) lookup)
+        // instead of scanning all paths (O(n))
         let import_filename = Path::new(import_path)
             .file_name()
             .and_then(|s| s.to_str())?;
 
-        for (path, _) in &self.path_to_id {
-            if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                // Check for exact filename match or match without extension
-                if filename == import_filename
-                    || filename.starts_with(&format!("{}.", import_filename))
-                {
+        // Try exact filename match first
+        if let Some(paths) = self.filename_to_paths.get(import_filename) {
+            if let Some(path) = paths.first() {
+                return Some(path.clone());
+            }
+        }
+
+        // Try with common extensions appended
+        for ext in &[".rs", ".py", ".js", ".ts", ".jsx", ".tsx"] {
+            let with_ext = format!("{}{}", import_filename, ext);
+            if let Some(paths) = self.filename_to_paths.get(&with_ext) {
+                if let Some(path) = paths.first() {
                     return Some(path.clone());
                 }
             }
         }
 
         None
+    }
+
+    /// Get file ID for a resolved path. Thread-safe.
+    pub fn get_file_id(&self, path: &Path) -> Option<u32> {
+        self.path_to_id.get(path).copied()
+    }
+
+    /// Batch insert multiple import edges. More efficient than repeated add_import calls.
+    pub fn add_imports_batch(&mut self, edges: Vec<(u32, u32)>) {
+        for (from_file, to_file) in edges {
+            self.imports
+                .entry(from_file)
+                .or_default()
+                .insert(to_file);
+            self.imported_by
+                .entry(to_file)
+                .or_default()
+                .insert(from_file);
+        }
+        
+        // Update cached counts in bulk
+        for (&file_id, dependents) in &self.imported_by {
+            self.import_counts.insert(file_id, dependents.len() as u32);
+        }
     }
 
     /// Get the number of files that import the given file
@@ -152,6 +194,7 @@ impl DependencyIndex {
         self.imported_by.clear();
         self.import_counts.clear();
         self.path_to_id.clear();
+        self.filename_to_paths.clear();
     }
 }
 
