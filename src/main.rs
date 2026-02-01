@@ -127,6 +127,9 @@ async fn main() -> Result<()> {
         std::thread::spawn(move || {
             use rayon::prelude::*;
             use std::time::Instant;
+            use std::sync::mpsc;
+            use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+            use std::sync::Arc;
 
             // Configure rayon with larger stack size (8MB) to handle tree-sitter recursion
             rayon::ThreadPoolBuilder::new()
@@ -137,19 +140,12 @@ async fn main() -> Result<()> {
             let total_start = Instant::now();
             info!("Background indexing {} path(s)", indexer_config.paths.len());
 
-            // Helper to update progress state
-            let update_progress = |updater: Box<dyn FnOnce(&mut IndexingProgress) + Send>| {
-                if let Ok(mut progress) = index_progress.write() {
-                    updater(&mut progress);
-                }
-            };
-
-            // Initialize progress - starting discovery phase
-            update_progress(Box::new(|p| {
+            // Initialize progress
+            if let Ok(mut p) = index_progress.write() {
                 *p = IndexingProgress::start();
-            }));
+            }
             
-            // Pre-compile exclude patterns once (avoids recompilation per file)
+            // Pre-compile exclude patterns once
             let exclude_patterns: Vec<String> = indexer_config
                 .exclude_patterns
                 .iter()
@@ -164,141 +160,202 @@ async fn main() -> Result<()> {
                 "woff", "woff2", "ttf", "eot", "pdf",
             ].into_iter().collect();
             
-            // Phase 1: Collect all file paths to index (single-threaded, I/O bound)
-            let collect_start = Instant::now();
-            let mut files_to_index: Vec<std::path::PathBuf> = Vec::new();
+            // Channel for streaming file paths from discovery to indexing
+            // Bounded channel provides backpressure if indexing falls behind
+            const CHANNEL_BUFFER: usize = 5000;
+            const BATCH_SIZE: usize = 500;
             
-            for path_str in &indexer_config.paths {
-                let path = std::path::Path::new(path_str);
-                if !path.exists() {
-                    tracing::warn!(path = %path_str, "Path does not exist, skipping");
-                    update_progress(Box::new(|p| p.errors += 1));
-                    continue;
-                }
-                
-                info!(path = %path_str, "Discovering files");
-                let path_str_owned = path_str.clone();
-                update_progress(Box::new(move |p| {
-                    p.current_path = Some(path_str_owned.clone());
-                    p.message = format!("Discovering files in {}...", path_str_owned);
-                }));
-                
-                for entry in walkdir::WalkDir::new(path)
-                    .follow_links(true)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
-                    if !entry.file_type().is_file() {
+            let (tx, rx) = mpsc::sync_channel::<std::path::PathBuf>(CHANNEL_BUFFER);
+            
+            // Shared counters for progress tracking
+            let files_discovered = Arc::new(AtomicUsize::new(0));
+            let discovery_done = Arc::new(AtomicBool::new(false));
+            
+            // Spawn discovery thread
+            let discovery_files_discovered = files_discovered.clone();
+            let discovery_done_flag = discovery_done.clone();
+            let discovery_progress = index_progress.clone();
+            
+            let discovery_handle = std::thread::spawn(move || {
+                for path_str in &indexer_config.paths {
+                    let path = std::path::Path::new(path_str);
+                    if !path.exists() {
+                        tracing::warn!(path = %path_str, "Path does not exist, skipping");
                         continue;
                     }
                     
-                    let entry_path = entry.path();
-                    let path_str_check = entry_path.to_string_lossy();
+                    info!(path = %path_str, "Discovering files");
                     
-                    // Check exclude patterns (using pre-compiled patterns)
-                    let should_exclude = exclude_patterns.iter().any(|pattern| {
-                        path_str_check.contains(pattern)
-                    });
-                    
-                    if should_exclude {
-                        continue;
-                    }
-                    
-                    // Skip binary files
-                    if let Some(ext) = entry_path.extension() {
-                        let ext = ext.to_string_lossy().to_lowercase();
-                        if binary_extensions.contains(ext.as_str()) {
+                    for entry in walkdir::WalkDir::new(path)
+                        .follow_links(true)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
+                        if !entry.file_type().is_file() {
                             continue;
                         }
-                    }
-                    
-                    files_to_index.push(entry_path.to_path_buf());
-                }
-            }
-            
-            let file_count = files_to_index.len();
-            info!(
-                file_count = file_count,
-                elapsed_ms = collect_start.elapsed().as_millis(),
-                "File discovery completed"
-            );
-
-            // Update progress: discovery complete, moving to indexing phase
-            update_progress(Box::new(move |p| {
-                p.status = IndexingStatus::Indexing;
-                p.files_discovered = file_count;
-                p.current_path = None;
-                p.message = format!("Discovered {} files, starting indexing...", file_count);
-            }));
-            
-            // Phase 2: Index files in batches with parallel processing
-            // Batch size balances parallelism overhead vs lock contention
-            const BATCH_SIZE: usize = 500;
-            let batch_count = (file_count + BATCH_SIZE - 1) / BATCH_SIZE;
-
-            // Update progress with batch count
-            let index_progress_ref = index_progress.clone();
-            if let Ok(mut p) = index_progress_ref.write() {
-                p.total_batches = batch_count;
-            }
-
-            let mut total_indexed = 0usize;
-            
-            for (batch_idx, batch) in files_to_index.chunks(BATCH_SIZE).enumerate() {
-                let batch_start = Instant::now();
-
-                // Update progress at start of batch
-                let batch_num = batch_idx + 1;
-                let index_progress_ref = index_progress.clone();
-                if let Ok(mut p) = index_progress_ref.write() {
-                    p.current_batch = batch_num;
-                    p.message = format!("Indexing batch {}/{} ({} files)...", 
-                        batch_num, batch_count, batch.len());
-                    // Show the first file of the batch as current path
-                    if let Some(first) = batch.first() {
-                        p.current_path = first.file_name()
-                            .map(|n| n.to_string_lossy().to_string());
+                        
+                        let entry_path = entry.path();
+                        let path_str_check = entry_path.to_string_lossy();
+                        
+                        // Check exclude patterns
+                        let should_exclude = exclude_patterns.iter().any(|pattern| {
+                            path_str_check.contains(pattern)
+                        });
+                        
+                        if should_exclude {
+                            continue;
+                        }
+                        
+                        // Skip binary files
+                        if let Some(ext) = entry_path.extension() {
+                            let ext = ext.to_string_lossy().to_lowercase();
+                            if binary_extensions.contains(ext.as_str()) {
+                                continue;
+                            }
+                        }
+                        
+                        // Send to indexing pipeline (blocks if channel is full)
+                        if tx.send(entry_path.to_path_buf()).is_err() {
+                            break; // Receiver dropped, stop discovery
+                        }
+                        
+                        let count = discovery_files_discovered.fetch_add(1, Ordering::Relaxed) + 1;
+                        
+                        // Update progress periodically (every 1000 files)
+                        if count % 1000 == 0 {
+                            if let Ok(mut p) = discovery_progress.write() {
+                                p.files_discovered = count;
+                                p.message = format!("Discovering... {} files found", count);
+                            }
+                        }
                     }
                 }
                 
-                // Process files in parallel - CPU-heavy work (read, trigrams, symbols)
+                // Signal discovery complete
+                discovery_done_flag.store(true, Ordering::Release);
+                let final_count = discovery_files_discovered.load(Ordering::Relaxed);
+                info!(file_count = final_count, "File discovery completed");
+            });
+            
+            // Main indexing loop - processes files as they arrive
+            let mut batch: Vec<std::path::PathBuf> = Vec::with_capacity(BATCH_SIZE);
+            let mut total_indexed = 0usize;
+            let mut batch_num = 0usize;
+            
+            // Update status to indexing (discovery + indexing running concurrently)
+            if let Ok(mut p) = index_progress.write() {
+                p.status = IndexingStatus::Indexing;
+                p.message = String::from("Discovering and indexing files...");
+            }
+            
+            loop {
+                // Try to receive with timeout to allow checking discovery status
+                match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                    Ok(path) => {
+                        batch.push(path);
+                        
+                        // Process batch when full
+                        if batch.len() >= BATCH_SIZE {
+                            batch_num += 1;
+                            let batch_start = Instant::now();
+                            
+                            // Update progress
+                            let discovered = files_discovered.load(Ordering::Relaxed);
+                            if let Ok(mut p) = index_progress.write() {
+                                p.current_batch = batch_num;
+                                p.files_discovered = discovered;
+                                p.message = format!("Indexing batch {} ({} files)...", batch_num, batch.len());
+                            }
+                            
+                            // Process in parallel
+                            let pre_indexed: Vec<PreIndexedFile> = batch
+                                .par_iter()
+                                .filter_map(|path| PreIndexedFile::process(path))
+                                .collect();
+                            
+                            let batch_indexed_count = pre_indexed.len();
+                            
+                            // Merge into engine
+                            {
+                                let mut engine = index_engine.write().unwrap();
+                                engine.index_batch(pre_indexed);
+                            }
+                            
+                            total_indexed += batch_indexed_count;
+                            
+                            // Update progress
+                            if let Ok(mut p) = index_progress.write() {
+                                p.files_indexed = total_indexed;
+                            }
+                            
+                            if batch_num % 10 == 0 {
+                                info!(
+                                    batch = batch_num,
+                                    files_indexed = total_indexed,
+                                    files_discovered = discovered,
+                                    batch_ms = batch_start.elapsed().as_millis(),
+                                    "Batch indexed"
+                                );
+                            }
+                            
+                            batch.clear();
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // Check if discovery is done and channel is empty
+                        if discovery_done.load(Ordering::Acquire) && rx.try_recv().is_err() {
+                            break;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        break;
+                    }
+                }
+            }
+            
+            // Process remaining files in final batch
+            if !batch.is_empty() {
+                batch_num += 1;
+                let batch_start = Instant::now();
+                
                 let pre_indexed: Vec<PreIndexedFile> = batch
                     .par_iter()
                     .filter_map(|path| PreIndexedFile::process(path))
                     .collect();
-
+                
                 let batch_indexed_count = pre_indexed.len();
                 
-                // Merge batch into engine with single write lock acquisition
                 {
                     let mut engine = index_engine.write().unwrap();
                     engine.index_batch(pre_indexed);
                 }
-
-                total_indexed += batch_indexed_count;
-
-                // Update progress after batch
-                let index_progress_ref = index_progress.clone();
-                if let Ok(mut p) = index_progress_ref.write() {
-                    p.files_indexed = total_indexed;
-                }
                 
-                if batch_idx % 10 == 0 || batch_idx == batch_count - 1 {
-                    info!(
-                        batch = batch_idx + 1,
-                        total_batches = batch_count,
-                        files_indexed = total_indexed,
-                        batch_ms = batch_start.elapsed().as_millis(),
-                        "Batch indexed"
-                    );
-                }
+                total_indexed += batch_indexed_count;
+                
+                info!(
+                    batch = batch_num,
+                    files_indexed = total_indexed,
+                    batch_ms = batch_start.elapsed().as_millis(),
+                    "Final batch indexed"
+                );
+            }
+            
+            // Wait for discovery thread to finish
+            let _ = discovery_handle.join();
+            
+            let final_discovered = files_discovered.load(Ordering::Relaxed);
+            
+            // Update total batches now that we know the final count
+            if let Ok(mut p) = index_progress.write() {
+                p.files_discovered = final_discovered;
+                p.total_batches = batch_num;
+                p.current_batch = batch_num;
             }
             
             // Resolve all import relationships after indexing completes
             {
-                // Update progress: resolving imports
-                let index_progress_ref = index_progress.clone();
-                if let Ok(mut p) = index_progress_ref.write() {
+                if let Ok(mut p) = index_progress.write() {
                     p.status = IndexingStatus::ResolvingImports;
                     p.current_path = None;
                     p.message = String::from("Resolving import dependencies...");
@@ -316,14 +373,15 @@ async fn main() -> Result<()> {
             
             let elapsed = total_start.elapsed();
             let files_per_sec = if elapsed.as_secs_f64() > 0.0 {
-                file_count as f64 / elapsed.as_secs_f64()
+                total_indexed as f64 / elapsed.as_secs_f64()
             } else {
                 0.0
             };
 
             info!(
                 elapsed_secs = elapsed.as_secs_f64(),
-                files_indexed = file_count,
+                files_indexed = total_indexed,
+                files_discovered = final_discovered,
                 files_per_sec = files_per_sec,
                 "Background indexing completed"
             );
@@ -333,6 +391,7 @@ async fn main() -> Result<()> {
                 if let Ok(mut p) = index_progress.write() {
                     p.status = IndexingStatus::Completed;
                     p.files_indexed = total_indexed;
+                    p.files_discovered = final_discovered;
                     p.current_path = None;
                     p.message = format!(
                         "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
