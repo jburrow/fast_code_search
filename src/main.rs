@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::server;
+use fast_code_search::web;
 use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing::{info, Level};
@@ -92,18 +93,90 @@ async fn main() -> Result<()> {
 
     let addr = config.server.address.parse()?;
 
-    // Create server with or without auto-indexing
-    let search_service = if !args.no_auto_index && !config.indexer.paths.is_empty() {
-        info!("Creating server with auto-indexing enabled");
-        server::create_server_with_indexing(&config.indexer)
+    // Create shared engine (empty initially, will be indexed in background)
+    let shared_engine = std::sync::Arc::new(std::sync::Mutex::new(fast_code_search::search::SearchEngine::new()));
+
+    // Start web server first if enabled (so UI is available during indexing)
+    if config.server.enable_web_ui {
+        let web_addr = config.server.web_address.clone();
+        let web_engine = shared_engine.clone();
+        info!(web_address = %web_addr, "Starting Web UI server");
+        
+        tokio::spawn(async move {
+            let router = web::create_router(web_engine);
+            let listener = tokio::net::TcpListener::bind(&web_addr).await.unwrap();
+            info!(address = %web_addr, "Web UI available at http://{}", web_addr);
+            axum::serve(listener, router).await.unwrap();
+        });
+    }
+
+    // Start background indexing if enabled
+    if !args.no_auto_index && !config.indexer.paths.is_empty() {
+        let indexer_config = config.indexer.clone();
+        let index_engine = shared_engine.clone();
+        info!("Starting background indexing");
+        
+        std::thread::spawn(move || {
+            use std::time::Instant;
+            let total_start = Instant::now();
+            info!("Background indexing {} path(s)", indexer_config.paths.len());
+            
+            for path_str in &indexer_config.paths {
+                let path = std::path::Path::new(path_str);
+                if !path.exists() {
+                    tracing::warn!(path = %path_str, "Path does not exist, skipping");
+                    continue;
+                }
+                
+                info!(path = %path_str, "Indexing path");
+                
+                for entry in walkdir::WalkDir::new(path)
+                    .follow_links(true)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                {
+                    if !entry.file_type().is_file() {
+                        continue;
+                    }
+                    
+                    let entry_path = entry.path();
+                    let path_str_check = entry_path.to_string_lossy();
+                    
+                    // Check exclude patterns
+                    let should_exclude = indexer_config.exclude_patterns.iter().any(|pattern| {
+                        path_str_check.contains(pattern.trim_matches('*').trim_matches('/'))
+                    });
+                    
+                    if should_exclude {
+                        continue;
+                    }
+                    
+                    // Skip binary files
+                    if let Some(ext) = entry_path.extension() {
+                        let ext = ext.to_string_lossy().to_lowercase();
+                        if matches!(ext.as_str(), "exe" | "dll" | "so" | "dylib" | "bin" | "o" | "a" | 
+                            "png" | "jpg" | "jpeg" | "gif" | "ico" | "bmp" | "zip" | "tar" | "gz" | "7z") {
+                            continue;
+                        }
+                    }
+                    
+                    // Index the file (method reads content internally)
+                    let mut engine = index_engine.lock().unwrap();
+                    let _ = engine.index_file(entry_path);
+                }
+            }
+            
+            let elapsed = total_start.elapsed();
+            info!(elapsed_secs = elapsed.as_secs_f64(), "Background indexing completed");
+        });
+    } else if args.no_auto_index {
+        info!("Auto-indexing disabled via --no-auto-index flag");
     } else {
-        if args.no_auto_index {
-            info!("Auto-indexing disabled via --no-auto-index flag");
-        } else {
-            info!("No paths configured for indexing");
-        }
-        server::create_server()
-    };
+        info!("No paths configured for indexing");
+    }
+
+    // Create gRPC service with shared engine
+    let search_service = server::create_server_with_engine(shared_engine.clone());
 
     info!(address = %addr, "Fast Code Search Server starting");
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");

@@ -22,6 +22,14 @@ pub struct ServerConfig {
     /// Address to bind the gRPC server to
     #[serde(default = "default_address")]
     pub address: String,
+
+    /// Address to bind the HTTP/Web UI server to
+    #[serde(default = "default_web_address")]
+    pub web_address: String,
+
+    /// Enable the web UI and REST API
+    #[serde(default = "default_enable_web_ui")]
+    pub enable_web_ui: bool,
 }
 
 /// Indexer-related configuration
@@ -46,6 +54,14 @@ pub struct IndexerConfig {
 
 fn default_address() -> String {
     "0.0.0.0:50051".to_string()
+}
+
+fn default_web_address() -> String {
+    "0.0.0.0:8080".to_string()
+}
+
+fn default_enable_web_ui() -> bool {
+    true
 }
 
 fn default_exclude_patterns() -> Vec<String> {
@@ -78,6 +94,8 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             address: default_address(),
+            web_address: default_web_address(),
+            enable_web_ui: default_enable_web_ui(),
         }
     }
 }

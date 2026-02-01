@@ -14,7 +14,7 @@ enable_web_ui = true
 [indexer]
 # Paths to index on startup
 # Add your project directories here
-paths = ["C:/workspace"]
+paths = ["C:/workspace/fast_code_search"]
 
 # File extensions to include (empty = all text files)
 # Uncomment and customize to limit indexed file types
