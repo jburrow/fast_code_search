@@ -17,6 +17,12 @@ pub struct SearchQuery {
     /// Maximum number of results (default: 50)
     #[serde(default = "default_max_results")]
     max: usize,
+    /// Semicolon-delimited glob patterns for paths to include
+    #[serde(default)]
+    include: String,
+    /// Semicolon-delimited glob patterns for paths to exclude
+    #[serde(default)]
+    exclude: String,
 }
 
 fn default_max_results() -> usize {
@@ -90,6 +96,8 @@ pub async fn search_handler(
     }
 
     let max_results = params.max.min(1000).max(1);
+    let include_patterns = params.include.as_str();
+    let exclude_patterns = params.exclude.as_str();
 
     // Use read lock for concurrent search access
     let engine = state.engine.read().map_err(|e| {
@@ -99,7 +107,19 @@ pub async fn search_handler(
         )
     })?;
 
-    let matches = engine.search(query, max_results);
+    // Use filtered search if patterns are provided, otherwise use regular search
+    let matches = if include_patterns.is_empty() && exclude_patterns.is_empty() {
+        engine.search(query, max_results)
+    } else {
+        engine
+            .search_with_filter(query, include_patterns, exclude_patterns, max_results)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid filter pattern: {}", e),
+                )
+            })?
+    };
 
     let results: Vec<SearchResultJson> = matches
         .into_iter()

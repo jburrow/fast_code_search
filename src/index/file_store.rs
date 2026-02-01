@@ -99,6 +99,11 @@ impl FileStore {
     pub fn total_size(&self) -> u64 {
         self.files.iter().map(|f| f.len() as u64).sum()
     }
+
+    /// Get all file paths as a vector (for path filtering)
+    pub fn get_all_paths(&self) -> Vec<PathBuf> {
+        self.files.iter().map(|f| f.path.clone()).collect()
+    }
 }
 
 impl Default for FileStore {

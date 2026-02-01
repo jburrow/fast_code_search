@@ -1,5 +1,6 @@
 use crate::dependencies::DependencyIndex;
 use crate::index::{FileStore, TrigramIndex, extract_trigrams, Trigram};
+use crate::search::path_filter::PathFilter;
 use crate::symbols::{Symbol, SymbolExtractor};
 use anyhow::Result;
 use rayon::prelude::*;
@@ -228,6 +229,56 @@ impl SearchEngine {
 
         // Return top results
         matches.into_iter().take(max_results).collect()
+    }
+
+    /// Search with path filtering using include/exclude glob patterns.
+    ///
+    /// This extends the basic search with additional path-based filtering:
+    /// 1. Trigram index narrows candidates based on query content
+    /// 2. Path filter further narrows based on file paths
+    /// 3. Parallel search runs only on final candidates
+    ///
+    /// # Arguments
+    /// * `query` - The search query string
+    /// * `include_patterns` - Semicolon-delimited glob patterns to include
+    /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
+    /// * `max_results` - Maximum number of results to return
+    pub fn search_with_filter(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchMatch>> {
+        // Build path filter from patterns
+        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
+
+        // Find candidate documents using trigram index
+        let candidate_docs = self.trigram_index.search(query);
+
+        // Apply path filter if it has any patterns
+        let filtered_docs = if path_filter.is_empty() {
+            candidate_docs
+        } else {
+            let all_paths = self.file_store.get_all_paths();
+            path_filter.filter_documents(&candidate_docs, &all_paths)
+        };
+
+        // Convert to vector for parallel processing
+        let doc_ids: Vec<u32> = filtered_docs.iter().collect();
+
+        // Search in parallel using rayon
+        let mut matches: Vec<SearchMatch> = doc_ids
+            .par_iter()
+            .filter_map(|&doc_id| self.search_in_document(doc_id, query))
+            .flatten()
+            .collect();
+
+        // Sort by score (descending)
+        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+        // Return top results
+        Ok(matches.into_iter().take(max_results).collect())
     }
 
     fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {

@@ -5,6 +5,8 @@ const API_BASE = '';
 // DOM Elements
 const queryInput = document.getElementById('query');
 const maxResultsSelect = document.getElementById('max-results');
+const includeFilterInput = document.getElementById('include-filter');
+const excludeFilterInput = document.getElementById('exclude-filter');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
@@ -219,6 +221,8 @@ function adjustStatusPolling(isIndexing) {
 async function performSearch() {
     const query = queryInput.value.trim();
     const maxResults = parseInt(maxResultsSelect.value, 10);
+    const includeFilter = includeFilterInput?.value.trim() || '';
+    const excludeFilter = excludeFilterInput?.value.trim() || '';
 
     if (!query) {
         resultsHeader.style.display = 'none';
@@ -238,6 +242,12 @@ async function performSearch() {
 
     try {
         const params = new URLSearchParams({ q: query, max: maxResults });
+        if (includeFilter) {
+            params.set('include', includeFilter);
+        }
+        if (excludeFilter) {
+            params.set('exclude', excludeFilter);
+        }
         const response = await fetch(`${API_BASE}/api/search?${params}`);
         
         if (!response.ok) {
@@ -310,6 +320,26 @@ function handleSearchInput() {
 // Event listeners
 queryInput.addEventListener('input', handleSearchInput);
 maxResultsSelect.addEventListener('change', performSearch);
+
+// Filter input event listeners
+if (includeFilterInput) {
+    includeFilterInput.addEventListener('input', handleSearchInput);
+    includeFilterInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            performSearch();
+        }
+    });
+}
+if (excludeFilterInput) {
+    excludeFilterInput.addEventListener('input', handleSearchInput);
+    excludeFilterInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            performSearch();
+        }
+    });
+}
 
 // Handle Enter key for immediate search
 queryInput.addEventListener('keydown', (e) => {

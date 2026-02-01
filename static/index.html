@@ -28,6 +28,21 @@
                     </select>
                 </label>
             </div>
+            <div class="filter-options">
+                <div class="filter-row">
+                    <label>
+                        <span class="filter-label">Include paths:</span>
+                        <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**" autocomplete="off">
+                    </label>
+                </div>
+                <div class="filter-row">
+                    <label>
+                        <span class="filter-label">Exclude paths:</span>
+                        <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**" autocomplete="off">
+                    </label>
+                </div>
+                <p class="filter-help">Use glob patterns separated by semicolons (;)</p>
+            </div>
         </div>
 
         <div class="stats-panel" id="stats">

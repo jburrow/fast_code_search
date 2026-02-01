@@ -125,6 +125,8 @@ async fn main() -> Result<()> {
         let search_request = SearchRequest {
             query: query.to_string(),
             max_results: *max_results,
+            include_paths: vec![],
+            exclude_paths: vec![],
         };
 
         let mut stream = client.search(search_request).await?.into_inner();

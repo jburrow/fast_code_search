@@ -202,10 +202,20 @@ impl CodeSearch for CodeSearchService {
         let req = request.into_inner();
         let query = req.query;
         let max_results = req.max_results.max(1).min(1000) as usize;
+        let include_patterns = req.include_paths.join(";");
+        let exclude_patterns = req.exclude_paths.join(";");
 
         // Use read lock for concurrent search access
         let engine = self.engine.read().unwrap();
-        let matches = engine.search(&query, max_results);
+        
+        // Use filtered search if patterns are provided
+        let matches = if include_patterns.is_empty() && exclude_patterns.is_empty() {
+            engine.search(&query, max_results)
+        } else {
+            engine
+                .search_with_filter(&query, &include_patterns, &exclude_patterns, max_results)
+                .map_err(|e| Status::invalid_argument(format!("Invalid filter pattern: {}", e)))?
+        };
         drop(engine); // Release lock before streaming
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
