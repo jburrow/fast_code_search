@@ -1,12 +1,13 @@
 use crate::dependencies::DependencyIndex;
-use crate::index::{extract_trigrams, FileStore, Trigram, TrigramIndex};
+use crate::index::{extract_unique_trigrams, FileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
 use crate::search::regex_search::RegexAnalysis;
 use crate::symbols::{Symbol, SymbolExtractor};
 use anyhow::Result;
+use memchr::memmem;
 use rayon::prelude::*;
 use regex::Regex;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
 
 /// Case-insensitive substring search without heap allocation.
@@ -58,7 +59,7 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     false
 }
 
-/// Fast byte substring search
+/// Fast byte substring search using memchr's memmem for SIMD acceleration
 #[inline]
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() {
@@ -67,7 +68,7 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     if haystack.len() < needle.len() {
         return false;
     }
-    haystack.windows(needle.len()).any(|w| w == needle)
+    memmem::find(haystack, needle).is_some()
 }
 
 /// Inline scoring function with pre-computed values (no method call overhead, no redundant lookups)
@@ -168,7 +169,7 @@ pub struct PreIndexedFile {
     /// File content (owned for thread safety)
     pub content: String,
     /// Unique trigrams extracted from the content
-    pub trigrams: HashSet<Trigram>,
+    pub trigrams: FxHashSet<Trigram>,
     /// Extracted symbols
     pub symbols: Vec<Symbol>,
     /// Extracted import paths
@@ -191,9 +192,8 @@ impl PreIndexedFile {
         // Read file content
         let content = std::fs::read_to_string(path).ok()?;
 
-        // Extract trigrams (safe, no recursion)
-        let trigram_vec = extract_trigrams(&content);
-        let trigrams: HashSet<Trigram> = trigram_vec.into_iter().collect();
+        // Extract trigrams directly into FxHashSet (avoids Vec allocation + conversion)
+        let trigrams = extract_unique_trigrams(&content);
 
         // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
         let extractor = SymbolExtractor::new(path);
