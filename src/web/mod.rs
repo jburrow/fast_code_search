@@ -10,15 +10,15 @@ use axum::{
     Router,
 };
 use rust_embed::RustEmbed;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
 struct StaticAssets;
 
-/// Shared application state
-pub type AppState = Arc<Mutex<SearchEngine>>;
+/// Shared application state - RwLock allows concurrent read access for searches
+pub type AppState = Arc<RwLock<SearchEngine>>;
 
 /// Create the web router with all routes
 pub fn create_router(engine: AppState) -> Router {

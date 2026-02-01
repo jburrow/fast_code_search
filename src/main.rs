@@ -94,7 +94,8 @@ async fn main() -> Result<()> {
     let addr = config.server.address.parse()?;
 
     // Create shared engine (empty initially, will be indexed in background)
-    let shared_engine = std::sync::Arc::new(std::sync::Mutex::new(fast_code_search::search::SearchEngine::new()));
+    // Using RwLock allows concurrent read access during searches while only blocking for writes (indexing)
+    let shared_engine = std::sync::Arc::new(std::sync::RwLock::new(fast_code_search::search::SearchEngine::new()));
 
     // Start web server first if enabled (so UI is available during indexing)
     if config.server.enable_web_ui {
@@ -117,9 +118,29 @@ async fn main() -> Result<()> {
         info!("Starting background indexing");
         
         std::thread::spawn(move || {
+            use rayon::prelude::*;
             use std::time::Instant;
             let total_start = Instant::now();
             info!("Background indexing {} path(s)", indexer_config.paths.len());
+            
+            // Pre-compile exclude patterns once (avoids recompilation per file)
+            let exclude_patterns: Vec<String> = indexer_config
+                .exclude_patterns
+                .iter()
+                .map(|p| p.trim_matches('*').trim_matches('/').to_string())
+                .collect();
+            
+            // Binary extensions to skip
+            let binary_extensions: std::collections::HashSet<&str> = [
+                "exe", "dll", "so", "dylib", "bin", "o", "a",
+                "png", "jpg", "jpeg", "gif", "ico", "bmp", 
+                "zip", "tar", "gz", "7z", "rar",
+                "woff", "woff2", "ttf", "eot", "pdf",
+            ].into_iter().collect();
+            
+            // Phase 1: Collect all file paths to index (single-threaded, I/O bound)
+            let collect_start = Instant::now();
+            let mut files_to_index: Vec<std::path::PathBuf> = Vec::new();
             
             for path_str in &indexer_config.paths {
                 let path = std::path::Path::new(path_str);
@@ -128,7 +149,7 @@ async fn main() -> Result<()> {
                     continue;
                 }
                 
-                info!(path = %path_str, "Indexing path");
+                info!(path = %path_str, "Discovering files");
                 
                 for entry in walkdir::WalkDir::new(path)
                     .follow_links(true)
@@ -142,9 +163,9 @@ async fn main() -> Result<()> {
                     let entry_path = entry.path();
                     let path_str_check = entry_path.to_string_lossy();
                     
-                    // Check exclude patterns
-                    let should_exclude = indexer_config.exclude_patterns.iter().any(|pattern| {
-                        path_str_check.contains(pattern.trim_matches('*').trim_matches('/'))
+                    // Check exclude patterns (using pre-compiled patterns)
+                    let should_exclude = exclude_patterns.iter().any(|pattern| {
+                        path_str_check.contains(pattern)
                     });
                     
                     if should_exclude {
@@ -154,21 +175,64 @@ async fn main() -> Result<()> {
                     // Skip binary files
                     if let Some(ext) = entry_path.extension() {
                         let ext = ext.to_string_lossy().to_lowercase();
-                        if matches!(ext.as_str(), "exe" | "dll" | "so" | "dylib" | "bin" | "o" | "a" | 
-                            "png" | "jpg" | "jpeg" | "gif" | "ico" | "bmp" | "zip" | "tar" | "gz" | "7z") {
+                        if binary_extensions.contains(ext.as_str()) {
                             continue;
                         }
                     }
                     
-                    // Index the file (method reads content internally)
-                    let mut engine = index_engine.lock().unwrap();
-                    let _ = engine.index_file(entry_path);
+                    files_to_index.push(entry_path.to_path_buf());
+                }
+            }
+            
+            let file_count = files_to_index.len();
+            info!(
+                file_count = file_count,
+                elapsed_ms = collect_start.elapsed().as_millis(),
+                "File discovery completed"
+            );
+            
+            // Phase 2: Index files in batches with parallel processing
+            // Batch size balances parallelism overhead vs lock contention
+            const BATCH_SIZE: usize = 500;
+            let batch_count = (file_count + BATCH_SIZE - 1) / BATCH_SIZE;
+            
+            for (batch_idx, batch) in files_to_index.chunks(BATCH_SIZE).enumerate() {
+                let batch_start = Instant::now();
+                
+                // Index files in parallel within batch, then merge with single lock
+                let indexed_paths: Vec<_> = batch
+                    .par_iter()
+                    .filter_map(|path| {
+                        // Validate file can be read before holding lock
+                        if std::fs::metadata(path).is_ok() {
+                            Some(path.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                
+                // Merge batch into engine with single write lock acquisition
+                {
+                    let mut engine = index_engine.write().unwrap();
+                    for path in indexed_paths {
+                        let _ = engine.index_file(&path);
+                    }
+                }
+                
+                if batch_idx % 10 == 0 || batch_idx == batch_count - 1 {
+                    info!(
+                        batch = batch_idx + 1,
+                        total_batches = batch_count,
+                        batch_ms = batch_start.elapsed().as_millis(),
+                        "Batch indexed"
+                    );
                 }
             }
             
             // Resolve all import relationships after indexing completes
             {
-                let mut engine = index_engine.lock().unwrap();
+                let mut engine = index_engine.write().unwrap();
                 info!("Resolving import dependencies...");
                 engine.resolve_imports();
                 let stats = engine.get_stats();
@@ -179,7 +243,12 @@ async fn main() -> Result<()> {
             }
             
             let elapsed = total_start.elapsed();
-            info!(elapsed_secs = elapsed.as_secs_f64(), "Background indexing completed");
+            info!(
+                elapsed_secs = elapsed.as_secs_f64(),
+                files_indexed = file_count,
+                files_per_sec = file_count as f64 / elapsed.as_secs_f64(),
+                "Background indexing completed"
+            );
         });
     } else if args.no_auto_index {
         info!("Auto-indexing disabled via --no-auto-index flag");

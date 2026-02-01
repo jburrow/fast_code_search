@@ -2,11 +2,14 @@ use anyhow::{Context, Result};
 use memmap2::Mmap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Represents a memory-mapped file
 pub struct MappedFile {
     pub path: PathBuf,
     pub mmap: Mmap,
+    /// Cached result of UTF-8 validation (validated once, reused on subsequent calls)
+    utf8_valid: OnceLock<bool>,
 }
 
 impl MappedFile {
@@ -24,13 +27,23 @@ impl MappedFile {
         Ok(Self {
             path: path.to_path_buf(),
             mmap,
+            utf8_valid: OnceLock::new(),
         })
     }
 
     /// Get the content as a string slice (if valid UTF-8)
+    /// UTF-8 validation is cached after the first call for performance.
     pub fn as_str(&self) -> Result<&str> {
-        std::str::from_utf8(&self.mmap)
-            .with_context(|| format!("File is not valid UTF-8: {}", self.path.display()))
+        let is_valid = *self.utf8_valid.get_or_init(|| {
+            std::str::from_utf8(&self.mmap).is_ok()
+        });
+        
+        if is_valid {
+            // SAFETY: We validated UTF-8 above and cached the result
+            Ok(unsafe { std::str::from_utf8_unchecked(&self.mmap) })
+        } else {
+            anyhow::bail!("File is not valid UTF-8: {}", self.path.display())
+        }
     }
 
     /// Get the content as bytes

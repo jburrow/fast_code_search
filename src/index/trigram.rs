@@ -1,5 +1,5 @@
 use roaring::RoaringBitmap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A trigram is a sequence of 3 characters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,12 +22,12 @@ impl Trigram {
 /// Extract trigrams from text
 pub fn extract_trigrams(text: &str) -> Vec<Trigram> {
     let bytes = text.as_bytes();
-    let mut trigrams = Vec::new();
+    let len = bytes.len().saturating_sub(2);
+    let mut trigrams = Vec::with_capacity(len);
     
-    for i in 0..bytes.len().saturating_sub(2) {
-        if let Some(trigram) = Trigram::from_slice(&bytes[i..]) {
-            trigrams.push(trigram);
-        }
+    for i in 0..len {
+        // Direct construction is safe since we know we have at least 3 bytes
+        trigrams.push(Trigram([bytes[i], bytes[i + 1], bytes[i + 2]]));
     }
     
     trigrams
@@ -49,10 +49,13 @@ impl TrigramIndex {
     pub fn add_document(&mut self, doc_id: u32, content: &str) {
         let trigrams = extract_trigrams(content);
         
-        for trigram in trigrams {
+        // Deduplicate trigrams to avoid redundant HashMap lookups and bitmap insertions
+        let unique_trigrams: HashSet<Trigram> = trigrams.into_iter().collect();
+        
+        for trigram in unique_trigrams {
             self.trigram_to_docs
                 .entry(trigram)
-                .or_insert_with(RoaringBitmap::new)
+                .or_default()
                 .insert(doc_id);
         }
     }

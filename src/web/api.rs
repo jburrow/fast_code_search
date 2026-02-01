@@ -74,10 +74,11 @@ pub async fn search_handler(
 
     let max_results = params.max.min(1000).max(1);
 
-    let engine = engine.lock().map_err(|e| {
+    // Use read lock for concurrent search access
+    let engine = engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine lock: {}", e),
+            format!("Failed to acquire engine read lock: {}", e),
         )
     })?;
 
@@ -112,10 +113,11 @@ pub async fn search_handler(
 pub async fn stats_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
-    let engine = engine.lock().map_err(|e| {
+    // Use read lock for concurrent access
+    let engine = engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine lock: {}", e),
+            format!("Failed to acquire engine read lock: {}", e),
         )
     })?;
 
@@ -157,10 +159,11 @@ pub async fn dependents_handler(
     State(engine): State<AppState>,
     Query(params): Query<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
-    let engine = engine.lock().map_err(|e| {
+    // Use read lock for concurrent access
+    let engine = engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine lock: {}", e),
+            format!("Failed to acquire engine read lock: {}", e),
         )
     })?;
 
@@ -191,10 +194,11 @@ pub async fn dependencies_handler(
     State(engine): State<AppState>,
     Query(params): Query<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
-    let engine = engine.lock().map_err(|e| {
+    // Use read lock for concurrent access
+    let engine = engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine lock: {}", e),
+            format!("Failed to acquire engine read lock: {}", e),
         )
     })?;
 

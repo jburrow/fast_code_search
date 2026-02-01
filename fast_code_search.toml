@@ -9,9 +9,7 @@ address = "0.0.0.0:50051"
 # Paths to index on startup
 # Add your project directories here
 paths = [
-    # "C:/code/my-project",
-    # "C:/code/another-project",
-    # "/home/user/projects/my-app",
+    "C:/workspace/fast_code_search/test_corpus",
 ]
 
 # File extensions to include (empty = all text files)

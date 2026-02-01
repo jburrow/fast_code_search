@@ -2,7 +2,7 @@ use crate::config::IndexerConfig;
 use crate::search::SearchEngine;
 use anyhow::Result;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -20,23 +20,23 @@ use search_proto::{
 };
 
 pub struct CodeSearchService {
-    engine: Arc<Mutex<SearchEngine>>,
+    engine: Arc<RwLock<SearchEngine>>,
 }
 
 impl CodeSearchService {
     pub fn new() -> Self {
         Self {
-            engine: Arc::new(Mutex::new(SearchEngine::new())),
+            engine: Arc::new(RwLock::new(SearchEngine::new())),
         }
     }
 
     /// Create a service with an existing shared engine
-    pub fn with_engine(engine: Arc<Mutex<SearchEngine>>) -> Self {
+    pub fn with_engine(engine: Arc<RwLock<SearchEngine>>) -> Self {
         Self { engine }
     }
 
     /// Get the shared engine reference
-    pub fn engine(&self) -> Arc<Mutex<SearchEngine>> {
+    pub fn engine(&self) -> Arc<RwLock<SearchEngine>> {
         Arc::clone(&self.engine)
     }
 
@@ -70,7 +70,7 @@ impl CodeSearchService {
             let mut path_files = 0u64;
             let mut path_size = 0u64;
 
-            let mut engine = service.engine.lock().unwrap();
+            let mut engine = service.engine.write().unwrap();
 
             for entry in WalkDir::new(path)
                 .follow_links(true)
@@ -168,7 +168,7 @@ impl CodeSearchService {
             total_size += path_size;
         }
 
-        let engine = service.engine.lock().unwrap();
+        let engine = service.engine.read().unwrap();
         let stats = engine.get_stats();
         drop(engine);
 
@@ -203,7 +203,8 @@ impl CodeSearch for CodeSearchService {
         let query = req.query;
         let max_results = req.max_results.max(1).min(1000) as usize;
 
-        let engine = self.engine.lock().unwrap();
+        // Use read lock for concurrent search access
+        let engine = self.engine.read().unwrap();
         let matches = engine.search(&query, max_results);
         drop(engine); // Release lock before streaming
 
@@ -242,7 +243,8 @@ impl CodeSearch for CodeSearchService {
         let req = request.into_inner();
         info!(paths = ?req.paths, "Received index request");
         let start = Instant::now();
-        let mut engine = self.engine.lock().unwrap();
+        // Use write lock for indexing operations
+        let mut engine = self.engine.write().unwrap();
 
         let mut files_indexed = 0;
         let mut total_size = 0u64;
@@ -315,14 +317,14 @@ pub fn create_server_with_indexing(
 }
 
 /// Create a shared engine with indexing, returns the Arc for sharing with web server
-pub fn create_indexed_engine(indexer_config: &IndexerConfig) -> Arc<Mutex<SearchEngine>> {
+pub fn create_indexed_engine(indexer_config: &IndexerConfig) -> Arc<RwLock<SearchEngine>> {
     let service = CodeSearchService::new_with_indexing(indexer_config);
     service.engine()
 }
 
 /// Create gRPC server with an existing shared engine
 pub fn create_server_with_engine(
-    engine: Arc<Mutex<SearchEngine>>,
+    engine: Arc<RwLock<SearchEngine>>,
 ) -> CodeSearchServer<CodeSearchService> {
     CodeSearchServer::new(CodeSearchService::with_engine(engine))
 }
