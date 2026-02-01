@@ -31,10 +31,7 @@ async fn main() -> Result<()> {
     let mut count = 0;
     while let Some(result) = stream.message().await? {
         count += 1;
-        println!(
-            "\n[{}] {}:{}",
-            count, result.file_path, result.line_number
-        );
+        println!("\n[{}] {}:{}", count, result.file_path, result.line_number);
         println!("  Score: {:.2}", result.score);
         println!("  Content: {}", result.content.trim());
     }

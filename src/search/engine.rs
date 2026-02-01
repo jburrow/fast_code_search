@@ -1,5 +1,5 @@
 use crate::dependencies::DependencyIndex;
-use crate::index::{FileStore, TrigramIndex, extract_trigrams, Trigram};
+use crate::index::{extract_trigrams, FileStore, Trigram, TrigramIndex};
 use crate::symbols::{Symbol, SymbolExtractor};
 use anyhow::Result;
 use rayon::prelude::*;
@@ -47,17 +47,18 @@ impl PreIndexedFile {
 
         // Read file content
         let content = std::fs::read_to_string(path).ok()?;
-        
+
         // Extract trigrams (safe, no recursion)
         let trigram_vec = extract_trigrams(&content);
         let trigrams: HashSet<Trigram> = trigram_vec.into_iter().collect();
-        
+
         // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
         let extractor = SymbolExtractor::new(path);
         let symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor.extract(&content).unwrap_or_default()
-        })).unwrap_or_default();
-        
+        }))
+        .unwrap_or_default();
+
         // Extract imports with panic protection
         let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor
@@ -65,8 +66,9 @@ impl PreIndexedFile {
                 .ok()
                 .map(|imports| imports.into_iter().map(|i| i.path).collect())
                 .unwrap_or_default()
-        })).unwrap_or_default();
-        
+        }))
+        .unwrap_or_default();
+
         Some(PreIndexedFile {
             path: path.to_path_buf(),
             content,
@@ -142,50 +144,49 @@ impl SearchEngine {
     /// Returns the number of files successfully indexed.
     pub fn index_batch(&mut self, batch: Vec<PreIndexedFile>) -> usize {
         let mut count = 0;
-        
+
         for pre_indexed in batch {
             // Add file to store - this also memory-maps it
             let file_id = match self.file_store.add_file(&pre_indexed.path) {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-            
+
             // Register file in dependency index
-            self.dependency_index.register_file(file_id, &pre_indexed.path);
-            
+            self.dependency_index
+                .register_file(file_id, &pre_indexed.path);
+
             // Add trigrams to index (using pre-computed trigrams)
-            self.trigram_index.add_document_trigrams(file_id, pre_indexed.trigrams);
-            
+            self.trigram_index
+                .add_document_trigrams(file_id, pre_indexed.trigrams);
+
             // Store symbols
             while self.symbol_cache.len() <= file_id as usize {
                 self.symbol_cache.push(Vec::new());
             }
             self.symbol_cache[file_id as usize] = pre_indexed.symbols;
-            
+
             // Store imports for later resolution
             if !pre_indexed.imports.is_empty() {
-                self.pending_imports.push((
-                    file_id,
-                    pre_indexed.path,
-                    pre_indexed.imports,
-                ));
+                self.pending_imports
+                    .push((file_id, pre_indexed.path, pre_indexed.imports));
             }
-            
+
             count += 1;
         }
-        
+
         count
     }
 
     /// Resolve all pending imports after indexing is complete.
     /// Call this after all files have been indexed to build the dependency graph.
-    /// 
+    ///
     /// Uses two-phase parallel resolution:
     /// 1. Parallel path resolution using rayon (CPU-bound, thread-safe)
     /// 2. Sequential graph insertion (requires &mut self)
     pub fn resolve_imports(&mut self) {
         let pending = std::mem::take(&mut self.pending_imports);
-        
+
         // Phase 1: Parallel path resolution - collect (from_id, to_id) pairs
         // Uses &self on dependency_index (thread-safe read-only methods)
         let edges: Vec<(u32, u32)> = pending
@@ -194,7 +195,9 @@ impl SearchEngine {
                 import_paths
                     .par_iter()
                     .filter_map(|import_path| {
-                        let resolved = self.dependency_index.resolve_import_path(file_path, import_path)?;
+                        let resolved = self
+                            .dependency_index
+                            .resolve_import_path(file_path, import_path)?;
                         let to_id = self.dependency_index.get_file_id(&resolved)?;
                         Some((*file_id, to_id))
                     })
@@ -210,16 +213,14 @@ impl SearchEngine {
     pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
         // Find candidate documents using trigram index
         let candidate_docs = self.trigram_index.search(query);
-        
+
         // Convert to vector for parallel processing
         let doc_ids: Vec<u32> = candidate_docs.iter().collect();
 
         // Search in parallel using rayon
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
-            .filter_map(|&doc_id| {
-                self.search_in_document(doc_id, query)
-            })
+            .filter_map(|&doc_id| self.search_in_document(doc_id, query))
             .flatten()
             .collect();
 
@@ -248,19 +249,12 @@ impl SearchEngine {
         for (line_num, line) in content.lines().enumerate() {
             if line.to_lowercase().contains(&query_lower) {
                 // Calculate score (includes dependency boost)
-                let score = self.calculate_score(
-                    &path,
-                    line,
-                    query,
-                    line_num,
-                    symbols,
-                    doc_id,
-                );
+                let score = self.calculate_score(&path, line, query, line_num, symbols, doc_id);
 
                 // Check if this is a symbol match
-                let is_symbol = symbols.iter().any(|s| {
-                    s.line == line_num && s.name.to_lowercase().contains(&query_lower)
-                });
+                let is_symbol = symbols
+                    .iter()
+                    .any(|s| s.line == line_num && s.name.to_lowercase().contains(&query_lower));
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
@@ -294,7 +288,10 @@ impl SearchEngine {
         }
 
         // Boost for symbol definitions
-        if symbols.iter().any(|s| s.line == line_num && s.is_definition) {
+        if symbols
+            .iter()
+            .any(|s| s.line == line_num && s.is_definition)
+        {
             score *= 3.0;
         }
 
@@ -308,7 +305,11 @@ impl SearchEngine {
         score *= line_len_factor;
 
         // Boost for query appearing at the start of the line
-        if line.trim_start().to_lowercase().starts_with(&query.to_lowercase()) {
+        if line
+            .trim_start()
+            .to_lowercase()
+            .starts_with(&query.to_lowercase())
+        {
             score *= 1.5;
         }
 
@@ -344,7 +345,9 @@ impl SearchEngine {
 
     /// Get file path by ID
     pub fn get_file_path(&self, file_id: u32) -> Option<String> {
-        self.file_store.get(file_id).map(|f| f.path.to_string_lossy().to_string())
+        self.file_store
+            .get(file_id)
+            .map(|f| f.path.to_string_lossy().to_string())
     }
 
     /// Find file ID by path
@@ -464,7 +467,8 @@ impl IndexingProgress {
                 if self.total_batches == 0 {
                     10
                 } else {
-                    let batch_progress = (self.current_batch as f64 / self.total_batches as f64) * 85.0;
+                    let batch_progress =
+                        (self.current_batch as f64 / self.total_batches as f64) * 85.0;
                     (10.0 + batch_progress).min(95.0) as u8
                 }
             }
@@ -488,7 +492,7 @@ mod tests {
     fn test_search_engine() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
-        
+
         let mut file = fs::File::create(&file_path).unwrap();
         writeln!(file, "hello world").unwrap();
         writeln!(file, "hello rust").unwrap();

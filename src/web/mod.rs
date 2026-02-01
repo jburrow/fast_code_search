@@ -68,14 +68,17 @@ fn serve_static_file(path: &str) -> Response<Body> {
     match StaticAssets::get(path) {
         Some(content) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
-            
+
             // Use ETag based on content hash for proper cache invalidation
             let etag = format!("\"{:x}\"", md5::compute(&content.data));
-            
+
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime.as_ref())
-                .header(header::CACHE_CONTROL, "public, max-age=3600, must-revalidate")
+                .header(
+                    header::CACHE_CONTROL,
+                    "public, max-age=3600, must-revalidate",
+                )
                 .header(header::ETAG, etag)
                 .body(Body::from(content.data.to_vec()))
                 .unwrap()
