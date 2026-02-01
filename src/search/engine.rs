@@ -169,7 +169,10 @@ fn find_char_boundary_ceil(s: &str, pos: usize) -> usize {
 
 /// Find match position using case-insensitive search
 #[inline]
-fn find_match_position_case_insensitive(haystack: &str, needle_lower: &str) -> Option<(usize, usize)> {
+fn find_match_position_case_insensitive(
+    haystack: &str,
+    needle_lower: &str,
+) -> Option<(usize, usize)> {
     if needle_lower.is_empty() {
         return Some((0, 0));
     }
@@ -567,8 +570,11 @@ impl SearchEngine {
 
             // Re-add unresolved imports to pending
             if !result.unresolved_paths.is_empty() {
-                self.pending_imports
-                    .push((result.file_id, result.file_path, result.unresolved_paths));
+                self.pending_imports.push((
+                    result.file_id,
+                    result.file_path,
+                    result.unresolved_paths,
+                ));
             }
         }
 
@@ -927,7 +933,9 @@ impl SearchEngine {
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
-            if let Some((match_start, match_end)) = find_match_position_case_insensitive(line, query_lower) {
+            if let Some((match_start, match_end)) =
+                find_match_position_case_insensitive(line, query_lower)
+            {
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = path_str.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
@@ -1021,7 +1029,9 @@ impl SearchEngine {
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
-            if let Some((match_start, match_end)) = find_match_position_case_insensitive(line, &query_lower) {
+            if let Some((match_start, match_end)) =
+                find_match_position_case_insensitive(line, &query_lower)
+            {
                 // Lazy initialize path info only when we have at least one match
                 let (path_ref, is_src_lib) = path_info.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();

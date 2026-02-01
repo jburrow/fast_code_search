@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-01
+
+### Added
+- **Indexing completion stats**: When background indexing completes, the log now reports the total size of indexed text and the current process memory usage in human-readable format (e.g., "150.00 MB"). Uses the `sysinfo` crate for cross-platform memory reporting.
+
 ## [0.2.0] - 2026-02-01
 
 ### Fixed
