@@ -111,6 +111,15 @@ impl TrigramIndex {
         }
         all_docs.len() as u32
     }
+
+    /// Get all document IDs in the index
+    pub fn all_documents(&self) -> RoaringBitmap {
+        let mut all_docs = RoaringBitmap::new();
+        for docs in self.trigram_to_docs.values() {
+            all_docs |= docs;
+        }
+        all_docs
+    }
 }
 
 #[cfg(test)]

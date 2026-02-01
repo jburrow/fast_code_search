@@ -101,6 +101,7 @@ header h1 {
     display: flex;
     gap: 1.5rem;
     color: var(--text-secondary);
+    align-items: center;
 }
 
 .search-options label {
@@ -116,6 +117,35 @@ header h1 {
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 0.9rem;
+}
+
+/* Regex toggle */
+.regex-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    transition: all 0.2s;
+}
+
+.regex-toggle:hover {
+    border-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"]:checked + span {
+    color: var(--accent);
+    font-weight: 600;
 }
 
 .stats-panel {
@@ -487,4 +517,54 @@ header h1 {
     color: var(--text-muted);
     font-style: italic;
     padding: 0.5rem;
+}
+
+/* Filter options */
+.filter-options {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.filter-row {
+    margin-bottom: 0.75rem;
+}
+
+.filter-row label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.filter-label {
+    min-width: 110px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.filter-row input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'Fira Code', 'Consolas', monospace;
+}
+
+.filter-row input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.filter-row input::placeholder {
+    color: var(--text-muted);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+.filter-help {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
 }

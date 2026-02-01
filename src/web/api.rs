@@ -17,6 +17,15 @@ pub struct SearchQuery {
     /// Maximum number of results (default: 50)
     #[serde(default = "default_max_results")]
     max: usize,
+    /// Semicolon-delimited glob patterns for paths to include
+    #[serde(default)]
+    include: String,
+    /// Semicolon-delimited glob patterns for paths to exclude
+    #[serde(default)]
+    exclude: String,
+    /// Whether to treat the query as a regex pattern
+    #[serde(default)]
+    regex: bool,
 }
 
 fn default_max_results() -> usize {
@@ -90,6 +99,9 @@ pub async fn search_handler(
     }
 
     let max_results = params.max.clamp(1, 1000);
+    let include_patterns = params.include.as_str();
+    let exclude_patterns = params.exclude.as_str();
+    let is_regex = params.regex;
 
     // Use read lock for concurrent search access
     let engine = state.engine.read().map_err(|e| {
@@ -99,7 +111,31 @@ pub async fn search_handler(
         )
     })?;
 
-    let matches = engine.search(query, max_results);
+    // Choose search method based on regex flag
+    let matches = if is_regex {
+        // Use regex search with optional path filtering
+        engine
+            .search_regex(query, include_patterns, exclude_patterns, max_results)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid regex pattern: {}", e),
+                )
+            })?
+    } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
+        // Plain text search without filtering
+        engine.search(query, max_results)
+    } else {
+        // Plain text search with path filtering
+        engine
+            .search_with_filter(query, include_patterns, exclude_patterns, max_results)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid filter pattern: {}", e),
+                )
+            })?
+    };
 
     let results: Vec<SearchResultJson> = matches
         .into_iter()

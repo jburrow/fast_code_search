@@ -1,8 +1,11 @@
 use crate::dependencies::DependencyIndex;
 use crate::index::{extract_trigrams, FileStore, Trigram, TrigramIndex};
+use crate::search::path_filter::PathFilter;
+use crate::search::regex_search::RegexAnalysis;
 use crate::symbols::{Symbol, SymbolExtractor};
 use anyhow::Result;
 use rayon::prelude::*;
+use regex::Regex;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -229,6 +232,225 @@ impl SearchEngine {
 
         // Return top results
         matches.into_iter().take(max_results).collect()
+    }
+
+    /// Search with path filtering using include/exclude glob patterns.
+    ///
+    /// This extends the basic search with additional path-based filtering:
+    /// 1. Trigram index narrows candidates based on query content
+    /// 2. Path filter further narrows based on file paths
+    /// 3. Parallel search runs only on final candidates
+    ///
+    /// # Arguments
+    /// * `query` - The search query string
+    /// * `include_patterns` - Semicolon-delimited glob patterns to include
+    /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
+    /// * `max_results` - Maximum number of results to return
+    pub fn search_with_filter(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchMatch>> {
+        // Build path filter from patterns
+        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
+
+        // Find candidate documents using trigram index
+        let candidate_docs = self.trigram_index.search(query);
+
+        // Apply path filter if it has any patterns
+        let filtered_docs = if path_filter.is_empty() {
+            candidate_docs
+        } else {
+            let all_paths = self.file_store.get_all_paths();
+            path_filter.filter_documents(&candidate_docs, &all_paths)
+        };
+
+        // Convert to vector for parallel processing
+        let doc_ids: Vec<u32> = filtered_docs.iter().collect();
+
+        // Search in parallel using rayon
+        let mut matches: Vec<SearchMatch> = doc_ids
+            .par_iter()
+            .filter_map(|&doc_id| self.search_in_document(doc_id, query))
+            .flatten()
+            .collect();
+
+        // Sort by score (descending)
+        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+        // Return top results
+        Ok(matches.into_iter().take(max_results).collect())
+    }
+
+    /// Search using a regex pattern with trigram acceleration.
+    ///
+    /// This method:
+    /// 1. Parses the regex and extracts literal strings
+    /// 2. Uses extracted literals for trigram pre-filtering (if available)
+    /// 3. Falls back to full scan if no literals can be extracted
+    /// 4. Runs regex matching only on candidate documents
+    ///
+    /// # Arguments
+    /// * `pattern` - The regex pattern to search for
+    /// * `include_patterns` - Semicolon-delimited glob patterns to include
+    /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
+    /// * `max_results` - Maximum number of results to return
+    pub fn search_regex(
+        &self,
+        pattern: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchMatch>> {
+        // Analyze the regex pattern
+        let analysis = RegexAnalysis::analyze(pattern)?;
+
+        // Build path filter from patterns
+        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
+
+        // Get candidate documents using trigram acceleration if possible
+        let candidate_docs = if analysis.is_accelerated {
+            // Use the best (longest) literal for trigram filtering
+            if let Some(literal) = analysis.best_literal() {
+                tracing::debug!(
+                    pattern = %pattern,
+                    literal = %literal,
+                    "Using trigram acceleration for regex search"
+                );
+                self.trigram_index.search(literal)
+            } else {
+                // Fallback to all documents
+                tracing::warn!(
+                    pattern = %pattern,
+                    "Regex has no usable literals - falling back to full scan"
+                );
+                self.trigram_index.all_documents()
+            }
+        } else {
+            // No acceleration possible - scan all documents
+            tracing::warn!(
+                pattern = %pattern,
+                "Regex has no extractable literals >= 3 chars - falling back to full scan"
+            );
+            self.trigram_index.all_documents()
+        };
+
+        // Apply path filter if it has any patterns
+        let filtered_docs = if path_filter.is_empty() {
+            candidate_docs
+        } else {
+            let all_paths = self.file_store.get_all_paths();
+            path_filter.filter_documents(&candidate_docs, &all_paths)
+        };
+
+        // Convert filtered bitmap to vector for parallel processing
+        let filtered_doc_ids: Vec<u32> = filtered_docs.iter().collect();
+
+        // Search in parallel using rayon with regex matching
+        let regex = &analysis.regex;
+        let mut matches: Vec<SearchMatch> = filtered_doc_ids
+            .par_iter()
+            .filter_map(|&doc_id| self.search_in_document_regex(doc_id, regex))
+            .flatten()
+            .collect();
+
+        // Sort by score (descending)
+        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+        // Return top results
+        Ok(matches.into_iter().take(max_results).collect())
+    }
+
+    /// Search in a document using regex matching
+    fn search_in_document_regex(&self, doc_id: u32, regex: &Regex) -> Option<Vec<SearchMatch>> {
+        let file = self.file_store.get(doc_id)?;
+        let content = file.as_str().ok()?;
+        let path = file.path.to_string_lossy().to_string();
+
+        let mut matches = Vec::new();
+
+        // Get symbols for this file
+        let symbols = self.symbol_cache.get(doc_id as usize)?;
+
+        // Get dependency count for this file
+        let dependency_count = self.dependency_index.get_import_count(doc_id);
+
+        // Search in each line using regex
+        for (line_num, line) in content.lines().enumerate() {
+            if regex.is_match(line) {
+                // Calculate score
+                let score = self.calculate_score_regex(
+                    &path,
+                    line,
+                    regex,
+                    line_num,
+                    symbols,
+                    doc_id,
+                );
+
+                // Check if this is a symbol match
+                let is_symbol = symbols.iter().any(|s| {
+                    s.line == line_num && regex.is_match(&s.name)
+                });
+
+                matches.push(SearchMatch {
+                    file_id: doc_id,
+                    file_path: path.clone(),
+                    line_number: line_num + 1, // 1-based line numbers
+                    content: line.to_string(),
+                    score,
+                    is_symbol,
+                    dependency_count,
+                });
+            }
+        }
+
+        Some(matches)
+    }
+
+    /// Calculate score for a regex match
+    fn calculate_score_regex(
+        &self,
+        path: &str,
+        line: &str,
+        regex: &Regex,
+        line_num: usize,
+        symbols: &[Symbol],
+        file_id: u32,
+    ) -> f64 {
+        let mut score = 1.0;
+
+        // Boost for symbol definitions
+        if symbols.iter().any(|s| s.line == line_num && s.is_definition) {
+            score *= 3.0;
+        }
+
+        // Boost for primary source directories
+        if path.contains("/src/") || path.contains("/lib/") {
+            score *= 1.5;
+        }
+
+        // Boost for shorter lines (more relevant)
+        let line_len_factor = 1.0 / (1.0 + (line.len() as f64 / 100.0));
+        score *= line_len_factor;
+
+        // Boost for match at start of line
+        if let Some(m) = regex.find(line.trim_start()) {
+            if m.start() == 0 {
+                score *= 1.5;
+            }
+        }
+
+        // Boost for files that are dependencies of many other files
+        let import_count = self.dependency_index.get_import_count(file_id);
+        if import_count > 0 {
+            let dependency_boost = 1.0 + (import_count as f64).log10() * 0.5;
+            score *= dependency_boost;
+        }
+
+        score
     }
 
     fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {

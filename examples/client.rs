@@ -23,6 +23,9 @@ async fn main() -> Result<()> {
     let search_request = SearchRequest {
         query: "SearchEngine".to_string(),
         max_results: 10,
+        include_paths: vec![],
+        exclude_paths: vec![],
+        is_regex: false,
     };
 
     let mut stream = client.search(search_request).await?.into_inner();
