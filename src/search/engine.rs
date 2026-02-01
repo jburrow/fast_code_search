@@ -1,9 +1,10 @@
 use crate::dependencies::DependencyIndex;
-use crate::index::{FileStore, TrigramIndex};
+use crate::index::{FileStore, TrigramIndex, extract_trigrams, Trigram};
 use crate::symbols::{Symbol, SymbolExtractor};
 use anyhow::Result;
 use rayon::prelude::*;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct SearchMatch {
@@ -14,6 +15,52 @@ pub struct SearchMatch {
     pub score: f64,
     pub is_symbol: bool,
     pub dependency_count: u32,
+}
+
+/// Pre-processed file data ready to be merged into the engine.
+/// This is computed in parallel and then merged with a lock.
+pub struct PreIndexedFile {
+    /// Path to the file
+    pub path: PathBuf,
+    /// File content (owned for thread safety)
+    pub content: String,
+    /// Unique trigrams extracted from the content
+    pub trigrams: HashSet<Trigram>,
+    /// Extracted symbols
+    pub symbols: Vec<Symbol>,
+    /// Extracted import paths
+    pub imports: Vec<String>,
+}
+
+impl PreIndexedFile {
+    /// Process a file in parallel - does all CPU-heavy work without needing engine access
+    pub fn process(path: &Path) -> Option<Self> {
+        // Read file content
+        let content = std::fs::read_to_string(path).ok()?;
+        
+        // Extract trigrams
+        let trigram_vec = extract_trigrams(&content);
+        let trigrams: HashSet<Trigram> = trigram_vec.into_iter().collect();
+        
+        // Extract symbols
+        let extractor = SymbolExtractor::new(path);
+        let symbols = extractor.extract(&content).unwrap_or_default();
+        
+        // Extract imports
+        let imports = extractor
+            .extract_imports(&content)
+            .ok()
+            .map(|imports| imports.into_iter().map(|i| i.path).collect())
+            .unwrap_or_default();
+        
+        Some(PreIndexedFile {
+            path: path.to_path_buf(),
+            content,
+            trigrams,
+            symbols,
+            imports,
+        })
+    }
 }
 
 pub struct SearchEngine {
@@ -74,6 +121,46 @@ impl SearchEngine {
         self.symbol_cache[file_id as usize] = symbols;
 
         Ok(())
+    }
+
+    /// Index a batch of pre-processed files.
+    /// This is the merge step after parallel processing - only this needs the write lock.
+    /// Returns the number of files successfully indexed.
+    pub fn index_batch(&mut self, batch: Vec<PreIndexedFile>) -> usize {
+        let mut count = 0;
+        
+        for pre_indexed in batch {
+            // Add file to store - this also memory-maps it
+            let file_id = match self.file_store.add_file(&pre_indexed.path) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            
+            // Register file in dependency index
+            self.dependency_index.register_file(file_id, &pre_indexed.path);
+            
+            // Add trigrams to index (using pre-computed trigrams)
+            self.trigram_index.add_document_trigrams(file_id, pre_indexed.trigrams);
+            
+            // Store symbols
+            while self.symbol_cache.len() <= file_id as usize {
+                self.symbol_cache.push(Vec::new());
+            }
+            self.symbol_cache[file_id as usize] = pre_indexed.symbols;
+            
+            // Store imports for later resolution
+            if !pre_indexed.imports.is_empty() {
+                self.pending_imports.push((
+                    file_id,
+                    pre_indexed.path,
+                    pre_indexed.imports,
+                ));
+            }
+            
+            count += 1;
+        }
+        
+        count
     }
 
     /// Resolve all pending imports after indexing is complete.

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
-use fast_code_search::search::{IndexingProgress, IndexingStatus, SharedIndexingProgress};
+use fast_code_search::search::{IndexingProgress, IndexingStatus, PreIndexedFile, SharedIndexingProgress};
 use fast_code_search::server;
 use fast_code_search::web;
 use std::path::PathBuf;
@@ -254,27 +254,18 @@ async fn main() -> Result<()> {
                     }
                 }
                 
-                // Index files in parallel within batch, then merge with single lock
-                let indexed_paths: Vec<_> = batch
+                // Process files in parallel - CPU-heavy work (read, trigrams, symbols)
+                let pre_indexed: Vec<PreIndexedFile> = batch
                     .par_iter()
-                    .filter_map(|path| {
-                        // Validate file can be read before holding lock
-                        if std::fs::metadata(path).is_ok() {
-                            Some(path.clone())
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|path| PreIndexedFile::process(path))
                     .collect();
 
-                let batch_indexed_count = indexed_paths.len();
+                let batch_indexed_count = pre_indexed.len();
                 
                 // Merge batch into engine with single write lock acquisition
                 {
                     let mut engine = index_engine.write().unwrap();
-                    for path in indexed_paths {
-                        let _ = engine.index_file(&path);
-                    }
+                    engine.index_batch(pre_indexed);
                 }
 
                 total_indexed += batch_indexed_count;

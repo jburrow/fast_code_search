@@ -60,6 +60,16 @@ impl TrigramIndex {
         }
     }
 
+    /// Add a document using pre-computed trigrams (for parallel indexing)
+    pub fn add_document_trigrams(&mut self, doc_id: u32, trigrams: HashSet<Trigram>) {
+        for trigram in trigrams {
+            self.trigram_to_docs
+                .entry(trigram)
+                .or_default()
+                .insert(doc_id);
+        }
+    }
+
     /// Search for documents containing all trigrams from the query
     pub fn search(&self, query: &str) -> RoaringBitmap {
         let query_trigrams = extract_trigrams(query);

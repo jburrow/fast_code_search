@@ -1,6 +1,6 @@
 pub mod engine;
 
 pub use engine::{
-    IndexingProgress, IndexingStatus, SearchEngine, SearchMatch, SearchStats,
+    IndexingProgress, IndexingStatus, PreIndexedFile, SearchEngine, SearchMatch, SearchStats,
     SharedIndexingProgress,
 };
