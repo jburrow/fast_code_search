@@ -57,6 +57,7 @@ reqwest = { version = "0.12", features = ["json"] }
 tokio-test = "0.4"
 tokio-stream = { version = "0.1", features = ["net"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+dhat = "0.3"
 
 [[bench]]
 name = "search_benchmark"
