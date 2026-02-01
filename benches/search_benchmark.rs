@@ -442,8 +442,7 @@ fn generate_source_files_with_imports(
         // Generate some function definitions
         for j in 0..lines_per_file / 10 {
             content.push_str(&format!(
-                "pub fn process_data_{}_{i}(input: &str) -> Result<String, Error> {{\n",
-                j
+                "pub fn process_data_{j}_{i}(input: &str) -> Result<String, Error> {{\n",
             ));
             content.push_str("    let mut result = String::new();\n");
             content.push_str("    for line in input.lines() {\n");

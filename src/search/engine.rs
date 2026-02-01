@@ -161,6 +161,19 @@ pub struct SearchMatch {
     pub dependency_count: u32,
 }
 
+/// Result of attempting to resolve imports for a single file.
+/// Used internally by resolve_imports_incremental.
+struct ImportResolutionResult {
+    /// ID of the file that has the imports
+    file_id: u32,
+    /// Path to the file
+    file_path: PathBuf,
+    /// Import paths that could not be resolved (target not indexed yet)
+    unresolved_paths: Vec<String>,
+    /// Successfully resolved edges (from_id, to_id)
+    resolved_edges: Vec<(u32, u32)>,
+}
+
 /// Pre-processed file data ready to be merged into the engine.
 /// This is computed in parallel and then merged with a lock.
 pub struct PreIndexedFile {
@@ -363,7 +376,6 @@ impl SearchEngine {
     /// Call this after each batch to distribute import resolution work across the indexing phase.
     ///
     /// Returns the number of import edges resolved.
-    #[allow(clippy::type_complexity)]
     pub fn resolve_imports_incremental(&mut self) -> usize {
         if self.pending_imports.is_empty() {
             return 0;
@@ -373,8 +385,7 @@ impl SearchEngine {
 
         // Phase 1: Parallel path resolution - try to resolve each import
         // Collect resolved edges and unresolved imports separately
-        // Type: (file_id, file_path, unresolved_import_paths, resolved_edges)
-        let results: Vec<(u32, PathBuf, Vec<String>, Vec<(u32, u32)>)> = pending
+        let results: Vec<ImportResolutionResult> = pending
             .into_par_iter()
             .map(|(file_id, file_path, import_paths)| {
                 let mut resolved_edges = Vec::new();
@@ -394,19 +405,24 @@ impl SearchEngine {
                     unresolved_paths.push(import_path);
                 }
 
-                (file_id, file_path, unresolved_paths, resolved_edges)
+                ImportResolutionResult {
+                    file_id,
+                    file_path,
+                    unresolved_paths,
+                    resolved_edges,
+                }
             })
             .collect();
 
         // Phase 2: Sequential processing - insert resolved edges and collect unresolved
         let mut all_edges = Vec::new();
-        for (file_id, file_path, unresolved_paths, edges) in results {
-            all_edges.extend(edges);
+        for result in results {
+            all_edges.extend(result.resolved_edges);
 
             // Re-add unresolved imports to pending
-            if !unresolved_paths.is_empty() {
+            if !result.unresolved_paths.is_empty() {
                 self.pending_imports
-                    .push((file_id, file_path, unresolved_paths));
+                    .push((result.file_id, result.file_path, result.unresolved_paths));
             }
         }
 
