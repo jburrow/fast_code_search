@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use memmap2::Mmap;
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -64,17 +65,36 @@ impl MappedFile {
 /// Store for all memory-mapped files
 pub struct FileStore {
     files: Vec<MappedFile>,
+    /// Map from canonicalized path to file ID to prevent duplicate indexing
+    path_to_id: HashMap<PathBuf, u32>,
 }
 
 impl FileStore {
     pub fn new() -> Self {
-        Self { files: Vec::new() }
+        Self {
+            files: Vec::new(),
+            path_to_id: HashMap::new(),
+        }
     }
 
-    /// Add a file to the store and return its ID
+    /// Add a file to the store and return its ID.
+    /// If the file was already added (by canonical path), returns the existing ID.
     pub fn add_file(&mut self, path: impl AsRef<Path>) -> Result<u32> {
+        let path = path.as_ref();
+
+        // Canonicalize path to handle symlinks and different path representations
+        let canonical = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf());
+
+        // Check if already indexed
+        if let Some(&existing_id) = self.path_to_id.get(&canonical) {
+            return Ok(existing_id);
+        }
+
         let mapped = MappedFile::new(path)?;
         let id = self.files.len() as u32;
+        self.path_to_id.insert(canonical, id);
         self.files.push(mapped);
         Ok(id)
     }
