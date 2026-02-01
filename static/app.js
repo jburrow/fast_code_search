@@ -260,13 +260,14 @@ async function performSearch() {
         }
 
         const data = await response.json();
-        const endTime = performance.now();
-        const duration = endTime - startTime;
+
+        // Use server-side elapsed time if available, otherwise calculate client-side
+        const duration = data.elapsed_ms !== undefined ? data.elapsed_ms : (performance.now() - startTime);
 
         // Update results header
         resultsHeader.style.display = 'flex';
         resultsCount.textContent = `${data.results.length} result${data.results.length !== 1 ? 's' : ''}`;
-        searchTime.textContent = `${duration.toFixed(0)}ms`;
+        searchTime.textContent = `${duration.toFixed(1)}ms`;
 
         if (data.results.length === 0) {
             resultsContainer.innerHTML = `

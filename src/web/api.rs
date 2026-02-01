@@ -49,6 +49,8 @@ pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
     pub query: String,
     pub total_results: usize,
+    /// Time taken by the search in milliseconds
+    pub elapsed_ms: f64,
 }
 
 /// Index stats response
@@ -95,6 +97,7 @@ pub async fn search_handler(
             results: vec![],
             query: String::new(),
             total_results: 0,
+            elapsed_ms: 0.0,
         }));
     }
 
@@ -102,6 +105,9 @@ pub async fn search_handler(
     let include_patterns = params.include.as_str();
     let exclude_patterns = params.exclude.as_str();
     let is_regex = params.regex;
+
+    // Start timing the search
+    let start_time = std::time::Instant::now();
 
     // Use read lock for concurrent search access
     let engine = state.engine.read().map_err(|e| {
@@ -154,11 +160,13 @@ pub async fn search_handler(
         .collect();
 
     let total_results = results.len();
+    let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
     Ok(Json(SearchResponse {
         results,
         query: query.to_string(),
         total_results,
+        elapsed_ms,
     }))
 }
 
