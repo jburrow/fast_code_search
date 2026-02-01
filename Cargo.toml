@@ -1,0 +1,32 @@
+[package]
+name = "fast_code_search"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+memmap2 = "0.9"
+roaring = "0.10"
+tree-sitter = "0.20"
+tree-sitter-rust = "0.20"
+tree-sitter-python = "0.20"
+tree-sitter-javascript = "0.20"
+tree-sitter-typescript = "0.20"
+tonic = "0.10"
+prost = "0.12"
+tokio = { version = "1.35", features = ["macros", "rt-multi-thread"] }
+tokio-stream = "0.1"
+rayon = "1.8"
+anyhow = "1.0"
+walkdir = "2.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.24"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[[bin]]
+name = "fast_code_search_server"
+path = "src/main.rs"
