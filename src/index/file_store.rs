@@ -119,7 +119,13 @@ impl FileStore {
         self.files.iter().map(|f| f.len() as u64).sum()
     }
 
+    /// Get a file path by ID (borrowed, no allocation)
+    pub fn get_path(&self, id: u32) -> Option<&Path> {
+        self.files.get(id as usize).map(|f| f.path.as_path())
+    }
+
     /// Get all file paths as a vector (for path filtering)
+    /// Note: This clones all paths - prefer get_path() for single lookups
     pub fn get_all_paths(&self) -> Vec<PathBuf> {
         self.files.iter().map(|f| f.path.clone()).collect()
     }

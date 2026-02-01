@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-01
+
+### Fixed
+- **Duplicate search results**: Fixed issue where the same file could appear multiple times in search results when discovered via symlinks or different path representations. The `FileStore` now deduplicates files by canonical path.
+
+### Added
+- **Server-side search timing**: Search API response now includes `elapsed_ms` field showing the actual server-side query time in milliseconds. The Web UI displays this instead of client-side round-trip time.
+
 ## [0.1.0] - 2026-02-01
 
 Initial release of fast_code_search — a high-performance, in-memory code search service built in Rust, designed to handle 10GB+ codebases with sub-millisecond query times.
@@ -123,5 +131,6 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jburrow/fast_code_search/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jburrow/fast_code_search/releases/tag/v0.1.0

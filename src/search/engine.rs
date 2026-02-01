@@ -9,6 +9,36 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// Case-insensitive substring search without heap allocation.
+/// Both `haystack` and `needle` are compared using ASCII case-insensitive matching.
+/// `needle` should already be lowercase for optimal performance.
+#[inline]
+fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle_lower.len() {
+        return false;
+    }
+    
+    let needle_bytes = needle_lower.as_bytes();
+    let haystack_bytes = haystack.as_bytes();
+    
+    // Sliding window search
+    'outer: for i in 0..=(haystack_bytes.len() - needle_bytes.len()) {
+        for (j, &needle_byte) in needle_bytes.iter().enumerate() {
+            let h = haystack_bytes[i + j];
+            // ASCII lowercase comparison
+            let h_lower = if h.is_ascii_uppercase() { h + 32 } else { h };
+            if h_lower != needle_byte {
+                continue 'outer;
+            }
+        }
+        return true;
+    }
+    false
+}
+
 #[derive(Debug, Clone)]
 pub struct SearchMatch {
     pub file_id: u32,
@@ -259,12 +289,13 @@ impl SearchEngine {
         // Find candidate documents using trigram index
         let candidate_docs = self.trigram_index.search(query);
 
-        // Apply path filter if it has any patterns
+        // Apply path filter if it has any patterns (using closure to avoid cloning all paths)
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            let all_paths = self.file_store.get_all_paths();
-            path_filter.filter_documents(&candidate_docs, &all_paths)
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
+                self.file_store.get_path(doc_id)
+            })
         };
 
         // Convert to vector for parallel processing
@@ -337,12 +368,13 @@ impl SearchEngine {
             self.trigram_index.all_documents()
         };
 
-        // Apply path filter if it has any patterns
+        // Apply path filter if it has any patterns (using closure to avoid cloning all paths)
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            let all_paths = self.file_store.get_all_paths();
-            path_filter.filter_documents(&candidate_docs, &all_paths)
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
+                self.file_store.get_path(doc_id)
+            })
         };
 
         // Convert filtered bitmap to vector for parallel processing
@@ -464,16 +496,16 @@ impl SearchEngine {
         // Get dependency count for this file
         let dependency_count = self.dependency_index.get_import_count(doc_id);
 
-        // Search in each line
+        // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
-            if line.to_lowercase().contains(&query_lower) {
+            if contains_case_insensitive(line, &query_lower) {
                 // Calculate score (includes dependency boost)
-                let score = self.calculate_score(&path, line, query, line_num, symbols, doc_id);
+                let score = self.calculate_score(&path, line, &query_lower, line_num, symbols, doc_id);
 
-                // Check if this is a symbol match
+                // Check if this is a symbol match (case-insensitive without allocation)
                 let is_symbol = symbols
                     .iter()
-                    .any(|s| s.line == line_num && s.name.to_lowercase().contains(&query_lower));
+                    .any(|s| s.line == line_num && contains_case_insensitive(&s.name, &query_lower));
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
@@ -494,15 +526,15 @@ impl SearchEngine {
         &self,
         path: &str,
         line: &str,
-        query: &str,
+        query_lower: &str,
         line_num: usize,
         symbols: &[Symbol],
         file_id: u32,
     ) -> f64 {
         let mut score = 1.0;
 
-        // Boost for exact matches
-        if line.contains(query) {
+        // Boost for exact case-sensitive matches (original case query is same as lowercase for this check)
+        if contains_case_insensitive(line, query_lower) && line.contains(query_lower) {
             score *= 2.0;
         }
 
@@ -523,11 +555,10 @@ impl SearchEngine {
         let line_len_factor = 1.0 / (1.0 + (line.len() as f64 / 100.0));
         score *= line_len_factor;
 
-        // Boost for query appearing at the start of the line
-        if line
-            .trim_start()
-            .to_lowercase()
-            .starts_with(&query.to_lowercase())
+        // Boost for query appearing at the start of the line (case-insensitive without allocation)
+        let trimmed = line.trim_start();
+        if trimmed.len() >= query_lower.len() 
+            && trimmed[..query_lower.len()].eq_ignore_ascii_case(query_lower) 
         {
             score *= 1.5;
         }

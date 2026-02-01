@@ -111,12 +111,43 @@ impl PathFilter {
         self.include.is_none() && self.exclude.is_none()
     }
 
+    /// Filter a set of document IDs based on their paths using a path lookup function.
+    ///
+    /// This is optimized for use after trigram pre-filtering:
+    /// - Takes a bitmap of candidate document IDs
+    /// - Uses a callback to look up paths (avoids cloning entire path array)
+    /// - Returns a new bitmap with only matching documents
+    pub fn filter_documents_with<'a, F>(&self, candidates: &RoaringBitmap, get_path: F) -> RoaringBitmap
+    where
+        F: Fn(u32) -> Option<&'a std::path::Path>,
+    {
+        // If no filters, return candidates unchanged
+        if self.is_empty() {
+            return candidates.clone();
+        }
+
+        let mut result = RoaringBitmap::new();
+        for doc_id in candidates.iter() {
+            if let Some(path) = get_path(doc_id) {
+                // Convert to string for matching
+                let path_str = path.to_string_lossy();
+                if self.matches(&path_str) {
+                    result.insert(doc_id);
+                }
+            }
+        }
+        result
+    }
+
     /// Filter a set of document IDs based on their paths.
     ///
     /// This is optimized for use after trigram pre-filtering:
     /// - Takes a bitmap of candidate document IDs
     /// - Looks up each path and applies glob matching
     /// - Returns a new bitmap with only matching documents
+    /// 
+    /// Note: Prefer `filter_documents_with()` for better performance as it
+    /// avoids cloning the entire path array.
     pub fn filter_documents(
         &self,
         candidates: &RoaringBitmap,
