@@ -242,6 +242,13 @@ impl SearchEngine {
         self.dependency_index.add_imports_batch(edges);
     }
 
+    /// Finalize the index after all files have been indexed.
+    /// This pre-computes caches for optimal query performance.
+    /// Call this after indexing is complete and before serving queries.
+    pub fn finalize(&mut self) {
+        self.trigram_index.finalize();
+    }
+
     /// Search for a query using parallel processing
     pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
         // Find candidate documents using trigram index
@@ -257,11 +264,21 @@ impl SearchEngine {
             .flatten()
             .collect();
 
-        // Sort by score (descending)
-        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Partial sort: only sort as much as needed for top N results
+        // Using sort_unstable_by is faster than stable sort (no need for stability)
+        if matches.len() > max_results {
+            // Partial sort to find top max_results
+            matches.select_nth_unstable_by(max_results, |a, b| {
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            matches.truncate(max_results);
+            // Now fully sort the top N
+            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        } else {
+            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
 
-        // Return top results
-        matches.into_iter().take(max_results).collect()
+        matches
     }
 
     /// Search with path filtering using include/exclude glob patterns.
@@ -308,11 +325,18 @@ impl SearchEngine {
             .flatten()
             .collect();
 
-        // Sort by score (descending)
-        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Partial sort: only sort as much as needed for top N results
+        if matches.len() > max_results {
+            matches.select_nth_unstable_by(max_results, |a, b| {
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            matches.truncate(max_results);
+            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        } else {
+            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
 
-        // Return top results
-        Ok(matches.into_iter().take(max_results).collect())
+        Ok(matches)
     }
 
     /// Search using a regex pattern with trigram acceleration.
@@ -388,26 +412,41 @@ impl SearchEngine {
             .flatten()
             .collect();
 
-        // Sort by score (descending)
-        matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Partial sort: only sort as much as needed for top N results
+        if matches.len() > max_results {
+            matches.select_nth_unstable_by(max_results, |a, b| {
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            matches.truncate(max_results);
+            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        } else {
+            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
 
-        // Return top results
-        Ok(matches.into_iter().take(max_results).collect())
+        Ok(matches)
     }
 
     /// Search in a document using regex matching
     fn search_in_document_regex(&self, doc_id: u32, regex: &Regex) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
-        let path = file.path.to_string_lossy().to_string();
-
-        let mut matches = Vec::new();
 
         // Get symbols for this file
         let symbols = self.symbol_cache.get(doc_id as usize)?;
 
         // Get dependency count for this file
         let dependency_count = self.dependency_index.get_import_count(doc_id);
+
+        // First pass: count matches to pre-allocate
+        let match_count = content.lines().filter(|line| regex.is_match(line)).count();
+
+        if match_count == 0 {
+            return Some(Vec::new());
+        }
+
+        // Only convert path to String if we have matches
+        let path = file.path.to_string_lossy().into_owned();
+        let mut matches = Vec::with_capacity(match_count);
 
         // Search in each line using regex
         for (line_num, line) in content.lines().enumerate() {
@@ -456,8 +495,10 @@ impl SearchEngine {
             score *= 3.0;
         }
 
-        // Boost for primary source directories
-        if path.contains("/src/") || path.contains("/lib/") {
+        // Boost for primary source directories (support both Unix and Windows paths)
+        if path.contains("/src/") || path.contains("\\src\\")
+            || path.contains("/lib/") || path.contains("\\lib\\")
+        {
             score *= 1.5;
         }
 
@@ -485,9 +526,7 @@ impl SearchEngine {
     fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
-        let path = file.path.to_string_lossy().to_string();
-
-        let mut matches = Vec::new();
+        
         let query_lower = query.to_lowercase();
 
         // Get symbols for this file
@@ -495,6 +534,20 @@ impl SearchEngine {
 
         // Get dependency count for this file
         let dependency_count = self.dependency_index.get_import_count(doc_id);
+
+        // First pass: count matches to pre-allocate
+        let match_count = content
+            .lines()
+            .filter(|line| contains_case_insensitive(line, &query_lower))
+            .count();
+
+        if match_count == 0 {
+            return Some(Vec::new());
+        }
+
+        // Only convert path to String if we have matches
+        let path = file.path.to_string_lossy().into_owned();
+        let mut matches = Vec::with_capacity(match_count);
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
@@ -546,8 +599,10 @@ impl SearchEngine {
             score *= 3.0;
         }
 
-        // Boost for primary source directories
-        if path.contains("/src/") || path.contains("/lib/") {
+        // Boost for primary source directories (support both Unix and Windows paths)
+        if path.contains("/src/") || path.contains("\\src\\")
+            || path.contains("/lib/") || path.contains("\\lib\\")
+        {
             score *= 1.5;
         }
 
@@ -558,7 +613,7 @@ impl SearchEngine {
         // Boost for query appearing at the start of the line (case-insensitive without allocation)
         let trimmed = line.trim_start();
         if trimmed.len() >= query_lower.len() 
-            && trimmed[..query_lower.len()].eq_ignore_ascii_case(query_lower) 
+            && trimmed.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes()) 
         {
             score *= 1.5;
         }

@@ -38,6 +38,8 @@ pub fn extract_trigrams(text: &str) -> Vec<Trigram> {
 pub struct TrigramIndex {
     // Map from trigram to set of document IDs containing that trigram
     trigram_to_docs: HashMap<Trigram, RoaringBitmap>,
+    // Cached bitmap of all document IDs (for regex fallback)
+    all_docs_cache: Option<RoaringBitmap>,
 }
 
 impl TrigramIndex {
@@ -58,6 +60,9 @@ impl TrigramIndex {
                 .or_default()
                 .insert(doc_id);
         }
+        
+        // Invalidate cache when documents are added
+        self.all_docs_cache = None;
     }
 
     /// Add a document using pre-computed trigrams (for parallel indexing)
@@ -67,6 +72,21 @@ impl TrigramIndex {
                 .entry(trigram)
                 .or_default()
                 .insert(doc_id);
+        }
+        
+        // Invalidate cache when documents are added
+        self.all_docs_cache = None;
+    }
+
+    /// Finalize the index after bulk loading. Call this after indexing is complete
+    /// to pre-compute the all_documents bitmap for faster regex fallback queries.
+    pub fn finalize(&mut self) {
+        if self.all_docs_cache.is_none() {
+            let mut all_docs = RoaringBitmap::new();
+            for docs in self.trigram_to_docs.values() {
+                all_docs |= docs;
+            }
+            self.all_docs_cache = Some(all_docs);
         }
     }
 
@@ -78,20 +98,33 @@ impl TrigramIndex {
             return RoaringBitmap::new();
         }
 
-        // Start with documents containing the first trigram
-        let mut result = self
-            .trigram_to_docs
-            .get(&query_trigrams[0])
-            .cloned()
-            .unwrap_or_default();
+        // Deduplicate trigrams for better intersection performance
+        let unique_trigrams: Vec<_> = {
+            let mut seen = std::collections::HashSet::new();
+            query_trigrams.into_iter().filter(|t| seen.insert(*t)).collect()
+        };
 
-        // Intersect with documents containing each subsequent trigram
-        for trigram in &query_trigrams[1..] {
+        // Find all matching bitmaps and check for missing trigrams
+        let mut bitmaps: Vec<&RoaringBitmap> = Vec::with_capacity(unique_trigrams.len());
+        for trigram in &unique_trigrams {
             if let Some(docs) = self.trigram_to_docs.get(trigram) {
-                result &= docs;
+                bitmaps.push(docs);
             } else {
                 // If any trigram is not in the index, no documents match
                 return RoaringBitmap::new();
+            }
+        }
+
+        // Sort by cardinality (smallest first) for optimal intersection order
+        bitmaps.sort_by_key(|b| b.len());
+
+        // Start with smallest bitmap and intersect with others
+        let mut result = bitmaps[0].clone();
+        for bitmap in &bitmaps[1..] {
+            result &= *bitmap;
+            // Early exit if result becomes empty
+            if result.is_empty() {
+                return result;
             }
         }
 
@@ -105,6 +138,10 @@ impl TrigramIndex {
 
     /// Get total number of documents in the index
     pub fn num_documents(&self) -> u32 {
+        if let Some(ref cached) = self.all_docs_cache {
+            return cached.len() as u32;
+        }
+        // Fallback: compute on the fly
         let mut all_docs = RoaringBitmap::new();
         for docs in self.trigram_to_docs.values() {
             all_docs |= docs;
@@ -112,8 +149,13 @@ impl TrigramIndex {
         all_docs.len() as u32
     }
 
-    /// Get all document IDs in the index
+    /// Get all document IDs in the index.
+    /// For best performance, call `finalize()` after indexing is complete.
     pub fn all_documents(&self) -> RoaringBitmap {
+        if let Some(ref cached) = self.all_docs_cache {
+            return cached.clone();
+        }
+        // Fallback: compute on the fly (slower)
         let mut all_docs = RoaringBitmap::new();
         for docs in self.trigram_to_docs.values() {
             all_docs |= docs;

@@ -372,6 +372,11 @@ async fn main() -> Result<()> {
                 let mut engine = index_engine.write().unwrap();
                 info!("Resolving import dependencies...");
                 engine.resolve_imports();
+                
+                // Finalize the index for optimal query performance
+                info!("Finalizing index...");
+                engine.finalize();
+                
                 let stats = engine.get_stats();
                 info!(
                     dependency_edges = stats.dependency_edges,
