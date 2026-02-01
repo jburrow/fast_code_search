@@ -256,6 +256,114 @@ pub struct SearchStats {
     pub dependency_edges: usize,
 }
 
+/// Status of the indexing process
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexingStatus {
+    /// No indexing is in progress
+    Idle,
+    /// Discovering files to index
+    Discovering,
+    /// Actively indexing files
+    Indexing,
+    /// Resolving import dependencies
+    ResolvingImports,
+    /// Indexing completed successfully
+    Completed,
+}
+
+impl Default for IndexingStatus {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+/// Progress information for the indexing process
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IndexingProgress {
+    /// Current status of the indexing process
+    pub status: IndexingStatus,
+    /// Number of files discovered during file discovery phase
+    pub files_discovered: usize,
+    /// Number of files indexed so far
+    pub files_indexed: usize,
+    /// Current batch number (1-based)
+    pub current_batch: usize,
+    /// Total number of batches to process
+    pub total_batches: usize,
+    /// Current path being processed (for display)
+    pub current_path: Option<String>,
+    /// Timestamp when indexing started (Unix epoch millis)
+    pub started_at: Option<u64>,
+    /// Number of errors encountered
+    pub errors: usize,
+    /// Message describing current activity
+    pub message: String,
+}
+
+impl Default for IndexingProgress {
+    fn default() -> Self {
+        Self {
+            status: IndexingStatus::Idle,
+            files_discovered: 0,
+            files_indexed: 0,
+            current_batch: 0,
+            total_batches: 0,
+            current_path: None,
+            started_at: None,
+            errors: 0,
+            message: String::from("Ready"),
+        }
+    }
+}
+
+impl IndexingProgress {
+    /// Create a new progress tracker starting the indexing process
+    pub fn start() -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Self {
+            status: IndexingStatus::Discovering,
+            started_at: Some(now),
+            message: String::from("Starting file discovery..."),
+            ..Default::default()
+        }
+    }
+
+    /// Calculate elapsed time in seconds
+    pub fn elapsed_secs(&self) -> Option<f64> {
+        let started = self.started_at?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Some((now - started) as f64 / 1000.0)
+    }
+
+    /// Calculate progress percentage (0-100)
+    pub fn progress_percent(&self) -> u8 {
+        match self.status {
+            IndexingStatus::Idle => 0,
+            IndexingStatus::Discovering => 5,
+            IndexingStatus::Indexing => {
+                if self.total_batches == 0 {
+                    10
+                } else {
+                    let batch_progress = (self.current_batch as f64 / self.total_batches as f64) * 85.0;
+                    (10.0 + batch_progress).min(95.0) as u8
+                }
+            }
+            IndexingStatus::ResolvingImports => 96,
+            IndexingStatus::Completed => 100,
+        }
+    }
+}
+
+/// Shared indexing progress state for use across threads
+pub type SharedIndexingProgress = std::sync::Arc<std::sync::RwLock<IndexingProgress>>;
+
 #[cfg(test)]
 mod tests {
     use super::*;

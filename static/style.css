@@ -147,6 +147,91 @@ header h1 {
     margin-top: 0.25rem;
 }
 
+/* Progress Panel */
+.progress-panel {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border);
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.status-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.status-badge.status-discovering {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.status-badge.status-indexing {
+    background: var(--warning);
+    color: var(--bg-primary);
+}
+
+.status-badge.status-resolving_imports {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.status-badge.status-completed {
+    background: var(--success);
+    color: var(--bg-primary);
+}
+
+.progress-percent {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.progress-bar-container {
+    height: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress-fill.completed {
+    background: var(--success);
+}
+
+.progress-info {
+    margin-bottom: 0.25rem;
+}
+
+.progress-message {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.progress-details {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
 .results-header {
     display: flex;
     justify-content: space-between;

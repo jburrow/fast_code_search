@@ -16,6 +16,19 @@ const statSize = document.getElementById('stat-size');
 const statTrigrams = document.getElementById('stat-trigrams');
 const statDeps = document.getElementById('stat-deps');
 
+// Progress elements
+const progressPanel = document.getElementById('progress-panel');
+const progressBar = document.getElementById('progress-bar');
+const progressPercent = document.getElementById('progress-percent');
+const progressStatus = document.getElementById('progress-status');
+const progressMessage = document.getElementById('progress-message');
+const progressDetails = document.getElementById('progress-details');
+
+// Status polling state
+let statusInterval = null;
+const STATUS_POLL_FAST_MS = 1000;  // During indexing
+const STATUS_POLL_SLOW_MS = 30000; // When idle/complete
+
 // Debounce timer
 let searchTimeout = null;
 const DEBOUNCE_MS = 300;
@@ -83,6 +96,123 @@ async function fetchStats() {
         statTrigrams.textContent = '-';
         statDeps.textContent = '-';
     }
+}
+
+// Format elapsed time to human readable
+function formatElapsed(secs) {
+    if (!secs) return '';
+    if (secs < 60) return `${secs.toFixed(1)}s`;
+    const mins = Math.floor(secs / 60);
+    const remainingSecs = secs % 60;
+    return `${mins}m ${remainingSecs.toFixed(0)}s`;
+}
+
+// Fetch indexing status
+async function fetchStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/api/status`);
+        if (!response.ok) throw new Error('Failed to fetch status');
+        
+        const status = await response.json();
+        updateProgressUI(status);
+        
+        // Adjust polling frequency based on indexing state
+        adjustStatusPolling(status.is_indexing);
+        
+        // Also refresh stats when status changes
+        if (status.is_indexing || status.status === 'completed') {
+            fetchStats();
+        }
+    } catch (error) {
+        console.error('Failed to fetch status:', error);
+        // Hide progress panel on error
+        if (progressPanel) {
+            progressPanel.style.display = 'none';
+        }
+    }
+}
+
+// Update progress UI elements
+function updateProgressUI(status) {
+    if (!progressPanel) return;
+    
+    const isActive = status.is_indexing;
+    const isCompleted = status.status === 'completed';
+    const isIdle = status.status === 'idle';
+    
+    // Show/hide progress panel
+    progressPanel.style.display = isIdle ? 'none' : 'block';
+    
+    // Update progress bar
+    if (progressBar) {
+        progressBar.style.width = `${status.progress_percent}%`;
+        progressBar.className = `progress-fill ${isCompleted ? 'completed' : ''}`;
+    }
+    
+    // Update percentage
+    if (progressPercent) {
+        progressPercent.textContent = `${status.progress_percent}%`;
+    }
+    
+    // Update status badge
+    if (progressStatus) {
+        const statusLabels = {
+            'idle': 'Ready',
+            'discovering': 'Discovering',
+            'indexing': 'Indexing',
+            'resolving_imports': 'Resolving',
+            'completed': 'Complete'
+        };
+        progressStatus.textContent = statusLabels[status.status] || status.status;
+        progressStatus.className = `status-badge status-${status.status}`;
+    }
+    
+    // Update message
+    if (progressMessage) {
+        progressMessage.textContent = status.message;
+    }
+    
+    // Update details
+    if (progressDetails) {
+        let details = [];
+        
+        if (status.files_discovered > 0) {
+            details.push(`${formatNumber(status.files_discovered)} files discovered`);
+        }
+        if (status.files_indexed > 0) {
+            details.push(`${formatNumber(status.files_indexed)} indexed`);
+        }
+        if (status.total_batches > 0 && status.status === 'indexing') {
+            details.push(`batch ${status.current_batch}/${status.total_batches}`);
+        }
+        if (status.elapsed_secs) {
+            details.push(formatElapsed(status.elapsed_secs));
+        }
+        if (status.errors > 0) {
+            details.push(`${status.errors} errors`);
+        }
+        
+        progressDetails.textContent = details.join(' • ');
+    }
+}
+
+// Adjust polling frequency based on indexing state
+function adjustStatusPolling(isIndexing) {
+    const targetInterval = isIndexing ? STATUS_POLL_FAST_MS : STATUS_POLL_SLOW_MS;
+    
+    // Only change if needed
+    if (statusInterval && statusInterval.interval === targetInterval) {
+        return;
+    }
+    
+    // Clear existing interval
+    if (statusInterval) {
+        clearInterval(statusInterval.id);
+    }
+    
+    // Set new interval
+    const id = setInterval(fetchStatus, targetInterval);
+    statusInterval = { id, interval: targetInterval };
 }
 
 // Perform search
@@ -194,8 +324,8 @@ queryInput.addEventListener('keydown', (e) => {
 // Initial stats load
 fetchStats();
 
-// Refresh stats periodically (every 30 seconds)
-setInterval(fetchStats, 30000);
+// Initial status load and start polling
+fetchStatus();
 
 // Show dependents modal
 async function showDependents(filePath) {

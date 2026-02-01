@@ -8,9 +8,7 @@ address = "0.0.0.0:50051"
 [indexer]
 # Paths to index on startup
 # Add your project directories here
-paths = [
-    "C:/workspace/fast_code_search/test_corpus",
-]
+paths = ["C:/workspace/fast_code_search/test_corpus"]
 
 # File extensions to include (empty = all text files)
 # Uncomment and customize to limit indexed file types

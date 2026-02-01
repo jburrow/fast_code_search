@@ -1,6 +1,7 @@
 //! REST API handlers for Fast Code Search
 
-use super::AppState;
+use super::WebState;
+use crate::search::IndexingStatus;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -57,9 +58,25 @@ pub struct HealthResponse {
     pub version: &'static str,
 }
 
+/// Indexing status response
+#[derive(Debug, Serialize)]
+pub struct StatusResponse {
+    pub status: String,
+    pub files_discovered: usize,
+    pub files_indexed: usize,
+    pub current_batch: usize,
+    pub total_batches: usize,
+    pub current_path: Option<String>,
+    pub progress_percent: u8,
+    pub elapsed_secs: Option<f64>,
+    pub errors: usize,
+    pub message: String,
+    pub is_indexing: bool,
+}
+
 /// Handle search requests
 pub async fn search_handler(
-    State(engine): State<AppState>,
+    State(state): State<WebState>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
     let query = params.q.trim();
@@ -75,7 +92,7 @@ pub async fn search_handler(
     let max_results = params.max.min(1000).max(1);
 
     // Use read lock for concurrent search access
-    let engine = engine.read().map_err(|e| {
+    let engine = state.engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to acquire engine read lock: {}", e),
@@ -111,10 +128,10 @@ pub async fn search_handler(
 
 /// Handle stats requests
 pub async fn stats_handler(
-    State(engine): State<AppState>,
+    State(state): State<WebState>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
     // Use read lock for concurrent access
-    let engine = engine.read().map_err(|e| {
+    let engine = state.engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to acquire engine read lock: {}", e),
@@ -139,6 +156,45 @@ pub async fn health_handler() -> Json<HealthResponse> {
     })
 }
 
+/// Handle indexing status requests
+pub async fn status_handler(
+    State(state): State<WebState>,
+) -> Result<Json<StatusResponse>, (StatusCode, String)> {
+    let progress = state.progress.read().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to acquire progress read lock: {}", e),
+        )
+    })?;
+
+    let status_str = match progress.status {
+        IndexingStatus::Idle => "idle",
+        IndexingStatus::Discovering => "discovering",
+        IndexingStatus::Indexing => "indexing",
+        IndexingStatus::ResolvingImports => "resolving_imports",
+        IndexingStatus::Completed => "completed",
+    };
+
+    let is_indexing = matches!(
+        progress.status,
+        IndexingStatus::Discovering | IndexingStatus::Indexing | IndexingStatus::ResolvingImports
+    );
+
+    Ok(Json(StatusResponse {
+        status: status_str.to_string(),
+        files_discovered: progress.files_discovered,
+        files_indexed: progress.files_indexed,
+        current_batch: progress.current_batch,
+        total_batches: progress.total_batches,
+        current_path: progress.current_path.clone(),
+        progress_percent: progress.progress_percent(),
+        elapsed_secs: progress.elapsed_secs(),
+        errors: progress.errors,
+        message: progress.message.clone(),
+        is_indexing,
+    }))
+}
+
 /// Query parameters for dependency endpoints
 #[derive(Debug, Deserialize)]
 pub struct DependencyQuery {
@@ -156,11 +212,11 @@ pub struct DependencyResponse {
 
 /// Get files that depend on (import) the specified file
 pub async fn dependents_handler(
-    State(engine): State<AppState>,
+    State(state): State<WebState>,
     Query(params): Query<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
     // Use read lock for concurrent access
-    let engine = engine.read().map_err(|e| {
+    let engine = state.engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to acquire engine read lock: {}", e),
@@ -191,11 +247,11 @@ pub async fn dependents_handler(
 
 /// Get files that the specified file depends on (imports)
 pub async fn dependencies_handler(
-    State(engine): State<AppState>,
+    State(state): State<WebState>,
     Query(params): Query<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
     // Use read lock for concurrent access
-    let engine = engine.read().map_err(|e| {
+    let engine = state.engine.read().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to acquire engine read lock: {}", e),

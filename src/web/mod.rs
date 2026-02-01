@@ -2,7 +2,7 @@
 
 mod api;
 
-use crate::search::SearchEngine;
+use crate::search::{SearchEngine, SharedIndexingProgress};
 use axum::{
     body::Body,
     http::{header, Response, StatusCode},
@@ -20,17 +20,27 @@ struct StaticAssets;
 /// Shared application state - RwLock allows concurrent read access for searches
 pub type AppState = Arc<RwLock<SearchEngine>>;
 
+/// Combined state for handlers that need both engine and progress
+#[derive(Clone)]
+pub struct WebState {
+    pub engine: AppState,
+    pub progress: SharedIndexingProgress,
+}
+
 /// Create the web router with all routes
-pub fn create_router(engine: AppState) -> Router {
+pub fn create_router(engine: AppState, progress: SharedIndexingProgress) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let state = WebState { engine, progress };
+
     Router::new()
         // API routes
         .route("/api/search", get(api::search_handler))
         .route("/api/stats", get(api::stats_handler))
+        .route("/api/status", get(api::status_handler))
         .route("/api/health", get(api::health_handler))
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
@@ -38,7 +48,7 @@ pub fn create_router(engine: AppState) -> Router {
         .route("/", get(index_handler))
         .route("/*file", get(static_handler))
         .layer(cors)
-        .with_state(engine)
+        .with_state(state)
 }
 
 /// Serve index.html
