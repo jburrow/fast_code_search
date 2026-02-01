@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use notify_debouncer_full::{
-    new_debouncer, notify::RecursiveMode, DebouncedEvent, Debouncer, NoCache,
+    new_debouncer, notify::RecursiveMode, DebouncedEvent, Debouncer, RecommendedCache,
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -52,7 +52,7 @@ pub struct FileWatcher {
     /// Channel receiver for file change events
     pub rx: Receiver<FileChange>,
     /// Keep the watcher alive
-    _watcher: Debouncer<notify_debouncer_full::notify::RecommendedWatcher, NoCache>,
+    _watcher: Debouncer<notify_debouncer_full::notify::RecommendedWatcher, RecommendedCache>,
 }
 
 impl FileWatcher {
