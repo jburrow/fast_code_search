@@ -27,3 +27,4 @@ target
 
 config.toml
 dhat-heap.json
+test_corpus

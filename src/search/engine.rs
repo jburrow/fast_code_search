@@ -361,6 +361,9 @@ impl SearchEngine {
 
     /// Search for a query using parallel processing
     pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
+        // Pre-compute lowercase query ONCE before parallel loop (avoids allocation per document)
+        let query_lower = query.to_lowercase();
+        
         // Find candidate documents using trigram index
         let candidate_docs = self.trigram_index.search(query);
 
@@ -370,7 +373,7 @@ impl SearchEngine {
         // Search in parallel using rayon
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
-            .filter_map(|&doc_id| self.search_in_document(doc_id, query))
+            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, &query_lower))
             .flatten()
             .collect();
 
@@ -425,13 +428,16 @@ impl SearchEngine {
             })
         };
 
+        // Pre-compute lowercase query ONCE before parallel loop
+        let query_lower = query.to_lowercase();
+
         // Convert to vector for parallel processing
         let doc_ids: Vec<u32> = filtered_docs.iter().collect();
 
         // Search in parallel using rayon
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
-            .filter_map(|&doc_id| self.search_in_document(doc_id, query))
+            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, &query_lower))
             .flatten()
             .collect();
 
@@ -554,51 +560,45 @@ impl SearchEngine {
             1.0
         };
 
-        // Build a set of symbol definition lines for O(1) lookup
-        let symbol_def_lines: std::collections::HashSet<usize> = symbols
+        // Use a simple Vec for symbol definition lines - faster than HashSet for small N
+        let symbol_def_lines: Vec<usize> = symbols
             .iter()
             .filter(|s| s.is_definition)
             .map(|s| s.line)
             .collect();
 
-        // Build a map of symbol lines to symbol names for O(1) lookup
-        let symbol_names_by_line: std::collections::HashMap<usize, Vec<&str>> = {
-            let mut map: std::collections::HashMap<usize, Vec<&str>> = std::collections::HashMap::new();
-            for s in symbols {
-                map.entry(s.line).or_default().push(&s.name);
-            }
-            map
-        };
-
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
-        let mut path_info: Option<(String, bool)> = None; // (path, is_src_or_lib)
+        
+        // Lazy-compute path info only if we find matches
+        let mut path_str: Option<String> = None;
+        let mut is_src_lib = false;
 
         // Search in each line using regex
         for (line_num, line) in content.lines().enumerate() {
             if regex.is_match(line) {
                 // Lazy initialize path info only when we have at least one match
-                let (path_ref, is_src_lib) = path_info.get_or_insert_with(|| {
+                let path_ref = path_str.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
                     let path_bytes = p.as_bytes();
-                    let is_src_lib = contains_bytes(path_bytes, b"/src/") 
+                    is_src_lib = contains_bytes(path_bytes, b"/src/") 
                         || contains_bytes(path_bytes, b"\\src\\")
                         || contains_bytes(path_bytes, b"/lib/") 
                         || contains_bytes(path_bytes, b"\\lib\\");
-                    (p, is_src_lib)
+                    p
                 });
 
                 // Calculate score using pre-computed values
                 let is_symbol_def = symbol_def_lines.contains(&line_num);
                 let score = calculate_score_regex_inline(
-                    line, regex, is_symbol_def, *is_src_lib, dependency_boost
+                    line, regex, is_symbol_def, is_src_lib, dependency_boost
                 );
 
-                // Check if this is a symbol match using pre-built map
-                let is_symbol = symbol_names_by_line
-                    .get(&line_num)
-                    .map(|names| names.iter().any(|name| regex.is_match(name)))
-                    .unwrap_or(false);
+                // Check if this is a symbol match - simple linear scan
+                let is_symbol = symbols
+                    .iter()
+                    .filter(|s| s.line == line_num)
+                    .any(|s| regex.is_match(&s.name));
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
@@ -615,6 +615,83 @@ impl SearchEngine {
         Some(matches)
     }
 
+    /// Optimized document search - takes pre-lowercased query to avoid allocation per document
+    #[inline]
+    fn search_in_document_fast(&self, doc_id: u32, query_lower: &str) -> Option<Vec<SearchMatch>> {
+        let file = self.file_store.get(doc_id)?;
+        let content = file.as_str().ok()?;
+
+        // Get symbols for this file
+        let symbols = self.symbol_cache.get(doc_id as usize)?;
+
+        // Get dependency count for this file (cached lookup - done once per document)
+        let dependency_count = self.dependency_index.get_import_count(doc_id);
+
+        // Pre-compute dependency boost (done once per document, not per match)
+        let dependency_boost = if dependency_count > 0 {
+            1.0 + (dependency_count as f64).log10() * 0.5
+        } else {
+            1.0
+        };
+
+        // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
+        // Most files have <100 symbols, linear scan is faster than hash overhead
+        let symbol_def_lines: Vec<usize> = symbols
+            .iter()
+            .filter(|s| s.is_definition)
+            .map(|s| s.line)
+            .collect();
+
+        // Single-pass search: collect matches directly
+        let mut matches = Vec::with_capacity(8);
+        
+        // Lazy-compute path info only if we find matches
+        let mut path_str: Option<String> = None;
+        let mut is_src_lib = false;
+
+        // Search in each line using case-insensitive matching without allocation
+        for (line_num, line) in content.lines().enumerate() {
+            if contains_case_insensitive(line, query_lower) {
+                // Lazy initialize path info only when we have at least one match
+                let path_ref = path_str.get_or_insert_with(|| {
+                    let p = file.path.to_string_lossy().into_owned();
+                    let path_bytes = p.as_bytes();
+                    is_src_lib = contains_bytes(path_bytes, b"/src/") 
+                        || contains_bytes(path_bytes, b"\\src\\")
+                        || contains_bytes(path_bytes, b"/lib/") 
+                        || contains_bytes(path_bytes, b"\\lib\\");
+                    p
+                });
+
+                // Calculate score using pre-computed values
+                // Linear scan for is_symbol_def - faster than HashSet for typical file sizes
+                let is_symbol_def = symbol_def_lines.contains(&line_num);
+                let score = calculate_score_inline(
+                    line, query_lower, is_symbol_def, is_src_lib, dependency_boost
+                );
+
+                // Check if this is a symbol match - simple linear scan over symbols on this line
+                let is_symbol = symbols
+                    .iter()
+                    .filter(|s| s.line == line_num)
+                    .any(|s| contains_case_insensitive(&s.name, query_lower));
+
+                matches.push(SearchMatch {
+                    file_id: doc_id,
+                    file_path: path_ref.clone(),
+                    line_number: line_num + 1, // 1-based line numbers
+                    content: line.to_string(),
+                    score,
+                    is_symbol,
+                    dependency_count,
+                });
+            }
+        }
+
+        Some(matches)
+    }
+
+    #[allow(dead_code)]
     fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
