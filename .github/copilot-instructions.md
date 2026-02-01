@@ -80,6 +80,66 @@ cargo test index::trigram
 cargo test -- --nocapture  # See output
 ```
 
+## Performance Optimization Workflow
+
+When doing optimization work, **always use benchmarks to measure impact**:
+
+### Before Making Changes
+```bash
+# Save current performance as baseline
+cargo bench -- --save-baseline before
+```
+
+### After Making Changes
+```bash
+# Compare against baseline to quantify improvement
+cargo bench -- --baseline before
+```
+
+### Benchmark Suite
+Benchmarks are in `benches/search_benchmark.rs`. Key groups:
+- `text_search` - Basic search with varying corpus sizes
+- `regex_search` - Regex patterns with/without trigram acceleration
+- `filtered_search` - Path filtering impact
+- `case_sensitivity` - Case folding overhead
+- `result_limits` - Impact of max_results parameter
+- `indexing` - File indexing throughput
+
+### Quick Benchmark Check
+```bash
+# Run specific benchmark with fewer samples for fast feedback
+cargo bench -- "text_search/common_query/100" --sample-size 10
+```
+
+### View Detailed Reports
+HTML reports with graphs are generated at `target/criterion/report/index.html`
+
+### What NOT to Commit
+- Benchmark baselines (`target/criterion/`) - machine-specific, already gitignored
+- Only commit the benchmark code itself
+
+## Release Checklist
+
+Before preparing a release:
+
+1. **Update benchmarks in README.md**:
+   ```bash
+   cargo bench
+   ```
+   Then update the Benchmarks table in `README.md` with latest results.
+
+2. **Update version** in `Cargo.toml`
+
+3. **Update CHANGELOG.md** with notable changes
+
+4. **Run full test suite**:
+   ```bash
+   cargo test
+   cargo clippy -- -D warnings
+   ```
+
+5. **Tag the release**: `git tag v0.x.x`
+
 ## Project-Specific Conventions
 
 - Use `Arc<Mutex<SearchEngine>>` for shared engine state between gRPC and web servers

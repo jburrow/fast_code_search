@@ -132,6 +132,22 @@ message SearchResult {
 - **Memory**: Uses memory mapping, so actual RAM usage is much lower than codebase size
 - **Scalability**: Handles 10GB+ of text efficiently
 
+## Benchmarks
+
+Benchmarks run on synthetic corpus using Criterion. Run locally with `cargo bench`.
+
+| Benchmark | Corpus Size | Time | Throughput |
+|-----------|-------------|------|------------|
+| text_search/common_query | 100 files | 1.4 ms | 7.0 Melem/s |
+| text_search/common_query | 500 files | 8.5 ms | 5.9 Melem/s |
+| text_search/common_query | 1000 files | 22 ms | 4.5 Melem/s |
+| text_search/rare_query | 500 files | 0.3 ms | - |
+| text_search/no_match | 500 files | 0.1 ms | - |
+| regex_search/simple_literal | 500 files | 9 ms | - |
+| regex_search/no_literal | 500 files | 45 ms | - |
+
+*Last updated: v0.2.0*
+
 ## How It Works
 
 1. **Indexing Phase**:

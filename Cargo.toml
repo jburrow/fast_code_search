@@ -56,6 +56,11 @@ tempfile = "3"
 reqwest = { version = "0.12", features = ["json"] }
 tokio-test = "0.4"
 tokio-stream = { version = "0.1", features = ["net"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "search_benchmark"
+harness = false
 
 [build-dependencies]
 tonic-prost-build = "0.14"
