@@ -12,6 +12,7 @@ message SearchRequest {
   int32 max_results = 2;
   repeated string include_paths = 3;  // Glob patterns for paths to include
   repeated string exclude_paths = 4;  // Glob patterns for paths to exclude
+  bool is_regex = 5;                  // Treat query as regex pattern
 }
 
 message SearchResult {

@@ -7,6 +7,7 @@ const queryInput = document.getElementById('query');
 const maxResultsSelect = document.getElementById('max-results');
 const includeFilterInput = document.getElementById('include-filter');
 const excludeFilterInput = document.getElementById('exclude-filter');
+const regexModeCheckbox = document.getElementById('regex-mode');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
@@ -223,6 +224,7 @@ async function performSearch() {
     const maxResults = parseInt(maxResultsSelect.value, 10);
     const includeFilter = includeFilterInput?.value.trim() || '';
     const excludeFilter = excludeFilterInput?.value.trim() || '';
+    const isRegex = regexModeCheckbox?.checked || false;
 
     if (!query) {
         resultsHeader.style.display = 'none';
@@ -247,6 +249,9 @@ async function performSearch() {
         }
         if (excludeFilter) {
             params.set('exclude', excludeFilter);
+        }
+        if (isRegex) {
+            params.set('regex', 'true');
         }
         const response = await fetch(`${API_BASE}/api/search?${params}`);
         
@@ -320,6 +325,11 @@ function handleSearchInput() {
 // Event listeners
 queryInput.addEventListener('input', handleSearchInput);
 maxResultsSelect.addEventListener('change', performSearch);
+
+// Regex mode checkbox listener
+if (regexModeCheckbox) {
+    regexModeCheckbox.addEventListener('change', performSearch);
+}
 
 // Filter input event listeners
 if (includeFilterInput) {

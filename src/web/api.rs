@@ -23,6 +23,9 @@ pub struct SearchQuery {
     /// Semicolon-delimited glob patterns for paths to exclude
     #[serde(default)]
     exclude: String,
+    /// Whether to treat the query as a regex pattern
+    #[serde(default)]
+    regex: bool,
 }
 
 fn default_max_results() -> usize {
@@ -98,6 +101,7 @@ pub async fn search_handler(
     let max_results = params.max.min(1000).max(1);
     let include_patterns = params.include.as_str();
     let exclude_patterns = params.exclude.as_str();
+    let is_regex = params.regex;
 
     // Use read lock for concurrent search access
     let engine = state.engine.read().map_err(|e| {
@@ -107,10 +111,22 @@ pub async fn search_handler(
         )
     })?;
 
-    // Use filtered search if patterns are provided, otherwise use regular search
-    let matches = if include_patterns.is_empty() && exclude_patterns.is_empty() {
+    // Choose search method based on regex flag
+    let matches = if is_regex {
+        // Use regex search with optional path filtering
+        engine
+            .search_regex(query, include_patterns, exclude_patterns, max_results)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid regex pattern: {}", e),
+                )
+            })?
+    } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
+        // Plain text search without filtering
         engine.search(query, max_results)
     } else {
+        // Plain text search with path filtering
         engine
             .search_with_filter(query, include_patterns, exclude_patterns, max_results)
             .map_err(|e| {

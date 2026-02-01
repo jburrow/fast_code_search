@@ -437,6 +437,8 @@ dependencies = [
  "mime_guess",
  "prost",
  "rayon",
+ "regex",
+ "regex-syntax",
  "roaring",
  "rust-embed",
  "serde",

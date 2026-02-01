@@ -101,6 +101,7 @@ header h1 {
     display: flex;
     gap: 1.5rem;
     color: var(--text-secondary);
+    align-items: center;
 }
 
 .search-options label {
@@ -116,6 +117,35 @@ header h1 {
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 0.9rem;
+}
+
+/* Regex toggle */
+.regex-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    transition: all 0.2s;
+}
+
+.regex-toggle:hover {
+    border-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"]:checked + span {
+    color: var(--accent);
+    font-weight: 600;
 }
 
 .stats-panel {
