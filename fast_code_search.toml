@@ -1,0 +1,34 @@
+# Fast Code Search Configuration
+# Generated template - customize as needed
+
+[server]
+# Address to bind the gRPC server to
+address = "0.0.0.0:50051"
+
+[indexer]
+# Paths to index on startup
+# Add your project directories here
+paths = [
+    # "C:/code/my-project",
+    # "C:/code/another-project",
+    # "/home/user/projects/my-app",
+]
+
+# File extensions to include (empty = all text files)
+# Uncomment and customize to limit indexed file types
+# include_extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+
+# Patterns to exclude from indexing
+exclude_patterns = [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "**/.venv/**",
+]
+
+# Maximum file size to index in bytes (default: 10MB)
+max_file_size = 10485760

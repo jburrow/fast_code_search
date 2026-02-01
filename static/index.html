@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fast Code Search</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Fast Code Search</h1>
+            <p class="subtitle">High-performance code search with trigram indexing</p>
+        </header>
+
+        <div class="search-box">
+            <input type="text" id="query" placeholder="Search code..." autocomplete="off" autofocus>
+            <div class="search-options">
+                <label>
+                    Max results:
+                    <select id="max-results">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                        <option value="250">250</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+
+        <div class="stats-panel" id="stats">
+            <div class="stat">
+                <span class="stat-value" id="stat-files">-</span>
+                <span class="stat-label">Files Indexed</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value" id="stat-size">-</span>
+                <span class="stat-label">Total Size</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value" id="stat-trigrams">-</span>
+                <span class="stat-label">Trigrams</span>
+            </div>
+        </div>
+
+        <div class="results-header" id="results-header" style="display: none;">
+            <span id="results-count">0 results</span>
+            <span id="search-time"></span>
+        </div>
+
+        <div class="results" id="results">
+            <div class="empty-state">
+                <p>Enter a search query to find code</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+
+</html>
