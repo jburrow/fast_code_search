@@ -14,6 +14,7 @@ const searchTime = document.getElementById('search-time');
 const statFiles = document.getElementById('stat-files');
 const statSize = document.getElementById('stat-size');
 const statTrigrams = document.getElementById('stat-trigrams');
+const statDeps = document.getElementById('stat-deps');
 
 // Debounce timer
 let searchTimeout = null;
@@ -74,11 +75,13 @@ async function fetchStats() {
         statFiles.textContent = formatNumber(stats.num_files);
         statSize.textContent = formatBytes(stats.total_size);
         statTrigrams.textContent = formatNumber(stats.num_trigrams);
+        statDeps.textContent = formatNumber(stats.dependency_edges || 0);
     } catch (error) {
         console.error('Failed to fetch stats:', error);
         statFiles.textContent = '-';
         statSize.textContent = '-';
         statTrigrams.textContent = '-';
+        statDeps.textContent = '-';
     }
 }
 
@@ -132,6 +135,10 @@ async function performSearch() {
         // Render results
         resultsContainer.innerHTML = data.results.map(result => {
             const matchType = getMatchTypeLabel(result.match_type);
+            const depCount = result.dependency_count || 0;
+            const depBadge = depCount > 0 
+                ? `<span class="dep-badge" title="${depCount} files depend on this" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
+                : '';
             return `
                 <div class="result-item">
                     <div class="result-header">
@@ -140,6 +147,7 @@ async function performSearch() {
                             <span class="result-line">:${result.line_number}</span>
                         </div>
                         <div class="result-meta">
+                            ${depBadge}
                             <span class="result-score">Score: ${result.score.toFixed(2)}</span>
                             <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
                         </div>
@@ -188,3 +196,97 @@ fetchStats();
 
 // Refresh stats periodically (every 30 seconds)
 setInterval(fetchStats, 30000);
+
+// Show dependents modal
+async function showDependents(filePath) {
+    try {
+        const params = new URLSearchParams({ file: filePath });
+        const response = await fetch(`${API_BASE}/api/dependents?${params}`);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch dependents: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        showDependencyModal('Dependents', filePath, data.files, 'Files that import this file:');
+    } catch (error) {
+        console.error('Error fetching dependents:', error);
+        alert('Failed to load dependents: ' + error.message);
+    }
+}
+
+// Show dependencies modal
+async function showDependencies(filePath) {
+    try {
+        const params = new URLSearchParams({ file: filePath });
+        const response = await fetch(`${API_BASE}/api/dependencies?${params}`);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch dependencies: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        showDependencyModal('Dependencies', filePath, data.files, 'Files imported by this file:');
+    } catch (error) {
+        console.error('Error fetching dependencies:', error);
+        alert('Failed to load dependencies: ' + error.message);
+    }
+}
+
+// Display dependency modal
+function showDependencyModal(title, filePath, files, description) {
+    // Remove existing modal if any
+    const existingModal = document.getElementById('dep-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    const fileList = files.length > 0
+        ? files.map(f => `<li class="dep-file">${escapeHtml(f)}</li>`).join('')
+        : '<li class="dep-none">No files found</li>';
+
+    const modal = document.createElement('div');
+    modal.id = 'dep-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>${title} (${files.length})</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-file">${escapeHtml(filePath)}</p>
+                <p class="modal-desc">${description}</p>
+                <ul class="dep-list">
+                    ${fileList}
+                </ul>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Close on overlay click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+
+    // Close on Escape key
+    document.addEventListener('keydown', handleModalEscape);
+}
+
+function handleModalEscape(e) {
+    if (e.key === 'Escape') {
+        closeModal();
+    }
+}
+
+function closeModal() {
+    const modal = document.getElementById('dep-modal');
+    if (modal) {
+        modal.remove();
+    }
+    document.removeEventListener('keydown', handleModalEscape);
+}

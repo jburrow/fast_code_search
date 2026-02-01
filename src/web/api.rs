@@ -30,6 +30,7 @@ pub struct SearchResultJson {
     pub line_number: usize,
     pub score: f64,
     pub match_type: &'static str,
+    pub dependency_count: u32,
 }
 
 /// Search response
@@ -46,6 +47,7 @@ pub struct StatsResponse {
     pub num_files: usize,
     pub total_size: u64,
     pub num_trigrams: usize,
+    pub dependency_edges: usize,
 }
 
 /// Health check response
@@ -93,6 +95,7 @@ pub async fn search_handler(
             } else {
                 "TEXT"
             },
+            dependency_count: m.dependency_count,
         })
         .collect();
 
@@ -122,6 +125,7 @@ pub async fn stats_handler(
         num_files: stats.num_files,
         total_size: stats.total_size,
         num_trigrams: stats.num_trigrams,
+        dependency_edges: stats.dependency_edges,
     }))
 }
 
@@ -131,4 +135,87 @@ pub async fn health_handler() -> Json<HealthResponse> {
         status: "healthy",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// Query parameters for dependency endpoints
+#[derive(Debug, Deserialize)]
+pub struct DependencyQuery {
+    /// File path to look up
+    file: String,
+}
+
+/// Dependency response
+#[derive(Debug, Serialize)]
+pub struct DependencyResponse {
+    pub file: String,
+    pub files: Vec<String>,
+    pub count: usize,
+}
+
+/// Get files that depend on (import) the specified file
+pub async fn dependents_handler(
+    State(engine): State<AppState>,
+    Query(params): Query<DependencyQuery>,
+) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
+    let engine = engine.lock().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to acquire engine lock: {}", e),
+        )
+    })?;
+
+    let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", params.file),
+        )
+    })?;
+
+    let dependent_ids = engine.get_dependents(file_id);
+    let files: Vec<String> = dependent_ids
+        .iter()
+        .filter_map(|&id| engine.get_file_path(id))
+        .collect();
+
+    let count = files.len();
+
+    Ok(Json(DependencyResponse {
+        file: params.file,
+        files,
+        count,
+    }))
+}
+
+/// Get files that the specified file depends on (imports)
+pub async fn dependencies_handler(
+    State(engine): State<AppState>,
+    Query(params): Query<DependencyQuery>,
+) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
+    let engine = engine.lock().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to acquire engine lock: {}", e),
+        )
+    })?;
+
+    let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", params.file),
+        )
+    })?;
+
+    let dependency_ids = engine.get_dependencies(file_id);
+    let files: Vec<String> = dependency_ids
+        .iter()
+        .filter_map(|&id| engine.get_file_path(id))
+        .collect();
+
+    let count = files.len();
+
+    Ok(Json(DependencyResponse {
+        file: params.file,
+        files,
+        count,
+    }))
 }

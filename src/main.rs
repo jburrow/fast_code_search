@@ -166,6 +166,18 @@ async fn main() -> Result<()> {
                 }
             }
             
+            // Resolve all import relationships after indexing completes
+            {
+                let mut engine = index_engine.lock().unwrap();
+                info!("Resolving import dependencies...");
+                engine.resolve_imports();
+                let stats = engine.get_stats();
+                info!(
+                    dependency_edges = stats.dependency_edges,
+                    "Import resolution completed"
+                );
+            }
+            
             let elapsed = total_start.elapsed();
             info!(elapsed_secs = elapsed.as_secs_f64(), "Background indexing completed");
         });

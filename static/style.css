@@ -287,3 +287,119 @@ header h1 {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* Dependency badge */
+.dep-badge {
+    background: var(--accent);
+    color: var(--bg-primary);
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.dep-badge:hover {
+    background: var(--accent-hover);
+}
+
+/* Modal styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    max-width: 600px;
+    width: 90%;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+    font-size: 1.25rem;
+    color: var(--text-primary);
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+}
+
+.modal-file {
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.875rem;
+    color: var(--accent);
+    word-break: break-all;
+    margin-bottom: 0.5rem;
+}
+
+.modal-desc {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.dep-list {
+    list-style: none;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.dep-file {
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.8rem;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.dep-file:last-child {
+    border-bottom: none;
+}
+
+.dep-file:hover {
+    background: var(--bg-tertiary);
+}
+
+.dep-none {
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 0.5rem;
+}

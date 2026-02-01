@@ -5,7 +5,6 @@ mod api;
 use crate::search::SearchEngine;
 use axum::{
     body::Body,
-    extract::State,
     http::{header, Response, StatusCode},
     routing::get,
     Router,
@@ -33,6 +32,8 @@ pub fn create_router(engine: AppState) -> Router {
         .route("/api/search", get(api::search_handler))
         .route("/api/stats", get(api::stats_handler))
         .route("/api/health", get(api::health_handler))
+        .route("/api/dependents", get(api::dependents_handler))
+        .route("/api/dependencies", get(api::dependencies_handler))
         // Static files
         .route("/", get(index_handler))
         .route("/*file", get(static_handler))
