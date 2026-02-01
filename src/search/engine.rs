@@ -909,8 +909,15 @@ impl SearchEngine {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
 
-        // Get symbols for this file (may be empty if loaded from persistence)
-        let symbols = self.symbol_cache.get(doc_id as usize).map(|s| s.as_slice()).unwrap_or(&[]);
+        // Get symbols for this file. The symbol cache may be empty/missing if:
+        // 1. The index was loaded from persistence (symbols aren't persisted for space efficiency)
+        // 2. The file was just added and symbols haven't been extracted yet
+        // When empty, search still works but without symbol-based ranking boosts.
+        let symbols = self
+            .symbol_cache
+            .get(doc_id as usize)
+            .map(|s| s.as_slice())
+            .unwrap_or(&[]);
 
         // Get dependency count for this file (cached lookup - done once per document)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
@@ -1131,8 +1138,8 @@ impl SearchEngine {
 
     /// Save the index to a file for persistence
     pub fn save_index(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        use crate::index::{PersistedFileMetadata, PersistedIndex};
         use crate::index::persistence::get_mtime;
+        use crate::index::{PersistedFileMetadata, PersistedIndex};
 
         // Collect file metadata
         let mut files = Vec::new();
@@ -1168,23 +1175,24 @@ impl SearchEngine {
 
     /// Load an index from disk if available and not stale
     /// Returns the list of stale files that need re-indexing
-    pub fn load_index(&mut self, path: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
-        use crate::index::PersistedIndex;
+    pub fn load_index(
+        &mut self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<std::path::PathBuf>> {
         use crate::index::persistence::is_file_stale;
+        use crate::index::PersistedIndex;
 
         let persisted = PersistedIndex::load(path)?;
 
         // Check which files are stale
         let mut stale_files = Vec::new();
-        let mut valid_file_ids = Vec::new();
 
-        for (id, file_meta) in persisted.files.iter().enumerate() {
-            if !file_meta.path.exists() {
+        for file_meta in persisted.files.iter() {
+            // File is stale if it doesn't exist or was modified since indexing
+            if !file_meta.path.exists()
+                || is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
+            {
                 stale_files.push(file_meta.path.clone());
-            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
-                stale_files.push(file_meta.path.clone());
-            } else {
-                valid_file_ids.push(id);
             }
         }
 
@@ -1192,12 +1200,12 @@ impl SearchEngine {
         let trigram_map = persisted.restore_trigram_index()?;
         self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
-        // Re-add valid files to the file store
+        // Re-add valid files to the file store (errors are silently ignored as files may have been removed)
         for file_meta in &persisted.files {
-            if file_meta.path.exists() && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
-                if let Ok(_id) = self.file_store.add_file(&file_meta.path) {
-                    // File added successfully
-                }
+            if file_meta.path.exists()
+                && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
+            {
+                let _ = self.file_store.add_file(&file_meta.path);
             }
         }
 

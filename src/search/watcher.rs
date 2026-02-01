@@ -4,9 +4,7 @@
 
 use anyhow::Result;
 use notify_debouncer_full::{
-    new_debouncer,
-    notify::RecursiveMode,
-    DebouncedEvent, Debouncer, NoCache,
+    new_debouncer, notify::RecursiveMode, DebouncedEvent, Debouncer, NoCache,
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -77,13 +75,14 @@ impl FileWatcher {
         let mut debouncer = new_debouncer(
             config.debounce_duration,
             None,
-            move |result: Result<Vec<DebouncedEvent>, Vec<notify_debouncer_full::notify::Error>>| {
+            move |result: Result<
+                Vec<DebouncedEvent>,
+                Vec<notify_debouncer_full::notify::Error>,
+            >| {
                 match result {
                     Ok(events) => {
                         for event in events {
-                            if let Some(change) =
-                                process_event(&event, &handler_exclude)
-                            {
+                            if let Some(change) = process_event(&event, &handler_exclude) {
                                 if handler_tx.send(change).is_err() {
                                     debug!("File watcher channel closed");
                                     return;
@@ -137,11 +136,13 @@ fn process_event(event: &DebouncedEvent, exclude_patterns: &[String]) -> Option<
     use notify_debouncer_full::notify::EventKind;
 
     let paths = &event.paths;
-    
+
     // Skip if all paths match exclude patterns
     let should_process = paths.iter().any(|path| {
         let path_str = path.to_string_lossy();
-        !exclude_patterns.iter().any(|pattern| path_str.contains(pattern))
+        !exclude_patterns
+            .iter()
+            .any(|pattern| path_str.contains(pattern))
     });
 
     if !should_process {
@@ -182,10 +183,7 @@ mod tests {
 
     #[test]
     fn test_should_exclude() {
-        let patterns = vec![
-            "node_modules".to_string(),
-            ".git".to_string(),
-        ];
+        let patterns = vec!["node_modules".to_string(), ".git".to_string()];
 
         assert!(should_exclude(
             Path::new("/project/node_modules/package/index.js"),
@@ -195,7 +193,10 @@ mod tests {
             Path::new("/project/.git/objects/abc"),
             &patterns
         ));
-        assert!(!should_exclude(Path::new("/project/src/main.rs"), &patterns));
+        assert!(!should_exclude(
+            Path::new("/project/src/main.rs"),
+            &patterns
+        ));
     }
 
     #[test]

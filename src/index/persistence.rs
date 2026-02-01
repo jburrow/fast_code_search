@@ -70,8 +70,9 @@ impl PersistedIndex {
     pub fn save(&self, path: &Path) -> Result<()> {
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create index directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create index directory: {}", parent.display())
+            })?;
         }
 
         let file = std::fs::File::create(path)
@@ -172,8 +173,8 @@ mod tests {
             size: 100,
         }];
 
-        let persisted = PersistedIndex::new(files, &trigram_to_docs)
-            .expect("Failed to create persisted index");
+        let persisted =
+            PersistedIndex::new(files, &trigram_to_docs).expect("Failed to create persisted index");
 
         // Save
         persisted.save(&index_path).expect("Failed to save index");
@@ -214,6 +215,10 @@ mod tests {
         assert!(is_file_stale(&file_path, mtime, size + 1));
 
         // Non-existent file should be stale
-        assert!(is_file_stale(&temp_dir.path().join("nonexistent.txt"), 0, 0));
+        assert!(is_file_stale(
+            &temp_dir.path().join("nonexistent.txt"),
+            0,
+            0
+        ));
     }
 }

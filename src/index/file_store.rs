@@ -150,7 +150,10 @@ mod tests {
         let mapped = MappedFile::new(&file_path).expect("Failed to create MappedFile");
         assert_eq!(mapped.len(), 11);
         assert!(!mapped.is_empty());
-        assert_eq!(mapped.as_str().expect("Failed to read as str"), "hello world");
+        assert_eq!(
+            mapped.as_str().expect("Failed to read as str"),
+            "hello world"
+        );
         assert_eq!(mapped.as_bytes(), b"hello world");
     }
 
@@ -170,10 +173,11 @@ mod tests {
     fn test_mapped_file_invalid_utf8() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = temp_dir.path().join("binary.bin");
-        
+
         // Write invalid UTF-8 bytes
         let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
-        file.write_all(&[0xFF, 0xFE, 0x00, 0x01]).expect("Failed to write bytes");
+        file.write_all(&[0xFF, 0xFE, 0x00, 0x01])
+            .expect("Failed to write bytes");
         drop(file);
 
         let mapped = MappedFile::new(&file_path).expect("Failed to create MappedFile");
@@ -204,12 +208,12 @@ mod tests {
 
         let mut store = FileStore::new();
         let id = store.add_file(&file_path).expect("Failed to add file");
-        
+
         assert_eq!(id, 0);
         assert_eq!(store.len(), 1);
         assert!(!store.is_empty());
         assert_eq!(store.total_size(), 11);
-        
+
         let file = store.get(id).expect("Failed to get file");
         assert_eq!(file.as_str().expect("Failed to read as str"), "hello world");
     }
@@ -221,9 +225,13 @@ mod tests {
         std::fs::write(&file_path, "hello world").expect("Failed to write test file");
 
         let mut store = FileStore::new();
-        let id1 = store.add_file(&file_path).expect("Failed to add file first time");
-        let id2 = store.add_file(&file_path).expect("Failed to add file second time");
-        
+        let id1 = store
+            .add_file(&file_path)
+            .expect("Failed to add file first time");
+        let id2 = store
+            .add_file(&file_path)
+            .expect("Failed to add file second time");
+
         // Same file added twice should return same ID
         assert_eq!(id1, id2);
         assert_eq!(store.len(), 1);
@@ -240,7 +248,7 @@ mod tests {
         let mut store = FileStore::new();
         let id1 = store.add_file(&file1).expect("Failed to add file1");
         let id2 = store.add_file(&file2).expect("Failed to add file2");
-        
+
         assert_eq!(id1, 0);
         assert_eq!(id2, 1);
         assert_eq!(store.len(), 2);
@@ -255,10 +263,10 @@ mod tests {
 
         let mut store = FileStore::new();
         let id = store.add_file(&file_path).expect("Failed to add file");
-        
+
         let path = store.get_path(id).expect("Failed to get path");
         assert!(path.ends_with("test.txt"));
-        
+
         // Non-existent ID should return None
         assert!(store.get_path(999).is_none());
     }
@@ -274,7 +282,7 @@ mod tests {
         let mut store = FileStore::new();
         store.add_file(&file1).expect("Failed to add file1");
         store.add_file(&file2).expect("Failed to add file2");
-        
+
         let paths = store.get_all_paths();
         assert_eq!(paths.len(), 2);
     }
