@@ -284,10 +284,13 @@ async fn main() -> Result<()> {
 
                             let batch_indexed_count = pre_indexed.len();
 
-                            // Merge into engine
+                            // Merge into engine and incrementally resolve imports
                             {
                                 let mut engine = index_engine.write().unwrap();
                                 engine.index_batch(pre_indexed);
+                                // Incrementally resolve imports that can be resolved now
+                                // This distributes import resolution work across the indexing phase
+                                engine.resolve_imports_incremental();
                             }
 
                             total_indexed += batch_indexed_count;
@@ -337,6 +340,8 @@ async fn main() -> Result<()> {
                 {
                     let mut engine = index_engine.write().unwrap();
                     engine.index_batch(pre_indexed);
+                    // Resolve imports for the final batch
+                    engine.resolve_imports_incremental();
                 }
 
                 total_indexed += batch_indexed_count;
@@ -361,17 +366,28 @@ async fn main() -> Result<()> {
                 p.current_batch = batch_num;
             }
 
-            // Resolve all import relationships after indexing completes
+            // Resolve any remaining import relationships that couldn't be resolved incrementally
+            // Most imports should already be resolved during the indexing phase
             {
-                if let Ok(mut p) = index_progress.write() {
-                    p.status = IndexingStatus::ResolvingImports;
-                    p.current_path = None;
-                    p.message = String::from("Resolving import dependencies...");
-                }
-
                 let mut engine = index_engine.write().unwrap();
-                info!("Resolving import dependencies...");
-                engine.resolve_imports();
+                let pending_count = engine.pending_imports_count();
+
+                if pending_count > 0 {
+                    if let Ok(mut p) = index_progress.write() {
+                        p.status = IndexingStatus::ResolvingImports;
+                        p.current_path = None;
+                        p.message = format!(
+                            "Resolving {} remaining import dependencies...",
+                            pending_count
+                        );
+                    }
+
+                    info!(
+                        pending_imports = pending_count,
+                        "Resolving remaining import dependencies..."
+                    );
+                    engine.resolve_imports();
+                }
 
                 // Finalize the index for optimal query performance
                 info!("Finalizing index...");

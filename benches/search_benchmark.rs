@@ -339,6 +339,134 @@ fn bench_indexing(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark import resolution strategies
+fn bench_import_resolution(c: &mut Criterion) {
+    let mut group = c.benchmark_group("import_resolution");
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(10);
+
+    for num_files in [50, 100] {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let files = generate_source_files_with_imports(num_files, DEFAULT_LINES_PER_FILE);
+
+        // Write files to temp directory
+        for (rel_path, content) in &files {
+            let full_path = temp_dir.path().join(rel_path);
+            std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+            std::fs::write(&full_path, content).unwrap();
+        }
+
+        let file_paths: Vec<_> = files
+            .iter()
+            .map(|(rel_path, _)| temp_dir.path().join(rel_path))
+            .collect();
+
+        // Benchmark: Index all, then resolve imports at end (old approach)
+        group.bench_with_input(
+            BenchmarkId::new("batch_resolve", num_files),
+            &file_paths,
+            |b, file_paths| {
+                b.iter(|| {
+                    let mut engine = SearchEngine::new();
+                    for path in file_paths {
+                        let _ = engine.index_file(path);
+                    }
+                    engine.resolve_imports();
+                    engine.finalize();
+                    black_box(engine)
+                });
+            },
+        );
+
+        // Benchmark: Incremental resolution every 10 files (simulates per-batch)
+        // This is closer to the real-world usage with BATCH_SIZE=500
+        group.bench_with_input(
+            BenchmarkId::new("incremental_every_10", num_files),
+            &file_paths,
+            |b, file_paths| {
+                b.iter(|| {
+                    let mut engine = SearchEngine::new();
+                    for (i, path) in file_paths.iter().enumerate() {
+                        let _ = engine.index_file(path);
+                        // Resolve every 10 files (simulates batch processing)
+                        if (i + 1) % 10 == 0 {
+                            engine.resolve_imports_incremental();
+                        }
+                    }
+                    engine.resolve_imports(); // Resolve any remaining
+                    engine.finalize();
+                    black_box(engine)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Generate source files with import statements for testing import resolution
+fn generate_source_files_with_imports(
+    num_files: usize,
+    lines_per_file: usize,
+) -> Vec<(PathBuf, String)> {
+    let mut files = Vec::with_capacity(num_files);
+
+    for i in 0..num_files {
+        let mut content = String::with_capacity(lines_per_file * 60);
+
+        // Add imports that reference other files in the codebase
+        if i > 0 {
+            // Reference earlier files (which will be indexed before this one)
+            let import_target = i - 1;
+            content.push_str(&format!(
+                "use crate::module_{}::processor_{}::DataProcessor{};\n",
+                import_target / 10,
+                import_target,
+                import_target
+            ));
+        }
+        if i + 1 < num_files {
+            // Reference later files (which may not be indexed yet)
+            let import_target = i + 1;
+            content.push_str(&format!(
+                "use crate::module_{}::processor_{}::DataProcessor{};\n",
+                import_target / 10,
+                import_target,
+                import_target
+            ));
+        }
+
+        content.push_str("\nuse std::collections::HashMap;\n");
+        content.push_str("use std::sync::Arc;\n\n");
+
+        // Generate some function definitions
+        for j in 0..lines_per_file / 10 {
+            content.push_str(&format!(
+                "pub fn process_data_{j}_{i}(input: &str) -> Result<String, Error> {{\n",
+            ));
+            content.push_str("    let mut result = String::new();\n");
+            content.push_str("    for line in input.lines() {\n");
+            content.push_str("        if line.contains(\"pattern\") {\n");
+            content.push_str("            result.push_str(line);\n");
+            content.push_str("        }\n");
+            content.push_str("    }\n");
+            content.push_str("    Ok(result)\n");
+            content.push_str("}\n\n");
+        }
+
+        // Add struct definition
+        content.push_str(&format!(
+            "pub struct DataProcessor{} {{\n    data: Vec<u8>,\n    cache: HashMap<String, String>,\n}}\n\n",
+            i
+        ));
+
+        let path = PathBuf::from(format!("src/module_{}/processor_{}.rs", i / 10, i));
+        files.push((path, content));
+    }
+
+    files
+}
+
 criterion_group!(
     benches,
     bench_text_search,
@@ -348,6 +476,7 @@ criterion_group!(
     bench_result_limits,
     bench_query_length,
     bench_indexing,
+    bench_import_resolution,
 );
 
 criterion_main!(benches);
