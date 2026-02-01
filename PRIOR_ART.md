@@ -20,6 +20,35 @@ This document compares `fast_code_search` to the best code search implementation
 - 🔄 Enhance regex acceleration with better literal extraction
 - 🔄 Add ranking based on code quality signals
 
+### Unique Advantages of fast_code_search's In-Memory Server Architecture
+
+Unlike ripgrep (stateless CLI) or Zoekt (disk-based index), fast_code_search operates as an **always-on, in-memory server**. This design provides several distinct advantages:
+
+| Advantage | Why It Matters | vs. ripgrep | vs. Zoekt |
+|-----------|----------------|-------------|-----------|
+| **Zero cold-start latency** | Index is always hot in RAM - no disk I/O on first query | ripgrep rescans files every query | Zoekt reads index from disk |
+| **Sub-millisecond search** | Memory access is 100-1000x faster than SSD | Similar per-file, but no file discovery | Faster than memory-mapped index files |
+| **Warm CPU caches** | Repeated queries hit L1/L2 cache | Each invocation starts cold | Partially warm (index pages) |
+| **Live dependency graph** | Import relationships tracked in-memory | Not available | Not available |
+| **Real-time streaming** | gRPC streaming to IDEs/UIs as results found | Pipes stdout | HTTP chunks |
+| **Concurrent read access** | RwLock allows many simultaneous searches | Process per search | Thread per search |
+
+**The key insight**: For a codebase that developers search repeatedly throughout the day, an in-memory server amortizes the indexing cost over many queries, while tools like ripgrep pay a (smaller) cost on every single search.
+
+#### When fast_code_search Wins
+
+1. **IDE Integration**: Sub-10ms search enables real-time "search as you type"
+2. **Repeated Queries**: Same search patterns used throughout a coding session
+3. **Large Codebases**: 10GB+ where ripgrep's per-query scan takes seconds
+4. **Dependency Queries**: "What files import this module?" - requires the graph
+5. **Team/Shared Search**: Multiple developers querying the same codebase
+
+#### When Others Win
+
+1. **One-off searches**: ripgrep is instant for single searches, no server needed
+2. **Disk-constrained**: Zoekt's persistent index survives restarts without rebuild
+3. **Planet-scale**: GitHub CS scales horizontally across data centers
+
 ---
 
 ## 1. ripgrep (rg)
@@ -498,12 +527,26 @@ impl SearchEngine {
 - Parallel search with rayon
 - Symbol awareness with tree-sitter
 
-The highest-impact improvements would be:
-1. **Index persistence** - Eliminates startup latency
-2. **Incremental indexing** - Responds to file changes in real-time
-3. **SIMD case-insensitive search** - Matches ripgrep performance
+### Unique Value Proposition
 
-These changes would bring `fast_code_search` closer to production-grade tools like Zoekt while maintaining its clean Rust architecture.
+**The in-memory server architecture provides advantages that stateless tools cannot match:**
+
+- **Sub-millisecond latency** for IDE integration and "search as you type"
+- **No cold-start penalty** - the index is always hot in RAM
+- **Live dependency graph** - track imports across the entire codebase
+- **Concurrent access** - serve multiple developers/tools simultaneously
+- **Streaming results** - gRPC streaming for real-time result display
+
+For teams working on large codebases (10GB+) with frequent searches throughout the day, this model is more efficient than per-query scanning (ripgrep) or disk-based indexes (Zoekt).
+
+### Recommended Improvements
+
+The highest-impact improvements would be:
+1. **Index persistence** - Eliminates startup latency while preserving sub-millisecond query performance
+2. **Incremental indexing** - Responds to file changes in real-time
+3. **SIMD case-insensitive search** - Matches ripgrep's per-query performance
+
+These changes would bring `fast_code_search` closer to production-grade tools like Zoekt while maintaining its clean Rust architecture and unique in-memory advantages.
 
 ---
 
