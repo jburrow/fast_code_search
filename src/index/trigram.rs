@@ -1,6 +1,10 @@
 use roaring::RoaringBitmap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Maximum initial capacity for trigram sets.
+/// Limits memory pre-allocation for very large files.
+const MAX_INITIAL_TRIGRAM_CAPACITY: usize = 1024;
+
 /// A trigram is a sequence of 3 characters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Trigram([u8; 3]);
@@ -39,7 +43,10 @@ pub fn extract_trigrams(text: &str) -> Vec<Trigram> {
 pub fn extract_unique_trigrams(text: &str) -> FxHashSet<Trigram> {
     let bytes = text.as_bytes();
     let len = bytes.len().saturating_sub(2);
-    let mut trigrams = FxHashSet::with_capacity_and_hasher(len.min(1024), Default::default());
+    let mut trigrams = FxHashSet::with_capacity_and_hasher(
+        len.min(MAX_INITIAL_TRIGRAM_CAPACITY),
+        Default::default(),
+    );
 
     for i in 0..len {
         trigrams.insert(Trigram([bytes[i], bytes[i + 1], bytes[i + 2]]));
@@ -74,7 +81,7 @@ impl TrigramIndex {
                 .or_default()
                 .insert(doc_id);
         }
-        
+
         // Invalidate cache when documents are added
         self.all_docs_cache = None;
     }
@@ -87,7 +94,7 @@ impl TrigramIndex {
                 .or_default()
                 .insert(doc_id);
         }
-        
+
         // Invalidate cache when documents are added
         self.all_docs_cache = None;
     }
@@ -115,7 +122,10 @@ impl TrigramIndex {
         // Deduplicate trigrams using FxHashSet for better performance
         let unique_trigrams: Vec<_> = {
             let mut seen = FxHashSet::default();
-            query_trigrams.into_iter().filter(|t| seen.insert(*t)).collect()
+            query_trigrams
+                .into_iter()
+                .filter(|t| seen.insert(*t))
+                .collect()
         };
 
         // Find all matching bitmaps and check for missing trigrams

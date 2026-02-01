@@ -22,7 +22,7 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if haystack.len() < needle_len {
         return false;
     }
-    
+
     let needle_bytes = needle_lower.as_bytes();
     let haystack_bytes = haystack.as_bytes();
     let first_needle = needle_bytes[0];
@@ -32,10 +32,10 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     } else {
         first_needle
     };
-    
+
     let mut i = 0;
     let max_start = haystack_bytes.len() - needle_len;
-    
+
     while i <= max_start {
         let h = haystack_bytes[i];
         // Quick first-byte check (handles both cases)
@@ -103,8 +103,8 @@ fn calculate_score_inline(
 
     // Boost for query appearing at the start of the line
     let trimmed = line.trim_start();
-    if trimmed.len() >= query_lower.len() 
-        && trimmed.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes()) 
+    if trimmed.len() >= query_lower.len()
+        && trimmed.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes())
     {
         score *= 1.5;
     }
@@ -363,7 +363,7 @@ impl SearchEngine {
     pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
         // Pre-compute lowercase query ONCE before parallel loop (avoids allocation per document)
         let query_lower = query.to_lowercase();
-        
+
         // Find candidate documents using trigram index
         let candidate_docs = self.trigram_index.search(query);
 
@@ -382,13 +382,23 @@ impl SearchEngine {
         if matches.len() > max_results {
             // Partial sort to find top max_results
             matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             matches.truncate(max_results);
             // Now fully sort the top N
-            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         } else {
-            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         matches
@@ -423,9 +433,8 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store.get_path(doc_id)
-            })
+            path_filter
+                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
         // Pre-compute lowercase query ONCE before parallel loop
@@ -444,12 +453,22 @@ impl SearchEngine {
         // Partial sort: only sort as much as needed for top N results
         if matches.len() > max_results {
             matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             matches.truncate(max_results);
-            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         } else {
-            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         Ok(matches)
@@ -512,9 +531,8 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store.get_path(doc_id)
-            })
+            path_filter
+                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
         // Convert filtered bitmap to vector for parallel processing
@@ -531,12 +549,22 @@ impl SearchEngine {
         // Partial sort: only sort as much as needed for top N results
         if matches.len() > max_results {
             matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             matches.truncate(max_results);
-            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         } else {
-            matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         Ok(matches)
@@ -569,7 +597,7 @@ impl SearchEngine {
 
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
-        
+
         // Lazy-compute path info only if we find matches
         let mut path_str: Option<String> = None;
         let mut is_src_lib = false;
@@ -581,9 +609,9 @@ impl SearchEngine {
                 let path_ref = path_str.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
                     let path_bytes = p.as_bytes();
-                    is_src_lib = contains_bytes(path_bytes, b"/src/") 
+                    is_src_lib = contains_bytes(path_bytes, b"/src/")
                         || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/") 
+                        || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
                     p
                 });
@@ -591,7 +619,11 @@ impl SearchEngine {
                 // Calculate score using pre-computed values
                 let is_symbol_def = symbol_def_lines.contains(&line_num);
                 let score = calculate_score_regex_inline(
-                    line, regex, is_symbol_def, is_src_lib, dependency_boost
+                    line,
+                    regex,
+                    is_symbol_def,
+                    is_src_lib,
+                    dependency_boost,
                 );
 
                 // Check if this is a symbol match - simple linear scan
@@ -644,7 +676,7 @@ impl SearchEngine {
 
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
-        
+
         // Lazy-compute path info only if we find matches
         let mut path_str: Option<String> = None;
         let mut is_src_lib = false;
@@ -656,9 +688,9 @@ impl SearchEngine {
                 let path_ref = path_str.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
                     let path_bytes = p.as_bytes();
-                    is_src_lib = contains_bytes(path_bytes, b"/src/") 
+                    is_src_lib = contains_bytes(path_bytes, b"/src/")
                         || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/") 
+                        || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
                     p
                 });
@@ -667,7 +699,11 @@ impl SearchEngine {
                 // Linear scan for is_symbol_def - faster than HashSet for typical file sizes
                 let is_symbol_def = symbol_def_lines.contains(&line_num);
                 let score = calculate_score_inline(
-                    line, query_lower, is_symbol_def, is_src_lib, dependency_boost
+                    line,
+                    query_lower,
+                    is_symbol_def,
+                    is_src_lib,
+                    dependency_boost,
                 );
 
                 // Check if this is a symbol match - simple linear scan over symbols on this line
@@ -695,7 +731,7 @@ impl SearchEngine {
     fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
-        
+
         let query_lower = query.to_lowercase();
 
         // Get symbols for this file
@@ -717,10 +753,11 @@ impl SearchEngine {
             .filter(|s| s.is_definition)
             .map(|s| s.line)
             .collect();
-        
+
         // Build a map of symbol lines to symbol names for O(1) symbol match check
         let symbol_names_by_line: std::collections::HashMap<usize, Vec<&str>> = {
-            let mut map: std::collections::HashMap<usize, Vec<&str>> = std::collections::HashMap::new();
+            let mut map: std::collections::HashMap<usize, Vec<&str>> =
+                std::collections::HashMap::new();
             for s in symbols {
                 map.entry(s.line).or_default().push(&s.name);
             }
@@ -739,9 +776,9 @@ impl SearchEngine {
                 let (path_ref, is_src_lib) = path_info.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
                     let path_bytes = p.as_bytes();
-                    let is_src_lib = contains_bytes(path_bytes, b"/src/") 
+                    let is_src_lib = contains_bytes(path_bytes, b"/src/")
                         || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/") 
+                        || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
                     (p, is_src_lib)
                 });
@@ -749,13 +786,21 @@ impl SearchEngine {
                 // Calculate score using pre-computed values
                 let is_symbol_def = symbol_def_lines.contains(&line_num);
                 let score = calculate_score_inline(
-                    line, &query_lower, is_symbol_def, *is_src_lib, dependency_boost
+                    line,
+                    &query_lower,
+                    is_symbol_def,
+                    *is_src_lib,
+                    dependency_boost,
                 );
 
                 // Check if this is a symbol match using pre-built map (O(1) lookup + small iteration)
                 let is_symbol = symbol_names_by_line
                     .get(&line_num)
-                    .map(|names| names.iter().any(|name| contains_case_insensitive(name, &query_lower)))
+                    .map(|names| {
+                        names
+                            .iter()
+                            .any(|name| contains_case_insensitive(name, &query_lower))
+                    })
                     .unwrap_or(false);
 
                 matches.push(SearchMatch {

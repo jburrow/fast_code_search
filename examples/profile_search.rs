@@ -17,21 +17,21 @@ fn main() {
 
     // Setup: create engine with test files
     let mut engine = SearchEngine::new();
-    
+
     // Index test corpus if it exists, otherwise create synthetic data
     let test_corpus = PathBuf::from("test_corpus");
     let mut indexed_count = 0;
-    
+
     if test_corpus.exists() {
         println!("Checking test_corpus...");
         for entry in walkdir::WalkDir::new(&test_corpus)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.file_type().is_file() && 
-                e.path().extension().map_or(false, |ext| {
-                    matches!(ext.to_str(), Some("rs" | "py" | "js" | "ts" | "tsx"))
-                })
+                e.file_type().is_file()
+                    && e.path().extension().map_or(false, |ext| {
+                        matches!(ext.to_str(), Some("rs" | "py" | "js" | "ts" | "tsx"))
+                    })
             })
             .take(500)
         {
@@ -40,14 +40,14 @@ fn main() {
             }
         }
     }
-    
+
     // If no files found, create synthetic data
     if indexed_count == 0 {
         println!("Creating synthetic files for profiling...");
         let temp_dir = std::env::temp_dir().join("fcs_profile");
         let _ = std::fs::remove_dir_all(&temp_dir); // Clean up previous run
         std::fs::create_dir_all(&temp_dir).unwrap();
-        
+
         for i in 0..200 {
             let subdir = temp_dir.join(format!("module_{}", i / 20));
             std::fs::create_dir_all(&subdir).unwrap();
@@ -81,26 +81,26 @@ fn main() {
             }
         }
     }
-    
+
     engine.finalize();
     println!("Indexed {} files", indexed_count);
 
     // Profile: run searches (this is what we want to measure)
     println!("\nRunning searches (profiling allocations)...");
-    
+
     for _ in 0..100 {
         // Common query
         let _ = engine.search("result", 100);
-        
+
         // Case-insensitive
         let _ = engine.search("RESULT", 100);
-        
+
         // Rare query
         let _ = engine.search("HashMap", 100);
     }
 
     println!("\nProfile complete. View dhat-heap.json at:");
     println!("https://nnethercote.github.io/dh_view/dh_view.html");
-    
+
     // Profiler drops here and writes dhat-heap.json
 }
