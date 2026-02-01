@@ -11,12 +11,7 @@ documentation = "https://docs.rs/fast_code_search"
 readme = "README.md"
 keywords = ["search", "code-search", "trigram", "grpc", "indexing"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = [
-    "test_corpus/**",
-    "target/**",
-    ".github/**",
-    "scripts/**",
-]
+exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**"]
 
 [lib]
 name = "fast_code_search"
