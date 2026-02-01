@@ -26,5 +26,6 @@ target
 /target
 
 config.toml
+fast_code_search.toml
 dhat-heap.json
 test_corpus
