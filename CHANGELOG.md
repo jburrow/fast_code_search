@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-02-01
+
+### Changed
+- **Improved indexing log readability**: The background indexing completion message now formats large numbers with underscore separators (e.g., `89_210`), rounds `files_per_sec` to whole numbers, and removes redundant raw byte values.
+
 ## [0.2.1] - 2026-02-01
 
 ### Added
