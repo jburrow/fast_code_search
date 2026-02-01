@@ -86,11 +86,11 @@ The trigram index extracted trigrams ["HEL", "ELL", "LLO"] from "HELLO", but con
 | `symbols/extractor.rs` | 1 test | Minimal |
 | Integration tests | 12 tests | Good |
 
-**Total:** 28 unit tests + 12 integration tests = 40 tests
+**Total:** 29 unit tests + 12 integration tests = 41 tests
 
-### Missing Test Cases
+### Missing Test Cases (Remaining)
 
-1. **Case sensitivity** - No tests verify case-insensitive behavior
+1. ~~**Case sensitivity** - No tests verify case-insensitive behavior~~ ✅ Fixed: Added `test_case_insensitive_search`
 2. **Empty files** - No tests for empty file handling
 3. **Unicode edge cases** - No tests for multi-byte UTF-8 in trigrams
 4. **File store** - No unit tests at all
@@ -103,6 +103,7 @@ The trigram index extracted trigrams ["HEL", "ELL", "LLO"] from "HELLO", but con
 ```rust
 #[test]
 fn test_case_insensitive_search() {
+    // ✅ Already implemented
     // Content has only lowercase, query is uppercase
     // Should still find matches
 }
