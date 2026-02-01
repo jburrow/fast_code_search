@@ -407,11 +407,43 @@ async fn main() -> Result<()> {
                 0.0
             };
 
+            // Get indexed text size from the engine
+            let indexed_size = {
+                let engine = index_engine.read().unwrap();
+                engine.get_stats().total_size
+            };
+
+            // Get current process memory usage
+            let process_memory = {
+                use sysinfo::{Pid, ProcessesToUpdate, System};
+                let pid = Pid::from_u32(std::process::id());
+                let mut sys = System::new();
+                sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+                sys.process(pid).map(|p| p.memory()).unwrap_or(0)
+            };
+
+            // Format sizes for human readability
+            let format_bytes = |bytes: u64| -> String {
+                if bytes >= 1_073_741_824 {
+                    format!("{:.2} GB", bytes as f64 / 1_073_741_824.0)
+                } else if bytes >= 1_048_576 {
+                    format!("{:.2} MB", bytes as f64 / 1_048_576.0)
+                } else if bytes >= 1024 {
+                    format!("{:.2} KB", bytes as f64 / 1024.0)
+                } else {
+                    format!("{} bytes", bytes)
+                }
+            };
+
             info!(
                 elapsed_secs = elapsed.as_secs_f64(),
                 files_indexed = total_indexed,
                 files_discovered = final_discovered,
                 files_per_sec = files_per_sec,
+                indexed_size_bytes = indexed_size,
+                indexed_size = %format_bytes(indexed_size),
+                process_memory_bytes = process_memory,
+                process_memory = %format_bytes(process_memory),
                 "Background indexing completed"
             );
 
