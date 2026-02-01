@@ -435,14 +435,25 @@ async fn main() -> Result<()> {
                 }
             };
 
+            // Format numbers with thousand separators
+            let format_number = |n: usize| -> String {
+                let s = n.to_string();
+                let mut result = String::new();
+                for (i, c) in s.chars().rev().enumerate() {
+                    if i > 0 && i % 3 == 0 {
+                        result.push('_');
+                    }
+                    result.push(c);
+                }
+                result.chars().rev().collect()
+            };
+
             info!(
-                elapsed_secs = elapsed.as_secs_f64(),
-                files_indexed = total_indexed,
-                files_discovered = final_discovered,
-                files_per_sec = files_per_sec,
-                indexed_size_bytes = indexed_size,
+                elapsed_secs = format!("{:.1}", elapsed.as_secs_f64()),
+                files_indexed = %format_number(total_indexed),
+                files_discovered = %format_number(final_discovered),
+                files_per_sec = format!("{:.0}", files_per_sec),
                 indexed_size = %format_bytes(indexed_size),
-                process_memory_bytes = process_memory,
                 process_memory = %format_bytes(process_memory),
                 "Background indexing completed"
             );
