@@ -98,7 +98,7 @@ pub async fn search_handler(
         }));
     }
 
-    let max_results = params.max.min(1000).max(1);
+    let max_results = params.max.clamp(1, 1000);
     let include_patterns = params.include.as_str();
     let exclude_patterns = params.exclude.as_str();
     let is_regex = params.regex;

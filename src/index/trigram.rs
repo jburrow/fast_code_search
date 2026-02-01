@@ -24,12 +24,12 @@ pub fn extract_trigrams(text: &str) -> Vec<Trigram> {
     let bytes = text.as_bytes();
     let len = bytes.len().saturating_sub(2);
     let mut trigrams = Vec::with_capacity(len);
-    
+
     for i in 0..len {
         // Direct construction is safe since we know we have at least 3 bytes
         trigrams.push(Trigram([bytes[i], bytes[i + 1], bytes[i + 2]]));
     }
-    
+
     trigrams
 }
 
@@ -48,10 +48,10 @@ impl TrigramIndex {
     /// Add a document to the index
     pub fn add_document(&mut self, doc_id: u32, content: &str) {
         let trigrams = extract_trigrams(content);
-        
+
         // Deduplicate trigrams to avoid redundant HashMap lookups and bitmap insertions
         let unique_trigrams: HashSet<Trigram> = trigrams.into_iter().collect();
-        
+
         for trigram in unique_trigrams {
             self.trigram_to_docs
                 .entry(trigram)
@@ -73,13 +73,14 @@ impl TrigramIndex {
     /// Search for documents containing all trigrams from the query
     pub fn search(&self, query: &str) -> RoaringBitmap {
         let query_trigrams = extract_trigrams(query);
-        
+
         if query_trigrams.is_empty() {
             return RoaringBitmap::new();
         }
 
         // Start with documents containing the first trigram
-        let mut result = self.trigram_to_docs
+        let mut result = self
+            .trigram_to_docs
             .get(&query_trigrams[0])
             .cloned()
             .unwrap_or_default();
@@ -135,16 +136,16 @@ mod tests {
     #[test]
     fn test_index_and_search() {
         let mut index = TrigramIndex::new();
-        
+
         index.add_document(0, "hello world");
         index.add_document(1, "hello rust");
         index.add_document(2, "goodbye world");
-        
+
         let results = index.search("hello");
         assert!(results.contains(0));
         assert!(results.contains(1));
         assert!(!results.contains(2));
-        
+
         let results = index.search("world");
         assert!(results.contains(0));
         assert!(!results.contains(1));

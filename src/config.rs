@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -79,15 +79,6 @@ fn default_exclude_patterns() -> Vec<String> {
 
 fn default_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            indexer: IndexerConfig::default(),
-        }
-    }
 }
 
 impl Default for ServerConfig {

@@ -201,7 +201,7 @@ impl CodeSearch for CodeSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query;
-        let max_results = req.max_results.max(1).min(1000) as usize;
+        let max_results = req.max_results.clamp(1, 1000) as usize;
         let include_patterns = req.include_paths.join(";");
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;

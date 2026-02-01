@@ -57,12 +57,15 @@ impl SymbolExtractor {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        Self { language, extension }
+        Self {
+            language,
+            extension,
+        }
     }
 
     fn language_for_file(path: &Path) -> Option<Language> {
         let extension = path.extension()?.to_str()?;
-        
+
         match extension {
             "rs" => Some(tree_sitter_rust::language()),
             "py" => Some(tree_sitter_python::language()),
@@ -91,14 +94,14 @@ impl SymbolExtractor {
 
         // Extract function definitions
         Self::extract_functions(&root_node, source, &mut symbols);
-        
+
         symbols.sort_by_key(|s| s.line);
         Ok(symbols)
     }
 
     fn extract_functions(node: &tree_sitter::Node, source: &str, symbols: &mut Vec<Symbol>) {
         let mut cursor = node.walk();
-        
+
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "function_item" | "function_declaration" | "function_definition" => {
@@ -129,7 +132,7 @@ impl SymbolExtractor {
                 }
                 _ => {}
             }
-            
+
             // Recursively process children
             Self::extract_functions(&child, source, symbols);
         }
@@ -188,10 +191,7 @@ impl SymbolExtractor {
                     } else {
                         // Fallback: get full text minus 'use' and ';'
                         let text = &source[child.byte_range()];
-                        let path = text
-                            .trim_start_matches("use")
-                            .trim_end_matches(';')
-                            .trim();
+                        let path = text.trim_start_matches("use").trim_end_matches(';').trim();
                         if !path.is_empty() {
                             imports.push(ImportStatement {
                                 path: path.to_string(),
@@ -269,7 +269,7 @@ impl SymbolExtractor {
         } else if text.starts_with("import ") {
             // import foo.bar
             let rest = text.strip_prefix("import ")?.trim();
-            let module = rest.split(|c| c == ',' || c == ' ').next()?;
+            let module = rest.split([',', ' ']).next()?;
             Some(module.to_string())
         } else {
             None
@@ -349,7 +349,7 @@ fn another_function() {
 "#;
         let extractor = SymbolExtractor::new(Path::new("test.rs"));
         let symbols = extractor.extract(source).unwrap();
-        
+
         assert!(symbols.len() >= 2);
         assert!(symbols.iter().any(|s| s.name == "hello_world"));
         assert!(symbols.iter().any(|s| s.name == "another_function"));

@@ -16,12 +16,11 @@ impl MappedFile {
     /// Create a new memory-mapped file
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open file: {}", path.display()))?;
-        
-        let mmap = unsafe { 
-            Mmap::map(&file)
-                .with_context(|| format!("Failed to mmap file: {}", path.display()))?
+        let file =
+            File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
+
+        let mmap = unsafe {
+            Mmap::map(&file).with_context(|| format!("Failed to mmap file: {}", path.display()))?
         };
 
         Ok(Self {
@@ -34,10 +33,10 @@ impl MappedFile {
     /// Get the content as a string slice (if valid UTF-8)
     /// UTF-8 validation is cached after the first call for performance.
     pub fn as_str(&self) -> Result<&str> {
-        let is_valid = *self.utf8_valid.get_or_init(|| {
-            std::str::from_utf8(&self.mmap).is_ok()
-        });
-        
+        let is_valid = *self
+            .utf8_valid
+            .get_or_init(|| std::str::from_utf8(&self.mmap).is_ok());
+
         if is_valid {
             // SAFETY: We validated UTF-8 above and cached the result
             Ok(unsafe { std::str::from_utf8_unchecked(&self.mmap) })

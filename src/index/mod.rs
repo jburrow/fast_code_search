@@ -1,5 +1,5 @@
-pub mod trigram;
 pub mod file_store;
+pub mod trigram;
 
-pub use trigram::{TrigramIndex, Trigram, extract_trigrams};
 pub use file_store::{FileStore, MappedFile};
+pub use trigram::{extract_trigrams, Trigram, TrigramIndex};

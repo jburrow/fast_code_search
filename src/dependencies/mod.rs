@@ -40,7 +40,7 @@ impl DependencyIndex {
             // Fallback to the path as-is if canonicalization fails
             path.to_path_buf()
         };
-        
+
         // Add to filename inverted index for fast non-relative lookups
         if let Some(filename) = stored_path.file_name().and_then(|s| s.to_str()) {
             self.filename_to_paths
@@ -48,17 +48,14 @@ impl DependencyIndex {
                 .or_default()
                 .push(stored_path.clone());
         }
-        
+
         self.path_to_id.insert(stored_path, file_id);
     }
 
     /// Add an import relationship: `from_file` imports `to_file`
     pub fn add_import(&mut self, from_file: u32, to_file: u32) {
         // Add forward edge
-        self.imports
-            .entry(from_file)
-            .or_default()
-            .insert(to_file);
+        self.imports.entry(from_file).or_default().insert(to_file);
 
         // Add reverse edge
         self.imported_by
@@ -141,16 +138,13 @@ impl DependencyIndex {
     /// Batch insert multiple import edges. More efficient than repeated add_import calls.
     pub fn add_imports_batch(&mut self, edges: Vec<(u32, u32)>) {
         for (from_file, to_file) in edges {
-            self.imports
-                .entry(from_file)
-                .or_default()
-                .insert(to_file);
+            self.imports.entry(from_file).or_default().insert(to_file);
             self.imported_by
                 .entry(to_file)
                 .or_default()
                 .insert(from_file);
         }
-        
+
         // Update cached counts in bulk
         for (&file_id, dependents) in &self.imported_by {
             self.import_counts.insert(file_id, dependents.len() as u32);
