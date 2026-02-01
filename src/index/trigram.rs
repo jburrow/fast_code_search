@@ -1,5 +1,9 @@
 use roaring::RoaringBitmap;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+/// Maximum initial capacity for trigram sets.
+/// Limits memory pre-allocation for very large files.
+const MAX_INITIAL_TRIGRAM_CAPACITY: usize = 1024;
 
 /// A trigram is a sequence of 3 characters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,11 +37,30 @@ pub fn extract_trigrams(text: &str) -> Vec<Trigram> {
     trigrams
 }
 
+/// Extract unique trigrams from text directly into a FxHashSet.
+/// More efficient than extracting to Vec and then deduplicating.
+#[inline]
+pub fn extract_unique_trigrams(text: &str) -> FxHashSet<Trigram> {
+    let bytes = text.as_bytes();
+    let len = bytes.len().saturating_sub(2);
+    let mut trigrams = FxHashSet::with_capacity_and_hasher(
+        len.min(MAX_INITIAL_TRIGRAM_CAPACITY),
+        Default::default(),
+    );
+
+    for i in 0..len {
+        trigrams.insert(Trigram([bytes[i], bytes[i + 1], bytes[i + 2]]));
+    }
+
+    trigrams
+}
+
 /// Inverted index mapping trigrams to document IDs using roaring bitmaps
 #[derive(Default)]
 pub struct TrigramIndex {
     // Map from trigram to set of document IDs containing that trigram
-    trigram_to_docs: HashMap<Trigram, RoaringBitmap>,
+    // FxHashMap is faster than std HashMap for small keys like Trigram
+    trigram_to_docs: FxHashMap<Trigram, RoaringBitmap>,
     // Cached bitmap of all document IDs (for regex fallback)
     all_docs_cache: Option<RoaringBitmap>,
 }
@@ -49,10 +72,8 @@ impl TrigramIndex {
 
     /// Add a document to the index
     pub fn add_document(&mut self, doc_id: u32, content: &str) {
-        let trigrams = extract_trigrams(content);
-
-        // Deduplicate trigrams to avoid redundant HashMap lookups and bitmap insertions
-        let unique_trigrams: HashSet<Trigram> = trigrams.into_iter().collect();
+        // Use extract_unique_trigrams for efficiency - avoids Vec allocation + HashSet conversion
+        let unique_trigrams = extract_unique_trigrams(content);
 
         for trigram in unique_trigrams {
             self.trigram_to_docs
@@ -60,20 +81,20 @@ impl TrigramIndex {
                 .or_default()
                 .insert(doc_id);
         }
-        
+
         // Invalidate cache when documents are added
         self.all_docs_cache = None;
     }
 
     /// Add a document using pre-computed trigrams (for parallel indexing)
-    pub fn add_document_trigrams(&mut self, doc_id: u32, trigrams: HashSet<Trigram>) {
+    pub fn add_document_trigrams(&mut self, doc_id: u32, trigrams: FxHashSet<Trigram>) {
         for trigram in trigrams {
             self.trigram_to_docs
                 .entry(trigram)
                 .or_default()
                 .insert(doc_id);
         }
-        
+
         // Invalidate cache when documents are added
         self.all_docs_cache = None;
     }
@@ -98,10 +119,13 @@ impl TrigramIndex {
             return RoaringBitmap::new();
         }
 
-        // Deduplicate trigrams for better intersection performance
+        // Deduplicate trigrams using FxHashSet for better performance
         let unique_trigrams: Vec<_> = {
-            let mut seen = std::collections::HashSet::new();
-            query_trigrams.into_iter().filter(|t| seen.insert(*t)).collect()
+            let mut seen = FxHashSet::default();
+            query_trigrams
+                .into_iter()
+                .filter(|t| seen.insert(*t))
+                .collect()
         };
 
         // Find all matching bitmaps and check for missing trigrams

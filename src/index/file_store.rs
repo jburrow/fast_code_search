@@ -83,9 +83,7 @@ impl FileStore {
         let path = path.as_ref();
 
         // Canonicalize path to handle symlinks and different path representations
-        let canonical = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         // Check if already indexed
         if let Some(&existing_id) = self.path_to_id.get(&canonical) {

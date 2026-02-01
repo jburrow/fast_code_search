@@ -117,7 +117,11 @@ impl PathFilter {
     /// - Takes a bitmap of candidate document IDs
     /// - Uses a callback to look up paths (avoids cloning entire path array)
     /// - Returns a new bitmap with only matching documents
-    pub fn filter_documents_with<'a, F>(&self, candidates: &RoaringBitmap, get_path: F) -> RoaringBitmap
+    pub fn filter_documents_with<'a, F>(
+        &self,
+        candidates: &RoaringBitmap,
+        get_path: F,
+    ) -> RoaringBitmap
     where
         F: Fn(u32) -> Option<&'a std::path::Path>,
     {
@@ -145,7 +149,7 @@ impl PathFilter {
     /// - Takes a bitmap of candidate document IDs
     /// - Looks up each path and applies glob matching
     /// - Returns a new bitmap with only matching documents
-    /// 
+    ///
     /// Note: Prefer `filter_documents_with()` for better performance as it
     /// avoids cloning the entire path array.
     pub fn filter_documents(
