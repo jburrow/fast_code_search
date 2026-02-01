@@ -354,8 +354,10 @@ impl PreIndexedFile {
         // Read file content
         let content = std::fs::read_to_string(path).ok()?;
 
-        // Extract trigrams directly into FxHashSet (avoids Vec allocation + conversion)
-        let trigrams = extract_unique_trigrams(&content);
+        // Extract trigrams from lowercase content for case-insensitive search
+        // Note: We lowercase during indexing so queries can be lowercased at search time
+        let content_lower = content.to_lowercase();
+        let trigrams = extract_unique_trigrams(&content_lower);
 
         // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
         let extractor = SymbolExtractor::new(path);
@@ -419,8 +421,10 @@ impl SearchEngine {
             .and_then(|f| f.as_str().ok())
             .unwrap_or("");
 
-        // Index the content with trigrams
-        self.trigram_index.add_document(file_id, content);
+        // Index the lowercase content with trigrams for case-insensitive search
+        // Note: We lowercase during indexing so queries can be lowercased at search time
+        let content_lower = content.to_lowercase();
+        self.trigram_index.add_document(file_id, &content_lower);
 
         // Extract symbols
         let extractor = SymbolExtractor::new(path);
@@ -609,7 +613,8 @@ impl SearchEngine {
         let query_lower = query.to_lowercase();
 
         // Find candidate documents using trigram index
-        let candidate_docs = self.trigram_index.search(query);
+        // Use lowercase query for case-insensitive trigram matching
+        let candidate_docs = self.trigram_index.search(&query_lower);
 
         // Convert to vector for parallel processing
         let doc_ids: Vec<u32> = candidate_docs.iter().collect();
@@ -670,8 +675,12 @@ impl SearchEngine {
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
+        // Pre-compute lowercase query ONCE before parallel loop
+        let query_lower = query.to_lowercase();
+
         // Find candidate documents using trigram index
-        let candidate_docs = self.trigram_index.search(query);
+        // Use lowercase query for case-insensitive trigram matching
+        let candidate_docs = self.trigram_index.search(&query_lower);
 
         // Apply path filter if it has any patterns (using closure to avoid cloning all paths)
         let filtered_docs = if path_filter.is_empty() {
@@ -680,9 +689,6 @@ impl SearchEngine {
             path_filter
                 .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
-
-        // Pre-compute lowercase query ONCE before parallel loop
-        let query_lower = query.to_lowercase();
 
         // Convert to vector for parallel processing
         let doc_ids: Vec<u32> = filtered_docs.iter().collect();
@@ -1332,5 +1338,43 @@ mod tests {
         // After resolution, pending should be 0 (they're cleared even if unresolved)
         engine.resolve_imports();
         assert_eq!(engine.pending_imports_count(), 0);
+    }
+
+    #[test]
+    fn test_case_insensitive_search() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create file with only lowercase content
+        let mut file = fs::File::create(&file_path).unwrap();
+        writeln!(file, "hello world").unwrap();
+        writeln!(file, "another hello here").unwrap();
+        drop(file);
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Test that all case variants find the same results
+        let results_lower = engine.search("hello", 10);
+        let results_upper = engine.search("HELLO", 10);
+        let results_mixed = engine.search("Hello", 10);
+
+        // All queries should find both lines with "hello"
+        assert_eq!(
+            results_lower.len(),
+            2,
+            "lowercase query 'hello' should find 2 matches"
+        );
+        assert_eq!(
+            results_upper.len(),
+            2,
+            "uppercase query 'HELLO' should find 2 matches"
+        );
+        assert_eq!(
+            results_mixed.len(),
+            2,
+            "mixed case query 'Hello' should find 2 matches"
+        );
     }
 }
