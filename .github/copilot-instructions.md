@@ -16,6 +16,11 @@ The system has four layers that communicate through shared data structures:
 3. **Search Layer** (`src/search/engine.rs`) - Parallel search with scoring
    - Uses rayon for parallel line-by-line search across candidate documents
    - Multi-factor scoring: symbol defs (3x), exact match (2x), src/lib dirs (1.5x)
+   - Four search methods:
+     - `search()`: Basic text search
+     - `search_with_filter()`: Text search with path filtering
+     - `search_regex()`: Regex pattern matching with trigram acceleration
+     - `search_symbols()`: Symbols-only search for function/class names
 
 4. **Server Layer** - Dual API exposure
    - `src/server/service.rs`: gRPC streaming via tonic (port 50051)
@@ -59,6 +64,15 @@ File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?
 2. Run `cargo build` to regenerate bindings
 3. Update `src/server/service.rs` implementation
 4. Update `examples/client.rs`
+
+### REST API Endpoints (src/web/api.rs)
+The REST API supports the following search parameters:
+- `q`: Query string (required)
+- `max`: Maximum results (default: 50)
+- `include`: Semicolon-delimited glob patterns for paths to include
+- `exclude`: Semicolon-delimited glob patterns for paths to exclude
+- `regex`: Set to `true` for regex pattern matching
+- `symbols`: Set to `true` for symbols-only search (functions/classes)
 
 ### Configuration
 TOML config in `config.toml` or `fast_code_search.toml`. Key settings:

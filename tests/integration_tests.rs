@@ -154,6 +154,7 @@ async fn test_grpc_search_finds_rust_function() -> Result<()> {
         include_paths: vec![],
         exclude_paths: vec![],
         is_regex: false,
+        symbols_only: false,
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -189,6 +190,7 @@ async fn test_grpc_search_finds_python_function() -> Result<()> {
         include_paths: vec![],
         exclude_paths: vec![],
         is_regex: false,
+        symbols_only: false,
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -220,6 +222,7 @@ async fn test_grpc_search_empty_query_returns_empty() -> Result<()> {
         include_paths: vec![],
         exclude_paths: vec![],
         is_regex: false,
+        symbols_only: false,
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -246,6 +249,7 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
         include_paths: vec![],
         exclude_paths: vec![],
         is_regex: false,
+        symbols_only: false,
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -484,6 +488,110 @@ async fn test_search_across_languages() -> Result<()> {
         "Expected results from at least one file type, got: {:?}",
         file_paths
     );
+
+    Ok(())
+}
+
+// =============================================================================
+// Symbols-only search tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_search_symbols_only() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Search for "find_me" with symbols mode - should find the function
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "find_me"), ("symbols", "true")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+    let results = body["results"].as_array().unwrap();
+
+    // Should find the function definition
+    assert!(
+        !results.is_empty(),
+        "Expected at least one symbol match for 'find_me'"
+    );
+
+    // All results should be symbol definitions
+    for result in results {
+        assert_eq!(
+            result["match_type"].as_str().unwrap(),
+            "SYMBOL_DEFINITION",
+            "Expected all results to be symbol definitions in symbols-only mode"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_http_search_symbols_only_no_text_match() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Search for "println" with symbols mode - should NOT find it (it's not a symbol name)
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "println"), ("symbols", "true")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+
+    assert_eq!(
+        body["total_results"].as_u64().unwrap(),
+        0,
+        "Expected no results when searching for 'println' in symbols-only mode (it's not a symbol name)"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_search_symbols_only() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    // Search for a function name that exists in the test files
+    let request = SearchRequest {
+        query: "find_me".to_string(),
+        max_results: 10,
+        include_paths: vec![],
+        exclude_paths: vec![],
+        is_regex: false,
+        symbols_only: true,
+    };
+
+    let mut stream = client.search(request).await?.into_inner();
+
+    let mut results = vec![];
+    while let Some(result) = stream.message().await? {
+        results.push(result);
+    }
+
+    // Should find the function definition
+    assert!(!results.is_empty(), "Expected at least one symbol result for 'find_me'");
+
+    // All results should be symbol matches
+    for result in &results {
+        assert_eq!(
+            result.match_type,
+            1, // SYMBOL_DEFINITION
+            "Expected all gRPC results to be symbol definitions"
+        );
+    }
 
     Ok(())
 }

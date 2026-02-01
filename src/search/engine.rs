@@ -820,6 +820,168 @@ impl SearchEngine {
         Ok(matches)
     }
 
+    /// Search only in discovered symbols (function/class names).
+    ///
+    /// This method searches only in the symbol cache, returning matches where
+    /// symbol names (functions, classes, methods, etc.) match the query.
+    /// This is much faster than full-text search when you're looking for definitions.
+    ///
+    /// # Arguments
+    /// * `query` - The search query string
+    /// * `include_patterns` - Semicolon-delimited glob patterns to include
+    /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
+    /// * `max_results` - Maximum number of results to return
+    pub fn search_symbols(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchMatch>> {
+        // Build path filter from patterns
+        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
+
+        // Pre-compute lowercase query ONCE
+        let query_lower = query.to_lowercase();
+
+        // Get all documents (we'll filter by path and search symbols)
+        let all_docs = self.trigram_index.all_documents();
+
+        // Apply path filter if it has any patterns
+        let filtered_docs = if path_filter.is_empty() {
+            all_docs
+        } else {
+            path_filter
+                .filter_documents_with(&all_docs, |doc_id| self.file_store.get_path(doc_id))
+        };
+
+        // Convert to vector for parallel processing
+        let doc_ids: Vec<u32> = filtered_docs.iter().collect();
+
+        // Search symbols in parallel using rayon
+        let mut matches: Vec<SearchMatch> = doc_ids
+            .par_iter()
+            .filter_map(|&doc_id| self.search_symbols_in_document(doc_id, &query_lower))
+            .flatten()
+            .collect();
+
+        // Partial sort: only sort as much as needed for top N results
+        if matches.len() > max_results {
+            matches.select_nth_unstable_by(max_results, |a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            matches.truncate(max_results);
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        } else {
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        Ok(matches)
+    }
+
+    /// Search for symbols matching the query in a document.
+    /// Returns matches only for lines where a symbol name matches.
+    fn search_symbols_in_document(
+        &self,
+        doc_id: u32,
+        query_lower: &str,
+    ) -> Option<Vec<SearchMatch>> {
+        let file = self.file_store.get(doc_id)?;
+        let content = file.as_str().ok()?;
+
+        // Get symbols for this file
+        let symbols = self.symbol_cache.get(doc_id as usize)?;
+
+        // Find symbols matching the query
+        let matching_symbols: Vec<&Symbol> = symbols
+            .iter()
+            .filter(|s| contains_case_insensitive(&s.name, query_lower))
+            .collect();
+
+        if matching_symbols.is_empty() {
+            return None;
+        }
+
+        // Get dependency count for this file
+        let dependency_count = self.dependency_index.get_import_count(doc_id);
+
+        // Pre-compute dependency boost
+        let dependency_boost = if dependency_count > 0 {
+            1.0 + (dependency_count as f64).log10() * 0.5
+        } else {
+            1.0
+        };
+
+        // Lazy-compute path info
+        let path_str = file.path.to_string_lossy().into_owned();
+        let path_bytes = path_str.as_bytes();
+        let is_src_lib = contains_bytes(path_bytes, b"/src/")
+            || contains_bytes(path_bytes, b"\\src\\")
+            || contains_bytes(path_bytes, b"/lib/")
+            || contains_bytes(path_bytes, b"\\lib\\");
+
+        // Collect lines into a vector for indexed access
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Build matches from matching symbols
+        let mut matches = Vec::with_capacity(matching_symbols.len());
+
+        for symbol in matching_symbols {
+            // Get the line content (symbol.line is 0-based)
+            let line = match lines.get(symbol.line) {
+                Some(l) => *l,
+                None => continue,
+            };
+
+            // Find where the symbol name appears in the line
+            let (match_start, match_end) =
+                match find_match_position_case_insensitive(line, query_lower) {
+                    Some(pos) => pos,
+                    None => {
+                        // Try to find the symbol name instead
+                        let name_lower = symbol.name.to_lowercase();
+                        find_match_position_case_insensitive(line, &name_lower).unwrap_or((0, 0))
+                    }
+                };
+
+            // Calculate score - symbols always get the symbol definition boost
+            let score =
+                calculate_score_inline(line, query_lower, true, is_src_lib, dependency_boost);
+
+            // Truncate long lines around the match
+            let truncated = truncate_around_match(line, match_start, match_end);
+
+            matches.push(SearchMatch {
+                file_id: doc_id,
+                file_path: path_str.clone(),
+                line_number: symbol.line + 1, // 1-based line numbers
+                content: truncated.content,
+                match_start: truncated.match_start,
+                match_end: truncated.match_end,
+                content_truncated: truncated.was_truncated,
+                score,
+                is_symbol: true,
+                dependency_count,
+            });
+        }
+
+        if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
+    }
+
     /// Search in a document using regex matching
     fn search_in_document_regex(&self, doc_id: u32, regex: &Regex) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
@@ -1525,5 +1687,103 @@ mod tests {
         // Create the file
         fs::write(&index_path, "dummy").unwrap();
         assert!(SearchEngine::can_load_index(&index_path));
+    }
+
+    #[test]
+    fn test_search_symbols() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        // Create a Rust file with functions and a class
+        fs::write(
+            &file_path,
+            r#"
+fn hello_world() {
+    println!("Hello");
+}
+
+fn another_function() {
+    // code
+}
+
+pub struct TestStruct {
+    name: String,
+}
+
+impl TestStruct {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_string() }
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Search for symbols matching "function"
+        let results = engine.search_symbols("function", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected at least one symbol match for 'function'"
+        );
+        assert!(
+            results.iter().any(|r| r.content.contains("another_function")),
+            "Expected to find 'another_function' symbol"
+        );
+
+        // Search for symbols matching "hello"
+        let results = engine.search_symbols("hello", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected at least one symbol match for 'hello'"
+        );
+        assert!(
+            results.iter().any(|r| r.content.contains("hello_world")),
+            "Expected to find 'hello_world' symbol"
+        );
+
+        // All results should be marked as symbols
+        for result in &results {
+            assert!(result.is_symbol, "All symbol search results should have is_symbol=true");
+        }
+
+        // Search for something that doesn't match any symbol
+        let results = engine.search_symbols("println", "", "", 10).unwrap();
+        assert!(
+            results.is_empty(),
+            "Expected no symbol match for 'println' (it's not a symbol name)"
+        );
+    }
+
+    #[test]
+    fn test_search_symbols_case_insensitive() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        fs::write(
+            &file_path,
+            r#"
+fn HelloWorld() {
+    println!("Hello");
+}
+"#,
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Case-insensitive search should work
+        let results_lower = engine.search_symbols("helloworld", "", "", 10).unwrap();
+        let results_upper = engine.search_symbols("HELLOWORLD", "", "", 10).unwrap();
+        let results_mixed = engine.search_symbols("HelloWorld", "", "", 10).unwrap();
+
+        assert!(!results_lower.is_empty(), "lowercase query should find symbol");
+        assert!(!results_upper.is_empty(), "uppercase query should find symbol");
+        assert!(!results_mixed.is_empty(), "mixed case query should find symbol");
     }
 }

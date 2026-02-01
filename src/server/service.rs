@@ -205,12 +205,18 @@ impl CodeSearch for CodeSearchService {
         let include_patterns = req.include_paths.join(";");
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;
+        let symbols_only = req.symbols_only;
 
         // Use read lock for concurrent search access
         let engine = self.engine.read().unwrap();
 
-        // Choose search method based on regex flag
-        let matches = if is_regex {
+        // Choose search method based on flags
+        let matches = if symbols_only {
+            // Search only in discovered symbols
+            engine
+                .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+                .map_err(|e| Status::invalid_argument(format!("Invalid filter pattern: {}", e)))?
+        } else if is_regex {
             // Use regex search with optional path filtering
             engine
                 .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
