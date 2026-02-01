@@ -134,3 +134,162 @@ impl Default for FileStore {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_mapped_file_new() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "hello world").expect("Failed to write test file");
+
+        let mapped = MappedFile::new(&file_path).expect("Failed to create MappedFile");
+        assert_eq!(mapped.len(), 11);
+        assert!(!mapped.is_empty());
+        assert_eq!(mapped.as_str().expect("Failed to read as str"), "hello world");
+        assert_eq!(mapped.as_bytes(), b"hello world");
+    }
+
+    #[test]
+    fn test_mapped_file_empty() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("empty.txt");
+        std::fs::write(&file_path, "").expect("Failed to write test file");
+
+        let mapped = MappedFile::new(&file_path).expect("Failed to create MappedFile");
+        assert_eq!(mapped.len(), 0);
+        assert!(mapped.is_empty());
+        assert_eq!(mapped.as_str().expect("Failed to read as str"), "");
+    }
+
+    #[test]
+    fn test_mapped_file_invalid_utf8() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("binary.bin");
+        
+        // Write invalid UTF-8 bytes
+        let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
+        file.write_all(&[0xFF, 0xFE, 0x00, 0x01]).expect("Failed to write bytes");
+        drop(file);
+
+        let mapped = MappedFile::new(&file_path).expect("Failed to create MappedFile");
+        assert!(mapped.as_str().is_err());
+        // But as_bytes should still work
+        assert_eq!(mapped.as_bytes(), &[0xFF, 0xFE, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn test_mapped_file_nonexistent() {
+        let result = MappedFile::new("/nonexistent/path/to/file.txt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_store_new() {
+        let store = FileStore::new();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+        assert_eq!(store.total_size(), 0);
+    }
+
+    #[test]
+    fn test_file_store_add_and_get() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "hello world").expect("Failed to write test file");
+
+        let mut store = FileStore::new();
+        let id = store.add_file(&file_path).expect("Failed to add file");
+        
+        assert_eq!(id, 0);
+        assert_eq!(store.len(), 1);
+        assert!(!store.is_empty());
+        assert_eq!(store.total_size(), 11);
+        
+        let file = store.get(id).expect("Failed to get file");
+        assert_eq!(file.as_str().expect("Failed to read as str"), "hello world");
+    }
+
+    #[test]
+    fn test_file_store_duplicate_handling() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "hello world").expect("Failed to write test file");
+
+        let mut store = FileStore::new();
+        let id1 = store.add_file(&file_path).expect("Failed to add file first time");
+        let id2 = store.add_file(&file_path).expect("Failed to add file second time");
+        
+        // Same file added twice should return same ID
+        assert_eq!(id1, id2);
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_file_store_multiple_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file1 = temp_dir.path().join("file1.txt");
+        let file2 = temp_dir.path().join("file2.txt");
+        std::fs::write(&file1, "hello").expect("Failed to write file1");
+        std::fs::write(&file2, "world").expect("Failed to write file2");
+
+        let mut store = FileStore::new();
+        let id1 = store.add_file(&file1).expect("Failed to add file1");
+        let id2 = store.add_file(&file2).expect("Failed to add file2");
+        
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.total_size(), 10); // "hello" (5) + "world" (5)
+    }
+
+    #[test]
+    fn test_file_store_get_path() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "content").expect("Failed to write test file");
+
+        let mut store = FileStore::new();
+        let id = store.add_file(&file_path).expect("Failed to add file");
+        
+        let path = store.get_path(id).expect("Failed to get path");
+        assert!(path.ends_with("test.txt"));
+        
+        // Non-existent ID should return None
+        assert!(store.get_path(999).is_none());
+    }
+
+    #[test]
+    fn test_file_store_get_all_paths() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file1 = temp_dir.path().join("file1.txt");
+        let file2 = temp_dir.path().join("file2.txt");
+        std::fs::write(&file1, "hello").expect("Failed to write file1");
+        std::fs::write(&file2, "world").expect("Failed to write file2");
+
+        let mut store = FileStore::new();
+        store.add_file(&file1).expect("Failed to add file1");
+        store.add_file(&file2).expect("Failed to add file2");
+        
+        let paths = store.get_all_paths();
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn test_file_store_get_nonexistent() {
+        let store = FileStore::new();
+        assert!(store.get(0).is_none());
+        assert!(store.get(100).is_none());
+    }
+
+    #[test]
+    fn test_file_store_default() {
+        let store = FileStore::default();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+    }
+}

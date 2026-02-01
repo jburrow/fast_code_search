@@ -115,9 +115,13 @@ async fn main() -> Result<()> {
 
         tokio::spawn(async move {
             let router = web::create_router(web_engine, web_progress);
-            let listener = tokio::net::TcpListener::bind(&web_addr).await.unwrap();
+            let listener = tokio::net::TcpListener::bind(&web_addr)
+                .await
+                .expect("Failed to bind Web UI server to address");
             info!(address = %web_addr, "Web UI available at http://{}", web_addr);
-            axum::serve(listener, router).await.unwrap();
+            axum::serve(listener, router)
+                .await
+                .expect("Web UI server failed");
         });
     }
 
@@ -286,7 +290,9 @@ async fn main() -> Result<()> {
 
                             // Merge into engine and incrementally resolve imports
                             {
-                                let mut engine = index_engine.write().unwrap();
+                                let mut engine = index_engine
+                                    .write()
+                                    .expect("Failed to acquire write lock on search engine");
                                 engine.index_batch(pre_indexed);
                                 // Incrementally resolve imports that can be resolved now
                                 // This distributes import resolution work across the indexing phase
@@ -338,7 +344,9 @@ async fn main() -> Result<()> {
                 let batch_indexed_count = pre_indexed.len();
 
                 {
-                    let mut engine = index_engine.write().unwrap();
+                    let mut engine = index_engine
+                        .write()
+                        .expect("Failed to acquire write lock on search engine");
                     engine.index_batch(pre_indexed);
                     // Resolve imports for the final batch
                     engine.resolve_imports_incremental();
@@ -369,7 +377,9 @@ async fn main() -> Result<()> {
             // Resolve any remaining import relationships that couldn't be resolved incrementally
             // Most imports should already be resolved during the indexing phase
             {
-                let mut engine = index_engine.write().unwrap();
+                let mut engine = index_engine
+                    .write()
+                    .expect("Failed to acquire write lock on search engine");
                 let pending_count = engine.pending_imports_count();
 
                 if pending_count > 0 {
@@ -409,7 +419,9 @@ async fn main() -> Result<()> {
 
             // Get indexed text size from the engine
             let indexed_size = {
-                let engine = index_engine.read().unwrap();
+                let engine = index_engine
+                    .read()
+                    .expect("Failed to acquire read lock on search engine");
                 engine.get_stats().total_size
             };
 
