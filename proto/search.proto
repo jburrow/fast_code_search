@@ -21,6 +21,9 @@ message SearchResult {
   int32 line_number = 3;
   double score = 4;
   MatchType match_type = 5;
+  int32 match_start = 6;       // Start position of match in content
+  int32 match_end = 7;         // End position of match in content
+  bool content_truncated = 8;  // Whether content was truncated from original line
 }
 
 enum MatchType {

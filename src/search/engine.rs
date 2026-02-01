@@ -71,6 +71,146 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     memmem::find(haystack, needle).is_some()
 }
 
+/// Maximum length of content to return per match (in bytes)
+const MAX_CONTENT_LENGTH: usize = 500;
+
+/// Context to show on each side of the match
+const MATCH_CONTEXT_CHARS: usize = 200;
+
+/// Result of truncating content around a match
+struct TruncatedContent {
+    content: String,
+    match_start: usize,
+    match_end: usize,
+    was_truncated: bool,
+}
+
+/// Truncates a line around the match position, preserving context on both sides.
+/// Returns the truncated content with ellipsis indicators if truncated.
+#[inline]
+fn truncate_around_match(line: &str, match_start: usize, match_end: usize) -> TruncatedContent {
+    // If line is short enough, return as-is
+    if line.len() <= MAX_CONTENT_LENGTH {
+        return TruncatedContent {
+            content: line.to_string(),
+            match_start,
+            match_end,
+            was_truncated: false,
+        };
+    }
+
+    // Calculate window around the match
+    let window_start = match_start.saturating_sub(MATCH_CONTEXT_CHARS);
+    let window_end = (match_end + MATCH_CONTEXT_CHARS).min(line.len());
+
+    // Find safe UTF-8 boundaries
+    let safe_start = find_char_boundary_floor(line, window_start);
+    let safe_end = find_char_boundary_ceil(line, window_end);
+
+    // Build truncated string with ellipsis indicators
+    let mut result = String::with_capacity(safe_end - safe_start + 2);
+    let prefix_truncated = safe_start > 0;
+    let suffix_truncated = safe_end < line.len();
+
+    if prefix_truncated {
+        result.push('…');
+    }
+    result.push_str(&line[safe_start..safe_end]);
+    if suffix_truncated {
+        result.push('…');
+    }
+
+    // Adjust match positions relative to the new string
+    let offset = safe_start;
+    let new_match_start = if prefix_truncated {
+        match_start - offset + 1 // +1 for the ellipsis
+    } else {
+        match_start - offset
+    };
+    let new_match_end = if prefix_truncated {
+        match_end - offset + 1
+    } else {
+        match_end - offset
+    };
+
+    TruncatedContent {
+        content: result,
+        match_start: new_match_start,
+        match_end: new_match_end,
+        was_truncated: true,
+    }
+}
+
+/// Find the largest valid char boundary <= pos
+#[inline]
+fn find_char_boundary_floor(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut p = pos;
+    while p > 0 && !s.is_char_boundary(p) {
+        p -= 1;
+    }
+    p
+}
+
+/// Find the smallest valid char boundary >= pos
+#[inline]
+fn find_char_boundary_ceil(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut p = pos;
+    while p < s.len() && !s.is_char_boundary(p) {
+        p += 1;
+    }
+    p
+}
+
+/// Find match position using case-insensitive search
+#[inline]
+fn find_match_position_case_insensitive(haystack: &str, needle_lower: &str) -> Option<(usize, usize)> {
+    if needle_lower.is_empty() {
+        return Some((0, 0));
+    }
+    let needle_len = needle_lower.len();
+    if haystack.len() < needle_len {
+        return None;
+    }
+
+    let needle_bytes = needle_lower.as_bytes();
+    let haystack_bytes = haystack.as_bytes();
+    let first_needle = needle_bytes[0];
+    let first_needle_upper = if first_needle.is_ascii_lowercase() {
+        first_needle - 32
+    } else {
+        first_needle
+    };
+
+    let mut i = 0;
+    let max_start = haystack_bytes.len() - needle_len;
+
+    while i <= max_start {
+        let h = haystack_bytes[i];
+        if h == first_needle || h == first_needle_upper {
+            let mut matched = true;
+            for j in 1..needle_len {
+                let h = haystack_bytes[i + j];
+                let h_lower = if h.is_ascii_uppercase() { h + 32 } else { h };
+                if h_lower != needle_bytes[j] {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                return Some((i, i + needle_len));
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Inline scoring function with pre-computed values (no method call overhead, no redundant lookups)
 #[inline]
 fn calculate_score_inline(
@@ -156,6 +296,12 @@ pub struct SearchMatch {
     pub file_path: String,
     pub line_number: usize,
     pub content: String,
+    /// Start position of the match within the (possibly truncated) content
+    pub match_start: usize,
+    /// End position of the match within the (possibly truncated) content
+    pub match_end: usize,
+    /// Whether the content was truncated from the original line
+    pub content_truncated: bool,
     pub score: f64,
     pub is_symbol: bool,
     pub dependency_count: u32,
@@ -696,7 +842,7 @@ impl SearchEngine {
 
         // Search in each line using regex
         for (line_num, line) in content.lines().enumerate() {
-            if regex.is_match(line) {
+            if let Some(m) = regex.find(line) {
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = path_str.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
@@ -724,11 +870,17 @@ impl SearchEngine {
                     .filter(|s| s.line == line_num)
                     .any(|s| regex.is_match(&s.name));
 
+                // Truncate long lines around the match
+                let truncated = truncate_around_match(line, m.start(), m.end());
+
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
                     line_number: line_num + 1, // 1-based line numbers
-                    content: line.to_string(),
+                    content: truncated.content,
+                    match_start: truncated.match_start,
+                    match_end: truncated.match_end,
+                    content_truncated: truncated.was_truncated,
                     score,
                     is_symbol,
                     dependency_count,
@@ -775,7 +927,7 @@ impl SearchEngine {
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
-            if contains_case_insensitive(line, query_lower) {
+            if let Some((match_start, match_end)) = find_match_position_case_insensitive(line, query_lower) {
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = path_str.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
@@ -804,11 +956,17 @@ impl SearchEngine {
                     .filter(|s| s.line == line_num)
                     .any(|s| contains_case_insensitive(&s.name, query_lower));
 
+                // Truncate long lines around the match
+                let truncated = truncate_around_match(line, match_start, match_end);
+
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
                     line_number: line_num + 1, // 1-based line numbers
-                    content: line.to_string(),
+                    content: truncated.content,
+                    match_start: truncated.match_start,
+                    match_end: truncated.match_end,
+                    content_truncated: truncated.was_truncated,
                     score,
                     is_symbol,
                     dependency_count,
@@ -863,7 +1021,7 @@ impl SearchEngine {
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
-            if contains_case_insensitive(line, &query_lower) {
+            if let Some((match_start, match_end)) = find_match_position_case_insensitive(line, &query_lower) {
                 // Lazy initialize path info only when we have at least one match
                 let (path_ref, is_src_lib) = path_info.get_or_insert_with(|| {
                     let p = file.path.to_string_lossy().into_owned();
@@ -895,11 +1053,17 @@ impl SearchEngine {
                     })
                     .unwrap_or(false);
 
+                // Truncate long lines around the match
+                let truncated = truncate_around_match(line, match_start, match_end);
+
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
                     line_number: line_num + 1, // 1-based line numbers
-                    content: line.to_string(),
+                    content: truncated.content,
+                    match_start: truncated.match_start,
+                    match_end: truncated.match_end,
+                    content_truncated: truncated.was_truncated,
                     score,
                     is_symbol,
                     dependency_count,

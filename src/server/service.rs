@@ -243,6 +243,9 @@ impl CodeSearch for CodeSearchService {
                     line_number: m.line_number as i32,
                     score: m.score,
                     match_type: match_type as i32,
+                    match_start: m.match_start as i32,
+                    match_end: m.match_end as i32,
+                    content_truncated: m.content_truncated,
                 };
 
                 if tx.send(Ok(result)).await.is_err() {

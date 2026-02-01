@@ -38,6 +38,12 @@ pub struct SearchResultJson {
     pub file_path: String,
     pub content: String,
     pub line_number: usize,
+    /// Start position of match in content
+    pub match_start: usize,
+    /// End position of match in content
+    pub match_end: usize,
+    /// Whether content was truncated from original line
+    pub content_truncated: bool,
     pub score: f64,
     pub match_type: &'static str,
     pub dependency_count: u32,
@@ -149,6 +155,9 @@ pub async fn search_handler(
             file_path: m.file_path,
             content: m.content,
             line_number: m.line_number,
+            match_start: m.match_start,
+            match_end: m.match_end,
+            content_truncated: m.content_truncated,
             score: m.score,
             match_type: if m.is_symbol {
                 "SYMBOL_DEFINITION"
