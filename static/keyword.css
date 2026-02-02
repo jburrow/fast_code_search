@@ -1,0 +1,59 @@
+/* ============================================
+   KEYWORD SEARCH - View-specific styles
+   Extends common.css
+   ============================================ */
+
+/* Toggle buttons specific to keyword search */
+.regex-toggle,
+.symbols-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    transition: all 0.2s;
+    font-size: 0.85rem;
+}
+
+.regex-toggle:hover,
+.symbols-toggle:hover {
+    border-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"],
+.symbols-toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"]:checked+span,
+.symbols-toggle input[type="checkbox"]:checked+span {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* Keyword search uses full-width input (no button) */
+.search-box>input#query {
+    width: 100%;
+    padding: 0.6rem 0.85rem;
+    font-size: 1rem;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-box>input#query:focus {
+    border-color: var(--accent);
+}
+
+.search-box>input#query::placeholder {
+    color: var(--text-muted);
+}
