@@ -50,27 +50,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut result_count = 0;
     while let Some(result) = stream.message().await? {
         result_count += 1;
-        println!("\nResult #{} (Score: {:.4})", result_count, result.similarity_score);
+        println!(
+            "\nResult #{} (Score: {:.4})",
+            result_count, result.similarity_score
+        );
         println!("File: {}", result.file_path);
         println!("Lines: {}-{}", result.start_line, result.end_line);
-        
+
         if !result.symbol_name.is_empty() {
             println!("Symbol: {}", result.symbol_name);
         }
-        
+
         println!("\nContent:");
         println!("{}", "-".repeat(80));
-        
+
         // Show first 5 lines of content
         let lines: Vec<&str> = result.content.lines().take(5).collect();
         for line in lines {
             println!("{}", line);
         }
-        
+
         if result.content.lines().count() > 5 {
             println!("... ({} more lines)", result.content.lines().count() - 5);
         }
-        
+
         println!("{}", "-".repeat(80));
     }
 

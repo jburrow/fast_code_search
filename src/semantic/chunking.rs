@@ -11,10 +11,10 @@ use std::path::Path;
 /// Type of code chunk
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChunkType {
-    Fixed,                  // Fixed-size chunk
-    Function(String),       // Function with name
-    Class(String),          // Class with name
-    Module,                 // Module/file level
+    Fixed,            // Fixed-size chunk
+    Function(String), // Function with name
+    Class(String),    // Class with name
+    Module,           // Module/file level
 }
 
 /// A chunk of code with metadata
@@ -127,7 +127,10 @@ mod tests {
     #[test]
     fn test_chunk_by_size() {
         let chunker = CodeChunker::new(10, 2);
-        let content = (0..25).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..25)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         let chunks = chunker.chunk_by_size(&content, "test.rs");
 
         assert!(!chunks.is_empty());

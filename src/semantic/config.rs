@@ -149,9 +149,7 @@ impl SemanticConfig {
 
         // Check user config directory
         if let Some(config_dir) = dirs::config_dir() {
-            let user_path = config_dir
-                .join("fast_code_search")
-                .join("semantic.toml");
+            let user_path = config_dir.join("fast_code_search").join("semantic.toml");
             if user_path.exists() {
                 let config = Self::from_file(&user_path)?;
                 return Ok(Some((config, user_path)));

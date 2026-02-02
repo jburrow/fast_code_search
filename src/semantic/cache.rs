@@ -76,10 +76,10 @@ mod tests {
     #[test]
     fn test_cache_basic() {
         let mut cache = QueryCache::new(3);
-        
+
         cache.insert("query1".to_string(), vec![1.0, 0.0]);
         cache.insert("query2".to_string(), vec![0.0, 1.0]);
-        
+
         assert_eq!(cache.len(), 2);
         assert!(cache.get("query1").is_some());
         assert!(cache.get("query3").is_none());
@@ -88,11 +88,11 @@ mod tests {
     #[test]
     fn test_cache_eviction() {
         let mut cache = QueryCache::new(2);
-        
+
         cache.insert("query1".to_string(), vec![1.0, 0.0]);
         cache.insert("query2".to_string(), vec![0.0, 1.0]);
         cache.insert("query3".to_string(), vec![1.0, 1.0]);
-        
+
         // query1 should be evicted
         assert_eq!(cache.len(), 2);
         assert!(cache.get("query1").is_none());
@@ -103,16 +103,16 @@ mod tests {
     #[test]
     fn test_cache_lru() {
         let mut cache = QueryCache::new(2);
-        
+
         cache.insert("query1".to_string(), vec![1.0, 0.0]);
         cache.insert("query2".to_string(), vec![0.0, 1.0]);
-        
+
         // Access query1 to make it most recently used
         let _ = cache.get("query1");
-        
+
         // Insert query3 - should evict query2 (least recently used)
         cache.insert("query3".to_string(), vec![1.0, 1.0]);
-        
+
         assert!(cache.get("query1").is_some());
         assert!(cache.get("query2").is_none());
         assert!(cache.get("query3").is_some());

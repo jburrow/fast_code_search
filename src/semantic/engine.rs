@@ -18,9 +18,9 @@ pub struct SemanticSearchEngine {
     vector_index: VectorIndex,
     embedding_model: EmbeddingModel,
     chunker: CodeChunker,
-    chunks: FxHashMap<u32, CodeChunk>,  // chunk_id -> chunk
+    chunks: FxHashMap<u32, CodeChunk>, // chunk_id -> chunk
     next_chunk_id: u32,
-    query_cache: QueryCache,  // Cache for query embeddings
+    query_cache: QueryCache, // Cache for query embeddings
 }
 
 /// Search result
@@ -87,7 +87,8 @@ impl SemanticSearchEngine {
             // Encode query
             let embedding = self.embedding_model.encode(query)?;
             // Cache for future use
-            self.query_cache.insert(query.to_string(), embedding.clone());
+            self.query_cache
+                .insert(query.to_string(), embedding.clone());
             embedding
         };
 
@@ -98,10 +99,12 @@ impl SemanticSearchEngine {
         let results: Vec<SemanticSearchResult> = neighbors
             .into_iter()
             .filter_map(|(chunk_id, similarity)| {
-                self.chunks.get(&chunk_id).map(|chunk| SemanticSearchResult {
-                    chunk: chunk.clone(),
-                    similarity_score: similarity,
-                })
+                self.chunks
+                    .get(&chunk_id)
+                    .map(|chunk| SemanticSearchResult {
+                        chunk: chunk.clone(),
+                        similarity_score: similarity,
+                    })
             })
             .collect();
 
@@ -112,7 +115,7 @@ impl SemanticSearchEngine {
 
     /// Get statistics
     pub fn get_stats(&self) -> EngineStats {
-        let unique_files: std::collections::HashSet<_> = 
+        let unique_files: std::collections::HashSet<_> =
             self.chunks.values().map(|c| &c.file_path).collect();
 
         EngineStats {
@@ -126,16 +129,16 @@ impl SemanticSearchEngine {
     /// Save index to disk
     pub fn save_index(&self, path: &Path) -> Result<()> {
         info!(path = %path.display(), "Saving semantic index");
-        
+
         // Save vector index
         let index_path = path.with_extension("index");
         self.vector_index.save(&index_path)?;
-        
+
         // Save chunks metadata
         let chunks_path = path.with_extension("chunks");
         let chunks_data = bincode::serialize(&(&self.chunks, self.next_chunk_id))?;
         std::fs::write(chunks_path, chunks_data)?;
-        
+
         info!("Index saved successfully");
         Ok(())
     }
@@ -143,24 +146,21 @@ impl SemanticSearchEngine {
     /// Load index from disk
     pub fn load_index(&mut self, path: &Path) -> Result<()> {
         info!(path = %path.display(), "Loading semantic index");
-        
+
         // Load vector index
         let index_path = path.with_extension("index");
         self.vector_index = VectorIndex::load(&index_path)?;
-        
+
         // Load chunks metadata
         let chunks_path = path.with_extension("chunks");
         let chunks_data = std::fs::read(chunks_path)?;
-        let (chunks, next_id): (FxHashMap<u32, CodeChunk>, u32) = 
+        let (chunks, next_id): (FxHashMap<u32, CodeChunk>, u32) =
             bincode::deserialize(&chunks_data)?;
-        
+
         self.chunks = chunks;
         self.next_chunk_id = next_id;
-        
-        info!(
-            num_chunks = self.chunks.len(),
-            "Index loaded successfully"
-        );
+
+        info!(num_chunks = self.chunks.len(), "Index loaded successfully");
         Ok(())
     }
 }
@@ -195,8 +195,12 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut engine = SemanticSearchEngine::new(10, 2);
-        engine.index_file(Path::new("test1.rs"), "fn main() {}").unwrap();
-        engine.index_file(Path::new("test2.rs"), "fn test() {}").unwrap();
+        engine
+            .index_file(Path::new("test1.rs"), "fn main() {}")
+            .unwrap();
+        engine
+            .index_file(Path::new("test2.rs"), "fn test() {}")
+            .unwrap();
 
         let stats = engine.get_stats();
         assert_eq!(stats.num_files, 2);
@@ -206,14 +210,16 @@ mod tests {
     #[test]
     fn test_query_cache() {
         let mut engine = SemanticSearchEngine::new(10, 2);
-        engine.index_file(Path::new("test.rs"), "fn main() {}").unwrap();
+        engine
+            .index_file(Path::new("test.rs"), "fn main() {}")
+            .unwrap();
 
         // First search - not cached
         let _ = engine.search("test query", 5).unwrap();
-        
+
         // Second search - should use cache
         let _ = engine.search("test query", 5).unwrap();
-        
+
         let stats = engine.get_stats();
         assert_eq!(stats.cache_size, 1);
     }
@@ -221,22 +227,24 @@ mod tests {
     #[test]
     fn test_save_and_load() {
         use tempfile::tempdir;
-        
+
         let dir = tempdir().unwrap();
         let index_path = dir.path().join("test_index");
-        
+
         // Create and save engine
         {
             let mut engine = SemanticSearchEngine::new(10, 2);
-            engine.index_file(Path::new("test.rs"), "fn main() {}").unwrap();
+            engine
+                .index_file(Path::new("test.rs"), "fn main() {}")
+                .unwrap();
             engine.save_index(&index_path).unwrap();
         }
-        
+
         // Load engine
         {
             let mut engine = SemanticSearchEngine::new(10, 2);
             engine.load_index(&index_path).unwrap();
-            
+
             let stats = engine.get_stats();
             assert!(stats.num_chunks > 0);
         }

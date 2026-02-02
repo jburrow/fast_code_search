@@ -95,10 +95,8 @@ async fn main() -> Result<()> {
 
     // Create semantic search engine
     info!("Initializing semantic search engine...");
-    let mut engine = SemanticSearchEngine::new(
-        config.indexer.chunk_size,
-        config.indexer.chunk_overlap,
-    );
+    let mut engine =
+        SemanticSearchEngine::new(config.indexer.chunk_size, config.indexer.chunk_overlap);
 
     // Try to load existing index if configured
     if let Some(ref index_path) = config.indexer.index_path {
@@ -128,15 +126,17 @@ async fn main() -> Result<()> {
         let indexer_config = config.indexer.clone();
         let index_engine = Arc::clone(&shared_engine);
 
-        info!("Starting background indexing of {} path(s)", indexer_config.paths.len());
+        info!(
+            "Starting background indexing of {} path(s)",
+            indexer_config.paths.len()
+        );
 
         std::thread::spawn(move || {
             use walkdir::WalkDir;
 
             let binary_extensions: std::collections::HashSet<&str> = [
-                "exe", "dll", "so", "dylib", "bin", "o", "a", "png", "jpg", "jpeg", "gif",
-                "ico", "bmp", "zip", "tar", "gz", "7z", "rar", "woff", "woff2", "ttf",
-                "eot", "pdf",
+                "exe", "dll", "so", "dylib", "bin", "o", "a", "png", "jpg", "jpeg", "gif", "ico",
+                "bmp", "zip", "tar", "gz", "7z", "rar", "woff", "woff2", "ttf", "eot", "pdf",
             ]
             .into_iter()
             .collect();
@@ -249,9 +249,7 @@ async fn main() -> Result<()> {
         use tonic::transport::Server;
 
         let service = SemanticSearchService::new(grpc_engine);
-        let addr = grpc_addr
-            .parse()
-            .expect("Invalid gRPC server address");
+        let addr = grpc_addr.parse().expect("Invalid gRPC server address");
 
         info!(address = %grpc_addr, "Semantic gRPC server listening on {}", grpc_addr);
 
