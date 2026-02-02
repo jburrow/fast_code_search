@@ -73,6 +73,51 @@ cargo test
 
 The CI pipeline runs `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` on every PR. Commits that fail these checks will block the PR.
 
+## Documentation Requirements
+
+**IMPORTANT**: Documentation must be kept up-to-date with every change. This includes:
+
+### Files to Update with Every Change
+
+1. **This file** (`.github/copilot-instructions.md`):
+   - Update architecture descriptions when adding/modifying components
+   - Add new patterns or conventions when established
+   - Update API documentation when endpoints change
+   - Add new build/test commands when introduced
+
+2. **README.md**:
+   - Update feature descriptions for user-facing changes
+   - Update usage examples when CLI or API changes
+   - Update installation instructions when dependencies change
+   - Update benchmark results table after performance changes
+
+3. **CHANGELOG.md**:
+   - Add entry for every user-facing change
+   - Follow Keep a Changelog format (Added, Changed, Deprecated, Removed, Fixed, Security)
+
+4. **Code comments and doc comments**:
+   - Update function/struct doc comments when behavior changes
+   - Keep inline comments accurate with code changes
+
+### When Adding New Features
+
+- Add new section to this instructions file explaining the feature
+- Update README.md with user-facing documentation
+- Add CHANGELOG.md entry
+- Update any relevant design docs (e.g., `DESIGN-*.md` files)
+
+### When Modifying Existing Features
+
+- Review and update all documentation that references the changed behavior
+- Search for outdated references in markdown files
+- Update examples if API signatures change
+
+### When Removing Features
+
+- Remove or update references in all documentation files
+- Add deprecation notice to CHANGELOG.md
+- Update this instructions file to remove obsolete sections
+
 ## Handling Merge Conflicts
 
 When there are merge conflicts with the main branch, **always resolve them automatically** by:
