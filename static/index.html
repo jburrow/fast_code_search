@@ -11,8 +11,42 @@
 <body>
     <div class="container">
         <header>
-            <h1>🔍 Fast Code Search</h1>
-            <p class="subtitle">High-performance code search with trigram indexing</p>
+            <div class="header-main">
+                <h1>🔍 Fast Code Search</h1>
+                <p class="subtitle">High-performance code search with trigram indexing</p>
+            </div>
+            
+            <div class="header-stats" id="stats">
+                <div class="stat">
+                    <span class="stat-value" id="stat-files">-</span>
+                    <span class="stat-label">Files</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-size">-</span>
+                    <span class="stat-label">Size</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-trigrams">-</span>
+                    <span class="stat-label">Trigrams</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value" id="stat-deps">-</span>
+                    <span class="stat-label">Deps</span>
+                </div>
+            </div>
+
+            <div class="header-progress" id="progress-panel" style="display: none;">
+                <div class="progress-header">
+                    <span class="status-badge" id="progress-status">Ready</span>
+                    <span class="progress-percent" id="progress-percent">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
+                </div>
+                <div class="progress-info">
+                    <span class="progress-message" id="progress-message">Waiting to start...</span>
+                </div>
+            </div>
         </header>
 
         <div class="search-box">
@@ -51,39 +85,6 @@
                 </div>
                 <p class="filter-help">Use glob patterns separated by semicolons (;)</p>
             </div>
-        </div>
-
-        <div class="stats-panel" id="stats">
-            <div class="stat">
-                <span class="stat-value" id="stat-files">-</span>
-                <span class="stat-label">Files Indexed</span>
-            </div>
-            <div class="stat">
-                <span class="stat-value" id="stat-size">-</span>
-                <span class="stat-label">Total Size</span>
-            </div>
-            <div class="stat">
-                <span class="stat-value" id="stat-trigrams">-</span>
-                <span class="stat-label">Trigrams</span>
-            </div>
-            <div class="stat">
-                <span class="stat-value" id="stat-deps">-</span>
-                <span class="stat-label">Dependencies</span>
-            </div>
-        </div>
-
-        <div class="progress-panel" id="progress-panel" style="display: none;">
-            <div class="progress-header">
-                <span class="status-badge" id="progress-status">Ready</span>
-                <span class="progress-percent" id="progress-percent">0%</span>
-            </div>
-            <div class="progress-bar-container">
-                <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
-            </div>
-            <div class="progress-info">
-                <span class="progress-message" id="progress-message">Waiting to start...</span>
-            </div>
-            <div class="progress-details" id="progress-details"></div>
         </div>
 
         <div class="results-header" id="results-header" style="display: none;">
