@@ -42,7 +42,7 @@ async function loadStats() {
     try {
         const response = await fetch(`${API_BASE}/stats`);
         if (!response.ok) {
-            throw new Error('Failed to load stats');
+            throw new Error(`Failed to load stats: ${response.status}`);
         }
         
         const stats = await response.json();
@@ -123,8 +123,8 @@ function displayResults(results, query, latency) {
         return;
     }
     
-    const resultsHtml = results.map((result, index) => {
-        return createResultCard(result, index + 1);
+    const resultsHtml = results.map((result) => {
+        return createResultCard(result);
     }).join('');
     
     resultsContainer.innerHTML = `
@@ -136,7 +136,7 @@ function displayResults(results, query, latency) {
     `;
 }
 
-function createResultCard(result, index) {
+function createResultCard(result) {
     const score = (result.similarity_score * 100).toFixed(1);
     const scorePercent = Math.min(100, score);
     

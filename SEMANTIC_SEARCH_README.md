@@ -19,11 +19,15 @@ Edit `fast_code_search_semantic.toml`:
 ```toml
 [indexer]
 paths = [
-    "/path/to/your/codebase",
+    "/path/to/your/codebase",  # Unix/Linux/Mac
+    # "C:\\code\\my-project",  # Windows example
 ]
 
 # Optional: Enable persistent index
+# Unix/Linux/Mac:
 index_path = "/var/lib/fast_code_search_semantic/index"
+# Windows:
+# index_path = "C:\\ProgramData\\fast_code_search_semantic\\index"
 ```
 
 ### 3. Start the Server
