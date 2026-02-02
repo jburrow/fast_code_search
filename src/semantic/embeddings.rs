@@ -2,7 +2,7 @@
 //!
 //! This is a simplified implementation using TF-IDF-like vectors
 //! as a placeholder for full ML-based embeddings (CodeBERT, etc.)
-//! 
+//!
 //! Future enhancement: Replace with ONNX Runtime + CodeBERT
 
 use anyhow::Result;
@@ -112,7 +112,7 @@ mod tests {
         let mut model = EmbeddingModel::new();
         let embedding = model.encode("function authenticate user").unwrap();
         assert_eq!(embedding.len(), 128);
-        
+
         // Check normalization
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((norm - 1.0).abs() < 0.01 || norm == 0.0);

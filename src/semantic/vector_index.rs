@@ -9,7 +9,7 @@ use std::path::Path;
 /// Simple vector search index
 pub struct VectorIndex {
     embeddings: Vec<Vec<f32>>,
-    chunk_ids: Vec<u32>,  // Maps index position to chunk ID
+    chunk_ids: Vec<u32>, // Maps index position to chunk ID
     embedding_dim: usize,
 }
 
