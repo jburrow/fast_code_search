@@ -1,0 +1,88 @@
+# Fast Code Search Configuration
+# Generated template - customize as needed
+
+[server]
+# Address to bind the gRPC server to
+address = "0.0.0.0:50052"
+
+[indexer]
+# Paths to index on startup
+# Add your project directories here
+paths = [
+    "C:/workspace/babel-plugin-rewire",
+    "C:/workspace/bb-booking",
+    "C:/workspace/brand-weaver",
+    "C:/workspace/code-002",
+    "C:/workspace/cpython",
+    "C:/workspace/cypress-react-webpack-5-example",
+    "C:/workspace/emily-website",
+    "C:/workspace/flame-chart-js",
+    "C:/workspace/hr_for_hire",
+    "C:/workspace/ignite-profiler",
+    "C:/workspace/ignite-profiler-slides",
+    "C:/workspace/intangible",
+    "C:/workspace/johnny",
+    "C:/workspace/jpm-login",
+    "C:/workspace/jugglejuggle",
+    "C:/workspace/LaTex-Workshop",
+    "C:/workspace/line-mapping",
+    "C:/workspace/liz-vibe",
+    "C:/workspace/mcp-play-01",
+    "C:/workspace/memfs",
+    "C:/workspace/memfs-jburrow",
+    "C:/workspace/monaco-definition-provider",
+    "C:/workspace/monaco-editor-code-review",
+    "C:/workspace/m_and_dad",
+    "C:/workspace/otel",
+    "C:/workspace/python-sdk",
+    "C:/workspace/react-svg-dag",
+    "C:/workspace/rewiremock",
+    "C:/workspace/rewiremock-webpack-example",
+    "C:/workspace/rich-xmas",
+    "C:/workspace/ruff",
+    "C:/workspace/rust",
+    "C:/workspace/temp-next",
+    "C:/workspace/the-eco-explorers",
+    "C:/workspace/pandas",
+    "C:/workspace/monaco-editor",
+    "C:/workspace/unionfs",
+    "C:/workspace/use-flame-chart-2",
+    "C:/workspace/use-flame-chart-js",
+    "C:/workspace/vfs-windsurf",
+    "C:/workspace/vs-python-repl",
+    "C:/workspace/vscode",
+    "C:/workspace/vscode-copilot-chat",
+    "C:/workspace/vscode-extension-samples",
+    "C:/workspace/vscode-vfs-demo",
+]
+
+# File extensions to include (empty = all text files)
+# Uncomment and customize to limit indexed file types
+# include_extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+
+# Patterns to exclude from indexing
+exclude_patterns = [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "**/.venv/**",
+]
+
+# Maximum file size to index in bytes (default: 10MB)
+max_file_size = 10485760
+
+# Path to persistent index storage
+# index_path = "C:/workspace/fast_code_search_index.bin"
+
+# Save index after initial build completes
+save_after_build = false
+
+# Save index after N file updates via watcher
+save_after_updates = 5
+
+# Enable file watcher for incremental indexing
+watch = true

@@ -131,107 +131,113 @@ async fn main() -> Result<()> {
             indexer_config.paths.len()
         );
 
-        std::thread::spawn(move || {
-            use walkdir::WalkDir;
+        // Use a larger stack size (8MB) to handle tree-sitter recursion on deeply nested files
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .name("semantic-indexer".to_string())
+            .spawn(move || {
+                use walkdir::WalkDir;
 
-            let binary_extensions: std::collections::HashSet<&str> = [
-                "exe", "dll", "so", "dylib", "bin", "o", "a", "png", "jpg", "jpeg", "gif", "ico",
-                "bmp", "zip", "tar", "gz", "7z", "rar", "woff", "woff2", "ttf", "eot", "pdf",
-            ]
-            .into_iter()
-            .collect();
-
-            let exclude_patterns: Vec<String> = indexer_config
-                .exclude_patterns
-                .iter()
-                .map(|p| p.trim_matches('*').trim_matches('/').to_string())
+                let binary_extensions: std::collections::HashSet<&str> = [
+                    "exe", "dll", "so", "dylib", "bin", "o", "a", "png", "jpg", "jpeg", "gif",
+                    "ico", "bmp", "zip", "tar", "gz", "7z", "rar", "woff", "woff2", "ttf", "eot",
+                    "pdf",
+                ]
+                .into_iter()
                 .collect();
 
-            let mut total_indexed = 0;
-            let mut total_chunks = 0;
+                let exclude_patterns: Vec<String> = indexer_config
+                    .exclude_patterns
+                    .iter()
+                    .map(|p| p.trim_matches('*').trim_matches('/').to_string())
+                    .collect();
 
-            for path_str in &indexer_config.paths {
-                let path = std::path::Path::new(path_str);
-                if !path.exists() {
-                    tracing::warn!(path = %path_str, "Path does not exist, skipping");
-                    continue;
-                }
+                let mut total_indexed = 0;
+                let mut total_chunks = 0;
 
-                info!(path = %path_str, "Indexing path");
-
-                for entry in WalkDir::new(path)
-                    .follow_links(true)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
-                    if !entry.file_type().is_file() {
+                for path_str in &indexer_config.paths {
+                    let path = std::path::Path::new(path_str);
+                    if !path.exists() {
+                        tracing::warn!(path = %path_str, "Path does not exist, skipping");
                         continue;
                     }
 
-                    let entry_path = entry.path();
-                    let path_str_check = entry_path.to_string_lossy();
+                    info!(path = %path_str, "Indexing path");
 
-                    // Check exclude patterns
-                    if exclude_patterns
-                        .iter()
-                        .any(|pattern| path_str_check.contains(pattern))
+                    for entry in WalkDir::new(path)
+                        .follow_links(true)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
                     {
-                        continue;
-                    }
-
-                    // Skip binary files
-                    if let Some(ext) = entry_path.extension() {
-                        let ext = ext.to_string_lossy().to_lowercase();
-                        if binary_extensions.contains(ext.as_str()) {
+                        if !entry.file_type().is_file() {
                             continue;
                         }
-                    }
 
-                    // Index the file
-                    if let Ok(content) = std::fs::read_to_string(entry_path) {
-                        let mut engine = index_engine.write().unwrap();
-                        match engine.index_file(entry_path, &content) {
-                            Ok(num_chunks) => {
-                                total_indexed += 1;
-                                total_chunks += num_chunks;
+                        let entry_path = entry.path();
+                        let path_str_check = entry_path.to_string_lossy();
 
-                                if total_indexed % 100 == 0 {
-                                    info!(
-                                        files = total_indexed,
-                                        chunks = total_chunks,
-                                        "Indexing progress"
+                        // Check exclude patterns
+                        if exclude_patterns
+                            .iter()
+                            .any(|pattern| path_str_check.contains(pattern))
+                        {
+                            continue;
+                        }
+
+                        // Skip binary files
+                        if let Some(ext) = entry_path.extension() {
+                            let ext = ext.to_string_lossy().to_lowercase();
+                            if binary_extensions.contains(ext.as_str()) {
+                                continue;
+                            }
+                        }
+
+                        // Index the file
+                        if let Ok(content) = std::fs::read_to_string(entry_path) {
+                            let mut engine = index_engine.write().unwrap();
+                            match engine.index_file(entry_path, &content) {
+                                Ok(num_chunks) => {
+                                    total_indexed += 1;
+                                    total_chunks += num_chunks;
+
+                                    if total_indexed % 100 == 0 {
+                                        info!(
+                                            files = total_indexed,
+                                            chunks = total_chunks,
+                                            "Indexing progress"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        path = %entry_path.display(),
+                                        error = %e,
+                                        "Failed to index file"
                                     );
                                 }
                             }
-                            Err(e) => {
-                                tracing::warn!(
-                                    path = %entry_path.display(),
-                                    error = %e,
-                                    "Failed to index file"
-                                );
-                            }
                         }
                     }
                 }
-            }
 
-            info!(
-                files_indexed = total_indexed,
-                total_chunks = total_chunks,
-                "Background indexing completed"
-            );
+                info!(
+                    files_indexed = total_indexed,
+                    total_chunks = total_chunks,
+                    "Background indexing completed"
+                );
 
-            // Save index if configured
-            if let Some(ref index_path) = indexer_config.index_path {
-                info!(path = %index_path, "Saving index to disk");
-                let engine = index_engine.read().unwrap();
-                if let Err(e) = engine.save_index(std::path::Path::new(index_path)) {
-                    tracing::error!(error = %e, "Failed to save index");
-                } else {
-                    info!("Index saved successfully");
+                // Save index if configured
+                if let Some(ref index_path) = indexer_config.index_path {
+                    info!(path = %index_path, "Saving index to disk");
+                    let engine = index_engine.read().unwrap();
+                    if let Err(e) = engine.save_index(std::path::Path::new(index_path)) {
+                        tracing::error!(error = %e, "Failed to save index");
+                    } else {
+                        info!("Index saved successfully");
+                    }
                 }
-            }
-        });
+            })
+            .expect("Failed to spawn indexing thread");
     } else if args.no_auto_index {
         info!("Auto-indexing disabled via --no-auto-index flag");
     } else {

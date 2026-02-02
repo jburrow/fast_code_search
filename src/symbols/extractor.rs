@@ -101,41 +101,47 @@ impl SymbolExtractor {
     }
 
     fn extract_functions(node: &tree_sitter::Node, source: &str, symbols: &mut Vec<Symbol>) {
-        let mut cursor = node.walk();
+        // Use iterative traversal with explicit stack to avoid stack overflow
+        // on deeply nested code
+        let mut stack = vec![*node];
 
-        for child in node.children(&mut cursor) {
-            match child.kind() {
-                "function_item" | "function_declaration" | "function_definition" => {
-                    if let Some(name_node) = child.child_by_field_name("name") {
-                        let name = &source[name_node.byte_range()];
-                        let start = child.start_position();
-                        symbols.push(Symbol {
-                            name: name.to_string(),
-                            symbol_type: SymbolType::Function,
-                            line: start.row,
-                            column: start.column,
-                            is_definition: true,
-                        });
+        while let Some(current) = stack.pop() {
+            let mut cursor = current.walk();
+
+            for child in current.children(&mut cursor) {
+                match child.kind() {
+                    "function_item" | "function_declaration" | "function_definition" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Function,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
                     }
-                }
-                "impl_item" | "class_declaration" | "class_definition" => {
-                    if let Some(name_node) = child.child_by_field_name("name") {
-                        let name = &source[name_node.byte_range()];
-                        let start = child.start_position();
-                        symbols.push(Symbol {
-                            name: name.to_string(),
-                            symbol_type: SymbolType::Class,
-                            line: start.row,
-                            column: start.column,
-                            is_definition: true,
-                        });
+                    "impl_item" | "class_declaration" | "class_definition" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Class,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+
+                // Add child to stack for iterative processing
+                stack.push(child);
             }
-
-            // Recursively process children
-            Self::extract_functions(&child, source, symbols);
         }
     }
 
@@ -176,48 +182,53 @@ impl SymbolExtractor {
         source: &str,
         imports: &mut Vec<ImportStatement>,
     ) {
-        let mut cursor = node.walk();
+        // Use iterative traversal with explicit stack to avoid stack overflow
+        let mut stack = vec![*node];
 
-        for child in node.children(&mut cursor) {
-            match child.kind() {
-                "use_declaration" => {
-                    // Extract the use path
-                    if let Some(path_node) = child.child_by_field_name("argument") {
-                        let path = &source[path_node.byte_range()];
-                        imports.push(ImportStatement {
-                            path: path.to_string(),
-                            line: child.start_position().row,
-                            import_type: ImportType::Rust,
-                        });
-                    } else {
-                        // Fallback: get full text minus 'use' and ';'
-                        let text = &source[child.byte_range()];
-                        let path = text.trim_start_matches("use").trim_end_matches(';').trim();
-                        if !path.is_empty() {
+        while let Some(current) = stack.pop() {
+            let mut cursor = current.walk();
+
+            for child in current.children(&mut cursor) {
+                match child.kind() {
+                    "use_declaration" => {
+                        // Extract the use path
+                        if let Some(path_node) = child.child_by_field_name("argument") {
+                            let path = &source[path_node.byte_range()];
                             imports.push(ImportStatement {
                                 path: path.to_string(),
                                 line: child.start_position().row,
                                 import_type: ImportType::Rust,
                             });
+                        } else {
+                            // Fallback: get full text minus 'use' and ';'
+                            let text = &source[child.byte_range()];
+                            let path = text.trim_start_matches("use").trim_end_matches(';').trim();
+                            if !path.is_empty() {
+                                imports.push(ImportStatement {
+                                    path: path.to_string(),
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Rust,
+                                });
+                            }
                         }
                     }
-                }
-                "mod_item" => {
-                    // mod foo; declarations
-                    if let Some(name_node) = child.child_by_field_name("name") {
-                        let name = &source[name_node.byte_range()];
-                        imports.push(ImportStatement {
-                            path: name.to_string(),
-                            line: child.start_position().row,
-                            import_type: ImportType::Rust,
-                        });
+                    "mod_item" => {
+                        // mod foo; declarations
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            imports.push(ImportStatement {
+                                path: name.to_string(),
+                                line: child.start_position().row,
+                                import_type: ImportType::Rust,
+                            });
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
-            }
 
-            // Recursively process children
-            Self::extract_rust_imports(&child, source, imports);
+                // Add child to stack for iterative processing
+                stack.push(child);
+            }
         }
     }
 
@@ -227,35 +238,41 @@ impl SymbolExtractor {
         source: &str,
         imports: &mut Vec<ImportStatement>,
     ) {
-        let mut cursor = node.walk();
+        // Use iterative traversal with explicit stack to avoid stack overflow
+        let mut stack = vec![*node];
 
-        for child in node.children(&mut cursor) {
-            match child.kind() {
-                "import_statement" | "import_from_statement" => {
-                    // Get the module name from the import
-                    if let Some(module_node) = child.child_by_field_name("module_name") {
-                        let module = &source[module_node.byte_range()];
-                        imports.push(ImportStatement {
-                            path: module.to_string(),
-                            line: child.start_position().row,
-                            import_type: ImportType::Python,
-                        });
-                    } else {
-                        // Fallback: extract from full text
-                        let text = &source[child.byte_range()];
-                        if let Some(path) = Self::parse_python_import_text(text) {
+        while let Some(current) = stack.pop() {
+            let mut cursor = current.walk();
+
+            for child in current.children(&mut cursor) {
+                match child.kind() {
+                    "import_statement" | "import_from_statement" => {
+                        // Get the module name from the import
+                        if let Some(module_node) = child.child_by_field_name("module_name") {
+                            let module = &source[module_node.byte_range()];
                             imports.push(ImportStatement {
-                                path,
+                                path: module.to_string(),
                                 line: child.start_position().row,
                                 import_type: ImportType::Python,
                             });
+                        } else {
+                            // Fallback: extract from full text
+                            let text = &source[child.byte_range()];
+                            if let Some(path) = Self::parse_python_import_text(text) {
+                                imports.push(ImportStatement {
+                                    path,
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Python,
+                                });
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
-            }
 
-            Self::extract_python_imports(&child, source, imports);
+                // Add child to stack for iterative processing
+                stack.push(child);
+            }
         }
     }
 
@@ -283,48 +300,54 @@ impl SymbolExtractor {
         source: &str,
         imports: &mut Vec<ImportStatement>,
     ) {
-        let mut cursor = node.walk();
+        // Use iterative traversal with explicit stack to avoid stack overflow
+        let mut stack = vec![*node];
 
-        for child in node.children(&mut cursor) {
-            match child.kind() {
-                "import_statement" => {
-                    // import { foo } from './bar'
-                    if let Some(source_node) = child.child_by_field_name("source") {
-                        let path = &source[source_node.byte_range()];
-                        // Remove quotes
-                        let path = path.trim_matches(|c| c == '"' || c == '\'');
-                        imports.push(ImportStatement {
-                            path: path.to_string(),
-                            line: child.start_position().row,
-                            import_type: ImportType::JavaScript,
-                        });
+        while let Some(current) = stack.pop() {
+            let mut cursor = current.walk();
+
+            for child in current.children(&mut cursor) {
+                match child.kind() {
+                    "import_statement" => {
+                        // import { foo } from './bar'
+                        if let Some(source_node) = child.child_by_field_name("source") {
+                            let path = &source[source_node.byte_range()];
+                            // Remove quotes
+                            let path = path.trim_matches(|c| c == '"' || c == '\'');
+                            imports.push(ImportStatement {
+                                path: path.to_string(),
+                                line: child.start_position().row,
+                                import_type: ImportType::JavaScript,
+                            });
+                        }
                     }
-                }
-                "call_expression" => {
-                    // require('./foo')
-                    if let Some(func_node) = child.child_by_field_name("function") {
-                        let func_name = &source[func_node.byte_range()];
-                        if func_name == "require" {
-                            if let Some(args_node) = child.child_by_field_name("arguments") {
-                                let args_text = &source[args_node.byte_range()];
-                                let path = args_text
-                                    .trim_matches(|c| c == '(' || c == ')')
-                                    .trim_matches(|c| c == '"' || c == '\'');
-                                if !path.is_empty() {
-                                    imports.push(ImportStatement {
-                                        path: path.to_string(),
-                                        line: child.start_position().row,
-                                        import_type: ImportType::JavaScript,
-                                    });
+                    "call_expression" => {
+                        // require('./foo')
+                        if let Some(func_node) = child.child_by_field_name("function") {
+                            let func_name = &source[func_node.byte_range()];
+                            if func_name == "require" {
+                                if let Some(args_node) = child.child_by_field_name("arguments") {
+                                    let args_text = &source[args_node.byte_range()];
+                                    let path = args_text
+                                        .trim_matches(|c| c == '(' || c == ')')
+                                        .trim_matches(|c| c == '"' || c == '\'');
+                                    if !path.is_empty() {
+                                        imports.push(ImportStatement {
+                                            path: path.to_string(),
+                                            line: child.start_position().row,
+                                            import_type: ImportType::JavaScript,
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
-            }
 
-            Self::extract_js_imports(&child, source, imports);
+                // Add child to stack for iterative processing
+                stack.push(child);
+            }
         }
     }
 
