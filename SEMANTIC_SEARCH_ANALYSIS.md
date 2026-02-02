@@ -5,25 +5,36 @@
 This document analyzes how **semantic search** could be integrated into `fast_code_search`, considering performance implications, codebase impact, and implementation approaches. Semantic search would enable developers to find code based on meaning and intent rather than just exact text matches, significantly improving code discovery in large codebases.
 
 **Key Findings:**
-- Semantic search would complement (not replace) the existing trigram-based search
-- Hybrid approach offers best balance of speed and accuracy
+- Semantic search should be **completely separate** from traditional trigram-based search
+- Two distinct search engines serve different use cases: traditional (regex/keyword) vs. semantic (natural language)
+- **Recommended approach**: Two separate binaries in the same repository
 - Implementation complexity: Medium to High
 - Performance impact: Manageable with proper architecture
 - Memory overhead: 2-10x depending on model choice
 - Development effort: 2-4 weeks for MVP
+
+**Design Principle: Separation of Concerns**
+
+The analysis recommends keeping traditional and semantic search as **independent, parallel search engines** rather than blending them. This architectural decision provides:
+- ✅ Clear separation of use cases (exact matching vs. conceptual search)
+- ✅ Independent optimization paths for each engine
+- ✅ No performance degradation to existing trigram search
+- ✅ Easier maintenance and evolution of each system
+- ✅ Users choose the right tool for their query type
 
 ---
 
 ## Table of Contents
 
 1. [What is Semantic Search?](#what-is-semantic-search)
-2. [Current Architecture Analysis](#current-architecture-analysis)
-3. [Semantic Search Technologies](#semantic-search-technologies)
-4. [Integration Approaches](#integration-approaches)
-5. [Performance Analysis](#performance-analysis)
-6. [Codebase Impact](#codebase-impact)
-7. [Implementation Plan](#implementation-plan)
-8. [Trade-offs and Recommendations](#trade-offs-and-recommendations)
+2. [Two Distinct Search Use Cases](#two-distinct-search-use-cases)
+3. [Current Architecture Analysis](#current-architecture-analysis)
+4. [Semantic Search Technologies](#semantic-search-technologies)
+5. [Integration Approaches](#integration-approaches)
+6. [Performance Analysis](#performance-analysis)
+7. [Codebase Impact](#codebase-impact)
+8. [Implementation Plan](#implementation-plan)
+9. [Trade-offs and Recommendations](#trade-offs-and-recommendations)
 
 ---
 
@@ -63,6 +74,109 @@ Matches: All of the above plus:
 4. **Reduced Keyword Dependency**
    - Less reliance on naming conventions
    - Works across different coding styles and domains
+
+---
+
+## Two Distinct Search Use Cases
+
+`fast_code_search` should support **two independent search modes**, each optimized for different developer workflows:
+
+### Use Case 1: Traditional Search (Existing)
+
+**Purpose:** Exact, fast, keyword-based code search
+
+**Best For:**
+- Finding known symbols: `fn authenticate_user`
+- Regex patterns: `impl.*Debug`
+- File path filtering: `src/**/*.rs`
+- Exact string matches: `"error handling"`
+- Symbol navigation: jumping to definitions
+
+**Characteristics:**
+- ⚡ Sub-millisecond latency
+- 🎯 100% precision (if it matches, it's exact)
+- 📏 Deterministic results (same query = same results)
+- 🔧 Power user tool (requires knowing exact terms)
+
+**Example Queries:**
+```
+authenticate
+fn.*process_\w+
+impl Debug for
+pub struct User
+```
+
+### Use Case 2: Semantic Search (Proposed)
+
+**Purpose:** Natural language, intent-based code discovery
+
+**Best For:**
+- Exploratory search: "how do we handle authentication?"
+- Conceptual queries: "database connection pooling"
+- Cross-cutting concerns: "error handling patterns"
+- Learning codebases: "where is logging configured?"
+- Finding similar code: "functions that parse JSON"
+
+**Characteristics:**
+- 🤔 Natural language understanding
+- 🔍 Conceptual matching (finds similar concepts, not exact text)
+- 📊 Ranked by semantic relevance
+- 🧭 Onboarding tool (no need to know exact terms)
+
+**Example Queries:**
+```
+"how do we authenticate users?"
+"database connection setup"
+"functions that handle file uploads"
+"where are API routes defined?"
+```
+
+### Why Keep Them Separate?
+
+**Design Philosophy: Different Tools for Different Jobs**
+
+| Aspect | Traditional Search | Semantic Search | Why Separate? |
+|--------|-------------------|-----------------|---------------|
+| **Query Type** | Keywords, regex | Natural language | Different query parsers |
+| **Speed** | 1-5ms | 20-50ms | Performance profiles incompatible |
+| **Index** | Trigrams + symbols | Embeddings + vectors | Different data structures |
+| **Optimization** | Exact matching | Similarity ranking | Conflicting optimization goals |
+| **Use Case** | "I know what I'm looking for" | "I want to explore/discover" | Different user intent |
+
+**Benefits of Separation:**
+
+1. ✅ **No Performance Degradation**
+   - Traditional search stays fast (1-5ms)
+   - No overhead from semantic components
+   - Each engine independently optimized
+
+2. ✅ **Clear Mental Model**
+   - Users choose tool based on query type
+   - No confusion about what results mean
+   - Predictable behavior for each mode
+
+3. ✅ **Independent Evolution**
+   - Upgrade semantic models without touching trigram
+   - Optimize each engine separately
+   - Different versioning/release cycles
+
+4. ✅ **Easier Testing & Debugging**
+   - Test each engine in isolation
+   - Clear failure boundaries
+   - Simpler troubleshooting
+
+5. ✅ **Resource Flexibility**
+   - GPU for semantic, CPU for traditional
+   - Scale independently based on usage
+   - Different caching strategies
+
+**Architectural Implication:**
+
+Rather than a "hybrid" approach that blends scores, we provide:
+- **Two separate binaries** (or one binary with clear mode selection)
+- **Two separate APIs** (e.g., `/api/search` vs `/api/semantic-search`)
+- **Two separate indexes** (trigram vs vector)
+- **User chooses** which engine to use based on their need
 
 ---
 
@@ -212,129 +326,263 @@ Return: Top 20 results
 
 ## Integration Approaches
 
-### Approach 1: Separate Semantic Index (Low Risk)
+Given the design principle of **keeping traditional and semantic search separate**, here are the recommended approaches:
 
-Add a parallel vector search engine alongside trigram index:
+### Approach 1: Two Separate Binaries in Same Repository (Recommended)
 
+**Architecture:**
 ```
-Architecture:
-┌────────────────────────────────────────┐
-│         SearchEngine                   │
-├────────────────────────────────────────┤
-│  TrigramIndex    │  VectorIndex       │
-│  (existing)      │  (new)              │
-│                  │                      │
-│  Fast exact      │  Semantic search    │
-│  matching        │  with embeddings    │
-└────────────────────────────────────────┘
+fast_code_search/
+├── src/
+│   ├── bin/
+│   │   ├── fast_code_search_server.rs      (traditional search - existing)
+│   │   └── fast_code_search_semantic.rs    (semantic search - new)
+│   ├── lib.rs                               (shared library code)
+│   ├── index/                               (trigram index - existing)
+│   ├── search/                              (traditional engine - existing)
+│   └── semantic/                            (semantic engine - new)
+│       ├── mod.rs
+│       ├── embeddings.rs
+│       ├── vector_index.rs
+│       └── chunking.rs
+└── Cargo.toml
+```
+
+**Deployment:**
+```
+# Traditional search (fast, exact matching)
+$ fast_code_search_server --port 50051
+
+# Semantic search (slower, conceptual matching)
+$ fast_code_search_semantic --port 50052
 ```
 
 **Implementation:**
 ```rust
-// New module: src/semantic/mod.rs
-pub struct VectorIndex {
-    embeddings: Vec<Vec<f32>>,  // One per code chunk
-    doc_ids: Vec<u32>,           // Map embedding idx → doc_id
-    model: EmbeddingModel,       // CodeBERT/UniXcoder
+// src/semantic/mod.rs - Completely independent from traditional search
+pub struct SemanticSearchEngine {
+    vector_index: VectorIndex,
+    embedding_model: EmbeddingModel,
+    file_store: FileStore,  // Shared with traditional
 }
 
-impl VectorIndex {
-    pub fn search(&self, query: &str, k: usize) -> Vec<(u32, f32)> {
-        let query_emb = self.model.encode(query);
-        self.find_nearest_neighbors(query_emb, k)
+impl SemanticSearchEngine {
+    pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
+        // Pure semantic search - no trigram dependency
+        let query_emb = self.embedding_model.encode(query)?;
+        let candidates = self.vector_index.search(&query_emb, max_results * 2)?;
+        self.rank_by_semantic_similarity(candidates, &query_emb, max_results)
     }
 }
 
-// In SearchEngine
-pub fn search_semantic(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
-    self.vector_index.search(query, max_results)
+// src/bin/fast_code_search_semantic.rs
+#[tokio::main]
+async fn main() -> Result<()> {
+    let engine = SemanticSearchEngine::new(config)?;
+    let service = SemanticSearchService::new(engine);
+    
+    Server::builder()
+        .add_service(SemanticSearchServer::new(service))
+        .serve(addr)
+        .await?;
+    
+    Ok(())
 }
 ```
 
 **Pros:**
-- ✅ No changes to existing search
-- ✅ Can be feature-flagged
-- ✅ Easy to A/B test
-- ✅ Gradual rollout
+- ✅ **Complete separation** - no code coupling
+- ✅ **Same repository** - shared infrastructure, CI/CD, versioning
+- ✅ **Independent deployment** - run one, both, or neither
+- ✅ **No risk to existing search** - traditional engine untouched
+- ✅ **Shared code** - FileStore, configuration, utilities
+- ✅ **Easy testing** - test each binary independently
+- ✅ **Clear user choice** - connect to the engine you need
 
 **Cons:**
-- ❌ Doubles index memory
-- ❌ Two separate search paths
-- ❌ No synergy between indexes
+- ❌ Two separate services to manage
+- ❌ Separate index storage
+- ❌ Cannot blend results (but this is intentional)
 
-### Approach 2: Hybrid Pipeline (Recommended)
+**When to Use Each:**
+- Traditional: `fast_code_search_server` for regex, symbols, exact matches
+- Semantic: `fast_code_search_semantic` for natural language queries
 
-Trigram search filters candidates, then semantic re-ranking:
+---
 
+### Approach 2: Single Binary with Mode Selection (Alternative)
+
+**Architecture:**
 ```rust
-pub fn search_hybrid(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
-    // Phase 1: Fast trigram filtering (existing)
-    let candidates = self.trigram_search(query, max_results * 10)?;
-    
-    // Phase 2: Semantic re-ranking (new)
-    if should_use_semantic_rerank(query) {
-        return self.semantic_rerank(candidates, query, max_results);
-    }
-    
-    candidates.truncate(max_results);
-    candidates
+pub enum SearchMode {
+    Traditional,  // Trigram-based
+    Semantic,     // Embedding-based
 }
 
-fn should_use_semantic_rerank(query: &str) -> bool {
-    // Use semantic for natural language queries
-    query.split_whitespace().count() > 2 || 
-    query.contains("how") || 
-    query.contains("what") ||
-    // etc.
+pub struct UnifiedSearchEngine {
+    traditional: Option<TraditionalEngine>,
+    semantic: Option<SemanticEngine>,
 }
 
-fn semantic_rerank(&self, candidates: Vec<SearchResult>, query: &str, k: usize) 
-    -> Vec<SearchResult> 
-{
-    let query_emb = self.embedding_model.encode(query);
-    
-    let mut scored: Vec<_> = candidates.into_iter()
-        .map(|result| {
-            let code_emb = self.get_embedding(result.doc_id);
-            let similarity = cosine_similarity(query_emb, code_emb);
-            
-            // Blend trigram score + semantic score
-            let final_score = 0.3 * result.score + 0.7 * similarity;
-            (result, final_score)
-        })
-        .collect();
-    
-    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    scored.truncate(k);
-    scored.into_iter().map(|(r, _)| r).collect()
+// User specifies mode in request
+message SearchRequest {
+    string query = 1;
+    SearchMode mode = 2;  // TRADITIONAL or SEMANTIC
+    int32 max_results = 3;
 }
 ```
 
-**Pros:**
-- ✅ Leverages existing trigram speed
-- ✅ Semantic only when needed
-- ✅ Better resource usage
-- ✅ Single search API
+**Deployment:**
+```bash
+# Run both engines in one process
+$ fast_code_search_server --enable-traditional --enable-semantic
 
-**Cons:**
-- ❌ More complex than separate indexes
-- ❌ Requires heuristics for when to re-rank
+# Run only traditional (existing behavior)
+$ fast_code_search_server --enable-traditional
 
-### Approach 3: Embedding-Only Search (Not Recommended)
-
-Replace trigram index entirely with vector search.
+# Run only semantic
+$ fast_code_search_server --enable-semantic
+```
 
 **Pros:**
-- ✅ Simplest architecture
-- ✅ Pure semantic search
+- ✅ Single binary to deploy
+- ✅ Shared resources (memory, file handles)
+- ✅ User selects mode per-query
+- ✅ Easier ops (one service to monitor)
 
 **Cons:**
-- ❌ Much slower for exact matches
-- ❌ Loses existing performance characteristics
-- ❌ No backward compatibility
-- ❌ Breaking change for users
+- ❌ More complex binary (includes both engines)
+- ❌ Harder to scale independently (semantic needs GPU)
+- ❌ Coupled lifecycle (restart affects both)
+- ❌ Larger memory footprint (both indexes loaded)
 
-**Verdict:** ❌ Not recommended for `fast_code_search`
+---
+
+### Approach 3: Separate Repository (Not Recommended)
+
+**Architecture:**
+```
+# Separate repos
+jburrow/fast_code_search          (traditional - existing)
+jburrow/fast_code_search_semantic (semantic - new repo)
+```
+
+**Pros:**
+- ✅ Complete independence
+- ✅ Different teams can own each
+
+**Cons:**
+- ❌ Code duplication (FileStore, utilities, etc.)
+- ❌ Separate CI/CD pipelines
+- ❌ Different versioning/release cycles
+- ❌ Harder to keep in sync
+- ❌ **Not recommended** - too much separation
+
+---
+
+### Approach 4: Microservice Architecture (Production Scale)
+
+**Architecture:**
+```
+┌─────────────────────┐       ┌──────────────────────┐
+│ Traditional Service │       │  Semantic Service    │
+│ (Rust)              │       │  (Rust)              │
+│ Port: 50051         │       │  Port: 50052         │
+│ CPU-optimized       │       │  GPU-optimized       │
+└─────────────────────┘       └──────────────────────┘
+          ▲                            ▲
+          │                            │
+          └────────────┬───────────────┘
+                       │
+                  ┌────▼─────┐
+                  │  Client  │
+                  │  or      │
+                  │  Gateway │
+                  └──────────┘
+```
+
+**When to Use:**
+- Large teams with separate search requirements
+- Need to scale traditional and semantic independently
+- Want different deployment strategies (CPU vs GPU clusters)
+
+**Pros:**
+- ✅ Independent scaling
+- ✅ Different infrastructure (CPU vs GPU)
+- ✅ Isolated failures
+- ✅ Can use different languages (Rust vs Python)
+
+**Cons:**
+- ❌ More operational complexity
+- ❌ Network latency between services
+- ❌ Separate deployment pipelines
+
+---
+
+### Recommended Approach: **Option 1 - Two Binaries in Same Repository**
+
+**Rationale:**
+
+1. **Maintains Separation** ✅
+   - Traditional and semantic are completely independent
+   - No code coupling or performance interference
+   - Each can evolve separately
+
+2. **Shared Infrastructure** ✅
+   - Same repository, CI/CD, versioning
+   - Shared FileStore, configuration, utilities
+   - DRY (Don't Repeat Yourself)
+
+3. **Deployment Flexibility** ✅
+   - Run traditional only (existing use case)
+   - Run semantic only (exploratory queries)
+   - Run both on different ports (full capability)
+
+4. **Clear User Model** ✅
+   - Users know which service to query based on need
+   - No confusion about result types
+   - Predictable behavior
+
+5. **Gradual Rollout** ✅
+   - Can deploy semantic to subset of users
+   - No risk to existing traditional search
+   - Easy to disable if issues arise
+
+**Implementation Path:**
+1. Create `src/semantic/` module in existing repo
+2. Add `src/bin/fast_code_search_semantic.rs`
+3. Build both binaries: `cargo build --bin fast_code_search_server --bin fast_code_search_semantic`
+4. Deploy traditional to all users (existing)
+5. Deploy semantic to early adopters (experimental)
+6. Iterate based on feedback
+
+---
+
+### Not Recommended: Hybrid/Blended Approach
+
+**Why we're NOT recommending a hybrid approach that blends traditional + semantic:**
+
+❌ **Performance Confusion**
+- Mixing 2ms and 30ms systems creates unpredictable latency
+- Users don't know if query will be fast or slow
+
+❌ **Result Ambiguity**
+- Is result ranked by exact match or semantic similarity?
+- Hard to explain to users why something ranked #1
+
+❌ **Optimization Conflicts**
+- Trigram wants exact matching; semantic wants similarity
+- Different scoring philosophies don't blend well
+
+❌ **Complexity**
+- Need heuristics to decide when to use each
+- Blending scores is arbitrary (30% trigram + 70% semantic?)
+- More code paths = more bugs
+
+✅ **Better Alternative: Let Users Choose**
+- Power users → traditional search (they know keywords)
+- Exploratory users → semantic search (natural language)
+- Clear separation → predictable results
 
 ---
 
@@ -350,7 +598,7 @@ File Mappings:   0 (memory-mapped)
 Total:           ~15-25% overhead
 ```
 
-**With Semantic Search (Hybrid):**
+**With Semantic Search (Separate Binary):**
 ```
 Assumptions:
 - 10GB codebase
@@ -367,7 +615,12 @@ Vector index (HNSW):
   ~1.5x embeddings = 920 MB
 
 Total semantic overhead: ~1.5 GB
-Combined total: 1.5-2.5 GB (for 10GB codebase)
+
+When running both binaries:
+  Traditional: ~1.5-2.5 GB (10GB codebase)
+  Semantic:    ~1.5 GB
+  Total:       ~3-4 GB
+```
 ```
 
 **Memory Scaling:**
@@ -771,107 +1024,115 @@ impl SearchEngine {
 
 ### Recommendations
 
-#### Option 1: Full Implementation (High Ambition)
+#### Recommended: Two Separate Binaries in Same Repository
 
-**Recommendation:** Implement hybrid semantic search with the following:
-
-**Architecture:**
-- Hybrid approach (trigram + semantic reranking)
-- CodeBERT or UniXcoder for embeddings
-- ONNX Runtime for inference (CPU/GPU)
-- HNSW for vector search
-- Feature flag for gradual rollout
-
-**Minimum Requirements:**
-- GPU support (CUDA/ROCm) for production
-- Persistent embedding cache
-- Incremental indexing
-- Query result caching
-
-**Timeline:** 4-6 weeks
-**Risk:** Medium-High
-**Effort:** High
-**Value:** High (if successful)
-
-#### Option 2: Experimental Branch (Conservative)
-
-**Recommendation:** Build semantic search as an experimental feature:
-
-**Approach:**
-- Separate binary (`fast_code_search_semantic`)
-- No changes to main codebase
-- Evaluate with real users
-- Decide on integration later
-
-**Timeline:** 2-3 weeks
-**Risk:** Low
-**Effort:** Medium
-**Value:** Medium (validation)
-
-#### Option 3: External Service (Pragmatic)
-
-**Recommendation:** Implement as a separate microservice:
+**Implementation Approach:**
 
 **Architecture:**
-```
-┌─────────────────┐      ┌──────────────────┐
-│ fast_code_search│      │ semantic_service │
-│ (existing)      │◄────►│ (new)            │
-│                 │      │                   │
-│ Trigram search  │      │ Embedding search  │
-└─────────────────┘      └──────────────────┘
-         ▲                        ▲
-         └────────────┬───────────┘
-                      │
-                 ┌────▼─────┐
-                 │  Client  │
-                 └──────────┘
+- Create `src/semantic/` module for semantic search engine
+- Add `src/bin/fast_code_search_semantic.rs` as second binary
+- Keep `src/bin/fast_code_search_server.rs` (traditional) unchanged
+- Share common code via library (`src/lib.rs`)
+
+**Deployment Strategy:**
+```bash
+# Traditional search (existing behavior, untouched)
+$ fast_code_search_server --port 50051
+
+# Semantic search (new, experimental)
+$ fast_code_search_semantic --port 50052 --gpu
+
+# Or run both for full capability
+$ fast_code_search_server --port 50051 &
+$ fast_code_search_semantic --port 50052 --gpu &
 ```
 
 **Benefits:**
-- ✅ Independent deployment
-- ✅ Separate scaling (GPU for semantic, CPU for trigram)
-- ✅ No risk to existing service
-- ✅ Language-agnostic (could be Python)
+- ✅ **Complete separation** - traditional search zero impact
+- ✅ **Same repository** - shared CI/CD, versioning, code reuse
+- ✅ **Independent deployment** - run one or both as needed
+- ✅ **Clear user model** - choose the right tool for the query
+- ✅ **Gradual rollout** - deploy semantic experimentally
+- ✅ **No complexity overhead** - no hybrid logic, no heuristics
+- ✅ **Easy testing** - each binary tested independently
 
-**Timeline:** 2-3 weeks
-**Risk:** Low
+**Timeline:** 3-4 weeks
+**Risk:** Low (no changes to existing search)
 **Effort:** Medium
-**Value:** Medium-High
+**Value:** High (addresses both use cases)
 
-#### Option 4: Defer (Most Conservative)
+---
 
-**Recommendation:** Wait for:
-- User demand to materialize
-- Embedding models to improve (smaller, faster)
-- Infrastructure to support GPU easily
-- Proven value from competitors
+#### Alternative: Single Binary with Mode Selection
 
-**Timeline:** N/A
-**Risk:** None
-**Effort:** None (document for future)
-**Value:** Avoids premature optimization
+**Implementation:**
+- Single binary with `--enable-traditional` and `--enable-semantic` flags
+- User selects mode per-query via API
+
+**Benefits:**
+- ✅ Single deployment artifact
+- ✅ Shared process resources
+
+**Drawbacks:**
+- ❌ Harder to scale independently (semantic needs GPU)
+- ❌ Both indexes loaded even if only using one
+- ❌ Coupled lifecycle
+
+**Verdict:** Less recommended than separate binaries
+
+---
+
+#### Not Recommended: Separate Repository
+
+**Why Not:**
+- ❌ Code duplication (FileStore, utilities, etc.)
+- ❌ Separate CI/CD maintenance
+- ❌ Harder to keep in sync
+- ❌ Too much separation
+
+---
+
+#### Not Recommended: Hybrid/Blended Approach
+
+**Why Not:**
+- ❌ Blending trigram + semantic scores is arbitrary
+- ❌ Unpredictable latency (2ms vs 30ms)
+- ❌ Result ambiguity (exact match or similarity?)
+- ❌ Increased complexity with little benefit
+
+**Better:** Let users explicitly choose which search mode they need
+
+---
 
 ### Final Recommendation
 
-**Recommended Path: Option 2 + Option 3 Hybrid**
+**Path Forward: Two Binaries in Same Repository**
 
-1. **Phase 1 (Now):** Build experimental implementation
-   - Validate approach with real codebases
-   - Measure actual performance
-   - Gather user feedback
-   - Timeline: 2-3 weeks
+**Phase 1: Implement Semantic Binary (3-4 weeks)**
+1. Create `src/semantic/` module
+2. Implement semantic search engine (embeddings, vector index)
+3. Create `fast_code_search_semantic` binary
+4. Add gRPC/REST API for semantic queries
+5. Deploy experimentally to early adopters
 
-2. **Phase 2 (After Validation):** If successful, choose:
-   - **A)** Integrate into main codebase (Option 1)
-   - **B)** Keep as separate service (Option 3)
-   - **C)** Defer/abandon if value is unclear
+**Phase 2: Evaluate & Iterate (2-3 weeks)**
+1. Gather user feedback on semantic search
+2. Measure usage patterns (which queries use semantic?)
+3. Optimize performance (GPU, caching, indexing)
+4. Decide on long-term strategy
+
+**Phase 3: Production Rollout (if successful)**
+1. Document when to use traditional vs semantic
+2. Provide client libraries for both
+3. Deploy to all users
+4. Monitor usage and iterate
 
 **Rationale:**
-- ✅ Low risk (experimental only)
-- ✅ Real validation before commitment
-- ✅ Demonstrates innovation
-- ✅ Can pivot based on results
+- ✅ Addresses both use cases (traditional + semantic)
+- ✅ Maintains separation of concerns
+- ✅ No risk to existing traditional search
+- ✅ Clear path to production or abandonment
+- ✅ Flexible deployment (one or both binaries)
 
 ---
 
@@ -1120,22 +1381,41 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 ## Conclusion
 
-Semantic search represents a significant evolution for `fast_code_search`, enabling natural language code discovery beyond keyword matching. While the implementation involves notable complexity and performance trade-offs, a hybrid approach that combines the existing trigram index with selective semantic re-ranking offers the best balance.
+Semantic search represents a significant evolution for `fast_code_search`, enabling natural language code discovery to complement the existing trigram-based exact matching. This analysis recommends **keeping traditional and semantic search completely separate** to serve two distinct use cases.
 
 **Key Takeaways:**
 
-1. **Hybrid approach is optimal** - Leverages existing speed while adding semantic understanding
-2. **GPU acceleration is critical** - CPU-only semantic search is too slow for production
-3. **Start with experiment** - Validate approach before full integration
-4. **Consider microservice** - Separate deployment may simplify architecture
-5. **4-6 week effort** - Realistic timeline for production-ready implementation
+1. **Two search engines, two use cases** - Traditional (regex/keyword) for power users, semantic (natural language) for exploration
+2. **Separation is optimal** - Independent binaries in same repository avoid complexity while enabling both
+3. **GPU acceleration is critical** - CPU-only semantic search is too slow for production
+4. **Same repository, different binaries** - Best balance of code reuse and operational independence
+5. **3-4 week effort** - Realistic timeline for experimental semantic binary
+
+**Recommended Architecture:**
+
+```
+fast_code_search/
+├── fast_code_search_server      (traditional - untouched)
+│   → Trigram index, regex, exact matching
+│   → 1-5ms latency, CPU-only
+│   → For: "fn authenticate", "impl.*Debug"
+│
+└── fast_code_search_semantic    (new binary)
+    → Vector index, embeddings, similarity
+    → 20-50ms latency, GPU-accelerated
+    → For: "how do we authenticate users?"
+```
 
 **Next Steps:**
 
-1. Gather stakeholder feedback on this analysis
-2. Decide on implementation approach (Options 1-4)
-3. If approved, start with Phase 1 (foundation)
-4. Measure performance on real codebases
-5. Iterate based on results
+1. Review this analysis and gather stakeholder feedback
+2. If approved, implement `fast_code_search_semantic` binary
+3. Deploy experimentally to validate approach
+4. Measure performance and user satisfaction
+5. Decide on production rollout based on results
 
-This analysis provides a comprehensive foundation for deciding whether and how to integrate semantic search into `fast_code_search`.
+**Design Philosophy:**
+
+Rather than blending two incompatible search paradigms, we provide **two specialized tools** that users can choose between based on their needs. This separation maintains the performance and simplicity of traditional search while enabling powerful new semantic capabilities.
+
+This analysis provides a comprehensive foundation for implementing semantic search in `fast_code_search` while preserving the strengths of the existing system.
