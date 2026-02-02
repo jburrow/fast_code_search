@@ -1,8 +1,0 @@
-[server]
-address = "0.0.0.0:50052"
-web_address = "0.0.0.0:8080"
-
-[indexer]
-paths = ["/home/runner/work/fast_code_search/fast_code_search"]
-extensions = [".rs", ".toml", ".md", ".js", ".html", ".css"]
-exclude_patterns = ["**/target/**", "**/.git/**", "**/node_modules/**"]
