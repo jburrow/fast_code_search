@@ -39,12 +39,26 @@ cargo run --release -- --config ./config.toml
 
 # Run tests
 cargo test
-
-# Lint before committing
-cargo clippy -- -D warnings && cargo fmt --check
 ```
 
 The `build.rs` compiles `proto/search.proto` via tonic-build on each build.
+
+## Before Every Commit
+
+**IMPORTANT**: Always run these commands before committing to avoid CI failures:
+
+```bash
+# Format code (REQUIRED - CI will reject unformatted code)
+cargo fmt
+
+# Run linter (REQUIRED - CI will reject code with clippy warnings)
+cargo clippy -- -D warnings
+
+# Run tests
+cargo test
+```
+
+The CI pipeline runs `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` on every PR. Commits that fail these checks will block the PR.
 
 ## Key Patterns
 
@@ -146,10 +160,11 @@ Before preparing a release:
 
 3. **Update CHANGELOG.md** with notable changes
 
-4. **Run full test suite**:
+4. **Run full test suite and formatting**:
    ```bash
-   cargo test
+   cargo fmt
    cargo clippy -- -D warnings
+   cargo test
    ```
 
 5. **Tag the release**: `git tag v0.x.x`
