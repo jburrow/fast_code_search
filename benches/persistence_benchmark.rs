@@ -175,9 +175,7 @@ fn bench_trigram_deserialization(c: &mut Criterion) {
         use fast_code_search::index::PersistedIndex;
         let persisted = PersistedIndex::load(&index_path).expect("Failed to load persisted index");
 
-        group.throughput(Throughput::Elements(
-            persisted.trigram_index.trigram_to_docs.len() as u64,
-        ));
+        group.throughput(Throughput::Elements(persisted.trigram_index.len() as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(num_files),
             &num_files,

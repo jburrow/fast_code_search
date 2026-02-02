@@ -17,7 +17,19 @@ use super::trigram::Trigram;
 #[derive(Serialize, Deserialize)]
 pub struct PersistedTrigramIndex {
     /// Map from trigram bytes to serialized roaring bitmap
-    pub trigram_to_docs: HashMap<[u8; 3], Vec<u8>>,
+    trigram_to_docs: HashMap<[u8; 3], Vec<u8>>,
+}
+
+impl PersistedTrigramIndex {
+    /// Get the number of trigrams in the index (for benchmarking)
+    pub fn len(&self) -> usize {
+        self.trigram_to_docs.len()
+    }
+
+    /// Check if the index is empty
+    pub fn is_empty(&self) -> bool {
+        self.trigram_to_docs.is_empty()
+    }
 }
 
 /// Serializable representation of file metadata
