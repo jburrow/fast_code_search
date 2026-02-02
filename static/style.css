@@ -146,8 +146,8 @@ header h1 {
     accent-color: var(--accent);
 }
 
-.regex-toggle input[type="checkbox"]:checked + span,
-.symbols-toggle input[type="checkbox"]:checked + span {
+.regex-toggle input[type="checkbox"]:checked+span,
+.symbols-toggle input[type="checkbox"]:checked+span {
     color: var(--accent);
     font-weight: 600;
 }
@@ -207,7 +207,17 @@ header h1 {
     color: var(--text-secondary);
 }
 
+.status-badge.status-loading_index {
+    background: var(--warning);
+    color: var(--bg-primary);
+}
+
 .status-badge.status-discovering {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.status-badge.status-reconciling {
     background: var(--accent);
     color: var(--bg-primary);
 }

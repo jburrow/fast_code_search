@@ -162,8 +162,10 @@ function updateProgressUI(status) {
     if (progressStatus) {
         const statusLabels = {
             'idle': 'Ready',
+            'loading_index': 'Loading Index',
             'discovering': 'Discovering',
             'indexing': 'Indexing',
+            'reconciling': 'Reconciling',
             'resolving_imports': 'Resolving',
             'completed': 'Complete'
         };
