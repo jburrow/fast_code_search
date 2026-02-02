@@ -60,9 +60,11 @@ function updateProgressUI(status) {
         progressMessage.textContent = status.message || '';
     }
     
-    // Refresh stats during/after indexing
-    if (status.is_indexing || isCompleted) {
-        loadStats();
+    // Update stats from WebSocket message (no separate HTTP request needed)
+    if (status.num_files !== undefined) {
+        updateStat('stat-files', formatNumber(status.num_files));
+        updateStat('stat-chunks', formatNumber(status.num_chunks || 0));
+        updateStat('stat-cache', formatNumber(status.cache_size || 0));
     }
 }
 

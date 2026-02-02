@@ -11,8 +11,10 @@ use tracing::{info, warn};
 #[cfg(feature = "ml-models")]
 use {
     super::model_download::{default_cache_dir, ModelDownloader, ModelInfo},
-    ndarray::{Array2, Axis},
-    ort::{GraphOptimizationLevel, Session},
+    anyhow::Context,
+    ndarray::{ArrayView3, Axis},
+    ort::session::{builder::GraphOptimizationLevel, Session},
+    ort::value::Tensor,
     tokenizers::Tokenizer,
     tracing::debug,
 };
@@ -181,10 +183,10 @@ impl EmbeddingModel {
 
     /// Encode using ML model
     #[cfg(feature = "ml-models")]
-    fn encode_ml(&self, text: &str) -> Result<Vec<f32>> {
+    fn encode_ml(&mut self, text: &str) -> Result<Vec<f32>> {
         let session = self
             .session
-            .as_ref()
+            .as_mut()
             .context("ONNX session not available")?;
         let tokenizer = self.tokenizer.as_ref().context("Tokenizer not available")?;
 
@@ -196,29 +198,26 @@ impl EmbeddingModel {
         let input_ids = encoding.get_ids();
         let attention_mask = encoding.get_attention_mask();
 
-        // Convert to arrays
-        let input_ids_array = Array2::from_shape_vec(
-            (1, input_ids.len()),
-            input_ids.iter().map(|&x| x as i64).collect(),
-        )?;
+        let seq_len = input_ids.len();
 
-        let attention_mask_array = Array2::from_shape_vec(
-            (1, attention_mask.len()),
-            attention_mask.iter().map(|&x| x as i64).collect(),
-        )?;
+        // Create tensors using tuple (shape, data) format for ort 2.0 API
+        let input_ids_data: Vec<i64> = input_ids.iter().map(|&x| x as i64).collect();
+        let attention_mask_data: Vec<i64> = attention_mask.iter().map(|&x| x as i64).collect();
 
-        // Run inference
+        let input_ids_tensor = Tensor::from_array(([1usize, seq_len], input_ids_data))?;
+        let attention_mask_tensor = Tensor::from_array(([1usize, seq_len], attention_mask_data))?;
+
+        // Run inference using the new ort 2.0 API
         let outputs = session.run(ort::inputs![
-            "input_ids" => input_ids_array.view(),
-            "attention_mask" => attention_mask_array.view()
-        ]?)?;
+            "input_ids" => input_ids_tensor,
+            "attention_mask" => attention_mask_tensor
+        ])?;
 
         // Extract embeddings from output
         // CodeBERT output is [batch_size, sequence_length, hidden_size]
-        let embeddings = outputs["last_hidden_state"]
-            .try_extract_tensor::<f32>()?
-            .view()
-            .to_owned();
+        let (shape, data) = outputs["last_hidden_state"].try_extract_tensor::<f32>()?;
+        let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+        let embeddings = ArrayView3::from_shape((dims[0], dims[1], dims[2]), data)?;
 
         // Mean pooling over sequence dimension
         let pooled = embeddings
@@ -226,7 +225,7 @@ impl EmbeddingModel {
             .context("Failed to pool embeddings")?;
 
         // L2 normalization
-        let mut embedding: Vec<f32> = pooled.to_vec();
+        let mut embedding: Vec<f32> = pooled.into_raw_vec();
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 0.0 {
             for val in &mut embedding {
@@ -239,10 +238,10 @@ impl EmbeddingModel {
 
     /// Encode batch using ML model
     #[cfg(feature = "ml-models")]
-    fn encode_batch_ml(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    fn encode_batch_ml(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let session = self
             .session
-            .as_ref()
+            .as_mut()
             .context("ONNX session not available")?;
         let tokenizer = self.tokenizer.as_ref().context("Tokenizer not available")?;
 
@@ -270,22 +269,21 @@ impl EmbeddingModel {
             attention_mask_vec.extend(mask.iter().map(|&x| x as i64));
         }
 
-        let input_ids_array = Array2::from_shape_vec((batch_size, seq_len), input_ids_vec)?;
+        // Create tensors using tuple (shape, data) format for ort 2.0 API
+        let input_ids_tensor = Tensor::from_array(([batch_size, seq_len], input_ids_vec))?;
+        let attention_mask_tensor =
+            Tensor::from_array(([batch_size, seq_len], attention_mask_vec))?;
 
-        let attention_mask_array =
-            Array2::from_shape_vec((batch_size, seq_len), attention_mask_vec)?;
-
-        // Run inference
+        // Run inference using the new ort 2.0 API
         let outputs = session.run(ort::inputs![
-            "input_ids" => input_ids_array.view(),
-            "attention_mask" => attention_mask_array.view()
-        ]?)?;
+            "input_ids" => input_ids_tensor,
+            "attention_mask" => attention_mask_tensor
+        ])?;
 
         // Extract and pool embeddings
-        let embeddings = outputs["last_hidden_state"]
-            .try_extract_tensor::<f32>()?
-            .view()
-            .to_owned();
+        let (shape, data) = outputs["last_hidden_state"].try_extract_tensor::<f32>()?;
+        let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+        let embeddings = ArrayView3::from_shape((dims[0], dims[1], dims[2]), data)?;
 
         let mut results = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
@@ -295,7 +293,7 @@ impl EmbeddingModel {
                 .context("Failed to pool embeddings")?;
 
             // L2 normalization
-            let mut embedding: Vec<f32> = pooled.to_vec();
+            let mut embedding: Vec<f32> = pooled.into_raw_vec();
             let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
             if norm > 0.0 {
                 for val in &mut embedding {

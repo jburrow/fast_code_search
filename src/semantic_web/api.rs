@@ -28,6 +28,11 @@ pub struct SemanticProgress {
     pub message: String,
     pub is_indexing: bool,
     pub progress_percent: u8,
+    // Stats fields (included to avoid separate HTTP request)
+    pub num_files: usize,
+    pub num_chunks: usize,
+    pub embedding_dim: usize,
+    pub cache_size: usize,
 }
 
 /// Shared progress state
@@ -198,6 +203,21 @@ pub async fn ws_progress_handler(
     ws.on_upgrade(|socket| handle_progress_socket(socket, state))
 }
 
+/// Helper to enrich progress with current stats from engine
+fn enrich_progress_with_stats(
+    mut progress: SemanticProgress,
+    engine: &EngineState,
+) -> SemanticProgress {
+    if let Ok(engine) = engine.read() {
+        let stats = engine.get_stats();
+        progress.num_files = stats.num_files;
+        progress.num_chunks = stats.num_chunks;
+        progress.embedding_dim = stats.embedding_dim;
+        progress.cache_size = stats.cache_size;
+    }
+    progress
+}
+
 /// Handle a WebSocket connection for progress updates
 async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     let (mut sender, mut receiver) = socket.split();
@@ -205,13 +225,15 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     // Subscribe to progress broadcast channel
     let mut rx = state.progress_tx.subscribe();
 
+    // Clone engine for use in spawned task
+    let engine = state.engine.clone();
+
     // Send initial progress state immediately (clone before await to avoid holding lock)
     let initial_json = {
-        state
-            .progress
-            .read()
-            .ok()
-            .and_then(|progress| serde_json::to_string(&*progress).ok())
+        state.progress.read().ok().and_then(|progress| {
+            let enriched = enrich_progress_with_stats(progress.clone(), &state.engine);
+            serde_json::to_string(&enriched).ok()
+        })
     };
     if let Some(json) = initial_json {
         let _ = sender.send(Message::Text(json.into())).await;
@@ -221,14 +243,17 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     let send_task = tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(progress) => match serde_json::to_string(&progress) {
-                    Ok(json) => {
-                        if sender.send(Message::Text(json.into())).await.is_err() {
-                            break; // Client disconnected
+                Ok(progress) => {
+                    let enriched = enrich_progress_with_stats(progress, &engine);
+                    match serde_json::to_string(&enriched) {
+                        Ok(json) => {
+                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                break; // Client disconnected
+                            }
                         }
+                        Err(_) => continue,
                     }
-                    Err(_) => continue,
-                },
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }

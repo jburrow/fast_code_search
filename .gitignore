@@ -30,3 +30,6 @@ fast_code_search.toml
 dhat-heap.json
 test_corpus
 .*.toml
+
+# ONNX Runtime (downloaded separately for ml-models feature)
+onnxruntime/

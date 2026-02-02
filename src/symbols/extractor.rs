@@ -12,6 +12,9 @@ pub enum SymbolType {
     Constant,
     Interface,
     Type,
+    Enum,
+    Trait,
+    Struct,
 }
 
 #[derive(Debug, Clone)]
@@ -123,13 +126,109 @@ impl SymbolExtractor {
                             });
                         }
                     }
-                    "impl_item" | "class_declaration" | "class_definition" => {
+                    "class_declaration" | "class_definition" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
                             let start = child.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Class,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Rust impl blocks use "type" field, not "name"
+                    "impl_item" => {
+                        if let Some(type_node) = child.child_by_field_name("type") {
+                            let name = &source[type_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Class,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    "interface_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Interface,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    "type_alias_declaration" | "type_item" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Type,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Enums: TypeScript enum_declaration, Rust enum_item
+                    "enum_declaration" | "enum_item" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Enum,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Rust traits (similar to interfaces)
+                    "trait_item" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Trait,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Rust structs
+                    "struct_item" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Struct,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Rust constants and statics
+                    "const_item" | "static_item" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Constant,
                                 line: start.row,
                                 column: start.column,
                                 is_definition: true,
@@ -377,5 +476,190 @@ fn another_function() {
         assert!(symbols.len() >= 2);
         assert!(symbols.iter().any(|s| s.name == "hello_world"));
         assert!(symbols.iter().any(|s| s.name == "another_function"));
+    }
+
+    #[test]
+    fn test_typescript_interface_extraction() {
+        let source = r#"
+interface User {
+    id: number;
+    name: string;
+}
+
+interface Config {
+    debug: boolean;
+}
+
+type UserId = string | number;
+
+type Handler = (event: Event) => void;
+
+function processUser(user: User): void {
+    console.log(user.name);
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.ts"));
+        let symbols = extractor.extract(source).unwrap();
+
+        // Should find interfaces
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "User" && s.symbol_type == SymbolType::Interface),
+            "Should find User interface"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Config" && s.symbol_type == SymbolType::Interface),
+            "Should find Config interface"
+        );
+
+        // Should find type aliases
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "UserId" && s.symbol_type == SymbolType::Type),
+            "Should find UserId type alias"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Handler" && s.symbol_type == SymbolType::Type),
+            "Should find Handler type alias"
+        );
+
+        // Should find function
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "processUser" && s.symbol_type == SymbolType::Function),
+            "Should find processUser function"
+        );
+    }
+
+    #[test]
+    fn test_typescript_enum_extraction() {
+        let source = r#"
+enum Status {
+    Active,
+    Inactive,
+    Pending
+}
+
+enum Color {
+    Red = "red",
+    Green = "green",
+    Blue = "blue"
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.ts"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Status" && s.symbol_type == SymbolType::Enum),
+            "Should find Status enum"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Color" && s.symbol_type == SymbolType::Enum),
+            "Should find Color enum"
+        );
+    }
+
+    #[test]
+    fn test_rust_comprehensive_extraction() {
+        let source = r#"
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+trait Drawable {
+    fn draw(&self);
+}
+
+type Coordinate = (i32, i32);
+
+const MAX_SIZE: usize = 100;
+
+static GLOBAL_COUNT: u32 = 0;
+
+fn process() {}
+
+impl Point {
+    fn new() -> Self {
+        Point { x: 0, y: 0 }
+    }
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.rs"));
+        let symbols = extractor.extract(source).unwrap();
+
+        // Should find struct
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Point" && s.symbol_type == SymbolType::Struct),
+            "Should find Point struct"
+        );
+
+        // Should find enum
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Direction" && s.symbol_type == SymbolType::Enum),
+            "Should find Direction enum"
+        );
+
+        // Should find trait
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Drawable" && s.symbol_type == SymbolType::Trait),
+            "Should find Drawable trait"
+        );
+
+        // Should find type alias
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Coordinate" && s.symbol_type == SymbolType::Type),
+            "Should find Coordinate type alias"
+        );
+
+        // Should find const
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "MAX_SIZE" && s.symbol_type == SymbolType::Constant),
+            "Should find MAX_SIZE constant"
+        );
+
+        // Should find static
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "GLOBAL_COUNT" && s.symbol_type == SymbolType::Constant),
+            "Should find GLOBAL_COUNT static"
+        );
+
+        // Should find function
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "process" && s.symbol_type == SymbolType::Function),
+            "Should find process function"
+        );
     }
 }

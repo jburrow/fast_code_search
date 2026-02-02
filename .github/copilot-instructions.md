@@ -69,6 +69,21 @@ cargo test
 
 The `build.rs` compiles `proto/search.proto` via tonic-build on each build.
 
+### ML Models Feature (Semantic Search)
+
+The `ml-models` feature enables ONNX-based embeddings for semantic search:
+
+```bash
+cargo build --release --bin fast_code_search_semantic --features ml-models
+```
+
+**Windows-specific**: Due to CRT linking conflicts between `ort` (dynamic /MD) and `tokenizers` (static /MT), the `ort` crate uses `load-dynamic` feature. This requires:
+
+1. Download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases
+2. Set `ORT_DYLIB_PATH` environment variable to point to `onnxruntime.dll`
+
+See `docs/semantic/SEMANTIC_SEARCH_README.md` for detailed setup instructions.
+
 ## Before Every Commit
 
 **IMPORTANT**: Always run these commands before committing to avoid CI failures:

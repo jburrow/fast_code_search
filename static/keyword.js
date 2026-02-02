@@ -100,9 +100,12 @@ function updateProgressUI(status) {
         progressMessage.textContent = status.message || '';
     }
     
-    // Refresh stats during/after indexing
-    if (status.is_indexing || isCompleted) {
-        fetchStats();
+    // Update stats from WebSocket message (no separate HTTP request needed)
+    if (status.num_files !== undefined) {
+        updateStat('stat-files', formatNumber(status.num_files));
+        updateStat('stat-size', formatBytes(status.total_size || 0));
+        updateStat('stat-trigrams', formatNumber(status.num_trigrams || 0));
+        updateStat('stat-deps', formatNumber(status.dependency_edges || 0));
     }
 }
 

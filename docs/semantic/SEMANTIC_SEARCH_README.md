@@ -122,10 +122,16 @@ Both share:
 
 ### Current Implementation
 
-**Embedding Model**: TF-IDF-based vector representation
+**Embedding Model**: TF-IDF-based vector representation (default)
 - Fast and lightweight
 - No external dependencies
-- Ready to upgrade to ML models (CodeBERT, UniXcoder)
+- Works out of the box
+
+**ML Embeddings** (optional, via `--features ml-models`):
+- CodeBERT/UniXcoder models via ONNX Runtime
+- Higher quality semantic understanding
+- Requires model download (~500MB)
+- See "Building with ML Models" section for setup
 
 **Vector Index**: Linear similarity search
 - Cosine similarity scoring
@@ -235,6 +241,58 @@ cargo build --bin fast_code_search_semantic
 cargo build --release --bin fast_code_search_semantic
 ```
 
+### Building with ML Models (Optional)
+
+To use ML-based embeddings (CodeBERT/UniXcoder) instead of TF-IDF, build with the `ml-models` feature:
+
+```bash
+cargo build --release --bin fast_code_search_semantic --features ml-models
+```
+
+#### Windows-Specific Setup
+
+On Windows, the `ml-models` feature requires additional setup due to CRT (C Runtime) linking conflicts between the `ort` (ONNX Runtime) and `tokenizers` crates. The solution is to use dynamic loading:
+
+1. **Build with the feature** (ort uses `load-dynamic` internally):
+   ```powershell
+   cargo build --release --bin fast_code_search_semantic --features ml-models
+   ```
+
+2. **Download ONNX Runtime**:
+   - Go to [ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases)
+   - Download `onnxruntime-win-x64-1.22.0.zip` (or latest version)
+   - Extract to a permanent location, e.g., `C:\onnxruntime\`
+
+3. **Set the environment variable** before running:
+   ```powershell
+   # PowerShell
+   $env:ORT_DYLIB_PATH = "C:\onnxruntime\onnxruntime-win-x64-1.22.0\lib\onnxruntime.dll"
+   
+   # Or permanently via System Settings
+   [Environment]::SetEnvironmentVariable("ORT_DYLIB_PATH", "C:\onnxruntime\onnxruntime-win-x64-1.22.0\lib\onnxruntime.dll", "User")
+   ```
+
+4. **Run the semantic search server**:
+   ```powershell
+   cargo run --release --bin fast_code_search_semantic --features ml-models -- --config fast_code_search_semantic.toml
+   ```
+
+**Why is this needed?** The `ort` crate links against the dynamic C runtime (/MD), while `tokenizers` (via `esaxx-rs`) uses the static runtime (/MT). These are incompatible at link time on Windows. Using `load-dynamic` avoids static linking entirely by loading `onnxruntime.dll` at runtime.
+
+#### Linux/macOS Setup
+
+On Unix systems, the build typically works without additional setup:
+
+```bash
+cargo build --release --bin fast_code_search_semantic --features ml-models
+```
+
+If you encounter issues, you can still use the dynamic loading approach by setting:
+```bash
+export ORT_DYLIB_PATH=/path/to/libonnxruntime.so  # Linux
+export ORT_DYLIB_PATH=/path/to/libonnxruntime.dylib  # macOS
+```
+
 ### Linting
 
 ```bash
@@ -250,7 +308,7 @@ cargo fmt --check
 - Improved result visualization
 
 ### Future Enhancements
-- **ML Embeddings**: Upgrade to CodeBERT/UniXcoder via ONNX Runtime
+- **ML Embeddings**: Available now via `--features ml-models` (CodeBERT/UniXcoder via ONNX Runtime)
 - **HNSW Index**: Sub-linear similarity search for large codebases
 - **GPU Support**: Faster embedding generation
 - **Multi-language**: Support for more programming languages
@@ -281,6 +339,27 @@ lsof -i :8081   # Web UI
 1. Enable index persistence to avoid re-indexing
 2. Reduce `max_results` parameter
 3. Consider upgrading to ML embeddings for better accuracy
+
+### ML Models won't build (Windows)
+
+**Symptom**: Linker errors mentioning `RuntimeLibrary mismatch` or `LIBCMT vs MSVCRT`
+
+**Solution**: This is expected. The `ort` crate in this project uses `load-dynamic` to avoid CRT conflicts. Follow the "Windows-Specific Setup" section in Development > Building with ML Models.
+
+### ML Models runtime error: "Cannot find ONNX Runtime library"
+
+**Solution**: Set the `ORT_DYLIB_PATH` environment variable to point to the ONNX Runtime library:
+
+```powershell
+# Windows
+$env:ORT_DYLIB_PATH = "C:\path\to\onnxruntime.dll"
+
+# Linux
+export ORT_DYLIB_PATH=/path/to/libonnxruntime.so
+
+# macOS
+export ORT_DYLIB_PATH=/path/to/libonnxruntime.dylib
+```
 
 ## License
 

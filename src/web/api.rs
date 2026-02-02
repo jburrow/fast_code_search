@@ -97,6 +97,11 @@ pub struct StatusResponse {
     pub errors: usize,
     pub message: String,
     pub is_indexing: bool,
+    // Stats fields (included to avoid separate HTTP request)
+    pub num_files: usize,
+    pub total_size: u64,
+    pub num_trigrams: usize,
+    pub dependency_edges: usize,
 }
 
 /// Handle search requests
@@ -258,6 +263,22 @@ pub async fn status_handler(
             | IndexingStatus::ResolvingImports
     );
 
+    // Get stats from the engine if available
+    let (num_files, total_size, num_trigrams, dependency_edges) = {
+        match state.engine.read() {
+            Ok(engine) => {
+                let stats = engine.get_stats();
+                (
+                    stats.num_files,
+                    stats.total_size,
+                    stats.num_trigrams,
+                    stats.dependency_edges,
+                )
+            }
+            Err(_) => (0, 0, 0, 0),
+        }
+    };
+
     Ok(Json(StatusResponse {
         status: status_str.to_string(),
         files_discovered: progress.files_discovered,
@@ -270,6 +291,10 @@ pub async fn status_handler(
         errors: progress.errors,
         message: progress.message.clone(),
         is_indexing,
+        num_files,
+        total_size,
+        num_trigrams,
+        dependency_edges,
     }))
 }
 
@@ -366,6 +391,23 @@ pub async fn ws_progress_handler(
     ws.on_upgrade(|socket| handle_progress_socket(socket, state))
 }
 
+/// Helper to get stats from engine
+fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
+    engine
+        .read()
+        .ok()
+        .map(|e| {
+            let stats = e.get_stats();
+            ProgressStats {
+                num_files: stats.num_files,
+                total_size: stats.total_size,
+                num_trigrams: stats.num_trigrams,
+                dependency_edges: stats.dependency_edges,
+            }
+        })
+        .unwrap_or_default()
+}
+
 /// Handle a WebSocket connection for progress updates
 async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     let (mut sender, mut receiver) = socket.split();
@@ -373,10 +415,14 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     // Subscribe to progress broadcast channel
     let mut rx = state.progress_tx.subscribe();
 
+    // Clone engine for use in spawned task
+    let engine = state.engine.clone();
+
     // Send initial progress state immediately (clone before await to avoid holding lock)
     let initial_json = {
+        let stats = get_stats_from_engine(&state.engine);
         state.progress.read().ok().and_then(|progress| {
-            let status_response = progress_to_status(&progress);
+            let status_response = progress_to_status(&progress, stats);
             serde_json::to_string(&status_response).ok()
         })
     };
@@ -389,7 +435,8 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
         loop {
             match rx.recv().await {
                 Ok(progress) => {
-                    let status_response = progress_to_status(&progress);
+                    let stats = get_stats_from_engine(&engine);
+                    let status_response = progress_to_status(&progress, stats);
                     match serde_json::to_string(&status_response) {
                         Ok(json) => {
                             if sender.send(Message::Text(json.into())).await.is_err() {
@@ -423,8 +470,20 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     send_task.abort();
 }
 
-/// Convert IndexingProgress to StatusResponse
-fn progress_to_status(progress: &crate::search::IndexingProgress) -> StatusResponse {
+/// Stats for inclusion in StatusResponse
+#[derive(Debug, Clone, Default)]
+pub struct ProgressStats {
+    pub num_files: usize,
+    pub total_size: u64,
+    pub num_trigrams: usize,
+    pub dependency_edges: usize,
+}
+
+/// Convert IndexingProgress to StatusResponse with stats
+fn progress_to_status(
+    progress: &crate::search::IndexingProgress,
+    stats: ProgressStats,
+) -> StatusResponse {
     let status_str = match progress.status {
         IndexingStatus::Idle => "idle",
         IndexingStatus::LoadingIndex => "loading_index",
@@ -456,5 +515,10 @@ fn progress_to_status(progress: &crate::search::IndexingProgress) -> StatusRespo
         errors: progress.errors,
         message: progress.message.clone(),
         is_indexing,
+        // Include stats
+        num_files: stats.num_files,
+        total_size: stats.total_size,
+        num_trigrams: stats.num_trigrams,
+        dependency_edges: stats.dependency_edges,
     }
 }

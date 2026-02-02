@@ -93,6 +93,20 @@ sudo apt-get install protobuf-compiler
 cargo build --release
 ```
 
+### Semantic Search (Optional)
+
+The semantic search binary enables natural language queries:
+
+```bash
+# Basic build (TF-IDF embeddings)
+cargo build --release --bin fast_code_search_semantic
+
+# With ML models (CodeBERT/UniXcoder - better quality)
+cargo build --release --bin fast_code_search_semantic --features ml-models
+```
+
+> **Windows users**: The `ml-models` feature requires ONNX Runtime DLL and `ORT_DYLIB_PATH` environment variable. See [Semantic Search README](docs/semantic/SEMANTIC_SEARCH_README.md#building-with-ml-models-optional) for detailed setup instructions.
+
 ### Run Tests
 
 ```bash
