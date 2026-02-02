@@ -238,6 +238,30 @@ async fn main() -> Result<()> {
         info!("No paths configured for indexing");
     }
 
+    // Start gRPC server
+    let grpc_addr = config.server.address.clone();
+    let grpc_engine = Arc::clone(&shared_engine);
+
+    info!(grpc_address = %grpc_addr, "Starting gRPC server");
+
+    tokio::spawn(async move {
+        use fast_code_search::semantic_server::{SemanticCodeSearchServer, SemanticSearchService};
+        use tonic::transport::Server;
+
+        let service = SemanticSearchService::new(grpc_engine);
+        let addr = grpc_addr
+            .parse()
+            .expect("Invalid gRPC server address");
+
+        info!(address = %grpc_addr, "Semantic gRPC server listening on {}", grpc_addr);
+
+        Server::builder()
+            .add_service(SemanticCodeSearchServer::new(service))
+            .serve(addr)
+            .await
+            .expect("gRPC server failed");
+    });
+
     // Start web server
     if config.server.enable_web_ui {
         let web_addr = config.server.web_address.clone();
