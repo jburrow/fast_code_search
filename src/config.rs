@@ -58,6 +58,15 @@ pub struct IndexerConfig {
     /// Enable file watcher for incremental indexing
     #[serde(default)]
     pub watch: bool,
+
+    /// Save index after initial build completes (default: true if index_path is set)
+    #[serde(default = "default_true")]
+    pub save_after_build: bool,
+
+    /// Save index after N file updates (0 = disabled, off by default)
+    /// When enabled, the index is periodically saved after this many files are updated
+    #[serde(default)]
+    pub save_after_updates: usize,
 }
 
 fn default_address() -> String {
@@ -89,6 +98,10 @@ fn default_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -108,7 +121,49 @@ impl Default for IndexerConfig {
             max_file_size: default_max_file_size(),
             index_path: None,
             watch: false,
+            save_after_build: true,
+            save_after_updates: 0, // Disabled by default
         }
+    }
+}
+
+impl IndexerConfig {
+    /// Generate a fingerprint of the indexer configuration
+    /// Used to detect config changes that require re-indexing
+    pub fn fingerprint(&self) -> String {
+        // Normalize and sort paths for consistent fingerprinting
+        let mut sorted_paths: Vec<_> = self
+            .paths
+            .iter()
+            .map(|p| p.replace('\\', "/").to_lowercase())
+            .collect();
+        sorted_paths.sort();
+
+        // Sort extensions
+        let mut sorted_exts = self.include_extensions.to_vec();
+        sorted_exts.sort();
+
+        // Sort exclude patterns
+        let mut sorted_excludes = self.exclude_patterns.to_vec();
+        sorted_excludes.sort();
+
+        // Create a deterministic string representation
+        let config_str = format!(
+            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}",
+            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size
+        );
+
+        // Generate MD5 hash
+        format!("{:x}", md5::compute(config_str.as_bytes()))
+    }
+
+    /// Check if a path is within the configured index paths
+    pub fn is_path_in_scope(&self, path: &std::path::Path) -> bool {
+        let path_str = path.to_string_lossy().replace('\\', "/").to_lowercase();
+        self.paths.iter().any(|base| {
+            let base_normalized = base.replace('\\', "/").to_lowercase();
+            path_str.starts_with(&base_normalized)
+        })
     }
 }
 
@@ -197,8 +252,18 @@ exclude_patterns = [
 max_file_size = 10485760
 
 # Path to persistent index storage (optional)
-# If set, the index will be saved to disk and loaded on restart
+# If set, the index will be saved to disk and loaded on restart for faster startup
+# The index file stores trigrams, file metadata, and config fingerprint for reconciliation
 # index_path = "/var/lib/fast_code_search/index.bin"
+
+# Save index after initial build completes (default: true)
+# Only effective when index_path is set
+# save_after_build = true
+
+# Save index after N file updates via watcher (default: 0 = disabled)
+# When enabled with a non-zero value, the index is periodically saved after this many files are updated
+# Useful for long-running servers to persist incremental changes
+# save_after_updates = 0
 
 # Enable file watcher for incremental indexing (default: false)
 # When enabled, changes to indexed files are detected and re-indexed automatically

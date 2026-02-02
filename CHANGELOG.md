@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Index persistence**: The trigram index can now be saved to disk and loaded on restart for faster startup times
+  - Configure `index_path` in config to enable persistence
+  - `save_after_build = true` (default) saves after initial indexing completes
+  - `save_after_updates = N` saves after N file updates via watcher (disabled by default)
+  - Stores config fingerprint for detecting configuration changes
+  - File locking ensures safe concurrent access (exclusive writes, shared reads)
+  - Multiple read-only servers can share the same index file
+
+- **Incremental reconciliation**: When loading a persisted index, the system reconciles against the current filesystem
+  - Detects stale files via mtime + size checks and re-indexes them
+  - Detects new files not in index and indexes them
+  - Detects removed files and excludes them from results
+  - Detects config changes (paths, extensions, excludes) and incrementally updates
+  - Background reconciliation allows searches during the update process
+
+- **New indexing status states**: UI shows `loading_index` when loading from disk and `reconciling` during background reconciliation
+
+- **Symbols-only search mode**: New search mode that searches only in discovered symbol names (functions, classes, methods). Enable via `symbols=true` query parameter in REST API or `symbols_only=true` in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.
+
+### Changed
+- **Updated performance comparison docs**: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep's official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.
+
 ## [0.2.2] - 2026-02-01
 
 ### Changed

@@ -1,8 +1,10 @@
 //! Persistent index storage
 //!
 //! Provides save/load functionality for the trigram index to speed up restarts.
+//! Includes file locking for safe concurrent access (exclusive writes, shared reads).
 
 use anyhow::{Context, Result};
+use fs2::FileExt;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -19,7 +21,7 @@ pub struct PersistedTrigramIndex {
 }
 
 /// Serializable representation of file metadata
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PersistedFileMetadata {
     /// Original file path
     pub path: PathBuf,
@@ -27,6 +29,9 @@ pub struct PersistedFileMetadata {
     pub mtime: u64,
     /// File size
     pub size: u64,
+    /// The base path from config that this file belongs to
+    #[serde(default)]
+    pub source_base_path: Option<String>,
 }
 
 /// Complete persisted index state
@@ -34,6 +39,12 @@ pub struct PersistedFileMetadata {
 pub struct PersistedIndex {
     /// Version for forward compatibility
     pub version: u32,
+    /// Configuration fingerprint for detecting config changes
+    #[serde(default)]
+    pub config_fingerprint: String,
+    /// The indexed base paths from config (for reconciliation)
+    #[serde(default)]
+    pub indexed_paths: Vec<String>,
     /// File metadata for staleness detection
     pub files: Vec<PersistedFileMetadata>,
     /// Trigram index data
@@ -41,11 +52,13 @@ pub struct PersistedIndex {
 }
 
 impl PersistedIndex {
-    /// Current persistence format version
-    pub const CURRENT_VERSION: u32 = 1;
+    /// Current persistence format version (bump this when format changes)
+    pub const CURRENT_VERSION: u32 = 2;
 
     /// Create a new persisted index from the current state
     pub fn new(
+        config_fingerprint: String,
+        indexed_paths: Vec<String>,
         files: Vec<PersistedFileMetadata>,
         trigram_to_docs: &FxHashMap<Trigram, RoaringBitmap>,
     ) -> Result<Self> {
@@ -59,6 +72,8 @@ impl PersistedIndex {
 
         Ok(Self {
             version: Self::CURRENT_VERSION,
+            config_fingerprint,
+            indexed_paths,
             files,
             trigram_index: PersistedTrigramIndex {
                 trigram_to_docs: serialized_trigrams,
@@ -66,7 +81,7 @@ impl PersistedIndex {
         })
     }
 
-    /// Save the index to a file
+    /// Save the index to a file with exclusive lock
     pub fn save(&self, path: &Path) -> Result<()> {
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -77,32 +92,98 @@ impl PersistedIndex {
 
         let file = std::fs::File::create(path)
             .with_context(|| format!("Failed to create index file: {}", path.display()))?;
-        let writer = std::io::BufWriter::new(file);
 
+        // Acquire exclusive lock for writing
+        file.lock_exclusive()
+            .with_context(|| format!("Failed to acquire exclusive lock on: {}", path.display()))?;
+
+        let writer = std::io::BufWriter::new(&file);
         bincode::serialize_into(writer, self)
             .with_context(|| format!("Failed to serialize index: {}", path.display()))?;
 
+        // Lock is automatically released when file is dropped
         Ok(())
     }
 
-    /// Load an index from a file
+    /// Load an index from a file with shared lock (allows multiple readers)
     pub fn load(path: &Path) -> Result<Self> {
         let file = std::fs::File::open(path)
             .with_context(|| format!("Failed to open index file: {}", path.display()))?;
-        let reader = std::io::BufReader::new(file);
 
+        // Acquire shared lock for reading (multiple readers allowed)
+        file.lock_shared()
+            .with_context(|| format!("Failed to acquire shared lock on: {}", path.display()))?;
+
+        let reader = std::io::BufReader::new(&file);
         let index: Self = bincode::deserialize_from(reader)
             .with_context(|| format!("Failed to deserialize index: {}", path.display()))?;
 
+        // Lock is automatically released when file is dropped
+
         if index.version != Self::CURRENT_VERSION {
             anyhow::bail!(
-                "Index version mismatch: found {}, expected {}",
+                "Index version mismatch: found {}, expected {}. The index will be rebuilt.",
                 index.version,
                 Self::CURRENT_VERSION
             );
         }
 
         Ok(index)
+    }
+
+    /// Try to load an index, returning None on any error (graceful degradation)
+    pub fn try_load(path: &Path) -> Option<Self> {
+        match Self::load(path) {
+            Ok(index) => Some(index),
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to load persisted index, will rebuild"
+                );
+                None
+            }
+        }
+    }
+
+    /// Check if the config has changed since the index was built
+    pub fn is_config_compatible(&self, current_fingerprint: &str) -> bool {
+        self.config_fingerprint == current_fingerprint
+    }
+
+    /// Get paths that were in the old config but not in the new config (need removal)
+    pub fn paths_to_remove(&self, current_paths: &[String]) -> Vec<String> {
+        let current_set: std::collections::HashSet<_> = current_paths
+            .iter()
+            .map(|p| p.replace('\\', "/").to_lowercase())
+            .collect();
+
+        self.indexed_paths
+            .iter()
+            .filter(|p| {
+                let normalized = p.replace('\\', "/").to_lowercase();
+                !current_set.contains(&normalized)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Get paths that are in the new config but weren't in the old config (need indexing)
+    pub fn paths_to_add(&self, current_paths: &[String]) -> Vec<String> {
+        let indexed_set: std::collections::HashSet<_> = self
+            .indexed_paths
+            .iter()
+            .map(|p| p.replace('\\', "/").to_lowercase())
+            .collect();
+
+        current_paths
+            .iter()
+            .filter(|p| {
+                let normalized = p.replace('\\', "/").to_lowercase();
+                !indexed_set.contains(&normalized)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Restore the trigram index from persisted data
@@ -171,10 +252,16 @@ mod tests {
             path: PathBuf::from("/test/file.rs"),
             mtime: 12345,
             size: 100,
+            source_base_path: Some("/test".to_string()),
         }];
 
-        let persisted =
-            PersistedIndex::new(files, &trigram_to_docs).expect("Failed to create persisted index");
+        let persisted = PersistedIndex::new(
+            "test_fingerprint".to_string(),
+            vec!["/test".to_string()],
+            files,
+            &trigram_to_docs,
+        )
+        .expect("Failed to create persisted index");
 
         // Save
         persisted.save(&index_path).expect("Failed to save index");

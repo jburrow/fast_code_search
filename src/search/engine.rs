@@ -820,6 +820,167 @@ impl SearchEngine {
         Ok(matches)
     }
 
+    /// Search only in discovered symbols (function/class names).
+    ///
+    /// This method searches only in the symbol cache, returning matches where
+    /// symbol names (functions, classes, methods, etc.) match the query.
+    /// This is much faster than full-text search when you're looking for definitions.
+    ///
+    /// # Arguments
+    /// * `query` - The search query string
+    /// * `include_patterns` - Semicolon-delimited glob patterns to include
+    /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
+    /// * `max_results` - Maximum number of results to return
+    pub fn search_symbols(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchMatch>> {
+        // Build path filter from patterns
+        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
+
+        // Pre-compute lowercase query ONCE
+        let query_lower = query.to_lowercase();
+
+        // Get all documents (we'll filter by path and search symbols)
+        let all_docs = self.trigram_index.all_documents();
+
+        // Apply path filter if it has any patterns
+        let filtered_docs = if path_filter.is_empty() {
+            all_docs
+        } else {
+            path_filter.filter_documents_with(&all_docs, |doc_id| self.file_store.get_path(doc_id))
+        };
+
+        // Convert to vector for parallel processing
+        let doc_ids: Vec<u32> = filtered_docs.iter().collect();
+
+        // Search symbols in parallel using rayon
+        let mut matches: Vec<SearchMatch> = doc_ids
+            .par_iter()
+            .filter_map(|&doc_id| self.search_symbols_in_document(doc_id, &query_lower))
+            .flatten()
+            .collect();
+
+        // Partial sort: only sort as much as needed for top N results
+        if matches.len() > max_results {
+            matches.select_nth_unstable_by(max_results, |a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            matches.truncate(max_results);
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        } else {
+            matches.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        Ok(matches)
+    }
+
+    /// Search for symbols matching the query in a document.
+    /// Returns matches only for lines where a symbol name matches.
+    fn search_symbols_in_document(
+        &self,
+        doc_id: u32,
+        query_lower: &str,
+    ) -> Option<Vec<SearchMatch>> {
+        let file = self.file_store.get(doc_id)?;
+        let content = file.as_str().ok()?;
+
+        // Get symbols for this file
+        let symbols = self.symbol_cache.get(doc_id as usize)?;
+
+        // Find symbols matching the query
+        let matching_symbols: Vec<&Symbol> = symbols
+            .iter()
+            .filter(|s| contains_case_insensitive(&s.name, query_lower))
+            .collect();
+
+        if matching_symbols.is_empty() {
+            return None;
+        }
+
+        // Get dependency count for this file
+        let dependency_count = self.dependency_index.get_import_count(doc_id);
+
+        // Pre-compute dependency boost
+        let dependency_boost = if dependency_count > 0 {
+            1.0 + (dependency_count as f64).log10() * 0.5
+        } else {
+            1.0
+        };
+
+        // Lazy-compute path info
+        let path_str = file.path.to_string_lossy().into_owned();
+        let path_bytes = path_str.as_bytes();
+        let is_src_lib = contains_bytes(path_bytes, b"/src/")
+            || contains_bytes(path_bytes, b"\\src\\")
+            || contains_bytes(path_bytes, b"/lib/")
+            || contains_bytes(path_bytes, b"\\lib\\");
+
+        // Collect lines into a vector for indexed access
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Build matches from matching symbols
+        let mut matches = Vec::with_capacity(matching_symbols.len());
+
+        for symbol in matching_symbols {
+            // Get the line content (symbol.line is 0-based)
+            let line = match lines.get(symbol.line) {
+                Some(l) => *l,
+                None => continue,
+            };
+
+            // Find where the symbol name appears in the line
+            let (match_start, match_end) =
+                match find_match_position_case_insensitive(line, query_lower) {
+                    Some(pos) => pos,
+                    None => {
+                        // Try to find the symbol name instead
+                        let name_lower = symbol.name.to_lowercase();
+                        find_match_position_case_insensitive(line, &name_lower).unwrap_or((0, 0))
+                    }
+                };
+
+            // Calculate score - symbols always get the symbol definition boost
+            let score =
+                calculate_score_inline(line, query_lower, true, is_src_lib, dependency_boost);
+
+            // Truncate long lines around the match
+            let truncated = truncate_around_match(line, match_start, match_end);
+
+            matches.push(SearchMatch {
+                file_id: doc_id,
+                file_path: path_str.clone(),
+                line_number: symbol.line + 1, // 1-based line numbers
+                content: truncated.content,
+                match_start: truncated.match_start,
+                match_end: truncated.match_end,
+                content_truncated: truncated.was_truncated,
+                score,
+                is_symbol: true,
+                dependency_count,
+            });
+        }
+
+        if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
+    }
+
     /// Search in a document using regex matching
     fn search_in_document_regex(&self, doc_id: u32, regex: &Regex) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
@@ -1137,31 +1298,58 @@ impl SearchEngine {
     }
 
     /// Save the index to a file for persistence
-    pub fn save_index(&self, path: &std::path::Path) -> anyhow::Result<()> {
+    pub fn save_index(
+        &self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+    ) -> anyhow::Result<()> {
         use crate::index::persistence::get_mtime;
         use crate::index::{PersistedFileMetadata, PersistedIndex};
 
-        // Collect file metadata
+        // Collect file metadata with source base path tracking
         let mut files = Vec::new();
         for id in 0..self.file_store.len() as u32 {
             if let Some(mapped_file) = self.file_store.get(id) {
                 let mtime = get_mtime(&mapped_file.path).unwrap_or(0);
+
+                // Determine which base path this file belongs to
+                let source_base = config
+                    .paths
+                    .iter()
+                    .find(|base| {
+                        let base_normalized = base.replace('\\', "/").to_lowercase();
+                        let file_normalized = mapped_file
+                            .path
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                            .to_lowercase();
+                        file_normalized.starts_with(&base_normalized)
+                    })
+                    .cloned();
+
                 files.push(PersistedFileMetadata {
                     path: mapped_file.path.clone(),
                     mtime,
                     size: mapped_file.len() as u64,
+                    source_base_path: source_base,
                 });
             }
         }
 
-        // Create persisted index
-        let persisted = PersistedIndex::new(files, self.trigram_index.get_trigram_map())?;
+        // Create persisted index with config fingerprint
+        let persisted = PersistedIndex::new(
+            config.fingerprint(),
+            config.paths.clone(),
+            files,
+            self.trigram_index.get_trigram_map(),
+        )?;
         persisted.save(path)?;
 
         tracing::info!(
             path = %path.display(),
             files = self.file_store.len(),
             trigrams = self.trigram_index.num_trigrams(),
+            config_fingerprint = %config.fingerprint(),
             "Index saved to disk"
         );
 
@@ -1173,7 +1361,111 @@ impl SearchEngine {
         path.exists()
     }
 
-    /// Load an index from disk if available and not stale
+    /// Load an index from disk with reconciliation against current config
+    /// Returns detailed information about what needs to be updated
+    pub fn load_index_with_reconciliation(
+        &mut self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+    ) -> anyhow::Result<LoadIndexResult> {
+        use crate::index::persistence::is_file_stale;
+        use crate::index::PersistedIndex;
+
+        let persisted = PersistedIndex::load(path)?;
+
+        // Check config compatibility
+        let current_fingerprint = config.fingerprint();
+        let config_compatible = persisted.is_config_compatible(&current_fingerprint);
+
+        if !config_compatible {
+            tracing::info!(
+                old_fingerprint = %persisted.config_fingerprint,
+                new_fingerprint = %current_fingerprint,
+                "Config fingerprint changed, will reconcile"
+            );
+        }
+
+        // Determine paths to add/remove based on config changes
+        let new_paths = persisted.paths_to_add(&config.paths);
+        let removed_paths = persisted.paths_to_remove(&config.paths);
+
+        // Check which files are stale or removed
+        let mut stale_files = Vec::new();
+        let mut removed_files = Vec::new();
+        let mut valid_file_count = 0;
+
+        for file_meta in persisted.files.iter() {
+            // Skip files from paths that are no longer in config
+            if let Some(ref base) = file_meta.source_base_path {
+                let base_normalized = base.replace('\\', "/").to_lowercase();
+                if removed_paths
+                    .iter()
+                    .any(|p| p.replace('\\', "/").to_lowercase() == base_normalized)
+                {
+                    removed_files.push(file_meta.path.clone());
+                    continue;
+                }
+            }
+
+            if !file_meta.path.exists() {
+                removed_files.push(file_meta.path.clone());
+            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
+                stale_files.push(file_meta.path.clone());
+            } else {
+                valid_file_count += 1;
+            }
+        }
+
+        // Only restore index if we have valid files
+        if valid_file_count > 0 {
+            // Restore trigram index
+            let trigram_map = persisted.restore_trigram_index()?;
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
+
+            // Re-add valid files to the file store
+            for file_meta in &persisted.files {
+                // Skip files from removed paths
+                if let Some(ref base) = file_meta.source_base_path {
+                    let base_normalized = base.replace('\\', "/").to_lowercase();
+                    if removed_paths
+                        .iter()
+                        .any(|p| p.replace('\\', "/").to_lowercase() == base_normalized)
+                    {
+                        continue;
+                    }
+                }
+
+                if file_meta.path.exists()
+                    && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
+                {
+                    let _ = self.file_store.add_file(&file_meta.path);
+                }
+            }
+
+            self.trigram_index.finalize();
+        }
+
+        tracing::info!(
+            path = %path.display(),
+            files_loaded = self.file_store.len(),
+            stale_files = stale_files.len(),
+            removed_files = removed_files.len(),
+            new_paths = new_paths.len(),
+            removed_paths = removed_paths.len(),
+            config_compatible = config_compatible,
+            "Index loaded from disk with reconciliation"
+        );
+
+        Ok(LoadIndexResult {
+            stale_files,
+            removed_files,
+            new_paths,
+            removed_paths,
+            config_compatible,
+        })
+    }
+
+    /// Load an index from disk if available and not stale (legacy method)
     /// Returns the list of stale files that need re-indexing
     pub fn load_index(
         &mut self,
@@ -1243,6 +1535,21 @@ pub struct SearchStats {
     pub dependency_edges: usize,
 }
 
+/// Result of loading a persisted index with reconciliation
+#[derive(Debug, Clone)]
+pub struct LoadIndexResult {
+    /// Files that were modified since indexing (need re-indexing)
+    pub stale_files: Vec<std::path::PathBuf>,
+    /// Files that no longer exist (removed from index)
+    pub removed_files: Vec<std::path::PathBuf>,
+    /// Paths that are new in config (need full indexing)
+    pub new_paths: Vec<String>,
+    /// Paths that were removed from config (files removed from index)
+    pub removed_paths: Vec<String>,
+    /// Whether the config fingerprint matches (false = config changed)
+    pub config_compatible: bool,
+}
+
 /// Status of the indexing process
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1250,10 +1557,14 @@ pub enum IndexingStatus {
     /// No indexing is in progress
     #[default]
     Idle,
+    /// Loading persisted index from disk
+    LoadingIndex,
     /// Discovering files to index
     Discovering,
     /// Actively indexing files
     Indexing,
+    /// Reconciling persisted index with current filesystem
+    Reconciling,
     /// Resolving import dependencies
     ResolvingImports,
     /// Indexing completed successfully
@@ -1328,16 +1639,18 @@ impl IndexingProgress {
     pub fn progress_percent(&self) -> u8 {
         match self.status {
             IndexingStatus::Idle => 0,
+            IndexingStatus::LoadingIndex => 2,
             IndexingStatus::Discovering => 5,
             IndexingStatus::Indexing => {
                 if self.total_batches == 0 {
                     10
                 } else {
                     let batch_progress =
-                        (self.current_batch as f64 / self.total_batches as f64) * 85.0;
-                    (10.0 + batch_progress).min(95.0) as u8
+                        (self.current_batch as f64 / self.total_batches as f64) * 80.0;
+                    (10.0 + batch_progress).min(90.0) as u8
                 }
             }
+            IndexingStatus::Reconciling => 92,
             IndexingStatus::ResolvingImports => 96,
             IndexingStatus::Completed => 100,
         }
@@ -1480,6 +1793,8 @@ mod tests {
 
     #[test]
     fn test_save_and_load_index() {
+        use crate::config::IndexerConfig;
+
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         let index_path = temp_dir.path().join("index.bin");
@@ -1489,6 +1804,12 @@ mod tests {
         writeln!(file, "hello world").unwrap();
         writeln!(file, "rust programming").unwrap();
         drop(file);
+
+        // Create config for the test
+        let config = IndexerConfig {
+            paths: vec![temp_dir.path().to_string_lossy().to_string()],
+            ..Default::default()
+        };
 
         // Index and save
         let mut engine = SearchEngine::new();
@@ -1500,7 +1821,7 @@ mod tests {
         assert!(!results.is_empty(), "Should find hello before save");
 
         // Save the index
-        engine.save_index(&index_path).unwrap();
+        engine.save_index(&index_path, &config).unwrap();
         assert!(index_path.exists(), "Index file should exist");
 
         // Create a new engine and load the index
@@ -1525,5 +1846,117 @@ mod tests {
         // Create the file
         fs::write(&index_path, "dummy").unwrap();
         assert!(SearchEngine::can_load_index(&index_path));
+    }
+
+    #[test]
+    fn test_search_symbols() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        // Create a Rust file with functions and a class
+        fs::write(
+            &file_path,
+            r#"
+fn hello_world() {
+    println!("Hello");
+}
+
+fn another_function() {
+    // code
+}
+
+pub struct TestStruct {
+    name: String,
+}
+
+impl TestStruct {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_string() }
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Search for symbols matching "function"
+        let results = engine.search_symbols("function", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected at least one symbol match for 'function'"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|r| r.content.contains("another_function")),
+            "Expected to find 'another_function' symbol"
+        );
+
+        // Search for symbols matching "hello"
+        let results = engine.search_symbols("hello", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected at least one symbol match for 'hello'"
+        );
+        assert!(
+            results.iter().any(|r| r.content.contains("hello_world")),
+            "Expected to find 'hello_world' symbol"
+        );
+
+        // All results should be marked as symbols
+        for result in &results {
+            assert!(
+                result.is_symbol,
+                "All symbol search results should have is_symbol=true"
+            );
+        }
+
+        // Search for something that doesn't match any symbol
+        let results = engine.search_symbols("println", "", "", 10).unwrap();
+        assert!(
+            results.is_empty(),
+            "Expected no symbol match for 'println' (it's not a symbol name)"
+        );
+    }
+
+    #[test]
+    fn test_search_symbols_case_insensitive() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        fs::write(
+            &file_path,
+            r#"
+fn HelloWorld() {
+    println!("Hello");
+}
+"#,
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Case-insensitive search should work
+        let results_lower = engine.search_symbols("helloworld", "", "", 10).unwrap();
+        let results_upper = engine.search_symbols("HELLOWORLD", "", "", 10).unwrap();
+        let results_mixed = engine.search_symbols("HelloWorld", "", "", 10).unwrap();
+
+        assert!(
+            !results_lower.is_empty(),
+            "lowercase query should find symbol"
+        );
+        assert!(
+            !results_upper.is_empty(),
+            "uppercase query should find symbol"
+        );
+        assert!(
+            !results_mixed.is_empty(),
+            "mixed case query should find symbol"
+        );
     }
 }

@@ -11,8 +11,7 @@ pub mod semantic_search {
 
 use semantic_search::{
     semantic_code_search_server::SemanticCodeSearch, ChunkType, ReloadIndexRequest,
-    ReloadIndexResponse, SemanticSearchRequest, SemanticSearchResult, StatsRequest,
-    StatsResponse,
+    ReloadIndexResponse, SemanticSearchRequest, SemanticSearchResult, StatsRequest, StatsResponse,
 };
 
 /// gRPC service for semantic code search
@@ -37,7 +36,7 @@ impl SemanticCodeSearch for SemanticSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query;
-        let max_results = req.max_results.max(1).min(100) as usize; // Clamp between 1-100
+        let max_results = req.max_results.clamp(1, 100) as usize; // Clamp between 1-100
 
         // Perform search
         let results = {
@@ -83,7 +82,9 @@ impl SemanticCodeSearch for SemanticSearchService {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     async fn get_stats(
