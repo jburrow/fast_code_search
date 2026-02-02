@@ -582,7 +582,10 @@ async fn test_grpc_search_symbols_only() -> Result<()> {
     }
 
     // Should find the function definition
-    assert!(!results.is_empty(), "Expected at least one symbol result for 'find_me'");
+    assert!(
+        !results.is_empty(),
+        "Expected at least one symbol result for 'find_me'"
+    );
 
     // All results should be symbol matches
     for result in &results {

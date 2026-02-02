@@ -851,8 +851,7 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             all_docs
         } else {
-            path_filter
-                .filter_documents_with(&all_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter.filter_documents_with(&all_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
         // Convert to vector for parallel processing
@@ -1730,7 +1729,9 @@ impl TestStruct {
             "Expected at least one symbol match for 'function'"
         );
         assert!(
-            results.iter().any(|r| r.content.contains("another_function")),
+            results
+                .iter()
+                .any(|r| r.content.contains("another_function")),
             "Expected to find 'another_function' symbol"
         );
 
@@ -1747,7 +1748,10 @@ impl TestStruct {
 
         // All results should be marked as symbols
         for result in &results {
-            assert!(result.is_symbol, "All symbol search results should have is_symbol=true");
+            assert!(
+                result.is_symbol,
+                "All symbol search results should have is_symbol=true"
+            );
         }
 
         // Search for something that doesn't match any symbol
@@ -1782,8 +1786,17 @@ fn HelloWorld() {
         let results_upper = engine.search_symbols("HELLOWORLD", "", "", 10).unwrap();
         let results_mixed = engine.search_symbols("HelloWorld", "", "", 10).unwrap();
 
-        assert!(!results_lower.is_empty(), "lowercase query should find symbol");
-        assert!(!results_upper.is_empty(), "uppercase query should find symbol");
-        assert!(!results_mixed.is_empty(), "mixed case query should find symbol");
+        assert!(
+            !results_lower.is_empty(),
+            "lowercase query should find symbol"
+        );
+        assert!(
+            !results_upper.is_empty(),
+            "uppercase query should find symbol"
+        );
+        assert!(
+            !results_mixed.is_empty(),
+            "mixed case query should find symbol"
+        );
     }
 }
