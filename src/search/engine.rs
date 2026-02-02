@@ -1368,8 +1368,7 @@ impl SearchEngine {
         path: &std::path::Path,
         config: &crate::config::IndexerConfig,
     ) -> anyhow::Result<LoadIndexResult> {
-        use crate::index::persistence::is_file_stale;
-        use crate::index::PersistedIndex;
+        use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
         let persisted = PersistedIndex::load(path)?;
 
@@ -1389,57 +1388,32 @@ impl SearchEngine {
         let new_paths = persisted.paths_to_add(&config.paths);
         let removed_paths = persisted.paths_to_remove(&config.paths);
 
-        // Check which files are stale or removed
+        // Batch check all files in parallel for staleness/removal
+        let file_statuses = batch_check_files(&persisted.files, &removed_paths);
+
+        // Categorize files based on status
         let mut stale_files = Vec::new();
         let mut removed_files = Vec::new();
-        let mut valid_file_count = 0;
+        let mut valid_file_indices = Vec::new();
 
-        for file_meta in persisted.files.iter() {
-            // Skip files from paths that are no longer in config
-            if let Some(ref base) = file_meta.source_base_path {
-                let base_normalized = base.replace('\\', "/").to_lowercase();
-                if removed_paths
-                    .iter()
-                    .any(|p| p.replace('\\', "/").to_lowercase() == base_normalized)
-                {
-                    removed_files.push(file_meta.path.clone());
-                    continue;
-                }
-            }
-
-            if !file_meta.path.exists() {
-                removed_files.push(file_meta.path.clone());
-            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
-                stale_files.push(file_meta.path.clone());
-            } else {
-                valid_file_count += 1;
+        for (idx, status) in file_statuses {
+            match status {
+                FileStatus::Valid => valid_file_indices.push(idx),
+                FileStatus::Stale => stale_files.push(persisted.files[idx].path.clone()),
+                FileStatus::Removed => removed_files.push(persisted.files[idx].path.clone()),
             }
         }
 
         // Only restore index if we have valid files
-        if valid_file_count > 0 {
-            // Restore trigram index
+        if !valid_file_indices.is_empty() {
+            // Restore trigram index (parallelized)
             let trigram_map = persisted.restore_trigram_index()?;
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
             // Re-add valid files to the file store
-            for file_meta in &persisted.files {
-                // Skip files from removed paths
-                if let Some(ref base) = file_meta.source_base_path {
-                    let base_normalized = base.replace('\\', "/").to_lowercase();
-                    if removed_paths
-                        .iter()
-                        .any(|p| p.replace('\\', "/").to_lowercase() == base_normalized)
-                    {
-                        continue;
-                    }
-                }
-
-                if file_meta.path.exists()
-                    && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
-                {
-                    let _ = self.file_store.add_file(&file_meta.path);
-                }
+            for &idx in &valid_file_indices {
+                let file_meta = &persisted.files[idx];
+                let _ = self.file_store.add_file(&file_meta.path);
             }
 
             self.trigram_index.finalize();
@@ -1471,34 +1445,33 @@ impl SearchEngine {
         &mut self,
         path: &std::path::Path,
     ) -> anyhow::Result<Vec<std::path::PathBuf>> {
-        use crate::index::persistence::is_file_stale;
-        use crate::index::PersistedIndex;
+        use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
         let persisted = PersistedIndex::load(path)?;
 
-        // Check which files are stale
-        let mut stale_files = Vec::new();
+        // Batch check all files in parallel
+        let file_statuses = batch_check_files(&persisted.files, &[]);
 
-        for file_meta in persisted.files.iter() {
-            // File is stale if it doesn't exist or was modified since indexing
-            if !file_meta.path.exists()
-                || is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
-            {
-                stale_files.push(file_meta.path.clone());
+        // Categorize files
+        let mut stale_files = Vec::new();
+        let mut valid_file_indices = Vec::new();
+
+        for (idx, status) in file_statuses {
+            match status {
+                FileStatus::Valid => valid_file_indices.push(idx),
+                FileStatus::Stale | FileStatus::Removed => {
+                    stale_files.push(persisted.files[idx].path.clone())
+                }
             }
         }
 
-        // Restore trigram index
+        // Restore trigram index (parallelized)
         let trigram_map = persisted.restore_trigram_index()?;
         self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
         // Re-add valid files to the file store (errors are silently ignored as files may have been removed)
-        for file_meta in &persisted.files {
-            if file_meta.path.exists()
-                && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
-            {
-                let _ = self.file_store.add_file(&file_meta.path);
-            }
+        for &idx in &valid_file_indices {
+            let _ = self.file_store.add_file(&persisted.files[idx].path);
         }
 
         self.trigram_index.finalize();

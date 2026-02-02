@@ -20,6 +20,18 @@ pub struct PersistedTrigramIndex {
     trigram_to_docs: HashMap<[u8; 3], Vec<u8>>,
 }
 
+impl PersistedTrigramIndex {
+    /// Get the number of trigrams in the index (for benchmarking)
+    pub fn len(&self) -> usize {
+        self.trigram_to_docs.len()
+    }
+
+    /// Check if the index is empty
+    pub fn is_empty(&self) -> bool {
+        self.trigram_to_docs.is_empty()
+    }
+}
+
 /// Serializable representation of file metadata
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PersistedFileMetadata {
@@ -186,17 +198,24 @@ impl PersistedIndex {
             .collect()
     }
 
-    /// Restore the trigram index from persisted data
+    /// Restore the trigram index from persisted data (parallelized for performance)
     pub fn restore_trigram_index(&self) -> Result<FxHashMap<Trigram, RoaringBitmap>> {
-        let mut result = FxHashMap::default();
+        use rayon::prelude::*;
 
-        for (trigram_bytes, bitmap_data) in &self.trigram_index.trigram_to_docs {
-            let trigram = Trigram::new(*trigram_bytes);
-            let bitmap = RoaringBitmap::deserialize_from(&bitmap_data[..])?;
-            result.insert(trigram, bitmap);
-        }
+        // Parallel deserialization of trigrams
+        let results: Result<Vec<_>> = self
+            .trigram_index
+            .trigram_to_docs
+            .par_iter()
+            .map(|(trigram_bytes, bitmap_data)| {
+                let trigram = Trigram::new(*trigram_bytes);
+                let bitmap = RoaringBitmap::deserialize_from(&bitmap_data[..])?;
+                Ok((trigram, bitmap))
+            })
+            .collect();
 
-        Ok(result)
+        // Collect into FxHashMap
+        Ok(results?.into_iter().collect())
     }
 }
 
@@ -229,6 +248,51 @@ pub fn is_file_stale(path: &Path, stored_mtime: u64, stored_size: u64) -> bool {
         }
         Err(_) => true, // File doesn't exist or can't be read
     }
+}
+
+/// File classification result after checking staleness
+#[derive(Debug)]
+pub enum FileStatus {
+    Valid,
+    Stale,
+    Removed,
+}
+
+/// Batch check file staleness in parallel for better performance
+pub fn batch_check_files(
+    files: &[PersistedFileMetadata],
+    removed_paths: &[String],
+) -> Vec<(usize, FileStatus)> {
+    use rayon::prelude::*;
+
+    // Normalize removed paths once for comparison
+    let removed_normalized: Vec<String> = removed_paths
+        .iter()
+        .map(|p| p.replace('\\', "/").to_lowercase())
+        .collect();
+
+    files
+        .par_iter()
+        .enumerate()
+        .map(|(idx, file_meta)| {
+            // Check if file is from a removed path
+            if let Some(ref base) = file_meta.source_base_path {
+                let base_normalized = base.replace('\\', "/").to_lowercase();
+                if removed_normalized.contains(&base_normalized) {
+                    return (idx, FileStatus::Removed);
+                }
+            }
+
+            // Check if file exists and is stale
+            if !file_meta.path.exists() {
+                (idx, FileStatus::Removed)
+            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
+                (idx, FileStatus::Stale)
+            } else {
+                (idx, FileStatus::Valid)
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
