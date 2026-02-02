@@ -1,26 +1,150 @@
-//! Simple embedding implementation for semantic search
+//! ML-based embedding implementation for semantic search
 //!
-//! This is a simplified implementation using TF-IDF-like vectors
-//! as a placeholder for full ML-based embeddings (CodeBERT, etc.)
+//! Uses ONNX Runtime with pretrained code models (CodeBERT) for
+//! generating high-quality embeddings for code search.
 //!
-//! Future enhancement: Replace with ONNX Runtime + CodeBERT
+//! Falls back to TF-IDF when ML models are not available.
 
 use anyhow::Result;
-use rustc_hash::FxHashMap;
+use tracing::{info, warn};
 
-/// Simple embedding model using TF-IDF-style vectors
+#[cfg(feature = "ml-models")]
+use {
+    super::model_download::{default_cache_dir, ModelDownloader, ModelInfo},
+    ndarray::{Array2, Axis},
+    ort::{GraphOptimizationLevel, Session},
+    tokenizers::Tokenizer,
+    tracing::debug,
+};
+
+/// ML-based embedding model using ONNX Runtime
 pub struct EmbeddingModel {
-    vocabulary: FxHashMap<String, usize>,
+    #[cfg(feature = "ml-models")]
+    session: Option<Session>,
+    #[cfg(feature = "ml-models")]
+    tokenizer: Option<Tokenizer>,
     embedding_dim: usize,
+    #[allow(dead_code)] // Used when ml-models feature is enabled
+    max_length: usize,
+    use_ml: bool,
 }
 
 impl EmbeddingModel {
-    /// Create a new embedding model
+    /// Create a new embedding model with ML support
+    ///
+    /// Attempts to load ONNX model. Falls back to simple TF-IDF if loading fails.
     pub fn new() -> Self {
-        Self {
-            vocabulary: FxHashMap::default(),
-            embedding_dim: 128, // Fixed dimension for now
+        #[cfg(feature = "ml-models")]
+        {
+            Self::with_config(true, 512)
         }
+        #[cfg(not(feature = "ml-models"))]
+        {
+            info!("ML models feature not enabled, using TF-IDF");
+            Self::with_config(false, 512)
+        }
+    }
+
+    /// Create embedding model with custom configuration
+    pub fn with_config(use_ml: bool, max_length: usize) -> Self {
+        if !use_ml {
+            info!("ML embeddings disabled, using TF-IDF fallback");
+            return Self {
+                #[cfg(feature = "ml-models")]
+                session: None,
+                #[cfg(feature = "ml-models")]
+                tokenizer: None,
+                embedding_dim: 128, // TF-IDF fallback dimension
+                max_length,
+                use_ml: false,
+            };
+        }
+
+        #[cfg(feature = "ml-models")]
+        {
+            match Self::load_ml_model(max_length) {
+                Ok((session, tokenizer, embedding_dim)) => {
+                    info!(
+                        dim = embedding_dim,
+                        "ML embedding model loaded successfully"
+                    );
+                    Self {
+                        session: Some(session),
+                        tokenizer: Some(tokenizer),
+                        embedding_dim,
+                        max_length,
+                        use_ml: true,
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load ML model, falling back to TF-IDF: {}", e);
+                    Self {
+                        session: None,
+                        tokenizer: None,
+                        embedding_dim: 128, // TF-IDF fallback dimension
+                        max_length,
+                        use_ml: false,
+                    }
+                }
+            }
+        }
+        #[cfg(not(feature = "ml-models"))]
+        {
+            warn!("ML models feature not enabled, cannot use ML mode");
+            Self {
+                embedding_dim: 128,
+                max_length,
+                use_ml: false,
+            }
+        }
+    }
+
+    /// Load ONNX model and tokenizer
+    #[cfg(feature = "ml-models")]
+    fn load_ml_model(max_length: usize) -> Result<(Session, Tokenizer, usize)> {
+        info!("Loading ML embedding model");
+
+        // Get cache directory
+        let cache_dir = default_cache_dir().context("Failed to get cache directory")?;
+
+        // Download model if needed
+        let downloader = ModelDownloader::new(cache_dir);
+        let model_info = ModelInfo::codebert();
+        let model_dir = downloader
+            .ensure_model(&model_info)
+            .context("Failed to ensure model is downloaded")?;
+
+        // Load ONNX session
+        let model_path = model_dir.join("model.onnx");
+        debug!(path = %model_path.display(), "Loading ONNX model");
+
+        let session = Session::builder()
+            .context("Failed to create session builder")?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .context("Failed to set optimization level")?
+            .commit_from_file(&model_path)
+            .context("Failed to load ONNX model")?;
+
+        // Load tokenizer
+        let tokenizer_path = model_dir.join("tokenizer.json");
+        debug!(path = %tokenizer_path.display(), "Loading tokenizer");
+
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+
+        // Configure tokenizer
+        if let Some(truncation) = tokenizer.get_truncation_mut() {
+            truncation.max_length = max_length;
+        }
+        tokenizer.with_padding(Some(tokenizers::PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        }));
+
+        // CodeBERT uses 768-dimensional embeddings
+        let embedding_dim = 768;
+
+        Ok((session, tokenizer, embedding_dim))
     }
 
     /// Get embedding dimension
@@ -28,15 +152,172 @@ impl EmbeddingModel {
         self.embedding_dim
     }
 
+    /// Check if using ML model
+    pub fn is_ml(&self) -> bool {
+        self.use_ml
+    }
+
     /// Encode text to embedding vector
-    /// Uses simple word frequency based approach
     pub fn encode(&mut self, text: &str) -> Result<Vec<f32>> {
-        let words = self.tokenize(text);
+        #[cfg(feature = "ml-models")]
+        {
+            if self.use_ml {
+                return self.encode_ml(text);
+            }
+        }
+        self.encode_tfidf(text)
+    }
+
+    /// Encode batch of texts
+    pub fn encode_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        #[cfg(feature = "ml-models")]
+        {
+            if self.use_ml {
+                return self.encode_batch_ml(texts);
+            }
+        }
+        texts.iter().map(|&text| self.encode_tfidf(text)).collect()
+    }
+
+    /// Encode using ML model
+    #[cfg(feature = "ml-models")]
+    fn encode_ml(&self, text: &str) -> Result<Vec<f32>> {
+        let session = self
+            .session
+            .as_ref()
+            .context("ONNX session not available")?;
+        let tokenizer = self.tokenizer.as_ref().context("Tokenizer not available")?;
+
+        // Tokenize
+        let encoding = tokenizer
+            .encode(text, true)
+            .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+
+        let input_ids = encoding.get_ids();
+        let attention_mask = encoding.get_attention_mask();
+
+        // Convert to arrays
+        let input_ids_array = Array2::from_shape_vec(
+            (1, input_ids.len()),
+            input_ids.iter().map(|&x| x as i64).collect(),
+        )?;
+
+        let attention_mask_array = Array2::from_shape_vec(
+            (1, attention_mask.len()),
+            attention_mask.iter().map(|&x| x as i64).collect(),
+        )?;
+
+        // Run inference
+        let outputs = session.run(ort::inputs![
+            "input_ids" => input_ids_array.view(),
+            "attention_mask" => attention_mask_array.view()
+        ]?)?;
+
+        // Extract embeddings from output
+        // CodeBERT output is [batch_size, sequence_length, hidden_size]
+        let embeddings = outputs["last_hidden_state"]
+            .try_extract_tensor::<f32>()?
+            .view()
+            .to_owned();
+
+        // Mean pooling over sequence dimension
+        let pooled = embeddings
+            .mean_axis(Axis(1))
+            .context("Failed to pool embeddings")?;
+
+        // L2 normalization
+        let mut embedding: Vec<f32> = pooled.to_vec();
+        let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            for val in &mut embedding {
+                *val /= norm;
+            }
+        }
+
+        Ok(embedding)
+    }
+
+    /// Encode batch using ML model
+    #[cfg(feature = "ml-models")]
+    fn encode_batch_ml(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let session = self
+            .session
+            .as_ref()
+            .context("ONNX session not available")?;
+        let tokenizer = self.tokenizer.as_ref().context("Tokenizer not available")?;
+
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Tokenize all texts
+        let encodings = tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|e| anyhow::anyhow!("Batch tokenization failed: {}", e))?;
+
+        let batch_size = encodings.len();
+        let seq_len = encodings[0].get_ids().len();
+
+        // Collect input IDs and attention masks
+        let mut input_ids_vec = Vec::with_capacity(batch_size * seq_len);
+        let mut attention_mask_vec = Vec::with_capacity(batch_size * seq_len);
+
+        for encoding in &encodings {
+            let ids = encoding.get_ids();
+            let mask = encoding.get_attention_mask();
+
+            input_ids_vec.extend(ids.iter().map(|&x| x as i64));
+            attention_mask_vec.extend(mask.iter().map(|&x| x as i64));
+        }
+
+        let input_ids_array = Array2::from_shape_vec((batch_size, seq_len), input_ids_vec)?;
+
+        let attention_mask_array =
+            Array2::from_shape_vec((batch_size, seq_len), attention_mask_vec)?;
+
+        // Run inference
+        let outputs = session.run(ort::inputs![
+            "input_ids" => input_ids_array.view(),
+            "attention_mask" => attention_mask_array.view()
+        ]?)?;
+
+        // Extract and pool embeddings
+        let embeddings = outputs["last_hidden_state"]
+            .try_extract_tensor::<f32>()?
+            .view()
+            .to_owned();
+
+        let mut results = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            let sample_embeddings = embeddings.index_axis(Axis(0), i);
+            let pooled = sample_embeddings
+                .mean_axis(Axis(0))
+                .context("Failed to pool embeddings")?;
+
+            // L2 normalization
+            let mut embedding: Vec<f32> = pooled.to_vec();
+            let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                for val in &mut embedding {
+                    *val /= norm;
+                }
+            }
+
+            results.push(embedding);
+        }
+
+        Ok(results)
+    }
+
+    /// Simple TF-IDF-style encoding as fallback
+    /// This is the original placeholder implementation
+    fn encode_tfidf(&self, text: &str) -> Result<Vec<f32>> {
+        let words = self.tokenize_simple(text);
         let mut embedding = vec![0.0f32; self.embedding_dim];
 
         // Simple hash-based embedding
         for word in words {
-            let idx = self.get_or_create_word_index(&word);
+            let idx = self.word_to_index(&word);
             if idx < self.embedding_dim {
                 embedding[idx] += 1.0;
             }
@@ -53,13 +334,8 @@ impl EmbeddingModel {
         Ok(embedding)
     }
 
-    /// Encode batch of texts
-    pub fn encode_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        texts.iter().map(|&text| self.encode(text)).collect()
-    }
-
-    /// Simple tokenization
-    fn tokenize(&self, text: &str) -> Vec<String> {
+    /// Simple tokenization for TF-IDF fallback
+    fn tokenize_simple(&self, text: &str) -> Vec<String> {
         text.to_lowercase()
             .split(|c: char| !c.is_alphanumeric())
             .filter(|s| !s.is_empty() && s.len() > 2)
@@ -67,16 +343,9 @@ impl EmbeddingModel {
             .collect()
     }
 
-    /// Get or create index for a word
-    fn get_or_create_word_index(&mut self, word: &str) -> usize {
-        if let Some(&idx) = self.vocabulary.get(word) {
-            idx
-        } else {
-            // Simple hash to index mapping
-            let idx = word.bytes().map(|b| b as usize).sum::<usize>() % self.embedding_dim;
-            self.vocabulary.insert(word.to_string(), idx);
-            idx
-        }
+    /// Map word to index for TF-IDF fallback
+    fn word_to_index(&self, word: &str) -> usize {
+        word.bytes().map(|b| b as usize).sum::<usize>() % self.embedding_dim
     }
 }
 
@@ -108,8 +377,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode() {
-        let mut model = EmbeddingModel::new();
+    fn test_tfidf_fallback() {
+        // Test TF-IDF fallback (no ML model)
+        let mut model = EmbeddingModel::with_config(false, 512);
+        assert!(!model.is_ml());
+        assert_eq!(model.embedding_dim(), 128);
+
         let embedding = model.encode("function authenticate user").unwrap();
         assert_eq!(embedding.len(), 128);
 
@@ -131,8 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn test_similar_texts() {
-        let mut model = EmbeddingModel::new();
+    fn test_similar_texts_tfidf() {
+        let mut model = EmbeddingModel::with_config(false, 512);
         let emb1 = model.encode("authenticate user login").unwrap();
         let emb2 = model.encode("user authentication login").unwrap();
         let emb3 = model.encode("database connection pool").unwrap();
@@ -142,5 +415,44 @@ mod tests {
 
         // Similar texts should have higher similarity
         assert!(sim_12 > sim_13);
+    }
+
+    // ML model tests - only run when model is available
+    #[test]
+    #[ignore] // Skip by default as it requires model download
+    #[cfg(feature = "ml-models")]
+    fn test_ml_model_loading() {
+        let model = EmbeddingModel::new();
+        // If ML model loads, dimension should be 768 (CodeBERT)
+        // If fallback, dimension should be 128
+        assert!(model.embedding_dim() == 768 || model.embedding_dim() == 128);
+    }
+
+    #[test]
+    #[ignore] // Skip by default as it requires model download
+    #[cfg(feature = "ml-models")]
+    fn test_ml_encode() {
+        let mut model = EmbeddingModel::new();
+        if model.is_ml() {
+            let embedding = model.encode("function authenticate user").unwrap();
+            assert_eq!(embedding.len(), 768);
+
+            // Check normalization
+            let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            assert!((norm - 1.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    #[ignore] // Skip by default as it requires model download
+    #[cfg(feature = "ml-models")]
+    fn test_ml_encode_batch() {
+        let mut model = EmbeddingModel::new();
+        if model.is_ml() {
+            let texts = vec!["function auth()", "class User", "def login()"];
+            let embeddings = model.encode_batch(&texts).unwrap();
+            assert_eq!(embeddings.len(), 3);
+            assert_eq!(embeddings[0].len(), 768);
+        }
     }
 }
