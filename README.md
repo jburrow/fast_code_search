@@ -9,10 +9,12 @@ High-performance, in-memory code search service built in Rust. Designed to handl
 - **Symbol awareness** using `tree-sitter` for Rust, Python, JavaScript, and TypeScript
 - **Parallel search** using `rayon` for maximum throughput
 - **Weight-based scoring** that boosts:
-  - Symbol definitions
-  - Primary source directories (src/, lib/)
-  - Exact matches
-  - Matches at the start of lines
+  - Symbol definitions (3.0x)
+  - Primary source directories (src/, lib/) (1.5x)
+  - Exact case-sensitive matches (2.0x)
+  - Matches at the start of lines (1.5x)
+  - Shorter lines (inverse length factor)
+  - **Heavily-imported files** — logarithmic boost based on dependent count (PageRank-style)
 - **gRPC API** using `tonic` with streaming results
 - **Supports 10GB+ codebases** efficiently
 
@@ -206,11 +208,12 @@ Benchmarks run on synthetic corpus using Criterion. Run locally with `cargo benc
    - Roaring bitmap intersection finds candidate documents
    - Parallel search across candidates using `rayon`
    - Results are scored based on:
-     - Exact vs. case-insensitive match
-     - Symbol definitions get 3x boost
-     - Primary source directories get 1.5x boost
-     - Shorter lines preferred
-     - Matches at start of line get 1.5x boost
+     - Exact case-sensitive match: **2.0x**
+     - Symbol definitions: **3.0x**
+     - Primary source directories (src/, lib/): **1.5x**
+     - Shorter lines: `1.0 / (1.0 + line_len * 0.01)`
+     - Matches at start of line: **1.5x**
+     - Dependency boost: `1.0 + log10(import_count) * 0.5` — files imported by many others rank higher (PageRank-style)
 
 3. **Result Streaming**:
    - Top results are streamed via gRPC

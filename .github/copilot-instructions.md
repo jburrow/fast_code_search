@@ -14,7 +14,13 @@ The system has four layers that communicate through shared `Arc<RwLock<SearchEng
    - Extracts function/class definitions to boost search relevance
    - Also extracts import statements for dependency analysis
 
-3. **Search Layer** (`src/search/`) - Parallel search with scoring
+3. **Dependency Layer** (`src/dependencies/mod.rs`) - Import graph for PageRank-style scoring
+   - `imports`: file_id → set of file_ids it imports
+   - `imported_by`: file_id → set of file_ids that import it (reverse index)
+   - `import_counts`: cached counts for fast scoring lookups
+   - Files with more dependents get logarithmic boost: `1.0 + log10(count) * 0.5`
+
+4. **Search Layer** (`src/search/`) - Parallel search with scoring
    - `engine.rs`: Core search using rayon for parallel line-by-line search
    - `regex_search.rs`: Regex pattern analysis for trigram acceleration
    - `path_filter.rs`: Glob-based include/exclude filtering
@@ -25,7 +31,7 @@ The system has four layers that communicate through shared `Arc<RwLock<SearchEng
      - `search_regex()`: Regex pattern matching with trigram acceleration
      - `search_symbols()`: Symbols-only search for function/class names
 
-4. **Server Layer** - Dual API exposure (shared engine via `Arc<RwLock<>>`)
+5. **Server Layer** - Dual API exposure (shared engine via `Arc<RwLock<>>`)
    - `src/server/service.rs`: gRPC streaming via tonic (port 50051)
    - `src/web/api.rs`: REST/JSON via axum (port 8080)
    - `static/`: Web UI files embedded via `rust-embed`

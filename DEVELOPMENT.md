@@ -196,6 +196,42 @@ Vec<MappedFile>
 - Array-indexed storage for O(1) document lookup
 - Memory-mapped files avoid loading entire files into RAM
 
+#### Dependency Index
+```rust
+struct DependencyIndex {
+    imports: HashMap<u32, HashSet<u32>>,      // file → files it imports
+    imported_by: HashMap<u32, HashSet<u32>>,  // file → files that import it
+    import_counts: HashMap<u32, u32>,         // cached dependent counts
+}
+```
+- Bidirectional import graph built from tree-sitter extracted imports
+- Enables PageRank-style scoring: heavily-imported files rank higher
+
+### Scoring Algorithm
+
+Search results are ranked using a multiplicative scoring formula:
+
+```
+score = base_score * case_boost * symbol_boost * path_boost * line_len_factor * position_boost * dependency_boost
+```
+
+| Factor | Condition | Multiplier |
+|--------|-----------|------------|
+| `case_boost` | Exact case-sensitive match | 2.0x |
+| `symbol_boost` | Line contains a symbol definition | 3.0x |
+| `path_boost` | File in `/src/` or `/lib/` directory | 1.5x |
+| `line_len_factor` | Shorter lines preferred | `1.0 / (1.0 + len * 0.01)` |
+| `position_boost` | Match at start of line | 1.5x |
+| `dependency_boost` | File imported by N other files | `1.0 + log10(N) * 0.5` |
+
+**Example**: A class definition in `src/models.py` imported by 100 files:
+- symbol_boost: 3.0x
+- path_boost: 1.5x  
+- dependency_boost: `1.0 + log10(100) * 0.5 = 2.0x`
+- Combined: **9.0x** base score (before other factors)
+
+This ensures that **definitions rank above usages** and **core modules rank above consumers**.
+
 ### Threading Model
 
 - **Indexing**: Single-threaded (I/O bound)
