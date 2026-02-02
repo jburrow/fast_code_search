@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Symbols-only search mode**: New search mode that searches only in discovered symbol names (functions, classes, methods). Enable via `symbols=true` query parameter in REST API or `symbols_only=true` in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.
+
 ## [0.2.2] - 2026-02-01
 
 ### Changed

@@ -26,6 +26,9 @@ pub struct SearchQuery {
     /// Whether to treat the query as a regex pattern
     #[serde(default)]
     regex: bool,
+    /// Whether to search only in symbols (function/class names)
+    #[serde(default)]
+    symbols: bool,
 }
 
 fn default_max_results() -> usize {
@@ -111,6 +114,7 @@ pub async fn search_handler(
     let include_patterns = params.include.as_str();
     let exclude_patterns = params.exclude.as_str();
     let is_regex = params.regex;
+    let symbols_only = params.symbols;
 
     // Start timing the search
     let start_time = std::time::Instant::now();
@@ -123,8 +127,18 @@ pub async fn search_handler(
         )
     })?;
 
-    // Choose search method based on regex flag
-    let matches = if is_regex {
+    // Choose search method based on flags
+    let matches = if symbols_only {
+        // Search only in discovered symbols
+        engine
+            .search_symbols(query, include_patterns, exclude_patterns, max_results)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid filter pattern: {}", e),
+                )
+            })?
+    } else if is_regex {
         // Use regex search with optional path filtering
         engine
             .search_regex(query, include_patterns, exclude_patterns, max_results)

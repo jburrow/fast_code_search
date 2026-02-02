@@ -8,6 +8,7 @@ const maxResultsSelect = document.getElementById('max-results');
 const includeFilterInput = document.getElementById('include-filter');
 const excludeFilterInput = document.getElementById('exclude-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
+const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
@@ -225,6 +226,7 @@ async function performSearch() {
     const includeFilter = includeFilterInput?.value.trim() || '';
     const excludeFilter = excludeFilterInput?.value.trim() || '';
     const isRegex = regexModeCheckbox?.checked || false;
+    const symbolsOnly = symbolsModeCheckbox?.checked || false;
 
     if (!query) {
         resultsHeader.style.display = 'none';
@@ -252,6 +254,9 @@ async function performSearch() {
         }
         if (isRegex) {
             params.set('regex', 'true');
+        }
+        if (symbolsOnly) {
+            params.set('symbols', 'true');
         }
         const response = await fetch(`${API_BASE}/api/search?${params}`);
         
@@ -330,6 +335,11 @@ maxResultsSelect.addEventListener('change', performSearch);
 // Regex mode checkbox listener
 if (regexModeCheckbox) {
     regexModeCheckbox.addEventListener('change', performSearch);
+}
+
+// Symbols mode checkbox listener
+if (symbolsModeCheckbox) {
+    symbolsModeCheckbox.addEventListener('change', performSearch);
 }
 
 // Filter input event listeners

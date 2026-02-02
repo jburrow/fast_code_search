@@ -143,6 +143,10 @@ Search for a query and stream results:
 message SearchRequest {
   string query = 1;
   int32 max_results = 2;
+  repeated string include_paths = 3;  // Glob patterns for paths to include
+  repeated string exclude_paths = 4;  // Glob patterns for paths to exclude
+  bool is_regex = 5;                  // Treat query as regex pattern
+  bool symbols_only = 6;              // Search only in discovered symbols
 }
 
 message SearchResult {
@@ -153,6 +157,18 @@ message SearchResult {
   MatchType match_type = 5;
 }
 ```
+
+### Search Modes
+
+The search engine supports multiple modes:
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| **Text Search** | (default) | Full-text search across all file contents |
+| **Regex Search** | `is_regex=true` | Regular expression pattern matching |
+| **Symbols-Only** | `symbols_only=true` | Search only in function/class names |
+
+**Symbols-only search** is ideal when you're looking for definitions rather than usages. It searches the symbol cache (extracted via tree-sitter) and returns only matches where the query appears in a symbol name. This is significantly faster than full-text search when you know you're looking for a function or class.
 
 ## Performance Characteristics
 

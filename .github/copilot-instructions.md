@@ -16,6 +16,11 @@ The system has four layers that communicate through shared data structures:
 3. **Search Layer** (`src/search/engine.rs`) - Parallel search with scoring
    - Uses rayon for parallel line-by-line search across candidate documents
    - Multi-factor scoring: symbol defs (3x), exact match (2x), src/lib dirs (1.5x)
+   - Four search methods:
+     - `search()`: Basic text search
+     - `search_with_filter()`: Text search with path filtering
+     - `search_regex()`: Regex pattern matching with trigram acceleration
+     - `search_symbols()`: Symbols-only search for function/class names
 
 4. **Server Layer** - Dual API exposure
    - `src/server/service.rs`: gRPC streaming via tonic (port 50051)
@@ -34,12 +39,38 @@ cargo run --release -- --config ./config.toml
 
 # Run tests
 cargo test
-
-# Lint before committing
-cargo clippy -- -D warnings && cargo fmt --check
 ```
 
 The `build.rs` compiles `proto/search.proto` via tonic-build on each build.
+
+## Before Every Commit
+
+**IMPORTANT**: Always run these commands before committing to avoid CI failures:
+
+```bash
+# Format code (REQUIRED - CI will reject unformatted code)
+cargo fmt
+
+# Run linter (REQUIRED - CI will reject code with clippy warnings)
+cargo clippy -- -D warnings
+
+# Run tests
+cargo test
+```
+
+The CI pipeline runs `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` on every PR. Commits that fail these checks will block the PR.
+
+## Handling Merge Conflicts
+
+When there are merge conflicts with the main branch, **always resolve them automatically** by:
+
+1. Fetching the latest main branch
+2. Merging or rebasing to incorporate upstream changes
+3. Resolving any conflicts by keeping both sets of changes when possible
+4. Running `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` after resolution
+5. Committing the resolved changes
+
+This ensures the PR stays up-to-date with the latest main branch changes.
 
 ## Key Patterns
 
@@ -59,6 +90,15 @@ File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?
 2. Run `cargo build` to regenerate bindings
 3. Update `src/server/service.rs` implementation
 4. Update `examples/client.rs`
+
+### REST API Endpoints (src/web/api.rs)
+The REST API supports the following search parameters:
+- `q`: Query string (required)
+- `max`: Maximum results (default: 50)
+- `include`: Semicolon-delimited glob patterns for paths to include
+- `exclude`: Semicolon-delimited glob patterns for paths to exclude
+- `regex`: Set to `true` for regex pattern matching
+- `symbols`: Set to `true` for symbols-only search (functions/classes)
 
 ### Configuration
 TOML config in `config.toml` or `fast_code_search.toml`. Key settings:
@@ -132,10 +172,11 @@ Before preparing a release:
 
 3. **Update CHANGELOG.md** with notable changes
 
-4. **Run full test suite**:
+4. **Run full test suite and formatting**:
    ```bash
-   cargo test
+   cargo fmt
    cargo clippy -- -D warnings
+   cargo test
    ```
 
 5. **Tag the release**: `git tag v0.x.x`

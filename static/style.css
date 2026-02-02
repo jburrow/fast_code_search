@@ -120,7 +120,8 @@ header h1 {
 }
 
 /* Regex toggle */
-.regex-toggle {
+.regex-toggle,
+.symbols-toggle {
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -132,18 +133,21 @@ header h1 {
     transition: all 0.2s;
 }
 
-.regex-toggle:hover {
+.regex-toggle:hover,
+.symbols-toggle:hover {
     border-color: var(--accent);
 }
 
-.regex-toggle input[type="checkbox"] {
+.regex-toggle input[type="checkbox"],
+.symbols-toggle input[type="checkbox"] {
     width: 16px;
     height: 16px;
     cursor: pointer;
     accent-color: var(--accent);
 }
 
-.regex-toggle input[type="checkbox"]:checked + span {
+.regex-toggle input[type="checkbox"]:checked + span,
+.symbols-toggle input[type="checkbox"]:checked + span {
     color: var(--accent);
     font-weight: 600;
 }
