@@ -17,7 +17,7 @@ use super::trigram::Trigram;
 #[derive(Serialize, Deserialize)]
 pub struct PersistedTrigramIndex {
     /// Map from trigram bytes to serialized roaring bitmap
-    trigram_to_docs: HashMap<[u8; 3], Vec<u8>>,
+    pub trigram_to_docs: HashMap<[u8; 3], Vec<u8>>,
 }
 
 /// Serializable representation of file metadata
