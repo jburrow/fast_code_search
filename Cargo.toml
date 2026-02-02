@@ -58,10 +58,14 @@ md5 = "0.8"
 notify-debouncer-full = "0.7"
 ndarray = "0.15"                                                              # For vector operations in semantic search
 fs2 = "0.4"
+# Semantic search ML model dependencies
+ort = "2.0.0-rc.11"                                                           # ONNX Runtime for ML model inference
+tokenizers = "0.19"                                                           # HuggingFace tokenizers for text encoding
+sha2 = "0.10"                                                                 # Checksum verification for model downloads
 
 [dev-dependencies]
 tempfile = "3"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }  # Also used for model downloads in production
 tokio-test = "0.4"
 tokio-stream = { version = "0.1", features = ["net"] }
 criterion = { version = "0.5", features = ["html_reports"] }
