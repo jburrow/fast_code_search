@@ -12,6 +12,7 @@ readme = "README.md"
 keywords = ["search", "code-search", "trigram", "grpc", "indexing"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**"]
+default-run = "fast_code_search_server"
 
 [lib]
 name = "fast_code_search"
@@ -55,7 +56,7 @@ rust-embed = "8"
 mime_guess = "2"
 md5 = "0.8"
 notify-debouncer-full = "0.7"
-ndarray = "0.15"  # For vector operations in semantic search
+ndarray = "0.15"                                                              # For vector operations in semantic search
 fs2 = "0.4"
 
 [dev-dependencies]
