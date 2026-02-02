@@ -107,9 +107,11 @@ Tests to add:
 ### HuggingFace Hub Integration
 
 Download from:
-- Model: `https://huggingface.co/microsoft/codebert-base/resolve/main/onnx/model.onnx`
+- Model: `https://huggingface.co/Xenova/codebert-base/resolve/main/onnx/model.onnx` (ONNX-optimized)
 - Tokenizer: `https://huggingface.co/microsoft/codebert-base/resolve/main/tokenizer.json`
 - Config: `https://huggingface.co/microsoft/codebert-base/resolve/main/config.json`
+
+**Note**: The original `microsoft/codebert-base` repository doesn't include ONNX models. We use `Xenova/codebert-base` which provides properly ONNX-optimized versions of the model exported using Optimum.
 
 Cache structure:
 ```

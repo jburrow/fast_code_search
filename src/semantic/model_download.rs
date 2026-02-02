@@ -5,11 +5,16 @@
 //! and caches them locally for reuse.
 
 use anyhow::{Context, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tracing::{debug, info, warn};
+
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY_SECS: u64 = 2;
 
 /// Model metadata
 #[derive(Debug, Clone)]
@@ -18,25 +23,48 @@ pub struct ModelInfo {
     pub onnx_url: String,
     pub tokenizer_url: String,
     pub config_url: String,
+    pub expected_sha256: Option<String>,
 }
 
 impl ModelInfo {
-    /// Get CodeBERT model info
+    /// Get CodeBERT model info (ONNX-optimized version)
+    ///
+    /// Uses the Optimum-converted ONNX model from HuggingFace.
+    /// This model is properly optimized for ONNX Runtime inference.
     pub fn codebert() -> Self {
         Self {
             name: "microsoft/codebert-base".to_string(),
-            onnx_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/onnx/model.onnx"
+            // Using Xenova's ONNX-converted model which is properly exported
+            // The original microsoft/codebert-base doesn't have ONNX models
+            onnx_url: "https://huggingface.co/Xenova/codebert-base/resolve/main/onnx/model.onnx"
                 .to_string(),
             tokenizer_url:
                 "https://huggingface.co/microsoft/codebert-base/resolve/main/tokenizer.json"
                     .to_string(),
             config_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/config.json"
                 .to_string(),
+            expected_sha256: None, // TODO: Add checksums for verification
+        }
+    }
+
+    /// Alternative: UniXcoder model (newer, multilingual)
+    #[allow(dead_code)]
+    pub fn unixcoder() -> Self {
+        Self {
+            name: "microsoft/unixcoder-base".to_string(),
+            onnx_url: "https://huggingface.co/Xenova/unixcoder-base/resolve/main/onnx/model.onnx"
+                .to_string(),
+            tokenizer_url:
+                "https://huggingface.co/microsoft/unixcoder-base/resolve/main/tokenizer.json"
+                    .to_string(),
+            config_url: "https://huggingface.co/microsoft/unixcoder-base/resolve/main/config.json"
+                .to_string(),
+            expected_sha256: None,
         }
     }
 }
 
-/// Model downloader
+/// Model downloader with progress tracking and retry logic
 pub struct ModelDownloader {
     cache_dir: PathBuf,
 }
@@ -65,7 +93,11 @@ impl ModelDownloader {
     pub fn get_model_path(&self, model_name: &str) -> Result<PathBuf> {
         let model_dir = self.model_dir(model_name);
         if !self.is_cached(model_name) {
-            anyhow::bail!("Model {} not found in cache", model_name);
+            anyhow::bail!(
+                "Model '{}' not found in cache at {}. Run with ML feature enabled to download.",
+                model_name,
+                model_dir.display()
+            );
         }
         Ok(model_dir)
     }
@@ -77,61 +109,163 @@ impl ModelDownloader {
             return self.get_model_path(&model_info.name);
         }
 
-        info!(model = %model_info.name, "Downloading model");
+        info!(model = %model_info.name, "Downloading model files");
         self.download_model(model_info)?;
         self.get_model_path(&model_info.name)
     }
 
-    /// Download model from HuggingFace
+    /// Download model from HuggingFace with retry logic
     fn download_model(&self, model_info: &ModelInfo) -> Result<()> {
         let model_dir = self.model_dir(&model_info.name);
         fs::create_dir_all(&model_dir).with_context(|| {
-            format!("Failed to create model directory: {}", model_dir.display())
+            format!(
+                "Failed to create model cache directory: {}. Check permissions.",
+                model_dir.display()
+            )
         })?;
 
-        // Download ONNX model
-        info!("Downloading ONNX model (~500MB, this may take a while)...");
-        self.download_file(&model_info.onnx_url, &model_dir.join("model.onnx"))?;
+        info!("Downloading CodeBERT ONNX model (~500MB). This is a one-time operation.");
+        info!("Files will be cached at: {}", model_dir.display());
+
+        // Download ONNX model (largest file)
+        self.download_file_with_retry(
+            &model_info.onnx_url,
+            &model_dir.join("model.onnx"),
+            "ONNX model",
+        )?;
 
         // Download tokenizer
-        info!("Downloading tokenizer...");
-        self.download_file(&model_info.tokenizer_url, &model_dir.join("tokenizer.json"))?;
+        self.download_file_with_retry(
+            &model_info.tokenizer_url,
+            &model_dir.join("tokenizer.json"),
+            "Tokenizer",
+        )?;
 
         // Download config
-        info!("Downloading config...");
-        self.download_file(&model_info.config_url, &model_dir.join("config.json"))?;
+        self.download_file_with_retry(
+            &model_info.config_url,
+            &model_dir.join("config.json"),
+            "Config",
+        )?;
 
-        info!(model = %model_info.name, path = %model_dir.display(), "Model downloaded successfully");
+        // Verify checksum if provided
+        if let Some(expected_hash) = &model_info.expected_sha256 {
+            info!("Verifying model checksum...");
+            let model_path = model_dir.join("model.onnx");
+            if !self.verify_checksum(&model_path, expected_hash)? {
+                anyhow::bail!(
+                    "Model checksum verification failed. Downloaded file may be corrupted. \
+                     Please delete {} and try again.",
+                    model_path.display()
+                );
+            }
+            info!("Checksum verification passed");
+        }
+
+        info!(
+            model = %model_info.name,
+            path = %model_dir.display(),
+            "Model downloaded and cached successfully"
+        );
         Ok(())
     }
 
-    /// Download a file from URL to path
-    fn download_file(&self, url: &str, path: &Path) -> Result<()> {
-        debug!(url = %url, path = %path.display(), "Downloading file");
+    /// Download a file from URL to path with retry logic and progress bar
+    fn download_file_with_retry(&self, url: &str, path: &Path, description: &str) -> Result<()> {
+        for attempt in 1..=MAX_RETRIES {
+            match self.download_file(url, path, description) {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < MAX_RETRIES => {
+                    warn!(
+                        "Download attempt {}/{} failed for {}: {}. Retrying in {}s...",
+                        attempt, MAX_RETRIES, description, e, RETRY_DELAY_SECS
+                    );
+                    std::thread::sleep(Duration::from_secs(RETRY_DELAY_SECS));
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "Failed to download {} after {} attempts. \
+                             Check your internet connection and firewall settings.",
+                            description, MAX_RETRIES
+                        )
+                    });
+                }
+            }
+        }
+        unreachable!()
+    }
 
-        let response = reqwest::blocking::get(url)
-            .with_context(|| format!("Failed to download from {}", url))?;
+    /// Download a file from URL to path with progress indicator
+    fn download_file(&self, url: &str, path: &Path, description: &str) -> Result<()> {
+        debug!(url = %url, path = %path.display(), "Downloading {}", description);
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(300)) // 5 minute timeout
+            .build()
+            .context("Failed to create HTTP client")?;
+
+        let response = client
+            .get(url)
+            .send()
+            .with_context(|| format!("Failed to connect to {}", url))?;
 
         if !response.status().is_success() {
-            anyhow::bail!("Failed to download {}: HTTP {}", url, response.status());
+            anyhow::bail!(
+                "Failed to download {}: HTTP {} from {}. \
+                 The file may not exist or you may not have access.",
+                description,
+                response.status(),
+                url
+            );
         }
 
+        // Get content length for progress bar
+        let total_size = response.content_length().unwrap_or(0);
+
+        // Create progress bar
+        let pb = if total_size > 0 {
+            let pb = ProgressBar::new(total_size);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+            pb.set_message(format!("Downloading {}", description));
+            Some(pb)
+        } else {
+            info!("Downloading {} (size unknown)...", description);
+            None
+        };
+
+        // Download with progress
         let bytes = response
             .bytes()
             .with_context(|| format!("Failed to read response from {}", url))?;
 
+        if let Some(pb) = &pb {
+            pb.set_position(bytes.len() as u64);
+            pb.finish_with_message(format!("Downloaded {}", description));
+        }
+
+        // Write to file
         let mut file = fs::File::create(path)
             .with_context(|| format!("Failed to create file: {}", path.display()))?;
 
         file.write_all(&bytes)
             .with_context(|| format!("Failed to write file: {}", path.display()))?;
 
-        debug!(path = %path.display(), size = bytes.len(), "File downloaded");
+        debug!(
+            path = %path.display(),
+            size = bytes.len(),
+            "{} downloaded successfully",
+            description
+        );
         Ok(())
     }
 
-    /// Verify file checksum (optional, for future use)
-    #[allow(dead_code)]
+    /// Verify file checksum using SHA256
     fn verify_checksum(&self, path: &Path, expected_hash: &str) -> Result<bool> {
         let bytes =
             fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
@@ -140,14 +274,17 @@ impl ModelDownloader {
         hasher.update(&bytes);
         let hash = format!("{:x}", hasher.finalize());
 
-        Ok(hash == expected_hash)
+        Ok(hash.eq_ignore_ascii_case(expected_hash))
     }
 }
 
 /// Get default cache directory
 pub fn default_cache_dir() -> Result<PathBuf> {
     let cache_dir = dirs::cache_dir()
-        .context("Failed to get cache directory")?
+        .context(
+            "Failed to determine cache directory. \
+             On Linux, ensure $HOME is set. On Windows, ensure %LOCALAPPDATA% is set.",
+        )?
         .join("fast_code_search_semantic");
 
     Ok(cache_dir)
@@ -159,10 +296,18 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_model_info() {
+    fn test_model_info_codebert() {
         let info = ModelInfo::codebert();
         assert_eq!(info.name, "microsoft/codebert-base");
         assert!(info.onnx_url.contains("huggingface.co"));
+        assert!(info.onnx_url.contains("Xenova")); // Should use ONNX-converted version
+    }
+
+    #[test]
+    fn test_model_info_unixcoder() {
+        let info = ModelInfo::unixcoder();
+        assert_eq!(info.name, "microsoft/unixcoder-base");
+        assert!(info.onnx_url.contains("Xenova"));
     }
 
     #[test]
@@ -192,8 +337,22 @@ mod tests {
             .contains("fast_code_search_semantic"));
     }
 
+    #[test]
+    fn test_get_model_path_not_cached() {
+        let temp = tempdir().unwrap();
+        let downloader = ModelDownloader::new(temp.path().to_path_buf());
+
+        let result = downloader.get_model_path("microsoft/codebert-base");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not found in cache"));
+    }
+
     // Note: Actual download tests are skipped in CI as they require network access
-    // and download large files. Run manually for testing.
+    // and download large files. Run manually for testing with:
+    // cargo test --features ml-models test_download_model -- --ignored
     #[test]
     #[ignore]
     fn test_download_model() {

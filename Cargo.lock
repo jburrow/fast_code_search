@@ -664,6 +664,7 @@ dependencies = [
  "fs2",
  "glob",
  "globset",
+ "indicatif",
  "md5",
  "memchr",
  "memmap2",
