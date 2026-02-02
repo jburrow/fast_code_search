@@ -8,6 +8,9 @@ High-performance, in-memory code search service built in Rust. Designed to handl
 - **Memory-mapped files** using `memmap2` for optimal memory usage
 - **Symbol awareness** using `tree-sitter` for Rust, Python, JavaScript, and TypeScript
 - **Parallel search** using `rayon` for maximum throughput
+- **Index persistence** — save index to disk and reload on restart for faster startup times
+- **File watcher** — incremental indexing monitors filesystem changes in real-time
+- **Symbols-only search** — search only in function/class names for faster, targeted results
 - **Weight-based scoring** that boosts:
   - Symbol definitions (3.0x)
   - Primary source directories (src/, lib/) (1.5x)
@@ -15,7 +18,11 @@ High-performance, in-memory code search service built in Rust. Designed to handl
   - Matches at the start of lines (1.5x)
   - Shorter lines (inverse length factor)
   - **Heavily-imported files** — logarithmic boost based on dependent count (PageRank-style)
-- **gRPC API** using `tonic` with streaming results
+- **Dual API access**:
+  - **gRPC API** using `tonic` with streaming results (port 50051)
+  - **REST API** using `axum` with JSON responses (port 8080)
+- **Embedded Web UI** — browser-based search interface with real-time results
+- **Semantic search** (optional) — natural language queries using TF-IDF or ML embeddings
 - **Supports 10GB+ codebases** efficiently
 
 ## Why an In-Memory Server?
@@ -45,7 +52,7 @@ Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_sea
 - **Disk-constrained**: Zoekt's persistent index survives restarts without rebuild
 - **Planet-scale**: GitHub Code Search scales horizontally across data centers
 
-📖 **See [PRIOR_ART.md](PRIOR_ART.md) for a detailed comparison with ripgrep, Zoekt, GitHub Code Search, and improvement roadmap.**
+📖 **See [PRIOR_ART.md](docs/design/PRIOR_ART.md) for a detailed comparison with ripgrep, Zoekt, GitHub Code Search, and improvement roadmap.**
 
 ## Architecture
 
@@ -58,22 +65,40 @@ Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_sea
 
 2. **File Store** (`src/index/file_store.rs`)
    - Memory-maps files for efficient access
+   - Deduplicates files by canonical path
    - Supports large codebases without loading everything into RAM
 
-3. **Symbol Extractor** (`src/symbols/extractor.rs`)
+3. **Index Persistence** (`src/index/persistence.rs`)
+   - Save/load index to disk with file locking
+   - Stores config fingerprint for detecting configuration changes
+   - Incremental reconciliation against filesystem on load
+   - Multiple read-only servers can share the same index file
+
+4. **Symbol Extractor** (`src/symbols/extractor.rs`)
    - Uses tree-sitter parsers for multiple languages
    - Identifies function/class definitions
    - Enhances search results with semantic information
 
-4. **Search Engine** (`src/search/engine.rs`)
+5. **Search Engine** (`src/search/engine.rs`)
    - Parallel search using rayon
    - Sophisticated scoring algorithm
    - Returns ranked results
+   - Four search methods: text, filtered, regex, and symbols-only
 
-5. **gRPC Server** (`src/server/service.rs`)
+6. **File Watcher** (`src/search/watcher.rs`)
+   - Monitors filesystem for changes using `notify-debouncer-full`
+   - Incrementally updates index on file add/modify/delete
+   - Background processing without blocking searches
+
+7. **gRPC Server** (`src/server/service.rs`)
    - Streaming search results
    - Index management
-   - Remote access via gRPC
+   - Remote access via gRPC (port 50051)
+
+8. **REST API & Web UI** (`src/web/`)
+   - JSON REST API on port 8080
+   - Embedded browser-based search interface
+   - WebSocket for real-time progress updates
 
 ## Building
 
@@ -105,6 +130,8 @@ cargo build --release --bin fast_code_search_semantic
 cargo build --release --bin fast_code_search_semantic --features ml-models
 ```
 
+Semantic search runs as a separate server on port 50052 (gRPC) and 8081 (Web UI).
+
 > **Windows users**: The `ml-models` feature requires ONNX Runtime DLL and `ORT_DYLIB_PATH` environment variable. See [Semantic Search README](docs/semantic/SEMANTIC_SEARCH_README.md#building-with-ml-models-optional) for detailed setup instructions.
 
 ### Run Tests
@@ -118,10 +145,65 @@ cargo test
 ### Starting the Server
 
 ```bash
+# Start with default settings
 cargo run --release --bin fast_code_search_server
+
+# Start with a config file
+cargo run --release --bin fast_code_search_server -- --config config.toml
+
+# Generate a template config file
+cargo run --release --bin fast_code_search_server -- --init fast_code_search.toml
 ```
 
-The server will start on `0.0.0.0:50051`.
+The server will start on:
+- **gRPC**: `0.0.0.0:50051`
+- **Web UI**: `http://localhost:8080`
+
+### CLI Options
+
+```
+fast_code_search_server [OPTIONS]
+
+Options:
+  -c, --config <FILE>       Path to configuration file
+  -a, --address <ADDR>      Server listen address (overrides config)
+  -i, --index <PATH>        Additional paths to index (repeatable)
+      --no-auto-index       Skip automatic indexing on startup
+  -v, --verbose             Enable verbose logging
+      --init <FILE>         Generate template configuration file
+  -h, --help                Print help
+  -V, --version             Print version
+```
+
+### Configuration File
+
+Create a TOML configuration file (see `--init` to generate a template):
+
+```toml
+[server]
+address = "0.0.0.0:50051"      # gRPC server address
+web_address = "0.0.0.0:8080"   # REST API / Web UI address
+enable_web_ui = true           # Enable embedded Web UI
+
+[indexer]
+paths = [                      # Directories to index
+    "/path/to/codebase",
+]
+exclude_patterns = [           # Glob patterns to exclude
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+]
+max_file_size = 10485760       # Skip files larger than 10MB
+
+# Index persistence (optional)
+index_path = "/var/lib/fast_code_search/index"
+save_after_build = true        # Save after initial indexing
+save_after_updates = 0         # Save after N file updates (0 = disabled)
+
+# File watcher (optional)
+watch = true                   # Monitor filesystem for changes
+```
 
 ### Example Client
 
@@ -174,17 +256,63 @@ message SearchResult {
 }
 ```
 
+### REST API
+
+The REST API is available at `http://localhost:8080` when `enable_web_ui` is true.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/search` | GET | Search the index |
+| `/api/stats` | GET | Get index statistics |
+| `/api/status` | GET | Get indexing progress and status |
+| `/api/health` | GET | Health check |
+| `/api/dependents` | GET | Get files that import a given file |
+| `/api/dependencies` | GET | Get files imported by a given file |
+| `/ws/progress` | WS | WebSocket for real-time indexing progress |
+
+#### Search Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | required | Query string |
+| `max` | int | 50 | Maximum results (1-1000) |
+| `include` | string | - | Semicolon-delimited glob patterns to include |
+| `exclude` | string | - | Semicolon-delimited glob patterns to exclude |
+| `regex` | bool | false | Treat query as regex pattern |
+| `symbols` | bool | false | Search only in symbol names |
+
+**Example:**
+```bash
+curl "http://localhost:8080/api/search?q=fn%20main&max=10&regex=true"
+```
+
 ### Search Modes
 
 The search engine supports multiple modes:
 
-| Mode | Flag | Description |
-|------|------|-------------|
-| **Text Search** | (default) | Full-text search across all file contents |
-| **Regex Search** | `is_regex=true` | Regular expression pattern matching |
-| **Symbols-Only** | `symbols_only=true` | Search only in function/class names |
+| Mode | REST Flag | gRPC Flag | Description |
+|------|-----------|-----------|-------------|
+| **Text Search** | (default) | (default) | Full-text search across all file contents |
+| **Regex Search** | `regex=true` | `is_regex=true` | Regular expression pattern matching |
+| **Symbols-Only** | `symbols=true` | `symbols_only=true` | Search only in function/class names |
 
 **Symbols-only search** is ideal when you're looking for definitions rather than usages. It searches the symbol cache (extracted via tree-sitter) and returns only matches where the query appears in a symbol name. This is significantly faster than full-text search when you know you're looking for a function or class.
+
+### Semantic Search
+
+For natural language queries like "authentication logic" or "database connection handling", use the semantic search server:
+
+```bash
+# Generate config
+cargo run --bin fast_code_search_semantic -- --init
+
+# Start server
+cargo run --bin fast_code_search_semantic -- --config fast_code_search_semantic.toml
+```
+
+Visit `http://localhost:8081` for the semantic search Web UI.
+
+See [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) for detailed documentation.
 
 ## Performance Characteristics
 
@@ -192,6 +320,7 @@ The search engine supports multiple modes:
 - **Search**: Sub-millisecond for most queries on 10GB+ codebases
 - **Memory**: Uses memory mapping, so actual RAM usage is much lower than codebase size
 - **Scalability**: Handles 10GB+ of text efficiently
+- **Persistence**: Load pre-built index on restart (no re-indexing needed)
 
 ## Benchmarks
 
@@ -207,7 +336,7 @@ Benchmarks run on synthetic corpus using Criterion. Run locally with `cargo benc
 | regex_search/simple_literal | 500 files | 9 ms | - |
 | regex_search/no_literal | 500 files | 45 ms | - |
 
-*Last updated: v0.2.0*
+*Last updated: v0.2.2*
 
 ### Comparison with Traditional Search Tools
 
@@ -266,7 +395,7 @@ The key insight: **amortized cost**. Traditional tools pay per-query costs, whil
 | IDE integration | Editor plugins | Editor plugins | Git | Limited | Native API |
 | Cross-platform | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-📖 **See [PRIOR_ART.md](PRIOR_ART.md) for detailed architectural analysis and improvement roadmap.**
+📖 **See [PRIOR_ART.md](docs/design/PRIOR_ART.md) for detailed architectural analysis and improvement roadmap.**
 
 ## How It Works
 
@@ -303,7 +432,15 @@ Tree-sitter symbol extraction is supported for:
 
 Other file types are still searchable, just without symbol-awareness.
 
+## Documentation
+
+- [CHANGELOG.md](CHANGELOG.md) — Version history and release notes
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Development guide
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Deployment guide
+- [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md) — Comparison with ripgrep, Zoekt, etc.
+- [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) — Semantic search setup
+
 ## License
 
-See LICENSE file.
+MIT — See [LICENSE](LICENSE) file.
 
