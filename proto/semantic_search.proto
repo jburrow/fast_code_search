@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package semantic_search;
+
+service SemanticCodeSearch {
+  // Search for code using natural language query
+  rpc Search(SemanticSearchRequest) returns (stream SemanticSearchResult);
+  
+  // Get search engine statistics
+  rpc GetStats(StatsRequest) returns (StatsResponse);
+  
+  // Reload index from disk
+  rpc ReloadIndex(ReloadIndexRequest) returns (ReloadIndexResponse);
+}
+
+message SemanticSearchRequest {
+  string query = 1;           // Natural language query
+  int32 max_results = 2;      // Maximum number of results to return
+}
+
+message SemanticSearchResult {
+  string file_path = 1;       // Path to the file containing the chunk
+  string content = 2;         // The code chunk content
+  int32 start_line = 3;       // Starting line number of chunk
+  int32 end_line = 4;         // Ending line number of chunk
+  float similarity_score = 5; // Similarity score (0-1, higher is better)
+  ChunkType chunk_type = 6;   // Type of code chunk
+  string symbol_name = 7;     // Symbol name if chunk is a function/class
+}
+
+enum ChunkType {
+  FIXED = 0;                  // Fixed-size chunk
+  FUNCTION = 1;               // Function chunk
+  CLASS = 2;                  // Class chunk
+  MODULE = 3;                 // Module-level chunk
+}
+
+message StatsRequest {
+  // Empty for now
+}
+
+message StatsResponse {
+  int32 num_files = 1;        // Number of indexed files
+  int32 num_chunks = 2;       // Number of code chunks
+  int32 embedding_dim = 3;    // Embedding dimension
+  int32 cache_size = 4;       // Query cache size
+}
+
+message ReloadIndexRequest {
+  string index_path = 1;      // Path to index file to load
+}
+
+message ReloadIndexResponse {
+  bool success = 1;           // Whether reload was successful
+  string message = 2;         // Status message
+  int32 num_chunks = 3;       // Number of chunks loaded
+}
