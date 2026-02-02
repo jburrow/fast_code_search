@@ -2,20 +2,29 @@
 //!
 //! Uses ONNX Runtime with pretrained code models (CodeBERT) for
 //! generating high-quality embeddings for code search.
+//!
+//! Falls back to TF-IDF when ML models are not available.
 
-use anyhow::{Context, Result};
-use ndarray::{Array2, Axis};
-use ort::{GraphOptimizationLevel, Session};
-use tokenizers::Tokenizer;
-use tracing::{debug, info, warn};
+use anyhow::Result;
+use tracing::{info, warn};
 
-use super::model_download::{ModelDownloader, ModelInfo, default_cache_dir};
+#[cfg(feature = "ml-models")]
+use {
+    super::model_download::{default_cache_dir, ModelDownloader, ModelInfo},
+    ndarray::{Array2, Axis},
+    ort::{GraphOptimizationLevel, Session},
+    tokenizers::Tokenizer,
+    tracing::debug,
+};
 
 /// ML-based embedding model using ONNX Runtime
 pub struct EmbeddingModel {
+    #[cfg(feature = "ml-models")]
     session: Option<Session>,
+    #[cfg(feature = "ml-models")]
     tokenizer: Option<Tokenizer>,
     embedding_dim: usize,
+    #[allow(dead_code)] // Used when ml-models feature is enabled
     max_length: usize,
     use_ml: bool,
 }
@@ -25,7 +34,15 @@ impl EmbeddingModel {
     ///
     /// Attempts to load ONNX model. Falls back to simple TF-IDF if loading fails.
     pub fn new() -> Self {
-        Self::with_config(true, 512)
+        #[cfg(feature = "ml-models")]
+        {
+            Self::with_config(true, 512)
+        }
+        #[cfg(not(feature = "ml-models"))]
+        {
+            info!("ML models feature not enabled, using TF-IDF");
+            Self::with_config(false, 512)
+        }
     }
 
     /// Create embedding model with custom configuration
@@ -33,7 +50,9 @@ impl EmbeddingModel {
         if !use_ml {
             info!("ML embeddings disabled, using TF-IDF fallback");
             return Self {
+                #[cfg(feature = "ml-models")]
                 session: None,
+                #[cfg(feature = "ml-models")]
                 tokenizer: None,
                 embedding_dim: 128, // TF-IDF fallback dimension
                 max_length,
@@ -41,48 +60,64 @@ impl EmbeddingModel {
             };
         }
 
-        match Self::load_ml_model(max_length) {
-            Ok((session, tokenizer, embedding_dim)) => {
-                info!(dim = embedding_dim, "ML embedding model loaded successfully");
-                Self {
-                    session: Some(session),
-                    tokenizer: Some(tokenizer),
-                    embedding_dim,
-                    max_length,
-                    use_ml: true,
+        #[cfg(feature = "ml-models")]
+        {
+            match Self::load_ml_model(max_length) {
+                Ok((session, tokenizer, embedding_dim)) => {
+                    info!(
+                        dim = embedding_dim,
+                        "ML embedding model loaded successfully"
+                    );
+                    Self {
+                        session: Some(session),
+                        tokenizer: Some(tokenizer),
+                        embedding_dim,
+                        max_length,
+                        use_ml: true,
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load ML model, falling back to TF-IDF: {}", e);
+                    Self {
+                        session: None,
+                        tokenizer: None,
+                        embedding_dim: 128, // TF-IDF fallback dimension
+                        max_length,
+                        use_ml: false,
+                    }
                 }
             }
-            Err(e) => {
-                warn!("Failed to load ML model, falling back to TF-IDF: {}", e);
-                Self {
-                    session: None,
-                    tokenizer: None,
-                    embedding_dim: 128, // TF-IDF fallback dimension
-                    max_length,
-                    use_ml: false,
-                }
+        }
+        #[cfg(not(feature = "ml-models"))]
+        {
+            warn!("ML models feature not enabled, cannot use ML mode");
+            Self {
+                embedding_dim: 128,
+                max_length,
+                use_ml: false,
             }
         }
     }
 
     /// Load ONNX model and tokenizer
+    #[cfg(feature = "ml-models")]
     fn load_ml_model(max_length: usize) -> Result<(Session, Tokenizer, usize)> {
         info!("Loading ML embedding model");
 
         // Get cache directory
-        let cache_dir = default_cache_dir()
-            .context("Failed to get cache directory")?;
+        let cache_dir = default_cache_dir().context("Failed to get cache directory")?;
 
         // Download model if needed
         let downloader = ModelDownloader::new(cache_dir);
         let model_info = ModelInfo::codebert();
-        let model_dir = downloader.ensure_model(&model_info)
+        let model_dir = downloader
+            .ensure_model(&model_info)
             .context("Failed to ensure model is downloaded")?;
 
         // Load ONNX session
         let model_path = model_dir.join("model.onnx");
         debug!(path = %model_path.display(), "Loading ONNX model");
-        
+
         let session = Session::builder()
             .context("Failed to create session builder")?
             .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -93,7 +128,7 @@ impl EmbeddingModel {
         // Load tokenizer
         let tokenizer_path = model_dir.join("tokenizer.json");
         debug!(path = %tokenizer_path.display(), "Loading tokenizer");
-        
+
         let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
@@ -124,28 +159,34 @@ impl EmbeddingModel {
 
     /// Encode text to embedding vector
     pub fn encode(&mut self, text: &str) -> Result<Vec<f32>> {
-        if self.use_ml {
-            self.encode_ml(text)
-        } else {
-            self.encode_tfidf(text)
+        #[cfg(feature = "ml-models")]
+        {
+            if self.use_ml {
+                return self.encode_ml(text);
+            }
         }
+        self.encode_tfidf(text)
     }
 
     /// Encode batch of texts
     pub fn encode_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        if self.use_ml {
-            self.encode_batch_ml(texts)
-        } else {
-            texts.iter().map(|&text| self.encode_tfidf(text)).collect()
+        #[cfg(feature = "ml-models")]
+        {
+            if self.use_ml {
+                return self.encode_batch_ml(texts);
+            }
         }
+        texts.iter().map(|&text| self.encode_tfidf(text)).collect()
     }
 
     /// Encode using ML model
+    #[cfg(feature = "ml-models")]
     fn encode_ml(&self, text: &str) -> Result<Vec<f32>> {
-        let session = self.session.as_ref()
+        let session = self
+            .session
+            .as_ref()
             .context("ONNX session not available")?;
-        let tokenizer = self.tokenizer.as_ref()
-            .context("Tokenizer not available")?;
+        let tokenizer = self.tokenizer.as_ref().context("Tokenizer not available")?;
 
         // Tokenize
         let encoding = tokenizer
@@ -197,11 +238,13 @@ impl EmbeddingModel {
     }
 
     /// Encode batch using ML model
+    #[cfg(feature = "ml-models")]
     fn encode_batch_ml(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        let session = self.session.as_ref()
+        let session = self
+            .session
+            .as_ref()
             .context("ONNX session not available")?;
-        let tokenizer = self.tokenizer.as_ref()
-            .context("Tokenizer not available")?;
+        let tokenizer = self.tokenizer.as_ref().context("Tokenizer not available")?;
 
         if texts.is_empty() {
             return Ok(vec![]);
@@ -222,20 +265,15 @@ impl EmbeddingModel {
         for encoding in &encodings {
             let ids = encoding.get_ids();
             let mask = encoding.get_attention_mask();
-            
+
             input_ids_vec.extend(ids.iter().map(|&x| x as i64));
             attention_mask_vec.extend(mask.iter().map(|&x| x as i64));
         }
 
-        let input_ids_array = Array2::from_shape_vec(
-            (batch_size, seq_len),
-            input_ids_vec,
-        )?;
+        let input_ids_array = Array2::from_shape_vec((batch_size, seq_len), input_ids_vec)?;
 
-        let attention_mask_array = Array2::from_shape_vec(
-            (batch_size, seq_len),
-            attention_mask_vec,
-        )?;
+        let attention_mask_array =
+            Array2::from_shape_vec((batch_size, seq_len), attention_mask_vec)?;
 
         // Run inference
         let outputs = session.run(ort::inputs![
@@ -252,7 +290,8 @@ impl EmbeddingModel {
         let mut results = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             let sample_embeddings = embeddings.index_axis(Axis(0), i);
-            let pooled = sample_embeddings.mean_axis(Axis(0))
+            let pooled = sample_embeddings
+                .mean_axis(Axis(0))
                 .context("Failed to pool embeddings")?;
 
             // L2 normalization
@@ -381,6 +420,7 @@ mod tests {
     // ML model tests - only run when model is available
     #[test]
     #[ignore] // Skip by default as it requires model download
+    #[cfg(feature = "ml-models")]
     fn test_ml_model_loading() {
         let model = EmbeddingModel::new();
         // If ML model loads, dimension should be 768 (CodeBERT)
@@ -390,6 +430,7 @@ mod tests {
 
     #[test]
     #[ignore] // Skip by default as it requires model download
+    #[cfg(feature = "ml-models")]
     fn test_ml_encode() {
         let mut model = EmbeddingModel::new();
         if model.is_ml() {
@@ -404,6 +445,7 @@ mod tests {
 
     #[test]
     #[ignore] // Skip by default as it requires model download
+    #[cfg(feature = "ml-models")]
     fn test_ml_encode_batch() {
         let mut model = EmbeddingModel::new();
         if model.is_ml() {

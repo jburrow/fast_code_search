@@ -1,3 +1,4 @@
+#![cfg(feature = "ml-models")]
 //! Model download and caching for semantic search
 //!
 //! Downloads ONNX models and tokenizers from HuggingFace Hub
@@ -24,9 +25,13 @@ impl ModelInfo {
     pub fn codebert() -> Self {
         Self {
             name: "microsoft/codebert-base".to_string(),
-            onnx_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/onnx/model.onnx".to_string(),
-            tokenizer_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/tokenizer.json".to_string(),
-            config_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/config.json".to_string(),
+            onnx_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/onnx/model.onnx"
+                .to_string(),
+            tokenizer_url:
+                "https://huggingface.co/microsoft/codebert-base/resolve/main/tokenizer.json"
+                    .to_string(),
+            config_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/config.json"
+                .to_string(),
         }
     }
 }
@@ -80,29 +85,21 @@ impl ModelDownloader {
     /// Download model from HuggingFace
     fn download_model(&self, model_info: &ModelInfo) -> Result<()> {
         let model_dir = self.model_dir(&model_info.name);
-        fs::create_dir_all(&model_dir)
-            .with_context(|| format!("Failed to create model directory: {}", model_dir.display()))?;
+        fs::create_dir_all(&model_dir).with_context(|| {
+            format!("Failed to create model directory: {}", model_dir.display())
+        })?;
 
         // Download ONNX model
         info!("Downloading ONNX model (~500MB, this may take a while)...");
-        self.download_file(
-            &model_info.onnx_url,
-            &model_dir.join("model.onnx"),
-        )?;
+        self.download_file(&model_info.onnx_url, &model_dir.join("model.onnx"))?;
 
         // Download tokenizer
         info!("Downloading tokenizer...");
-        self.download_file(
-            &model_info.tokenizer_url,
-            &model_dir.join("tokenizer.json"),
-        )?;
+        self.download_file(&model_info.tokenizer_url, &model_dir.join("tokenizer.json"))?;
 
         // Download config
         info!("Downloading config...");
-        self.download_file(
-            &model_info.config_url,
-            &model_dir.join("config.json"),
-        )?;
+        self.download_file(&model_info.config_url, &model_dir.join("config.json"))?;
 
         info!(model = %model_info.name, path = %model_dir.display(), "Model downloaded successfully");
         Ok(())
@@ -119,7 +116,8 @@ impl ModelDownloader {
             anyhow::bail!("Failed to download {}: HTTP {}", url, response.status());
         }
 
-        let bytes = response.bytes()
+        let bytes = response
+            .bytes()
             .with_context(|| format!("Failed to read response from {}", url))?;
 
         let mut file = fs::File::create(path)
@@ -135,8 +133,8 @@ impl ModelDownloader {
     /// Verify file checksum (optional, for future use)
     #[allow(dead_code)]
     fn verify_checksum(&self, path: &Path, expected_hash: &str) -> Result<bool> {
-        let bytes = fs::read(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+        let bytes =
+            fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -171,23 +169,27 @@ mod tests {
     fn test_model_dir_path() {
         let temp = tempdir().unwrap();
         let downloader = ModelDownloader::new(temp.path().to_path_buf());
-        
+
         let model_dir = downloader.model_dir("microsoft/codebert-base");
-        assert!(model_dir.to_string_lossy().contains("microsoft-codebert-base"));
+        assert!(model_dir
+            .to_string_lossy()
+            .contains("microsoft-codebert-base"));
     }
 
     #[test]
     fn test_is_cached_not_found() {
         let temp = tempdir().unwrap();
         let downloader = ModelDownloader::new(temp.path().to_path_buf());
-        
+
         assert!(!downloader.is_cached("microsoft/codebert-base"));
     }
 
     #[test]
     fn test_default_cache_dir() {
         let cache_dir = default_cache_dir().unwrap();
-        assert!(cache_dir.to_string_lossy().contains("fast_code_search_semantic"));
+        assert!(cache_dir
+            .to_string_lossy()
+            .contains("fast_code_search_semantic"));
     }
 
     // Note: Actual download tests are skipped in CI as they require network access
@@ -198,7 +200,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let downloader = ModelDownloader::new(temp.path().to_path_buf());
         let model_info = ModelInfo::codebert();
-        
+
         let result = downloader.ensure_model(&model_info);
         assert!(result.is_ok());
         assert!(downloader.is_cached(&model_info.name));
