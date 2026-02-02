@@ -95,10 +95,31 @@ async fn main() -> Result<()> {
 
     // Create semantic search engine
     info!("Initializing semantic search engine...");
-    let engine = SemanticSearchEngine::new(
+    let mut engine = SemanticSearchEngine::new(
         config.indexer.chunk_size,
         config.indexer.chunk_overlap,
     );
+
+    // Try to load existing index if configured
+    if let Some(ref index_path) = config.indexer.index_path {
+        let path = std::path::Path::new(index_path);
+        if path.with_extension("index").exists() {
+            info!(path = %index_path, "Loading existing index");
+            match engine.load_index(path) {
+                Ok(_) => {
+                    let stats = engine.get_stats();
+                    info!(
+                        files = stats.num_files,
+                        chunks = stats.num_chunks,
+                        "Index loaded successfully"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load index, will rebuild");
+                }
+            }
+        }
+    }
 
     let shared_engine = Arc::new(RwLock::new(engine));
 
@@ -199,6 +220,17 @@ async fn main() -> Result<()> {
                 total_chunks = total_chunks,
                 "Background indexing completed"
             );
+
+            // Save index if configured
+            if let Some(ref index_path) = indexer_config.index_path {
+                info!(path = %index_path, "Saving index to disk");
+                let engine = index_engine.read().unwrap();
+                if let Err(e) = engine.save_index(std::path::Path::new(index_path)) {
+                    tracing::error!(error = %e, "Failed to save index");
+                } else {
+                    info!("Index saved successfully");
+                }
+            }
         });
     } else if args.no_auto_index {
         info!("Auto-indexing disabled via --no-auto-index flag");

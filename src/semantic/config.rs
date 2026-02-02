@@ -51,6 +51,10 @@ pub struct SemanticIndexerConfig {
     /// Overlap between chunks in lines
     #[serde(default = "default_chunk_overlap")]
     pub chunk_overlap: usize,
+
+    /// Path to persistent index storage (if set, index will be saved/loaded)
+    #[serde(default)]
+    pub index_path: Option<String>,
 }
 
 fn default_grpc_address() -> String {
@@ -103,6 +107,7 @@ impl Default for SemanticIndexerConfig {
             exclude_patterns: default_exclude_patterns(),
             chunk_size: default_chunk_size(),
             chunk_overlap: default_chunk_overlap(),
+            index_path: None,
         }
     }
 }
@@ -197,6 +202,10 @@ chunk_size = 50
 
 # Overlap between chunks in lines (default: 5)
 chunk_overlap = 5
+
+# Path to persistent index storage (optional)
+# If set, the index will be saved to disk and loaded on restart
+# index_path = "/var/lib/fast_code_search_semantic/index"
 "#
         .to_string()
     }

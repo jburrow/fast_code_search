@@ -5,10 +5,11 @@
 //! fixed-size chunking with overlap.
 
 use crate::symbols::SymbolExtractor;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Type of code chunk
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChunkType {
     Fixed,                  // Fixed-size chunk
     Function(String),       // Function with name
@@ -17,7 +18,7 @@ pub enum ChunkType {
 }
 
 /// A chunk of code with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeChunk {
     pub text: String,
     pub start_line: usize,

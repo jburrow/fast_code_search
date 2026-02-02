@@ -53,6 +53,7 @@ pub struct StatsResponse {
     pub num_files: usize,
     pub num_chunks: usize,
     pub embedding_dim: usize,
+    pub cache_size: usize,
 }
 
 /// Health response
@@ -125,6 +126,7 @@ pub async fn stats_handler(
         num_files: stats.num_files,
         num_chunks: stats.num_chunks,
         embedding_dim: stats.embedding_dim,
+        cache_size: stats.cache_size,
     }))
 }
 
