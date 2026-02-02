@@ -60,6 +60,18 @@ cargo test
 
 The CI pipeline runs `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` on every PR. Commits that fail these checks will block the PR.
 
+## Handling Merge Conflicts
+
+When there are merge conflicts with the main branch, **always resolve them automatically** by:
+
+1. Fetching the latest main branch
+2. Merging or rebasing to incorporate upstream changes
+3. Resolving any conflicts by keeping both sets of changes when possible
+4. Running `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` after resolution
+5. Committing the resolved changes
+
+This ensures the PR stays up-to-date with the latest main branch changes.
+
 ## Key Patterns
 
 ### Error Handling
