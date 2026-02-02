@@ -29,19 +29,20 @@ pub struct ModelInfo {
 impl ModelInfo {
     /// Get CodeBERT model info (ONNX-optimized version)
     ///
-    /// Uses the Optimum-converted ONNX model from HuggingFace.
+    /// Uses the ONNX Community's converted model from HuggingFace.
     /// This model is properly optimized for ONNX Runtime inference.
     pub fn codebert() -> Self {
         Self {
             name: "microsoft/codebert-base".to_string(),
-            // Using Xenova's ONNX-converted model which is properly exported
+            // Using onnx-community's ONNX-converted model which is properly exported
             // The original microsoft/codebert-base doesn't have ONNX models
-            onnx_url: "https://huggingface.co/Xenova/codebert-base/resolve/main/onnx/model.onnx"
+            // Note: Xenova/codebert-base was deprecated/removed, now using onnx-community
+            onnx_url: "https://huggingface.co/onnx-community/codebert-base-ONNX/resolve/main/onnx/model.onnx"
                 .to_string(),
             tokenizer_url:
-                "https://huggingface.co/microsoft/codebert-base/resolve/main/tokenizer.json"
+                "https://huggingface.co/onnx-community/codebert-base-ONNX/resolve/main/tokenizer.json"
                     .to_string(),
-            config_url: "https://huggingface.co/microsoft/codebert-base/resolve/main/config.json"
+            config_url: "https://huggingface.co/onnx-community/codebert-base-ONNX/resolve/main/config.json"
                 .to_string(),
             expected_sha256: None, // TODO: Add checksums for verification
         }
@@ -52,12 +53,14 @@ impl ModelInfo {
     pub fn unixcoder() -> Self {
         Self {
             name: "microsoft/unixcoder-base".to_string(),
-            onnx_url: "https://huggingface.co/Xenova/unixcoder-base/resolve/main/onnx/model.onnx"
+            // Using community ONNX-converted model
+            // Note: model.onnx is in root, not in onnx/ subfolder for this repo
+            onnx_url: "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/model.onnx"
                 .to_string(),
             tokenizer_url:
-                "https://huggingface.co/microsoft/unixcoder-base/resolve/main/tokenizer.json"
+                "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/tokenizer.json"
                     .to_string(),
-            config_url: "https://huggingface.co/microsoft/unixcoder-base/resolve/main/config.json"
+            config_url: "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/config.json"
                 .to_string(),
             expected_sha256: None,
         }
