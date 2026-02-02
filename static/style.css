@@ -264,8 +264,6 @@ header h1 {
     color: var(--text-primary);
 }
 
-/* Remove old stats-panel styles */
-
 .progress-header {
     display: flex;
     justify-content: space-between;
