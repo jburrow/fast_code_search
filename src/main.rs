@@ -133,6 +133,7 @@ async fn main() -> Result<()> {
         info!("Starting background indexing");
 
         std::thread::spawn(move || {
+            use fast_code_search::search::LoadIndexResult;
             use rayon::prelude::*;
             use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
             use std::sync::mpsc;
@@ -153,6 +154,62 @@ async fn main() -> Result<()> {
                 *p = IndexingProgress::start();
             }
 
+            // Try to load persisted index if configured
+            let mut load_result: Option<LoadIndexResult> = None;
+            let mut loaded_from_persistence = false;
+
+            if let Some(ref index_path_str) = indexer_config.index_path {
+                let index_path = std::path::Path::new(index_path_str);
+
+                if index_path.exists() {
+                    if let Ok(mut p) = index_progress.write() {
+                        p.status = IndexingStatus::LoadingIndex;
+                        p.message = String::from("Loading persisted index...");
+                    }
+
+                    info!(path = %index_path.display(), "Attempting to load persisted index");
+
+                    match index_engine.write() {
+                        Ok(mut engine) => {
+                            match engine.load_index_with_reconciliation(index_path, &indexer_config)
+                            {
+                                Ok(result) => {
+                                    let files_loaded = engine.get_stats().num_files;
+                                    info!(
+                                        files_loaded = files_loaded,
+                                        stale_files = result.stale_files.len(),
+                                        removed_files = result.removed_files.len(),
+                                        new_paths = result.new_paths.len(),
+                                        config_compatible = result.config_compatible,
+                                        "Loaded persisted index"
+                                    );
+
+                                    if let Ok(mut p) = index_progress.write() {
+                                        p.files_indexed = files_loaded;
+                                        p.message = format!(
+                                            "Loaded {} files from cache, reconciling...",
+                                            files_loaded
+                                        );
+                                    }
+
+                                    loaded_from_persistence = true;
+                                    load_result = Some(result);
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "Failed to load persisted index, will rebuild"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to acquire engine lock");
+                        }
+                    }
+                }
+            }
+
             // Pre-compile exclude patterns once
             let exclude_patterns: Vec<String> = indexer_config
                 .exclude_patterns
@@ -168,6 +225,21 @@ async fn main() -> Result<()> {
             .into_iter()
             .collect();
 
+            // Determine what needs to be indexed
+            let paths_to_index: Vec<String> = if let Some(ref result) = load_result {
+                // If we loaded from persistence, only index new paths
+                result.new_paths.clone()
+            } else {
+                // Full indexing required
+                indexer_config.paths.clone()
+            };
+
+            // Collect stale files that need re-indexing
+            let stale_files: Vec<std::path::PathBuf> = load_result
+                .as_ref()
+                .map(|r| r.stale_files.clone())
+                .unwrap_or_default();
+
             // Channel for streaming file paths from discovery to indexing
             // Bounded channel provides backpressure if indexing falls behind
             const CHANNEL_BUFFER: usize = 5000;
@@ -179,13 +251,28 @@ async fn main() -> Result<()> {
             let files_discovered = Arc::new(AtomicUsize::new(0));
             let discovery_done = Arc::new(AtomicBool::new(false));
 
+            // Clone for discovery thread
+            let discovery_exclude_patterns = exclude_patterns.clone();
+            let discovery_binary_extensions = binary_extensions.clone();
+
             // Spawn discovery thread
             let discovery_files_discovered = files_discovered.clone();
             let discovery_done_flag = discovery_done.clone();
             let discovery_progress = index_progress.clone();
 
             let discovery_handle = std::thread::spawn(move || {
-                for path_str in &indexer_config.paths {
+                // First, send stale files that need re-indexing
+                for stale_path in stale_files {
+                    if stale_path.exists() {
+                        if tx.send(stale_path).is_err() {
+                            return; // Receiver dropped
+                        }
+                        discovery_files_discovered.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+
+                // Then discover files from paths that need indexing
+                for path_str in &paths_to_index {
                     let path = std::path::Path::new(path_str);
                     if !path.exists() {
                         tracing::warn!(path = %path_str, "Path does not exist, skipping");
@@ -207,7 +294,7 @@ async fn main() -> Result<()> {
                         let path_str_check = entry_path.to_string_lossy();
 
                         // Check exclude patterns
-                        let should_exclude = exclude_patterns
+                        let should_exclude = discovery_exclude_patterns
                             .iter()
                             .any(|pattern| path_str_check.contains(pattern));
 
@@ -218,7 +305,7 @@ async fn main() -> Result<()> {
                         // Skip binary files
                         if let Some(ext) = entry_path.extension() {
                             let ext = ext.to_string_lossy().to_lowercase();
-                            if binary_extensions.contains(ext.as_str()) {
+                            if discovery_binary_extensions.contains(ext.as_str()) {
                                 continue;
                             }
                         }
@@ -251,10 +338,15 @@ async fn main() -> Result<()> {
             let mut total_indexed = 0usize;
             let mut batch_num = 0usize;
 
-            // Update status to indexing (discovery + indexing running concurrently)
+            // Update status based on whether we're reconciling or full indexing
             if let Ok(mut p) = index_progress.write() {
-                p.status = IndexingStatus::Indexing;
-                p.message = String::from("Discovering and indexing files...");
+                if loaded_from_persistence {
+                    p.status = IndexingStatus::Reconciling;
+                    p.message = String::from("Reconciling index with filesystem...");
+                } else {
+                    p.status = IndexingStatus::Indexing;
+                    p.message = String::from("Discovering and indexing files...");
+                }
             }
 
             loop {
@@ -469,6 +561,35 @@ async fn main() -> Result<()> {
                 process_memory = %format_bytes(process_memory),
                 "Background indexing completed"
             );
+
+            // Save index after build if configured
+            if indexer_config.save_after_build {
+                if let Some(ref index_path_str) = indexer_config.index_path {
+                    let index_path = std::path::Path::new(index_path_str);
+                    info!(path = %index_path.display(), "Saving index to disk...");
+
+                    match index_engine.read() {
+                        Ok(engine) => {
+                            if let Err(e) = engine.save_index(index_path, &indexer_config) {
+                                tracing::error!(
+                                    error = %e,
+                                    path = %index_path.display(),
+                                    "Failed to save index"
+                                );
+                            } else {
+                                info!(
+                                    path = %index_path.display(),
+                                    files = engine.get_stats().num_files,
+                                    "Index saved successfully"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to acquire read lock to save index");
+                        }
+                    }
+                }
+            }
 
             // Update progress: completed
             {

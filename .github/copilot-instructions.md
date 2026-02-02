@@ -4,11 +4,12 @@ High-performance, in-memory code search service built in Rust. Handles 10GB+ cod
 
 ## Architecture Overview
 
-The system has four layers that communicate through shared `Arc<RwLock<SearchEngine>>`:
+The system has five layers that communicate through shared `Arc<RwLock<SearchEngine>>`:
 
-1. **Index Layer** (`src/index/`) - File discovery and trigram indexing
+1. **Index Layer** (`src/index/`) - File discovery, trigram indexing, and persistence
    - `file_store.rs`: Memory-mapped files via `memmap2` for zero-copy access
    - `trigram.rs`: Roaring bitmap-based inverted index mapping trigrams → document IDs (`u32`)
+   - `persistence.rs`: Save/load index to disk with file locking and config fingerprinting
 
 2. **Symbol Layer** (`src/symbols/extractor.rs`) - Tree-sitter parsing for Rust/Python/JS/TS
    - Extracts function/class definitions to boost search relevance
@@ -37,6 +38,18 @@ The system has four layers that communicate through shared `Arc<RwLock<SearchEng
    - `static/`: Web UI files embedded via `rust-embed`
 
 **Data Flow**: Query → trigram extraction → bitmap intersection → candidate docs → parallel search → scored results → streaming response
+
+### Index Persistence
+
+The index can be saved to disk and loaded on restart for faster startup:
+
+- **Configuration**: Set `index_path` in config to enable persistence
+- **Save triggers**: After initial build (`save_after_build = true`), or after N file updates (`save_after_updates`)
+- **Load on startup**: If index file exists, loads it with reconciliation against current config
+- **Staleness detection**: Checks mtime + size of each file; stale files are re-indexed
+- **Config fingerprint**: Hash of paths/extensions/excludes stored in index; if config changes, affected paths are reconciled
+- **File locking**: Exclusive lock for writes, shared lock for reads (multiple servers can share read-only access)
+- **Reconciliation**: Background task walks filesystem to find new files, updates index incrementally
 
 ## Build & Development
 

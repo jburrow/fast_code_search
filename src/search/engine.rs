@@ -1298,31 +1298,58 @@ impl SearchEngine {
     }
 
     /// Save the index to a file for persistence
-    pub fn save_index(&self, path: &std::path::Path) -> anyhow::Result<()> {
+    pub fn save_index(
+        &self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+    ) -> anyhow::Result<()> {
         use crate::index::persistence::get_mtime;
         use crate::index::{PersistedFileMetadata, PersistedIndex};
 
-        // Collect file metadata
+        // Collect file metadata with source base path tracking
         let mut files = Vec::new();
         for id in 0..self.file_store.len() as u32 {
             if let Some(mapped_file) = self.file_store.get(id) {
                 let mtime = get_mtime(&mapped_file.path).unwrap_or(0);
+
+                // Determine which base path this file belongs to
+                let source_base = config
+                    .paths
+                    .iter()
+                    .find(|base| {
+                        let base_normalized = base.replace('\\', "/").to_lowercase();
+                        let file_normalized = mapped_file
+                            .path
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                            .to_lowercase();
+                        file_normalized.starts_with(&base_normalized)
+                    })
+                    .cloned();
+
                 files.push(PersistedFileMetadata {
                     path: mapped_file.path.clone(),
                     mtime,
                     size: mapped_file.len() as u64,
+                    source_base_path: source_base,
                 });
             }
         }
 
-        // Create persisted index
-        let persisted = PersistedIndex::new(files, self.trigram_index.get_trigram_map())?;
+        // Create persisted index with config fingerprint
+        let persisted = PersistedIndex::new(
+            config.fingerprint(),
+            config.paths.clone(),
+            files,
+            self.trigram_index.get_trigram_map(),
+        )?;
         persisted.save(path)?;
 
         tracing::info!(
             path = %path.display(),
             files = self.file_store.len(),
             trigrams = self.trigram_index.num_trigrams(),
+            config_fingerprint = %config.fingerprint(),
             "Index saved to disk"
         );
 
@@ -1334,7 +1361,111 @@ impl SearchEngine {
         path.exists()
     }
 
-    /// Load an index from disk if available and not stale
+    /// Load an index from disk with reconciliation against current config
+    /// Returns detailed information about what needs to be updated
+    pub fn load_index_with_reconciliation(
+        &mut self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+    ) -> anyhow::Result<LoadIndexResult> {
+        use crate::index::persistence::is_file_stale;
+        use crate::index::PersistedIndex;
+
+        let persisted = PersistedIndex::load(path)?;
+
+        // Check config compatibility
+        let current_fingerprint = config.fingerprint();
+        let config_compatible = persisted.is_config_compatible(&current_fingerprint);
+
+        if !config_compatible {
+            tracing::info!(
+                old_fingerprint = %persisted.config_fingerprint,
+                new_fingerprint = %current_fingerprint,
+                "Config fingerprint changed, will reconcile"
+            );
+        }
+
+        // Determine paths to add/remove based on config changes
+        let new_paths = persisted.paths_to_add(&config.paths);
+        let removed_paths = persisted.paths_to_remove(&config.paths);
+
+        // Check which files are stale or removed
+        let mut stale_files = Vec::new();
+        let mut removed_files = Vec::new();
+        let mut valid_file_count = 0;
+
+        for file_meta in persisted.files.iter() {
+            // Skip files from paths that are no longer in config
+            if let Some(ref base) = file_meta.source_base_path {
+                let base_normalized = base.replace('\\', "/").to_lowercase();
+                if removed_paths
+                    .iter()
+                    .any(|p| p.replace('\\', "/").to_lowercase() == base_normalized)
+                {
+                    removed_files.push(file_meta.path.clone());
+                    continue;
+                }
+            }
+
+            if !file_meta.path.exists() {
+                removed_files.push(file_meta.path.clone());
+            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
+                stale_files.push(file_meta.path.clone());
+            } else {
+                valid_file_count += 1;
+            }
+        }
+
+        // Only restore index if we have valid files
+        if valid_file_count > 0 {
+            // Restore trigram index
+            let trigram_map = persisted.restore_trigram_index()?;
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
+
+            // Re-add valid files to the file store
+            for file_meta in &persisted.files {
+                // Skip files from removed paths
+                if let Some(ref base) = file_meta.source_base_path {
+                    let base_normalized = base.replace('\\', "/").to_lowercase();
+                    if removed_paths
+                        .iter()
+                        .any(|p| p.replace('\\', "/").to_lowercase() == base_normalized)
+                    {
+                        continue;
+                    }
+                }
+
+                if file_meta.path.exists()
+                    && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
+                {
+                    let _ = self.file_store.add_file(&file_meta.path);
+                }
+            }
+
+            self.trigram_index.finalize();
+        }
+
+        tracing::info!(
+            path = %path.display(),
+            files_loaded = self.file_store.len(),
+            stale_files = stale_files.len(),
+            removed_files = removed_files.len(),
+            new_paths = new_paths.len(),
+            removed_paths = removed_paths.len(),
+            config_compatible = config_compatible,
+            "Index loaded from disk with reconciliation"
+        );
+
+        Ok(LoadIndexResult {
+            stale_files,
+            removed_files,
+            new_paths,
+            removed_paths,
+            config_compatible,
+        })
+    }
+
+    /// Load an index from disk if available and not stale (legacy method)
     /// Returns the list of stale files that need re-indexing
     pub fn load_index(
         &mut self,
@@ -1404,6 +1535,21 @@ pub struct SearchStats {
     pub dependency_edges: usize,
 }
 
+/// Result of loading a persisted index with reconciliation
+#[derive(Debug, Clone)]
+pub struct LoadIndexResult {
+    /// Files that were modified since indexing (need re-indexing)
+    pub stale_files: Vec<std::path::PathBuf>,
+    /// Files that no longer exist (removed from index)
+    pub removed_files: Vec<std::path::PathBuf>,
+    /// Paths that are new in config (need full indexing)
+    pub new_paths: Vec<String>,
+    /// Paths that were removed from config (files removed from index)
+    pub removed_paths: Vec<String>,
+    /// Whether the config fingerprint matches (false = config changed)
+    pub config_compatible: bool,
+}
+
 /// Status of the indexing process
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1411,10 +1557,14 @@ pub enum IndexingStatus {
     /// No indexing is in progress
     #[default]
     Idle,
+    /// Loading persisted index from disk
+    LoadingIndex,
     /// Discovering files to index
     Discovering,
     /// Actively indexing files
     Indexing,
+    /// Reconciling persisted index with current filesystem
+    Reconciling,
     /// Resolving import dependencies
     ResolvingImports,
     /// Indexing completed successfully
@@ -1489,16 +1639,18 @@ impl IndexingProgress {
     pub fn progress_percent(&self) -> u8 {
         match self.status {
             IndexingStatus::Idle => 0,
+            IndexingStatus::LoadingIndex => 2,
             IndexingStatus::Discovering => 5,
             IndexingStatus::Indexing => {
                 if self.total_batches == 0 {
                     10
                 } else {
                     let batch_progress =
-                        (self.current_batch as f64 / self.total_batches as f64) * 85.0;
-                    (10.0 + batch_progress).min(95.0) as u8
+                        (self.current_batch as f64 / self.total_batches as f64) * 80.0;
+                    (10.0 + batch_progress).min(90.0) as u8
                 }
             }
+            IndexingStatus::Reconciling => 92,
             IndexingStatus::ResolvingImports => 96,
             IndexingStatus::Completed => 100,
         }
@@ -1641,6 +1793,8 @@ mod tests {
 
     #[test]
     fn test_save_and_load_index() {
+        use crate::config::IndexerConfig;
+
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         let index_path = temp_dir.path().join("index.bin");
@@ -1650,6 +1804,12 @@ mod tests {
         writeln!(file, "hello world").unwrap();
         writeln!(file, "rust programming").unwrap();
         drop(file);
+
+        // Create config for the test
+        let config = IndexerConfig {
+            paths: vec![temp_dir.path().to_string_lossy().to_string()],
+            ..Default::default()
+        };
 
         // Index and save
         let mut engine = SearchEngine::new();
@@ -1661,7 +1821,7 @@ mod tests {
         assert!(!results.is_empty(), "Should find hello before save");
 
         // Save the index
-        engine.save_index(&index_path).unwrap();
+        engine.save_index(&index_path, &config).unwrap();
         assert!(index_path.exists(), "Index file should exist");
 
         // Create a new engine and load the index

@@ -236,15 +236,21 @@ pub async fn status_handler(
 
     let status_str = match progress.status {
         IndexingStatus::Idle => "idle",
+        IndexingStatus::LoadingIndex => "loading_index",
         IndexingStatus::Discovering => "discovering",
         IndexingStatus::Indexing => "indexing",
+        IndexingStatus::Reconciling => "reconciling",
         IndexingStatus::ResolvingImports => "resolving_imports",
         IndexingStatus::Completed => "completed",
     };
 
     let is_indexing = matches!(
         progress.status,
-        IndexingStatus::Discovering | IndexingStatus::Indexing | IndexingStatus::ResolvingImports
+        IndexingStatus::LoadingIndex
+            | IndexingStatus::Discovering
+            | IndexingStatus::Indexing
+            | IndexingStatus::Reconciling
+            | IndexingStatus::ResolvingImports
     );
 
     Ok(Json(StatusResponse {
