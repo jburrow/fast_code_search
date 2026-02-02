@@ -4,8 +4,8 @@ pub mod regex_search;
 pub mod watcher;
 
 pub use engine::{
-    IndexingProgress, IndexingStatus, LoadIndexResult, PreIndexedFile, SearchEngine, SearchMatch,
-    SearchStats, SharedIndexingProgress,
+    create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadIndexResult, PreIndexedFile,
+    ProgressBroadcaster, SearchEngine, SearchMatch, SearchStats, SharedIndexingProgress,
 };
 pub use path_filter::PathFilter;
 pub use regex_search::RegexAnalysis;

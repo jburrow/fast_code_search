@@ -1633,6 +1633,19 @@ impl IndexingProgress {
 /// Shared indexing progress state for use across threads
 pub type SharedIndexingProgress = std::sync::Arc<std::sync::RwLock<IndexingProgress>>;
 
+/// Broadcast channel for sending progress updates to WebSocket clients
+/// Use sender.subscribe() to get a receiver for each WebSocket connection
+pub type ProgressBroadcaster = tokio::sync::broadcast::Sender<IndexingProgress>;
+
+/// Create a new progress broadcaster with reasonable capacity
+/// Returns both the sender (for publishing updates) and receiver (for subscribing)
+pub fn create_progress_broadcaster() -> ProgressBroadcaster {
+    // Buffer 16 messages - clients that fall behind will miss updates
+    // This is fine since they'll get the next update shortly
+    let (tx, _rx) = tokio::sync::broadcast::channel(16);
+    tx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

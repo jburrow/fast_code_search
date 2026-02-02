@@ -6,7 +6,10 @@
 use anyhow::Result;
 use clap::Parser;
 use fast_code_search::semantic::{SemanticConfig, SemanticSearchEngine};
-use fast_code_search::semantic_web;
+use fast_code_search::semantic_web::{
+    self, create_semantic_progress_broadcaster, SemanticProgress, SemanticProgressBroadcaster,
+    SharedSemanticProgress, WebState,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tracing::{info, Level};
@@ -121,15 +124,34 @@ async fn main() -> Result<()> {
 
     let shared_engine = Arc::new(RwLock::new(engine));
 
+    // Create shared progress state
+    let shared_progress: SharedSemanticProgress =
+        Arc::new(RwLock::new(SemanticProgress::default()));
+    let progress_tx: SemanticProgressBroadcaster = create_semantic_progress_broadcaster();
+
     // Start background indexing if enabled
     if !args.no_auto_index && !config.indexer.paths.is_empty() {
         let indexer_config = config.indexer.clone();
         let index_engine = Arc::clone(&shared_engine);
+        let index_progress = Arc::clone(&shared_progress);
+        let index_progress_tx = progress_tx.clone();
 
         info!(
             "Starting background indexing of {} path(s)",
             indexer_config.paths.len()
         );
+
+        // Helper to update and broadcast progress
+        fn broadcast_progress(
+            progress: &SharedSemanticProgress,
+            tx: &SemanticProgressBroadcaster,
+            update_fn: impl FnOnce(&mut SemanticProgress),
+        ) {
+            if let Ok(mut p) = progress.write() {
+                update_fn(&mut p);
+                let _ = tx.send(p.clone());
+            }
+        }
 
         // Use a larger stack size (16MB) to handle tree-sitter recursion on deeply nested files
         std::thread::Builder::new()
@@ -137,6 +159,13 @@ async fn main() -> Result<()> {
             .name("semantic-indexer".to_string())
             .spawn(move || {
                 use walkdir::WalkDir;
+
+                // Initialize progress
+                broadcast_progress(&index_progress, &index_progress_tx, |p| {
+                    p.status = "indexing".to_string();
+                    p.is_indexing = true;
+                    p.message = "Starting indexing...".to_string();
+                });
 
                 let binary_extensions: std::collections::HashSet<&str> = [
                     "exe", "dll", "so", "dylib", "bin", "o", "a", "png", "jpg", "jpeg", "gif",
@@ -224,6 +253,20 @@ async fn main() -> Result<()> {
                                             chunks = total_chunks,
                                             "Indexing progress"
                                         );
+                                        broadcast_progress(
+                                            &index_progress,
+                                            &index_progress_tx,
+                                            |p| {
+                                                p.files_indexed = total_indexed;
+                                                p.chunks_indexed = total_chunks;
+                                                p.current_path =
+                                                    Some(entry_path_owned.display().to_string());
+                                                p.message = format!(
+                                                    "Indexing {} files, {} chunks...",
+                                                    total_indexed, total_chunks
+                                                );
+                                            },
+                                        );
                                     }
                                 }
                                 Ok(Err(e)) => {
@@ -249,6 +292,20 @@ async fn main() -> Result<()> {
                     total_chunks = total_chunks,
                     "Background indexing completed"
                 );
+
+                // Update progress: completed
+                broadcast_progress(&index_progress, &index_progress_tx, |p| {
+                    p.status = "completed".to_string();
+                    p.is_indexing = false;
+                    p.files_indexed = total_indexed;
+                    p.chunks_indexed = total_chunks;
+                    p.current_path = None;
+                    p.progress_percent = 100;
+                    p.message = format!(
+                        "Indexing complete: {} files, {} chunks",
+                        total_indexed, total_chunks
+                    );
+                });
 
                 // Save index if configured
                 if let Some(ref index_path) = indexer_config.index_path {
@@ -294,11 +351,18 @@ async fn main() -> Result<()> {
     if config.server.enable_web_ui {
         let web_addr = config.server.web_address.clone();
         let web_engine = Arc::clone(&shared_engine);
+        let web_progress = Arc::clone(&shared_progress);
+        let web_progress_tx = progress_tx.clone();
 
         info!(web_address = %web_addr, "Starting Web UI server");
 
         tokio::spawn(async move {
-            let router = semantic_web::create_router(web_engine);
+            let state = WebState {
+                engine: web_engine,
+                progress: web_progress,
+                progress_tx: web_progress_tx,
+            };
+            let router = semantic_web::create_router(state);
             let listener = tokio::net::TcpListener::bind(&web_addr)
                 .await
                 .expect("Failed to bind Web UI");

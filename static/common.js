@@ -187,9 +187,85 @@ function highlightMatches(content, query) {
 }
 
 // ============================================
-// STATUS POLLING (for indexing progress)
+// PROGRESS WEBSOCKET (for real-time indexing progress)
 // ============================================
 
+class ProgressWebSocket {
+    constructor(options = {}) {
+        this.wsUrl = options.wsUrl || `ws://${location.host}/ws/progress`;
+        this.onUpdate = options.onUpdate || (() => {});
+        this.onError = options.onError || console.error;
+        this.onConnected = options.onConnected || (() => {});
+        this.onDisconnected = options.onDisconnected || (() => {});
+        this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 10;
+        this.reconnectDelay = 1000;
+        this.shouldReconnect = true;
+    }
+
+    connect() {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            return; // Already connected
+        }
+
+        try {
+            this.ws = new WebSocket(this.wsUrl);
+
+            this.ws.onopen = () => {
+                this.reconnectAttempts = 0;
+                this.onConnected();
+            };
+
+            this.ws.onmessage = (event) => {
+                try {
+                    const status = JSON.parse(event.data);
+                    this.onUpdate(status);
+                } catch (e) {
+                    this.onError(new Error('Failed to parse progress message'));
+                }
+            };
+
+            this.ws.onclose = (event) => {
+                this.onDisconnected();
+                if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.scheduleReconnect();
+                }
+            };
+
+            this.ws.onerror = (error) => {
+                this.onError(error);
+            };
+
+        } catch (error) {
+            this.onError(error);
+            if (this.shouldReconnect) {
+                this.scheduleReconnect();
+            }
+        }
+    }
+
+    scheduleReconnect() {
+        this.reconnectAttempts++;
+        const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
+        setTimeout(() => this.connect(), delay);
+    }
+
+    start() {
+        this.shouldReconnect = true;
+        this.connect();
+    }
+
+    stop() {
+        this.shouldReconnect = false;
+        if (this.ws) {
+            this.ws.close();
+            this.ws = null;
+        }
+    }
+}
+
+// Legacy StatusPoller for fallback (if WebSocket not available)
 class StatusPoller {
     constructor(options = {}) {
         this.apiBase = options.apiBase || '';
@@ -254,6 +330,7 @@ if (typeof module !== 'undefined' && module.exports) {
         createResultsSummary,
         formatCodeWithLineNumbers,
         highlightMatches,
+        ProgressWebSocket,
         StatusPoller
     };
 }

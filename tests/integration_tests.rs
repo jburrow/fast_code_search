@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use fast_code_search::{
-    search::{IndexingProgress, SearchEngine},
+    search::{create_progress_broadcaster, IndexingProgress, SearchEngine},
     server::{
         create_server_with_engine,
         search_proto::{code_search_client::CodeSearchClient, IndexRequest, SearchRequest},
@@ -101,6 +101,7 @@ async fn setup_test_server() -> Result<TestContext> {
     }
 
     let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
 
     // Start gRPC server on random port
     let grpc_listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -120,7 +121,7 @@ async fn setup_test_server() -> Result<TestContext> {
     // Start HTTP server on random port
     let http_listener = TcpListener::bind("127.0.0.1:0").await?;
     let http_addr = http_listener.local_addr()?;
-    let router = create_router(engine, progress);
+    let router = create_router(engine, progress, progress_tx);
 
     tokio::spawn(async move {
         axum::serve(http_listener, router)

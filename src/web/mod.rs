@@ -2,7 +2,7 @@
 
 mod api;
 
-use crate::search::{SearchEngine, SharedIndexingProgress};
+use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
 use axum::{
     body::Body,
     http::{header, Response, StatusCode},
@@ -25,16 +25,25 @@ pub type AppState = Arc<RwLock<SearchEngine>>;
 pub struct WebState {
     pub engine: AppState,
     pub progress: SharedIndexingProgress,
+    pub progress_tx: ProgressBroadcaster,
 }
 
 /// Create the web router with all routes
-pub fn create_router(engine: AppState, progress: SharedIndexingProgress) -> Router {
+pub fn create_router(
+    engine: AppState,
+    progress: SharedIndexingProgress,
+    progress_tx: ProgressBroadcaster,
+) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let state = WebState { engine, progress };
+    let state = WebState {
+        engine,
+        progress,
+        progress_tx,
+    };
 
     Router::new()
         // API routes
@@ -44,6 +53,8 @@ pub fn create_router(engine: AppState, progress: SharedIndexingProgress) -> Rout
         .route("/api/health", get(api::health_handler))
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
+        // WebSocket for progress streaming
+        .route("/ws/progress", get(api::ws_progress_handler))
         // Static files
         .route("/", get(index_handler))
         .route("/{*file}", get(static_handler))

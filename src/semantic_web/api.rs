@@ -2,15 +2,53 @@
 
 use crate::semantic::SemanticSearchEngine;
 use axum::{
-    extract::{Query, State},
+    extract::{
+        ws::{Message, WebSocket},
+        Query, State, WebSocketUpgrade,
+    },
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-pub type WebState = Arc<RwLock<SemanticSearchEngine>>;
+/// Shared engine state
+pub type EngineState = Arc<RwLock<SemanticSearchEngine>>;
+
+/// Semantic indexing progress
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct SemanticProgress {
+    pub status: String,
+    pub files_indexed: usize,
+    pub chunks_indexed: usize,
+    pub current_path: Option<String>,
+    pub message: String,
+    pub is_indexing: bool,
+    pub progress_percent: u8,
+}
+
+/// Shared progress state
+pub type SharedSemanticProgress = Arc<RwLock<SemanticProgress>>;
+
+/// Broadcast channel for progress updates
+pub type SemanticProgressBroadcaster = tokio::sync::broadcast::Sender<SemanticProgress>;
+
+/// Create a new progress broadcaster
+pub fn create_semantic_progress_broadcaster() -> SemanticProgressBroadcaster {
+    let (tx, _rx) = tokio::sync::broadcast::channel(16);
+    tx
+}
+
+/// Combined web state
+#[derive(Clone)]
+pub struct WebState {
+    pub engine: EngineState,
+    pub progress: SharedSemanticProgress,
+    pub progress_tx: SemanticProgressBroadcaster,
+}
 
 /// Search query parameters
 #[derive(Debug, Deserialize)]
@@ -71,7 +109,7 @@ pub async fn search_handler(
     let start = Instant::now();
 
     let results = {
-        let mut engine = state.write().unwrap();
+        let mut engine = state.engine.write().unwrap();
         engine
             .search(&params.q, params.max)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -118,7 +156,7 @@ pub async fn stats_handler(
     State(state): State<WebState>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
     let stats = {
-        let engine = state.read().unwrap();
+        let engine = state.engine.read().unwrap();
         engine.get_stats()
     };
 
@@ -136,4 +174,75 @@ pub async fn health_handler() -> Json<HealthResponse> {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// Handle status requests (for indexing progress)
+pub async fn status_handler(
+    State(state): State<WebState>,
+) -> Result<Json<SemanticProgress>, (StatusCode, String)> {
+    let progress = state.progress.read().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read progress: {}", e),
+        )
+    })?;
+
+    Ok(Json(progress.clone()))
+}
+
+/// WebSocket upgrade handler for progress streaming
+pub async fn ws_progress_handler(
+    State(state): State<WebState>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_progress_socket(socket, state))
+}
+
+/// Handle a WebSocket connection for progress updates
+async fn handle_progress_socket(socket: WebSocket, state: WebState) {
+    let (mut sender, mut receiver) = socket.split();
+
+    // Subscribe to progress broadcast channel
+    let mut rx = state.progress_tx.subscribe();
+
+    // Send initial progress state immediately (clone before await to avoid holding lock)
+    let initial_json = {
+        state
+            .progress
+            .read()
+            .ok()
+            .and_then(|progress| serde_json::to_string(&*progress).ok())
+    };
+    if let Some(json) = initial_json {
+        let _ = sender.send(Message::Text(json.into())).await;
+    }
+
+    // Spawn a task to forward broadcast messages to the WebSocket
+    let send_task = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(progress) => match serde_json::to_string(&progress) {
+                    Ok(json) => {
+                        if sender.send(Message::Text(json.into())).await.is_err() {
+                            break; // Client disconnected
+                        }
+                    }
+                    Err(_) => continue,
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    // Wait for client to close connection
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Close(_)) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+
+    send_task.abort();
 }

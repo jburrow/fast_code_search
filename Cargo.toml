@@ -50,7 +50,8 @@ regex-syntax = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sysinfo = "0.33"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = { version = "0.3", features = ["sink"] }
 tower-http = { version = "0.6", features = ["cors"] }
 rust-embed = "8"
 mime_guess = "2"
@@ -59,18 +60,25 @@ notify-debouncer-full = "0.7"
 ndarray = "0.15"                                                              # For vector operations in semantic search
 fs2 = "0.4"
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
-ort = { version = "2.0.0-rc.11", optional = true }                            # ONNX Runtime for ML model inference
-tokenizers = { version = "0.19", optional = true }                            # HuggingFace tokenizers for text encoding
-sha2 = "0.10"                                                                 # Checksum verification for model downloads
-indicatif = { version = "0.17", optional = true }                             # Progress bars for downloads
+ort = { version = "2.0.0-rc.11", optional = true } # ONNX Runtime for ML model inference
+tokenizers = { version = "0.19", optional = true } # HuggingFace tokenizers for text encoding
+sha2 = "0.10"                                      # Checksum verification for model downloads
+indicatif = { version = "0.17", optional = true }  # Progress bars for downloads
 
 [features]
 default = []
-ml-models = ["ort", "tokenizers", "indicatif"]  # Enable ML model support (requires ONNX Runtime)
+ml-models = [
+    "ort",
+    "tokenizers",
+    "indicatif",
+] # Enable ML model support (requires ONNX Runtime)
 
 [dev-dependencies]
 tempfile = "3"
-reqwest = { version = "0.12", features = ["json", "blocking"] }  # Also used for model downloads in production
+reqwest = { version = "0.12", features = [
+    "json",
+    "blocking",
+] } # Also used for model downloads in production
 tokio-test = "0.4"
 tokio-stream = { version = "0.1", features = ["net"] }
 criterion = { version = "0.5", features = ["html_reports"] }

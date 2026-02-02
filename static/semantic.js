@@ -11,6 +11,61 @@ const searchBtn = document.getElementById('search-btn');
 const maxResultsSelect = document.getElementById('max-results');
 const resultsContainer = document.getElementById('results');
 
+// Progress elements
+const progressPanel = document.getElementById('progress-panel');
+const progressBar = document.getElementById('progress-bar');
+const progressStatus = document.getElementById('progress-status');
+const progressMessage = document.getElementById('progress-message');
+const progressPercent = document.getElementById('progress-percent');
+
+// ============================================
+// PROGRESS WEBSOCKET
+// ============================================
+
+const progressWS = new ProgressWebSocket({
+    onUpdate: updateProgressUI,
+    onConnected: () => console.log('Semantic progress WebSocket connected'),
+    onDisconnected: () => console.log('Semantic progress WebSocket disconnected'),
+    onError: (err) => console.error('Semantic progress WebSocket error:', err)
+});
+
+function updateProgressUI(status) {
+    const isIdle = status.status === 'idle' || !status.status;
+    const isCompleted = status.status === 'completed';
+    
+    if (progressPanel) {
+        toggleElement('progress-panel', status.is_indexing || (!isIdle && !isCompleted), 'flex');
+    }
+    
+    if (progressBar) {
+        progressBar.style.width = `${status.progress_percent || 0}%`;
+        progressBar.className = `progress-fill ${isCompleted ? 'completed' : ''}`;
+    }
+    
+    if (progressPercent) {
+        updateStat('progress-percent', `${status.progress_percent || 0}%`);
+    }
+    
+    if (progressStatus) {
+        const labels = {
+            'idle': 'Ready',
+            'indexing': 'Indexing',
+            'completed': 'Complete'
+        };
+        progressStatus.textContent = labels[status.status] || status.status || 'Ready';
+        progressStatus.className = `status-badge status-${status.status || 'idle'}`;
+    }
+    
+    if (progressMessage) {
+        progressMessage.textContent = status.message || '';
+    }
+    
+    // Refresh stats during/after indexing
+    if (status.is_indexing || isCompleted) {
+        loadStats();
+    }
+}
+
 // ============================================
 // STATS
 // ============================================
@@ -141,4 +196,4 @@ document.querySelectorAll('.example-btn').forEach(btn => {
 // ============================================
 
 loadStats();
-setInterval(loadStats, 30000);
+progressWS.start();

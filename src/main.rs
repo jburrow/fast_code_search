@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::search::{
-    IndexingProgress, IndexingStatus, PreIndexedFile, SharedIndexingProgress,
+    create_progress_broadcaster, IndexingProgress, IndexingStatus, PreIndexedFile,
+    ProgressBroadcaster, SharedIndexingProgress,
 };
 use fast_code_search::server;
 use fast_code_search::web;
@@ -106,15 +107,19 @@ async fn main() -> Result<()> {
     let shared_progress: SharedIndexingProgress =
         std::sync::Arc::new(std::sync::RwLock::new(IndexingProgress::default()));
 
+    // Create broadcast channel for WebSocket progress updates
+    let progress_tx: ProgressBroadcaster = create_progress_broadcaster();
+
     // Start web server first if enabled (so UI is available during indexing)
     if config.server.enable_web_ui {
         let web_addr = config.server.web_address.clone();
         let web_engine = shared_engine.clone();
         let web_progress = shared_progress.clone();
+        let web_progress_tx = progress_tx.clone();
         info!(web_address = %web_addr, "Starting Web UI server");
 
         tokio::spawn(async move {
-            let router = web::create_router(web_engine, web_progress);
+            let router = web::create_router(web_engine, web_progress, web_progress_tx);
             let listener = tokio::net::TcpListener::bind(&web_addr)
                 .await
                 .expect("Failed to bind Web UI server to address");
@@ -130,6 +135,7 @@ async fn main() -> Result<()> {
         let indexer_config = config.indexer.clone();
         let index_engine = shared_engine.clone();
         let index_progress = shared_progress.clone();
+        let index_progress_tx = progress_tx.clone();
         info!("Starting background indexing");
 
         std::thread::spawn(move || {
@@ -149,10 +155,23 @@ async fn main() -> Result<()> {
             let total_start = Instant::now();
             info!("Background indexing {} path(s)", indexer_config.paths.len());
 
-            // Initialize progress
-            if let Ok(mut p) = index_progress.write() {
-                *p = IndexingProgress::start();
+            // Helper to update progress and broadcast to WebSocket clients
+            fn broadcast_progress(
+                progress: &SharedIndexingProgress,
+                tx: &ProgressBroadcaster,
+                update_fn: impl FnOnce(&mut IndexingProgress),
+            ) {
+                if let Ok(mut p) = progress.write() {
+                    update_fn(&mut p);
+                    // Broadcast to WebSocket clients (ignore errors if no subscribers)
+                    let _ = tx.send(p.clone());
+                }
             }
+
+            // Initialize progress
+            broadcast_progress(&index_progress, &index_progress_tx, |p| {
+                *p = IndexingProgress::start()
+            });
 
             // Try to load persisted index if configured
             let mut load_result: Option<LoadIndexResult> = None;
@@ -162,10 +181,10 @@ async fn main() -> Result<()> {
                 let index_path = std::path::Path::new(index_path_str);
 
                 if index_path.exists() {
-                    if let Ok(mut p) = index_progress.write() {
+                    broadcast_progress(&index_progress, &index_progress_tx, |p| {
                         p.status = IndexingStatus::LoadingIndex;
                         p.message = String::from("Loading persisted index...");
-                    }
+                    });
 
                     info!(path = %index_path.display(), "Attempting to load persisted index");
 
@@ -184,13 +203,13 @@ async fn main() -> Result<()> {
                                         "Loaded persisted index"
                                     );
 
-                                    if let Ok(mut p) = index_progress.write() {
+                                    broadcast_progress(&index_progress, &index_progress_tx, |p| {
                                         p.files_indexed = files_loaded;
                                         p.message = format!(
                                             "Loaded {} files from cache, reconciling...",
                                             files_loaded
                                         );
-                                    }
+                                    });
 
                                     loaded_from_persistence = true;
                                     load_result = Some(result);
@@ -259,6 +278,7 @@ async fn main() -> Result<()> {
             let discovery_files_discovered = files_discovered.clone();
             let discovery_done_flag = discovery_done.clone();
             let discovery_progress = index_progress.clone();
+            let discovery_progress_tx = index_progress_tx.clone();
 
             let discovery_handle = std::thread::spawn(move || {
                 // First, send stale files that need re-indexing
@@ -322,6 +342,7 @@ async fn main() -> Result<()> {
                             if let Ok(mut p) = discovery_progress.write() {
                                 p.files_discovered = count;
                                 p.message = format!("Discovering... {} files found", count);
+                                let _ = discovery_progress_tx.send(p.clone());
                             }
                         }
                     }
@@ -339,7 +360,7 @@ async fn main() -> Result<()> {
             let mut batch_num = 0usize;
 
             // Update status based on whether we're reconciling or full indexing
-            if let Ok(mut p) = index_progress.write() {
+            broadcast_progress(&index_progress, &index_progress_tx, |p| {
                 if loaded_from_persistence {
                     p.status = IndexingStatus::Reconciling;
                     p.message = String::from("Reconciling index with filesystem...");
@@ -347,7 +368,7 @@ async fn main() -> Result<()> {
                     p.status = IndexingStatus::Indexing;
                     p.message = String::from("Discovering and indexing files...");
                 }
-            }
+            });
 
             loop {
                 // Try to receive with timeout to allow checking discovery status
@@ -359,18 +380,18 @@ async fn main() -> Result<()> {
                         if batch.len() >= BATCH_SIZE {
                             batch_num += 1;
                             let batch_start = Instant::now();
+                            let batch_len = batch.len();
 
                             // Update progress
                             let discovered = files_discovered.load(Ordering::Relaxed);
-                            if let Ok(mut p) = index_progress.write() {
+                            broadcast_progress(&index_progress, &index_progress_tx, |p| {
                                 p.current_batch = batch_num;
                                 p.files_discovered = discovered;
                                 p.message = format!(
                                     "Indexing batch {} ({} files)...",
-                                    batch_num,
-                                    batch.len()
+                                    batch_num, batch_len
                                 );
-                            }
+                            });
 
                             // Process in parallel
                             let pre_indexed: Vec<PreIndexedFile> = batch
@@ -394,9 +415,9 @@ async fn main() -> Result<()> {
                             total_indexed += batch_indexed_count;
 
                             // Update progress
-                            if let Ok(mut p) = index_progress.write() {
+                            broadcast_progress(&index_progress, &index_progress_tx, |p| {
                                 p.files_indexed = total_indexed;
-                            }
+                            });
 
                             if batch_num.is_multiple_of(10) {
                                 info!(
@@ -460,11 +481,11 @@ async fn main() -> Result<()> {
             let final_discovered = files_discovered.load(Ordering::Relaxed);
 
             // Update total batches now that we know the final count
-            if let Ok(mut p) = index_progress.write() {
+            broadcast_progress(&index_progress, &index_progress_tx, |p| {
                 p.files_discovered = final_discovered;
                 p.total_batches = batch_num;
                 p.current_batch = batch_num;
-            }
+            });
 
             // Resolve any remaining import relationships that couldn't be resolved incrementally
             // Most imports should already be resolved during the indexing phase
@@ -475,14 +496,14 @@ async fn main() -> Result<()> {
                 let pending_count = engine.pending_imports_count();
 
                 if pending_count > 0 {
-                    if let Ok(mut p) = index_progress.write() {
+                    broadcast_progress(&index_progress, &index_progress_tx, |p| {
                         p.status = IndexingStatus::ResolvingImports;
                         p.current_path = None;
                         p.message = format!(
                             "Resolving {} remaining import dependencies...",
                             pending_count
                         );
-                    }
+                    });
 
                     info!(
                         pending_imports = pending_count,
@@ -592,20 +613,18 @@ async fn main() -> Result<()> {
             }
 
             // Update progress: completed
-            {
-                if let Ok(mut p) = index_progress.write() {
-                    p.status = IndexingStatus::Completed;
-                    p.files_indexed = total_indexed;
-                    p.files_discovered = final_discovered;
-                    p.current_path = None;
-                    p.message = format!(
-                        "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
-                        total_indexed,
-                        elapsed.as_secs_f64(),
-                        files_per_sec
-                    );
-                }
-            }
+            broadcast_progress(&index_progress, &index_progress_tx, |p| {
+                p.status = IndexingStatus::Completed;
+                p.files_indexed = total_indexed;
+                p.files_discovered = final_discovered;
+                p.current_path = None;
+                p.message = format!(
+                    "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
+                    total_indexed,
+                    elapsed.as_secs_f64(),
+                    files_per_sec
+                );
+            });
         });
     } else if args.no_auto_index {
         info!("Auto-indexing disabled via --no-auto-index flag");

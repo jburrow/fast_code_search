@@ -54,13 +54,18 @@ async function fetchStats() {
     }
 }
 
-// Status poller instance
-const statusPoller = new StatusPoller({
-    apiBase: API_BASE,
+// Progress WebSocket instance (real-time updates)
+const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
+    onConnected: () => {
+        console.log('Progress WebSocket connected');
+    },
+    onDisconnected: () => {
+        console.log('Progress WebSocket disconnected');
+    },
     onError: (err) => {
-        console.error('Status fetch error:', err);
-        toggleElement('progress-panel', false);
+        console.error('Progress WebSocket error:', err);
+        // Progress will continue via reconnection
     }
 });
 
@@ -275,4 +280,4 @@ if (excludeFilterInput) {
 // ============================================
 
 fetchStats();
-statusPoller.start();
+progressWS.start();

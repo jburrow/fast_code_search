@@ -3,10 +3,15 @@
 use super::WebState;
 use crate::search::IndexingStatus;
 use axum::{
-    extract::{Query, State},
+    extract::{
+        ws::{Message, WebSocket},
+        Query, State, WebSocketUpgrade,
+    },
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 
 /// Search query parameters
@@ -351,4 +356,105 @@ pub async fn dependencies_handler(
         files,
         count,
     }))
+}
+
+/// WebSocket upgrade handler for progress streaming
+pub async fn ws_progress_handler(
+    State(state): State<WebState>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_progress_socket(socket, state))
+}
+
+/// Handle a WebSocket connection for progress updates
+async fn handle_progress_socket(socket: WebSocket, state: WebState) {
+    let (mut sender, mut receiver) = socket.split();
+
+    // Subscribe to progress broadcast channel
+    let mut rx = state.progress_tx.subscribe();
+
+    // Send initial progress state immediately (clone before await to avoid holding lock)
+    let initial_json = {
+        state.progress.read().ok().and_then(|progress| {
+            let status_response = progress_to_status(&progress);
+            serde_json::to_string(&status_response).ok()
+        })
+    };
+    if let Some(json) = initial_json {
+        let _ = sender.send(Message::Text(json.into())).await;
+    }
+
+    // Spawn a task to forward broadcast messages to the WebSocket
+    let send_task = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(progress) => {
+                    let status_response = progress_to_status(&progress);
+                    match serde_json::to_string(&status_response) {
+                        Ok(json) => {
+                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                break; // Client disconnected
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    // We fell behind, just continue with next message
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break; // Channel closed
+                }
+            }
+        }
+    });
+
+    // Wait for client to close connection or send a close message
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Close(_)) => break,
+            Err(_) => break,
+            _ => {} // Ignore other messages (ping/pong handled automatically)
+        }
+    }
+
+    // Clean up
+    send_task.abort();
+}
+
+/// Convert IndexingProgress to StatusResponse
+fn progress_to_status(progress: &crate::search::IndexingProgress) -> StatusResponse {
+    let status_str = match progress.status {
+        IndexingStatus::Idle => "idle",
+        IndexingStatus::LoadingIndex => "loading_index",
+        IndexingStatus::Discovering => "discovering",
+        IndexingStatus::Indexing => "indexing",
+        IndexingStatus::Reconciling => "reconciling",
+        IndexingStatus::ResolvingImports => "resolving_imports",
+        IndexingStatus::Completed => "completed",
+    };
+
+    let is_indexing = matches!(
+        progress.status,
+        IndexingStatus::LoadingIndex
+            | IndexingStatus::Discovering
+            | IndexingStatus::Indexing
+            | IndexingStatus::Reconciling
+            | IndexingStatus::ResolvingImports
+    );
+
+    StatusResponse {
+        status: status_str.to_string(),
+        files_discovered: progress.files_discovered,
+        files_indexed: progress.files_indexed,
+        current_batch: progress.current_batch,
+        total_batches: progress.total_batches,
+        current_path: progress.current_path.clone(),
+        progress_percent: progress.progress_percent(),
+        elapsed_secs: progress.elapsed_secs(),
+        errors: progress.errors,
+        message: progress.message.clone(),
+        is_indexing,
+    }
 }

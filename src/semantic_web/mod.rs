@@ -2,7 +2,12 @@
 
 pub mod api;
 
-use api::{health_handler, search_handler, stats_handler, WebState};
+pub use api::{
+    create_semantic_progress_broadcaster, EngineState, SemanticProgress,
+    SemanticProgressBroadcaster, SharedSemanticProgress, WebState,
+};
+
+use api::{health_handler, search_handler, stats_handler, status_handler, ws_progress_handler};
 use axum::{
     body::Body,
     http::{header, Response, StatusCode},
@@ -21,7 +26,10 @@ pub fn create_router(state: WebState) -> Router {
     Router::new()
         .route("/api/search", get(search_handler))
         .route("/api/stats", get(stats_handler))
+        .route("/api/status", get(status_handler))
         .route("/api/health", get(health_handler))
+        // WebSocket for progress streaming
+        .route("/ws/progress", get(ws_progress_handler))
         // Static files
         .route("/", get(index_handler))
         .route("/{*file}", get(static_handler))
