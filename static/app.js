@@ -145,7 +145,7 @@ function updateProgressUI(status) {
     const isIdle = status.status === 'idle';
     
     // Show/hide progress panel
-    progressPanel.style.display = isIdle ? 'none' : 'block';
+    progressPanel.style.display = isIdle ? 'none' : 'flex';
     
     // Update progress bar
     if (progressBar) {

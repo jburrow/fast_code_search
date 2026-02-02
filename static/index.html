@@ -10,12 +10,20 @@
 
 <body>
     <div class="container">
-        <header>
-            <div class="header-main">
+        <header class="header-compact">
+            <div class="header-title">
                 <h1>🔍 Fast Code Search</h1>
-                <p class="subtitle">High-performance code search with trigram indexing</p>
             </div>
-            
+
+            <div class="header-progress" id="progress-panel" style="display: none;">
+                <span class="status-badge" id="progress-status">Ready</span>
+                <div class="progress-bar-container">
+                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
+                </div>
+                <span class="progress-percent" id="progress-percent">0%</span>
+                <span class="progress-message" id="progress-message"></span>
+            </div>
+
             <div class="header-stats" id="stats">
                 <div class="stat">
                     <span class="stat-value" id="stat-files">-</span>
@@ -34,57 +42,54 @@
                     <span class="stat-label">Deps</span>
                 </div>
             </div>
-
-            <div class="header-progress" id="progress-panel" style="display: none;">
-                <div class="progress-header">
-                    <span class="status-badge" id="progress-status">Ready</span>
-                    <span class="progress-percent" id="progress-percent">0%</span>
-                </div>
-                <div class="progress-bar-container">
-                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
-                </div>
-                <div class="progress-info">
-                    <span class="progress-message" id="progress-message">Waiting to start...</span>
-                </div>
-            </div>
         </header>
 
         <div class="search-box">
             <input type="text" id="query" placeholder="Search code..." autocomplete="off" autofocus>
-            <div class="search-options">
-                <label>
-                    Max results:
-                    <select id="max-results">
-                        <option value="25">25</option>
-                        <option value="50" selected>50</option>
-                        <option value="100">100</option>
-                        <option value="250">250</option>
-                    </select>
-                </label>
-                <label class="regex-toggle">
-                    <input type="checkbox" id="regex-mode">
-                    <span>Regex</span>
-                </label>
-                <label class="symbols-toggle">
-                    <input type="checkbox" id="symbols-mode">
-                    <span>Symbols Only</span>
-                </label>
-            </div>
-            <div class="filter-options">
-                <div class="filter-row">
-                    <label>
-                        <span class="filter-label">Include paths:</span>
-                        <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**" autocomplete="off">
-                    </label>
+
+            <details class="advanced-options">
+                <summary class="advanced-toggle">
+                    <span class="toggle-icon">▶</span> Advanced Options
+                </summary>
+                <div class="advanced-content">
+                    <div class="search-options">
+                        <label>
+                            Max results:
+                            <select id="max-results">
+                                <option value="25">25</option>
+                                <option value="50" selected>50</option>
+                                <option value="100">100</option>
+                                <option value="250">250</option>
+                            </select>
+                        </label>
+                        <label class="regex-toggle">
+                            <input type="checkbox" id="regex-mode">
+                            <span>Regex</span>
+                        </label>
+                        <label class="symbols-toggle">
+                            <input type="checkbox" id="symbols-mode">
+                            <span>Symbols Only</span>
+                        </label>
+                    </div>
+                    <div class="filter-options">
+                        <div class="filter-row">
+                            <label>
+                                <span class="filter-label">Include paths:</span>
+                                <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**"
+                                    autocomplete="off">
+                            </label>
+                        </div>
+                        <div class="filter-row">
+                            <label>
+                                <span class="filter-label">Exclude paths:</span>
+                                <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**"
+                                    autocomplete="off">
+                            </label>
+                        </div>
+                        <p class="filter-help">Use glob patterns separated by semicolons (;)</p>
+                    </div>
                 </div>
-                <div class="filter-row">
-                    <label>
-                        <span class="filter-label">Exclude paths:</span>
-                        <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**" autocomplete="off">
-                    </label>
-                </div>
-                <p class="filter-help">Use glob patterns separated by semicolons (;)</p>
-            </div>
+            </details>
         </div>
 
         <div class="results-header" id="results-header" style="display: none;">

@@ -10,12 +10,11 @@
 
 <body>
     <div class="container">
-        <header>
-            <div class="header-main">
+        <header class="header-compact">
+            <div class="header-title">
                 <h1>🧠 Semantic Code Search</h1>
-                <p class="subtitle">Natural language code discovery powered by AI</p>
             </div>
-            
+
             <div class="header-stats" id="stats">
                 <div class="stat">
                     <span class="stat-value" id="stat-files">-</span>
@@ -38,34 +37,43 @@
 
         <div class="search-box">
             <div class="query-input-wrapper">
-                <input type="text" id="query" placeholder="Ask in natural language... (e.g., 'authentication logic' or 'error handling')" 
-                       autocomplete="off" autofocus>
+                <input type="text" id="query"
+                    placeholder="Ask in natural language... (e.g., 'authentication logic' or 'error handling')"
+                    autocomplete="off" autofocus>
                 <button id="search-btn" class="search-button">
                     <span class="search-icon">🔍</span>
                     Search
                 </button>
             </div>
-            
-            <div class="search-options">
-                <label>
-                    Max results:
-                    <select id="max-results">
-                        <option value="5">5</option>
-                        <option value="10" selected>10</option>
-                        <option value="25">25</option>
-                        <option value="50">50</option>
-                    </select>
-                </label>
-            </div>
 
-            <div class="examples">
-                <span class="examples-label">Try these examples:</span>
-                <button class="example-btn" data-query="authentication and login">authentication and login</button>
-                <button class="example-btn" data-query="error handling">error handling</button>
-                <button class="example-btn" data-query="database connection">database connection</button>
-                <button class="example-btn" data-query="API endpoints">API endpoints</button>
-                <button class="example-btn" data-query="configuration loading">configuration loading</button>
-            </div>
+            <details class="advanced-options">
+                <summary class="advanced-toggle">
+                    <span class="toggle-icon">▶</span> Advanced Options
+                </summary>
+                <div class="advanced-content">
+                    <div class="search-options">
+                        <label>
+                            Max results:
+                            <select id="max-results">
+                                <option value="5">5</option>
+                                <option value="10" selected>10</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="examples">
+                        <span class="examples-label">Try these examples:</span>
+                        <button class="example-btn" data-query="authentication and login">authentication and
+                            login</button>
+                        <button class="example-btn" data-query="error handling">error handling</button>
+                        <button class="example-btn" data-query="database connection">database connection</button>
+                        <button class="example-btn" data-query="API endpoints">API endpoints</button>
+                        <button class="example-btn" data-query="configuration loading">configuration loading</button>
+                    </div>
+                </div>
+            </details>
         </div>
 
         <div id="results" class="results-container"></div>
