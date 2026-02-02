@@ -131,9 +131,9 @@ async fn main() -> Result<()> {
             indexer_config.paths.len()
         );
 
-        // Use a larger stack size (8MB) to handle tree-sitter recursion on deeply nested files
+        // Use a larger stack size (16MB) to handle tree-sitter recursion on deeply nested files
         std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
+            .stack_size(16 * 1024 * 1024)
             .name("semantic-indexer".to_string())
             .spawn(move || {
                 use walkdir::WalkDir;
@@ -192,11 +192,29 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Index the file
+                        // Skip very large files that could cause parsing issues (> 1MB)
+                        if let Ok(metadata) = entry_path.metadata() {
+                            if metadata.len() > 1024 * 1024 {
+                                tracing::debug!(
+                                    path = %entry_path.display(),
+                                    size = metadata.len(),
+                                    "Skipping large file"
+                                );
+                                continue;
+                            }
+                        }
+
+                        // Index the file, catching any panics from tree-sitter parsing
                         if let Ok(content) = std::fs::read_to_string(entry_path) {
-                            let mut engine = index_engine.write().unwrap();
-                            match engine.index_file(entry_path, &content) {
-                                Ok(num_chunks) => {
+                            let entry_path_owned = entry_path.to_path_buf();
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    let mut engine = index_engine.write().unwrap();
+                                    engine.index_file(&entry_path_owned, &content)
+                                }));
+
+                            match result {
+                                Ok(Ok(num_chunks)) => {
                                     total_indexed += 1;
                                     total_chunks += num_chunks;
 
@@ -208,11 +226,17 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     tracing::warn!(
                                         path = %entry_path.display(),
                                         error = %e,
                                         "Failed to index file"
+                                    );
+                                }
+                                Err(_) => {
+                                    tracing::warn!(
+                                        path = %entry_path.display(),
+                                        "File parsing caused a panic, skipping"
                                     );
                                 }
                             }
