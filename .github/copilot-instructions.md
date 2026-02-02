@@ -4,17 +4,20 @@ High-performance, in-memory code search service built in Rust. Handles 10GB+ cod
 
 ## Architecture Overview
 
-The system has four layers that communicate through shared data structures:
+The system has four layers that communicate through shared `Arc<RwLock<SearchEngine>>`:
 
 1. **Index Layer** (`src/index/`) - File discovery and trigram indexing
    - `file_store.rs`: Memory-mapped files via `memmap2` for zero-copy access
-   - `trigram.rs`: Roaring bitmap-based inverted index mapping trigrams → document IDs
+   - `trigram.rs`: Roaring bitmap-based inverted index mapping trigrams → document IDs (`u32`)
 
 2. **Symbol Layer** (`src/symbols/extractor.rs`) - Tree-sitter parsing for Rust/Python/JS/TS
    - Extracts function/class definitions to boost search relevance
+   - Also extracts import statements for dependency analysis
 
-3. **Search Layer** (`src/search/engine.rs`) - Parallel search with scoring
-   - Uses rayon for parallel line-by-line search across candidate documents
+3. **Search Layer** (`src/search/`) - Parallel search with scoring
+   - `engine.rs`: Core search using rayon for parallel line-by-line search
+   - `regex_search.rs`: Regex pattern analysis for trigram acceleration
+   - `path_filter.rs`: Glob-based include/exclude filtering
    - Multi-factor scoring: symbol defs (3x), exact match (2x), src/lib dirs (1.5x)
    - Four search methods:
      - `search()`: Basic text search
@@ -22,9 +25,10 @@ The system has four layers that communicate through shared data structures:
      - `search_regex()`: Regex pattern matching with trigram acceleration
      - `search_symbols()`: Symbols-only search for function/class names
 
-4. **Server Layer** - Dual API exposure
+4. **Server Layer** - Dual API exposure (shared engine via `Arc<RwLock<>>`)
    - `src/server/service.rs`: gRPC streaming via tonic (port 50051)
    - `src/web/api.rs`: REST/JSON via axum (port 8080)
+   - `static/`: Web UI files embedded via `rust-embed`
 
 **Data Flow**: Query → trigram extraction → bitmap intersection → candidate docs → parallel search → scored results → streaming response
 
@@ -37,7 +41,10 @@ cargo build --release
 # Run server with config
 cargo run --release -- --config ./config.toml
 
-# Run tests
+# Generate template config file
+cargo run --release -- --init fast_code_search.toml
+
+# Run tests (unit + integration)
 cargo test
 ```
 
@@ -114,10 +121,12 @@ TOML config in `config.toml` or `fast_code_search.toml`. Key settings:
 
 ## Testing
 
-Unit tests live in same file using `#[cfg(test)]` modules. Run specific module tests:
+Unit tests live in same file using `#[cfg(test)]` modules. Integration tests in `tests/integration_tests.rs` spin up real gRPC/HTTP servers with temp directories.
+
 ```bash
-cargo test index::trigram
-cargo test -- --nocapture  # See output
+cargo test index::trigram          # Specific module
+cargo test -- --nocapture          # See output
+cargo test integration             # Integration tests only
 ```
 
 ## Performance Optimization Workflow
@@ -183,7 +192,8 @@ Before preparing a release:
 
 ## Project-Specific Conventions
 
-- Use `Arc<Mutex<SearchEngine>>` for shared engine state between gRPC and web servers
+- Default branch is `main` (not `master`)
+- Use `Arc<RwLock<SearchEngine>>` for shared engine state between gRPC and web servers
 - Document IDs are `u32` indices into `FileStore.files` vector
 - Line numbers in results are 1-based; internally 0-based
 - Trigrams operate on raw bytes, not Unicode graphemes
