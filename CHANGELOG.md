@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed import paths for `Session`, `GraphOptimizationLevel`, and `Tensor` in ort 2.0 API
   - Added comprehensive Windows setup documentation in `docs/semantic/SEMANTIC_SEARCH_README.md`
   - Windows users must download ONNX Runtime DLL and set `ORT_DYLIB_PATH` environment variable
+- **ONNX Runtime version compatibility**: Downgraded `ort` from 2.0.0-rc.11 to 2.0.0-rc.10
+  - rc.11 requires ONNX Runtime >= 1.23.x, but bundled version is 1.22.0
+  - rc.10 supports ONNX Runtime 1.18.x - 1.22.x
+  - Added Windows launcher scripts (`scripts/run_semantic_server.ps1` and `.bat`) that automatically set `ORT_DYLIB_PATH`
 
 ## [0.2.2] - 2026-02-01
 

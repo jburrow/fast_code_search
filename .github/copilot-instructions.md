@@ -77,10 +77,13 @@ The `ml-models` feature enables ONNX-based embeddings for semantic search:
 cargo build --release --bin fast_code_search_semantic --features ml-models
 ```
 
+**ONNX Runtime Compatibility**: The project uses `ort 2.0.0-rc.10` which requires ONNX Runtime **1.18.x - 1.22.x**. Do NOT use ONNX Runtime 1.23+ (incompatible with rc.10) or older than 1.18.
+
 **Windows-specific**: Due to CRT linking conflicts between `ort` (dynamic /MD) and `tokenizers` (static /MT), the `ort` crate uses `load-dynamic` feature. This requires:
 
-1. Download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases
-2. Set `ORT_DYLIB_PATH` environment variable to point to `onnxruntime.dll`
+1. Download ONNX Runtime 1.22.0 from https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0
+2. Extract to `onnxruntime/onnxruntime-win-x64-1.22.0/` in the project root
+3. Use the launcher script: `scripts\run_semantic_server.ps1` (sets `ORT_DYLIB_PATH` automatically)
 
 See `docs/semantic/SEMANTIC_SEARCH_README.md` for detailed setup instructions.
 

@@ -251,30 +251,47 @@ cargo build --release --bin fast_code_search_semantic --features ml-models
 
 #### Windows-Specific Setup
 
-On Windows, the `ml-models` feature requires additional setup due to CRT (C Runtime) linking conflicts between the `ort` (ONNX Runtime) and `tokenizers` crates. The solution is to use dynamic loading:
+On Windows, the `ml-models` feature requires additional setup due to CRT (C Runtime) linking conflicts between the `ort` (ONNX Runtime) and `tokenizers` crates. The solution is to use dynamic loading.
+
+**⚠️ Version Compatibility**: This project uses `ort 2.0.0-rc.10` which requires **ONNX Runtime 1.18.x - 1.22.x**. Do NOT use ONNX Runtime 1.23+ (incompatible).
 
 1. **Build with the feature** (ort uses `load-dynamic` internally):
    ```powershell
    cargo build --release --bin fast_code_search_semantic --features ml-models
    ```
 
-2. **Download ONNX Runtime**:
-   - Go to [ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases)
-   - Download `onnxruntime-win-x64-1.22.0.zip` (or latest version)
-   - Extract to a permanent location, e.g., `C:\onnxruntime\`
+2. **Download ONNX Runtime 1.22.0** (recommended version):
+   - Go to [ONNX Runtime v1.22.0 Release](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)
+   - Download `onnxruntime-win-x64-1.22.0.zip`
+   - Extract to the project's `onnxruntime/` folder:
+     ```
+     fast_code_search/
+     └── onnxruntime/
+         └── onnxruntime-win-x64-1.22.0/
+             └── lib/
+                 └── onnxruntime.dll
+     ```
 
-3. **Set the environment variable** before running:
+3. **Run using the launcher script** (recommended - sets `ORT_DYLIB_PATH` automatically):
    ```powershell
-   # PowerShell
-   $env:ORT_DYLIB_PATH = "C:\onnxruntime\onnxruntime-win-x64-1.22.0\lib\onnxruntime.dll"
+   # PowerShell (recommended)
+   .\scripts\run_semantic_server.ps1
    
-   # Or permanently via System Settings
-   [Environment]::SetEnvironmentVariable("ORT_DYLIB_PATH", "C:\onnxruntime\onnxruntime-win-x64-1.22.0\lib\onnxruntime.dll", "User")
+   # Or with custom config
+   .\scripts\run_semantic_server.ps1 -ConfigFile .\my_config.toml
+   
+   # Command Prompt alternative
+   scripts\run_semantic_server.bat
    ```
 
-4. **Run the semantic search server**:
+4. **Or set the environment variable manually**:
    ```powershell
-   cargo run --release --bin fast_code_search_semantic --features ml-models -- --config fast_code_search_semantic.toml
+   # PowerShell (per-session)
+   $env:ORT_DYLIB_PATH = "C:\path\to\onnxruntime.dll"
+   .\target\release\fast_code_search_semantic.exe --config fast_code_search_semantic.toml
+   
+   # Or permanently via System Settings
+   [Environment]::SetEnvironmentVariable("ORT_DYLIB_PATH", "C:\path\to\onnxruntime.dll", "User")
    ```
 
 **Why is this needed?** The `ort` crate links against the dynamic C runtime (/MD), while `tokenizers` (via `esaxx-rs`) uses the static runtime (/MT). These are incompatible at link time on Windows. Using `load-dynamic` avoids static linking entirely by loading `onnxruntime.dll` at runtime.
@@ -359,6 +376,20 @@ export ORT_DYLIB_PATH=/path/to/libonnxruntime.so
 
 # macOS
 export ORT_DYLIB_PATH=/path/to/libonnxruntime.dylib
+```
+
+### ML Models runtime error: "ort X.X is not compatible with ONNX Runtime binary"
+
+**Symptom**: Error like `expected version >= '1.23.x', but got '1.22.0'` or similar version mismatch.
+
+**Solution**: This project uses `ort 2.0.0-rc.10` which requires ONNX Runtime **1.18.x - 1.22.x**.
+
+- If you have ONNX Runtime 1.23+, downgrade to [v1.22.0](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0)
+- If you have ONNX Runtime older than 1.18, upgrade to v1.22.0
+
+On Windows, use the bundled launcher scripts which point to the correct version:
+```powershell
+.\scripts\run_semantic_server.ps1
 ```
 
 ## License
