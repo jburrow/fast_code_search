@@ -909,8 +909,15 @@ impl SearchEngine {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
 
-        // Get symbols for this file
-        let symbols = self.symbol_cache.get(doc_id as usize)?;
+        // Get symbols for this file. The symbol cache may be empty/missing if:
+        // 1. The index was loaded from persistence (symbols aren't persisted for space efficiency)
+        // 2. The file was just added and symbols haven't been extracted yet
+        // When empty, search still works but without symbol-based ranking boosts.
+        let symbols = self
+            .symbol_cache
+            .get(doc_id as usize)
+            .map(|s| s.as_slice())
+            .unwrap_or(&[]);
 
         // Get dependency count for this file (cached lookup - done once per document)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
@@ -1127,6 +1134,99 @@ impl SearchEngine {
             }
         }
         None
+    }
+
+    /// Save the index to a file for persistence
+    pub fn save_index(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        use crate::index::persistence::get_mtime;
+        use crate::index::{PersistedFileMetadata, PersistedIndex};
+
+        // Collect file metadata
+        let mut files = Vec::new();
+        for id in 0..self.file_store.len() as u32 {
+            if let Some(mapped_file) = self.file_store.get(id) {
+                let mtime = get_mtime(&mapped_file.path).unwrap_or(0);
+                files.push(PersistedFileMetadata {
+                    path: mapped_file.path.clone(),
+                    mtime,
+                    size: mapped_file.len() as u64,
+                });
+            }
+        }
+
+        // Create persisted index
+        let persisted = PersistedIndex::new(files, self.trigram_index.get_trigram_map())?;
+        persisted.save(path)?;
+
+        tracing::info!(
+            path = %path.display(),
+            files = self.file_store.len(),
+            trigrams = self.trigram_index.num_trigrams(),
+            "Index saved to disk"
+        );
+
+        Ok(())
+    }
+
+    /// Check if a persisted index exists and is usable
+    pub fn can_load_index(path: &std::path::Path) -> bool {
+        path.exists()
+    }
+
+    /// Load an index from disk if available and not stale
+    /// Returns the list of stale files that need re-indexing
+    pub fn load_index(
+        &mut self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<std::path::PathBuf>> {
+        use crate::index::persistence::is_file_stale;
+        use crate::index::PersistedIndex;
+
+        let persisted = PersistedIndex::load(path)?;
+
+        // Check which files are stale
+        let mut stale_files = Vec::new();
+
+        for file_meta in persisted.files.iter() {
+            // File is stale if it doesn't exist or was modified since indexing
+            if !file_meta.path.exists()
+                || is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
+            {
+                stale_files.push(file_meta.path.clone());
+            }
+        }
+
+        // Restore trigram index
+        let trigram_map = persisted.restore_trigram_index()?;
+        self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
+
+        // Re-add valid files to the file store (errors are silently ignored as files may have been removed)
+        for file_meta in &persisted.files {
+            if file_meta.path.exists()
+                && !is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size)
+            {
+                let _ = self.file_store.add_file(&file_meta.path);
+            }
+        }
+
+        self.trigram_index.finalize();
+
+        tracing::info!(
+            path = %path.display(),
+            files_loaded = self.file_store.len(),
+            stale_files = stale_files.len(),
+            "Index loaded from disk"
+        );
+
+        Ok(stale_files)
+    }
+
+    /// Update the index for a single file (for incremental indexing)
+    pub fn update_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
+        // For now, just re-index the file
+        // A more sophisticated implementation could track document IDs
+        // and update only the affected trigrams
+        self.index_file(path)
     }
 }
 
@@ -1376,5 +1476,54 @@ mod tests {
             2,
             "mixed case query 'Hello' should find 2 matches"
         );
+    }
+
+    #[test]
+    fn test_save_and_load_index() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        let index_path = temp_dir.path().join("index.bin");
+
+        // Create a test file
+        let mut file = fs::File::create(&file_path).unwrap();
+        writeln!(file, "hello world").unwrap();
+        writeln!(file, "rust programming").unwrap();
+        drop(file);
+
+        // Index and save
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Verify search works before save
+        let results = engine.search("hello", 10);
+        assert!(!results.is_empty(), "Should find hello before save");
+
+        // Save the index
+        engine.save_index(&index_path).unwrap();
+        assert!(index_path.exists(), "Index file should exist");
+
+        // Create a new engine and load the index
+        let mut engine2 = SearchEngine::new();
+        let stale_files = engine2.load_index(&index_path).unwrap();
+
+        // No files should be stale since we haven't modified them
+        assert!(stale_files.is_empty(), "No files should be stale");
+
+        // Verify search works after load
+        let results2 = engine2.search("hello", 10);
+        assert!(!results2.is_empty(), "Should find hello after load");
+    }
+
+    #[test]
+    fn test_can_load_index() {
+        let temp_dir = TempDir::new().unwrap();
+        let index_path = temp_dir.path().join("nonexistent.bin");
+
+        assert!(!SearchEngine::can_load_index(&index_path));
+
+        // Create the file
+        fs::write(&index_path, "dummy").unwrap();
+        assert!(SearchEngine::can_load_index(&index_path));
     }
 }

@@ -50,6 +50,14 @@ pub struct IndexerConfig {
     /// Maximum file size to index in bytes (default 10MB)
     #[serde(default = "default_max_file_size")]
     pub max_file_size: u64,
+
+    /// Path to persistent index storage (if set, index will be saved/loaded)
+    #[serde(default)]
+    pub index_path: Option<String>,
+
+    /// Enable file watcher for incremental indexing
+    #[serde(default)]
+    pub watch: bool,
 }
 
 fn default_address() -> String {
@@ -98,6 +106,8 @@ impl Default for IndexerConfig {
             include_extensions: Vec::new(),
             exclude_patterns: default_exclude_patterns(),
             max_file_size: default_max_file_size(),
+            index_path: None,
+            watch: false,
         }
     }
 }
@@ -185,6 +195,14 @@ exclude_patterns = [
 
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
+
+# Path to persistent index storage (optional)
+# If set, the index will be saved to disk and loaded on restart
+# index_path = "/var/lib/fast_code_search/index.bin"
+
+# Enable file watcher for incremental indexing (default: false)
+# When enabled, changes to indexed files are detected and re-indexed automatically
+# watch = false
 "#
         .to_string()
     }
