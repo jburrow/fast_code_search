@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::search::{
-    create_progress_broadcaster, IndexingProgress, IndexingStatus, PreIndexedFile,
+    create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadingPhase, PreIndexedFile,
     ProgressBroadcaster, SharedIndexingProgress,
 };
 use fast_code_search::server;
@@ -183,6 +183,7 @@ async fn main() -> Result<()> {
                 if index_path.exists() {
                     broadcast_progress(&index_progress, &index_progress_tx, |p| {
                         p.status = IndexingStatus::LoadingIndex;
+                        p.loading_phase = LoadingPhase::ReadingFile;
                         p.message = String::from("Loading persisted index...");
                     });
 
@@ -190,8 +191,24 @@ async fn main() -> Result<()> {
 
                     match index_engine.write() {
                         Ok(mut engine) => {
-                            match engine.load_index_with_reconciliation(index_path, &indexer_config)
-                            {
+                            // Create a progress callback that updates shared progress
+                            let progress_ref = &index_progress;
+                            let tx_ref = &index_progress_tx;
+
+                            let result = engine.load_index_with_progress(
+                                index_path,
+                                &indexer_config,
+                                |phase, total, processed, message| {
+                                    broadcast_progress(progress_ref, tx_ref, |p| {
+                                        p.loading_phase = phase;
+                                        p.loading_total_files = total;
+                                        p.loading_files_processed = processed;
+                                        p.message = message.to_string();
+                                    });
+                                },
+                            );
+
+                            match result {
                                 Ok(result) => {
                                     let files_loaded = engine.get_stats().num_files;
                                     info!(
@@ -205,6 +222,9 @@ async fn main() -> Result<()> {
 
                                     broadcast_progress(&index_progress, &index_progress_tx, |p| {
                                         p.files_indexed = files_loaded;
+                                        p.loading_phase = LoadingPhase::None;
+                                        p.loading_total_files = None;
+                                        p.loading_files_processed = None;
                                         p.message = format!(
                                             "Loaded {} files from cache, reconciling...",
                                             files_loaded

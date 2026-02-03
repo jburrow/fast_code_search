@@ -1439,6 +1439,151 @@ impl SearchEngine {
         })
     }
 
+    /// Load an index from disk with reconciliation and progress reporting
+    ///
+    /// The progress callback receives updates during each phase of loading:
+    /// - ReadingFile: Starting to read the index file
+    /// - Deserializing: Deserializing persisted data
+    /// - CheckingFiles: Checking file staleness (with file count progress)
+    /// - RestoringTrigrams: Restoring the trigram index
+    /// - MappingFiles: Memory-mapping files (with file count progress)
+    pub fn load_index_with_progress<F>(
+        &mut self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+        mut progress_callback: F,
+    ) -> anyhow::Result<LoadIndexResult>
+    where
+        F: FnMut(LoadingPhase, Option<usize>, Option<usize>, &str),
+    {
+        use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
+
+        // Phase 1: Reading file from disk
+        progress_callback(
+            LoadingPhase::ReadingFile,
+            None,
+            None,
+            "Reading index file from disk...",
+        );
+
+        // Phase 2: Deserializing
+        progress_callback(
+            LoadingPhase::Deserializing,
+            None,
+            None,
+            "Deserializing index data...",
+        );
+        let persisted = PersistedIndex::load(path)?;
+        let total_files = persisted.files.len();
+
+        // Check config compatibility
+        let current_fingerprint = config.fingerprint();
+        let config_compatible = persisted.is_config_compatible(&current_fingerprint);
+
+        if !config_compatible {
+            tracing::info!(
+                old_fingerprint = %persisted.config_fingerprint,
+                new_fingerprint = %current_fingerprint,
+                "Config fingerprint changed, will reconcile"
+            );
+        }
+
+        // Determine paths to add/remove based on config changes
+        let new_paths = persisted.paths_to_add(&config.paths);
+        let removed_paths = persisted.paths_to_remove(&config.paths);
+
+        // Phase 3: Checking files for staleness
+        progress_callback(
+            LoadingPhase::CheckingFiles,
+            Some(total_files),
+            Some(0),
+            &format!("Checking {} files for changes...", total_files),
+        );
+
+        let file_statuses = batch_check_files(&persisted.files, &removed_paths);
+
+        progress_callback(
+            LoadingPhase::CheckingFiles,
+            Some(total_files),
+            Some(total_files),
+            &format!("Checked {} files", total_files),
+        );
+
+        // Categorize files based on status
+        let mut stale_files = Vec::new();
+        let mut removed_files = Vec::new();
+        let mut valid_file_indices = Vec::new();
+
+        for (idx, status) in file_statuses {
+            match status {
+                FileStatus::Valid => valid_file_indices.push(idx),
+                FileStatus::Stale => stale_files.push(persisted.files[idx].path.clone()),
+                FileStatus::Removed => removed_files.push(persisted.files[idx].path.clone()),
+            }
+        }
+
+        let valid_count = valid_file_indices.len();
+
+        // Only restore index if we have valid files
+        if !valid_file_indices.is_empty() {
+            // Phase 4: Restore trigram index
+            progress_callback(
+                LoadingPhase::RestoringTrigrams,
+                None,
+                None,
+                "Restoring search index...",
+            );
+
+            let trigram_map = persisted.restore_trigram_index()?;
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
+
+            // Phase 5: Memory-map files
+            progress_callback(
+                LoadingPhase::MappingFiles,
+                Some(valid_count),
+                Some(0),
+                &format!("Loading {} files into memory...", valid_count),
+            );
+
+            // Re-add valid files to the file store with progress updates
+            for (i, &idx) in valid_file_indices.iter().enumerate() {
+                let file_meta = &persisted.files[idx];
+                let _ = self.file_store.add_file(&file_meta.path);
+
+                // Update progress every 100 files or on last file
+                if i % 100 == 0 || i == valid_count - 1 {
+                    progress_callback(
+                        LoadingPhase::MappingFiles,
+                        Some(valid_count),
+                        Some(i + 1),
+                        &format!("Loaded {} / {} files", i + 1, valid_count),
+                    );
+                }
+            }
+
+            self.trigram_index.finalize();
+        }
+
+        tracing::info!(
+            path = %path.display(),
+            files_loaded = self.file_store.len(),
+            stale_files = stale_files.len(),
+            removed_files = removed_files.len(),
+            new_paths = new_paths.len(),
+            removed_paths = removed_paths.len(),
+            config_compatible = config_compatible,
+            "Index loaded from disk with reconciliation"
+        );
+
+        Ok(LoadIndexResult {
+            stale_files,
+            removed_files,
+            new_paths,
+            removed_paths,
+            config_compatible,
+        })
+    }
+
     /// Load an index from disk if available and not stale (legacy method)
     /// Returns the list of stale files that need re-indexing
     pub fn load_index(
@@ -1544,6 +1689,25 @@ pub enum IndexingStatus {
     Completed,
 }
 
+/// Sub-phases during index loading for detailed progress reporting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadingPhase {
+    /// Not currently loading
+    #[default]
+    None,
+    /// Reading index file from disk
+    ReadingFile,
+    /// Deserializing the persisted index data
+    Deserializing,
+    /// Checking files for staleness
+    CheckingFiles,
+    /// Restoring trigram index
+    RestoringTrigrams,
+    /// Memory-mapping files
+    MappingFiles,
+}
+
 /// Progress information for the indexing process
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexingProgress {
@@ -1565,6 +1729,20 @@ pub struct IndexingProgress {
     pub errors: usize,
     /// Message describing current activity
     pub message: String,
+    /// Sub-phase during index loading (when status == LoadingIndex)
+    #[serde(skip_serializing_if = "is_loading_phase_none")]
+    pub loading_phase: LoadingPhase,
+    /// Total files in persisted index (for loading progress)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loading_total_files: Option<usize>,
+    /// Files processed during loading
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loading_files_processed: Option<usize>,
+}
+
+/// Helper for serde skip_serializing_if
+fn is_loading_phase_none(phase: &LoadingPhase) -> bool {
+    *phase == LoadingPhase::None
 }
 
 impl Default for IndexingProgress {
@@ -1579,6 +1757,9 @@ impl Default for IndexingProgress {
             started_at: None,
             errors: 0,
             message: String::from("Ready"),
+            loading_phase: LoadingPhase::None,
+            loading_total_files: None,
+            loading_files_processed: None,
         }
     }
 }
@@ -1612,7 +1793,39 @@ impl IndexingProgress {
     pub fn progress_percent(&self) -> u8 {
         match self.status {
             IndexingStatus::Idle => 0,
-            IndexingStatus::LoadingIndex => 2,
+            IndexingStatus::LoadingIndex => {
+                // Show more granular progress during loading based on phase
+                match self.loading_phase {
+                    LoadingPhase::None => 1,
+                    LoadingPhase::ReadingFile => 2,
+                    LoadingPhase::Deserializing => 5,
+                    LoadingPhase::CheckingFiles => {
+                        // 10-30% for file checking
+                        if let (Some(total), Some(processed)) =
+                            (self.loading_total_files, self.loading_files_processed)
+                        {
+                            if total > 0 {
+                                let pct = (processed as f64 / total as f64) * 20.0;
+                                return (10.0 + pct).min(30.0) as u8;
+                            }
+                        }
+                        15
+                    }
+                    LoadingPhase::RestoringTrigrams => 40,
+                    LoadingPhase::MappingFiles => {
+                        // 50-90% for file mapping
+                        if let (Some(total), Some(processed)) =
+                            (self.loading_total_files, self.loading_files_processed)
+                        {
+                            if total > 0 {
+                                let pct = (processed as f64 / total as f64) * 40.0;
+                                return (50.0 + pct).min(90.0) as u8;
+                            }
+                        }
+                        60
+                    }
+                }
+            }
             IndexingStatus::Discovering => 5,
             IndexingStatus::Indexing => {
                 if self.total_batches == 0 {

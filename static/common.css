@@ -637,6 +637,75 @@ body {
 }
 
 /* ============================================
+   SEARCH READINESS / DISABLED STATES
+   ============================================ */
+
+/* Disabled search input state */
+input.search-disabled,
+input:disabled,
+select.search-disabled,
+select:disabled,
+button.search-disabled,
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: var(--bg-tertiary) !important;
+}
+
+input.search-disabled::placeholder {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Loading index state in results container */
+.loading-index-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1.5rem;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.loading-index-state .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+}
+
+.loading-index-state .loading-message {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+}
+
+.loading-index-state .loading-progress {
+    width: 200px;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.loading-index-state .loading-progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 @media (max-width: 768px) {

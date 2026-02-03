@@ -18,6 +18,21 @@ const progressStatus = document.getElementById('progress-status');
 const progressMessage = document.getElementById('progress-message');
 const progressPercent = document.getElementById('progress-percent');
 
+// Search readiness manager (disables search until index is ready)
+const searchReadiness = new SearchReadinessManager({
+    searchInputId: 'query',
+    searchButtonId: 'search-btn',
+    resultsContainerId: 'results',
+    additionalInputIds: ['max-results'],
+    onReadyChange: (isReady, status) => {
+        console.log(`Semantic search readiness changed: ${isReady ? 'READY' : 'NOT READY'}`, status?.status);
+        if (isReady && queryInput.value.trim()) {
+            // If user typed while waiting, trigger search now
+            performSearch();
+        }
+    }
+});
+
 // ============================================
 // PROGRESS WEBSOCKET
 // ============================================
@@ -32,6 +47,9 @@ const progressWS = new ProgressWebSocket({
 function updateProgressUI(status) {
     const isIdle = status.status === 'idle' || !status.status;
     const isCompleted = status.status === 'completed';
+    
+    // Update search readiness based on status
+    searchReadiness.update(status);
     
     if (progressPanel) {
         toggleElement('progress-panel', status.is_indexing || (!isIdle && !isCompleted), 'flex');
@@ -92,6 +110,12 @@ async function loadStats() {
 // ============================================
 
 async function performSearch() {
+    // Don't search if index isn't ready yet
+    if (!searchReadiness.isReady) {
+        console.log('Semantic search blocked: index not ready');
+        return;
+    }
+    
     const query = queryInput.value.trim();
     const maxResults = parseInt(maxResultsSelect.value);
     
@@ -196,6 +220,12 @@ document.querySelectorAll('.example-btn').forEach(btn => {
 // ============================================
 // INITIALIZATION
 // ============================================
+
+// Store original placeholder before readiness manager may change it
+searchReadiness.storeDefaultPlaceholder();
+
+// Start with search disabled until we know the status
+searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
 
 loadStats();
 progressWS.start();
