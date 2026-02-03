@@ -605,6 +605,7 @@ pub async fn diagnostics_handler(
     let mut self_tests = Vec::new();
 
     // Test 1: Random file search - pick a random indexed file and search for part of its filename
+    // (Filenames are indexed as searchable content, so this tests that feature)
     if !all_file_paths.is_empty() {
         let test_start = Instant::now();
         let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
@@ -668,14 +669,25 @@ pub async fn diagnostics_handler(
 
         if let Some(mapped_file) = engine.file_store.get(test_file_id) {
             if let Ok(content) = mapped_file.as_str() {
-                // Find a suitable line (non-empty, not too short)
+                // Find a suitable line (non-empty, not too short, avoid problematic patterns)
                 let lines: Vec<&str> = content
                     .lines()
-                    .filter(|l| l.trim().len() > 10 && l.trim().len() < 100)
+                    .filter(|l| {
+                        let trimmed = l.trim();
+                        trimmed.len() > 10
+                            && trimmed.len() < 100
+                            && !trimmed.starts_with("//")
+                            && !trimmed.starts_with('#')
+                            && !trimmed.starts_with("/*")
+                            && !trimmed.starts_with('*')
+                            && !trimmed.contains("...")
+                            && !trimmed.contains("…")
+                            && trimmed.chars().filter(|c| c.is_alphanumeric()).count() >= 8
+                    })
                     .collect();
 
                 if let Some(sample_line) = lines.choose(&mut rng) {
-                    // Take a substring to search for
+                    // Take a substring to search for (avoid special chars at boundaries)
                     let search_term = sample_line.trim();
                     let search_term_slice = if search_term.len() > 30 {
                         &search_term[..30]

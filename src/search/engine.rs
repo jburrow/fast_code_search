@@ -2,7 +2,7 @@ use crate::dependencies::DependencyIndex;
 use crate::index::{extract_unique_trigrams, FileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
 use crate::search::regex_search::RegexAnalysis;
-use crate::symbols::{Symbol, SymbolExtractor};
+use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
 use anyhow::Result;
 use memchr::memmem;
 use rayon::prelude::*;
@@ -354,17 +354,37 @@ impl PreIndexedFile {
         // Read file content
         let content = std::fs::read_to_string(path).ok()?;
 
+        // Extract filename stem for indexing (enables searching by filename)
+        let filename_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+
         // Extract trigrams from lowercase content for case-insensitive search
+        // Prepend filename so it's also searchable
         // Note: We lowercase during indexing so queries can be lowercased at search time
-        let content_lower = content.to_lowercase();
+        let content_with_filename = format!("{}\n{}", filename_stem, content);
+        let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
         // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
         let extractor = SymbolExtractor::new(path);
-        let symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor.extract(&content).unwrap_or_default()
         }))
         .unwrap_or_default();
+
+        // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
+        if !filename_stem.is_empty() {
+            symbols.push(Symbol {
+                name: filename_stem.clone(),
+                symbol_type: SymbolType::FileName,
+                line: 0,
+                column: 0,
+                is_definition: true,
+            });
+        }
 
         // Extract imports with panic protection
         let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -421,14 +441,30 @@ impl SearchEngine {
             .and_then(|f| f.as_str().ok())
             .unwrap_or("");
 
+        // Extract filename stem for indexing (enables searching by filename)
+        let filename_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
         // Index the lowercase content with trigrams for case-insensitive search
+        // Prepend filename so it's also searchable
         // Note: We lowercase during indexing so queries can be lowercased at search time
-        let content_lower = content.to_lowercase();
+        let content_with_filename = format!("{}\n{}", filename_stem, content);
+        let content_lower = content_with_filename.to_lowercase();
         self.trigram_index.add_document(file_id, &content_lower);
 
         // Extract symbols
         let extractor = SymbolExtractor::new(path);
-        let symbols = extractor.extract(content).unwrap_or_default();
+        let mut symbols = extractor.extract(content).unwrap_or_default();
+
+        // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
+        if !filename_stem.is_empty() {
+            symbols.push(Symbol {
+                name: filename_stem.to_string(),
+                symbol_type: SymbolType::FileName,
+                line: 0,
+                column: 0,
+                is_definition: true,
+            });
+        }
 
         // Extract imports and store for later resolution
         if let Ok(imports) = extractor.extract_imports(content) {
