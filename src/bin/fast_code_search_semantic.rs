@@ -15,6 +15,28 @@ use std::sync::{Arc, RwLock};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+/// Check if content appears to be binary (contains null bytes or high ratio of non-printable chars)
+fn is_binary_content(content: &str) -> bool {
+    // Check first 8KB for binary indicators
+    let check_len = content.len().min(8192);
+    let sample = &content[..check_len];
+
+    let mut non_text_count = 0;
+    for byte in sample.bytes() {
+        // Null bytes are a strong indicator of binary content
+        if byte == 0 {
+            return true;
+        }
+        // Count non-printable, non-whitespace characters (excluding common control chars)
+        if byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r') {
+            non_text_count += 1;
+        }
+    }
+
+    // If more than 10% non-text characters, likely binary
+    non_text_count > check_len / 10
+}
+
 /// Fast Code Search Semantic Server
 #[derive(Parser, Debug)]
 #[command(name = "fast_code_search_semantic")]
@@ -235,6 +257,15 @@ async fn main() -> Result<()> {
 
                         // Index the file, catching any panics from tree-sitter parsing
                         if let Ok(content) = std::fs::read_to_string(entry_path) {
+                            // Skip binary files that slipped through (e.g., cache files without extensions)
+                            if is_binary_content(&content) {
+                                tracing::debug!(
+                                    path = %entry_path.display(),
+                                    "Skipping binary file"
+                                );
+                                continue;
+                            }
+
                             let entry_path_owned = entry_path.to_path_buf();
                             let result =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
