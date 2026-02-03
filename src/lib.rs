@@ -1,5 +1,6 @@
 pub mod config;
 pub mod dependencies;
+pub mod diagnostics;
 pub mod index;
 pub mod search;
 pub mod semantic;

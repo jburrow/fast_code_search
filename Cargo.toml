@@ -59,6 +59,8 @@ md5 = "0.8"
 notify-debouncer-full = "0.7"
 ndarray = "0.15"                                                              # For vector operations in semantic search
 fs2 = "0.4"
+chrono = "0.4"                                                                # For timestamp formatting in diagnostics
+rand = "0.9"                                                                  # For random file sampling in self-tests
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
 ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
     "load-dynamic",

@@ -1,6 +1,10 @@
 //! REST API handlers for Fast Code Search
 
 use super::WebState;
+use crate::diagnostics::{
+    self, ConfigSummary, DiagnosticsQuery, ExtensionBreakdown, HealthStatus,
+    KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
+};
 use crate::search::IndexingStatus;
 use axum::{
     extract::{
@@ -12,7 +16,10 @@ use axum::{
     Json,
 };
 use futures_util::{SinkExt, StreamExt};
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::Instant;
 
 /// Search query parameters
 #[derive(Debug, Deserialize)]
@@ -521,4 +528,325 @@ fn progress_to_status(
         num_trigrams: stats.num_trigrams,
         dependency_edges: stats.dependency_edges,
     }
+}
+
+/// Handle diagnostics requests with self-tests
+pub async fn diagnostics_handler(
+    State(state): State<WebState>,
+    Query(params): Query<DiagnosticsQuery>,
+) -> Result<Json<KeywordDiagnosticsResponse>, (StatusCode, String)> {
+    let sample_count = params.sample_count.clamp(1, 20);
+
+    // Acquire read lock on engine
+    let engine = state.engine.read().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to acquire engine read lock: {}", e),
+        )
+    })?;
+
+    // Get basic stats
+    let stats = engine.get_stats();
+
+    // Build extension breakdown
+    let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
+    let mut all_file_paths: Vec<(u32, String)> = Vec::new();
+
+    for file_id in 0..engine.file_store.len() as u32 {
+        if let Some(mapped_file) = engine.file_store.get(file_id) {
+            let path_str = mapped_file.path.to_string_lossy().to_string();
+            all_file_paths.push((file_id, path_str.clone()));
+
+            let ext = mapped_file
+                .path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("(none)")
+                .to_lowercase();
+
+            let entry = ext_map.entry(ext).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += mapped_file.len() as u64;
+        }
+    }
+
+    // Convert to sorted extension breakdown
+    let mut files_by_extension: Vec<ExtensionBreakdown> = ext_map
+        .into_iter()
+        .map(|(ext, (count, bytes))| ExtensionBreakdown {
+            extension: ext,
+            count,
+            total_bytes: bytes,
+        })
+        .collect();
+    files_by_extension.sort_by(|a, b| b.count.cmp(&a.count));
+    files_by_extension.truncate(20); // Top 20 extensions
+
+    // Sample random files for display
+    let mut rng = rand::rng();
+    let sample_count_actual = sample_count.min(all_file_paths.len());
+    let sampled: Vec<&(u32, String)> = all_file_paths
+        .choose_multiple(&mut rng, sample_count_actual)
+        .collect();
+    let sample_files: Vec<String> = sampled.into_iter().map(|(_, p)| p.clone()).collect();
+
+    // Get config summary from progress state if available (we don't have direct config access here)
+    // For now, provide a minimal config summary
+    let config = ConfigSummary {
+        indexed_paths: vec!["(see server configuration)".to_string()],
+        include_extensions: vec![],
+        exclude_patterns: vec![],
+        max_file_size_bytes: 10 * 1024 * 1024, // default
+        index_path: None,
+        watch_enabled: false,
+    };
+
+    // Run self-tests
+    let mut self_tests = Vec::new();
+
+    // Test 1: Random file search - pick a random indexed file and search for part of its filename
+    if !all_file_paths.is_empty() {
+        let test_start = Instant::now();
+        let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
+        let test_file_path = test_file_path.clone(); // Clone to avoid borrow issues
+        let _ = test_file_id; // Suppress unused warning
+
+        // Extract filename stem for search
+        let file_name = std::path::Path::new(&test_file_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("test");
+
+        // Take first 8 chars or full name if shorter
+        let search_term = if file_name.len() > 8 {
+            &file_name[..8]
+        } else {
+            file_name
+        };
+
+        let search_results = engine.search(search_term, 100);
+        let found = search_results.iter().any(|r| {
+            r.file_path.contains(&test_file_path) || test_file_path.contains(&r.file_path)
+        });
+
+        let test = if found {
+            TestResult::passed(
+                "random_file_search",
+                test_start.elapsed(),
+                format!(
+                    "Found file '{}' when searching for '{}'",
+                    test_file_path, search_term
+                ),
+            )
+        } else {
+            TestResult::failed(
+                "random_file_search",
+                test_start.elapsed(),
+                format!(
+                    "Could not find file '{}' when searching for '{}' ({} results returned)",
+                    test_file_path,
+                    search_term,
+                    search_results.len()
+                ),
+            )
+            .with_details(format!(
+                "Searched for '{}', expected to find file at path containing '{}'",
+                search_term, test_file_path
+            ))
+        };
+        self_tests.push(test);
+    }
+
+    // Test 2: Content sample search - read a line from a random file and search for it
+    if !all_file_paths.is_empty() {
+        let test_start = Instant::now();
+        let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
+        let test_file_id = *test_file_id;
+        let test_file_path = test_file_path.clone();
+
+        let mut test_result = None;
+
+        if let Some(mapped_file) = engine.file_store.get(test_file_id) {
+            if let Ok(content) = mapped_file.as_str() {
+                // Find a suitable line (non-empty, not too short)
+                let lines: Vec<&str> = content
+                    .lines()
+                    .filter(|l| l.trim().len() > 10 && l.trim().len() < 100)
+                    .collect();
+
+                if let Some(sample_line) = lines.choose(&mut rng) {
+                    // Take a substring to search for
+                    let search_term = sample_line.trim();
+                    let search_term_slice = if search_term.len() > 30 {
+                        &search_term[..30]
+                    } else {
+                        search_term
+                    };
+
+                    let search_results = engine.search(search_term_slice, 50);
+                    let found = search_results.iter().any(|r| {
+                        r.file_path.contains(&test_file_path)
+                            || test_file_path.contains(&r.file_path)
+                    });
+
+                    test_result = Some(if found {
+                        TestResult::passed(
+                            "content_sample_search",
+                            test_start.elapsed(),
+                            format!("Found content from '{}' in search results", test_file_path),
+                        )
+                    } else {
+                        TestResult::failed(
+                            "content_sample_search",
+                            test_start.elapsed(),
+                            format!(
+                                "Content search did not return expected file ({} results)",
+                                search_results.len()
+                            ),
+                        )
+                        .with_details(format!(
+                            "Searched for '{}...' from file '{}'",
+                            &search_term_slice[..search_term_slice.len().min(20)],
+                            test_file_path
+                        ))
+                    });
+                }
+            }
+        }
+
+        if let Some(tr) = test_result {
+            self_tests.push(tr);
+        } else {
+            self_tests.push(TestResult::passed(
+                "content_sample_search",
+                test_start.elapsed(),
+                "Skipped - no suitable content found for sampling".to_string(),
+            ));
+        }
+    }
+
+    // Test 3: Index integrity - verify file IDs resolve to valid paths
+    {
+        let test_start = Instant::now();
+        let mut valid_count = 0;
+        let mut invalid_count = 0;
+        let check_count = 10.min(engine.file_store.len());
+
+        for file_id in 0..check_count as u32 {
+            if engine.get_file_path(file_id).is_some() {
+                valid_count += 1;
+            } else {
+                invalid_count += 1;
+            }
+        }
+
+        let test = if invalid_count == 0 {
+            TestResult::passed(
+                "index_integrity",
+                test_start.elapsed(),
+                format!(
+                    "All {} sampled file IDs resolve to valid paths",
+                    valid_count
+                ),
+            )
+        } else {
+            TestResult::failed(
+                "index_integrity",
+                test_start.elapsed(),
+                format!(
+                    "{} of {} file IDs failed to resolve",
+                    invalid_count, check_count
+                ),
+            )
+        };
+        self_tests.push(test);
+    }
+
+    // Test 4: Trigram index sanity - verify trigram count is reasonable
+    {
+        let test_start = Instant::now();
+        let num_trigrams = stats.num_trigrams;
+        let num_files = stats.num_files;
+
+        // A reasonable heuristic: should have trigrams if we have files
+        let test = if num_files == 0 {
+            TestResult::passed(
+                "trigram_index",
+                test_start.elapsed(),
+                "No files indexed yet".to_string(),
+            )
+        } else if num_trigrams > 0 {
+            TestResult::passed(
+                "trigram_index",
+                test_start.elapsed(),
+                format!(
+                    "Trigram index healthy: {} unique trigrams for {} files",
+                    num_trigrams, num_files
+                ),
+            )
+        } else {
+            TestResult::failed(
+                "trigram_index",
+                test_start.elapsed(),
+                format!("No trigrams indexed despite having {} files", num_files),
+            )
+        };
+        self_tests.push(test);
+    }
+
+    // Test 5: Regex search functionality
+    {
+        let test_start = Instant::now();
+        // Try a simple regex that should match common patterns
+        let regex_result = engine.search_regex(r"fn\s+\w+", "", "", 10);
+
+        let test = match regex_result {
+            Ok(results) => TestResult::passed(
+                "regex_search",
+                test_start.elapsed(),
+                format!(
+                    "Regex search operational ({} results for 'fn\\s+\\w+')",
+                    results.len()
+                ),
+            ),
+            Err(e) => TestResult::failed(
+                "regex_search",
+                test_start.elapsed(),
+                format!("Regex search failed: {}", e),
+            ),
+        };
+        self_tests.push(test);
+    }
+
+    // Calculate overall health status
+    let test_summary = TestSummary::from_results(&self_tests);
+    let status = if test_summary.failed == 0 {
+        HealthStatus::Healthy
+    } else if test_summary.failed <= test_summary.total / 2 {
+        HealthStatus::Degraded
+    } else {
+        HealthStatus::Unhealthy
+    };
+
+    let response = KeywordDiagnosticsResponse {
+        status,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_secs: diagnostics::get_uptime_secs(),
+        uptime_human: diagnostics::format_uptime(diagnostics::get_uptime_secs()),
+        generated_at: diagnostics::get_timestamp(),
+        config,
+        index: KeywordIndexDiagnostics {
+            num_files: stats.num_files,
+            total_size_bytes: stats.total_size,
+            total_size_human: diagnostics::format_bytes(stats.total_size),
+            num_trigrams: stats.num_trigrams,
+            dependency_edges: stats.dependency_edges,
+            files_by_extension,
+            sample_files,
+        },
+        self_tests,
+        test_summary,
+    };
+
+    Ok(Json(response))
 }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
+use fast_code_search::diagnostics;
 use fast_code_search::search::{
     create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadingPhase, PreIndexedFile,
     ProgressBroadcaster, SharedIndexingProgress,
@@ -59,6 +60,9 @@ async fn main() -> Result<()> {
         .with_file(false)
         .with_line_number(false)
         .init();
+
+    // Initialize diagnostics server start time
+    diagnostics::init_server_start_time();
 
     // Handle --init flag: generate template config and exit
     if let Some(init_path) = args.init {
@@ -633,17 +637,38 @@ async fn main() -> Result<()> {
             }
 
             // Update progress: completed
+            // Get the actual file count from the engine (includes files loaded from persistence)
+            let actual_file_count = {
+                let engine = index_engine
+                    .read()
+                    .expect("Failed to acquire read lock on search engine");
+                engine.get_stats().num_files
+            };
+
             broadcast_progress(&index_progress, &index_progress_tx, |p| {
                 p.status = IndexingStatus::Completed;
-                p.files_indexed = total_indexed;
-                p.files_discovered = final_discovered;
+                p.files_indexed = actual_file_count;
+                p.files_discovered = if loaded_from_persistence {
+                    actual_file_count // Show total files, not just newly discovered
+                } else {
+                    final_discovered
+                };
                 p.current_path = None;
-                p.message = format!(
-                    "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
-                    total_indexed,
-                    elapsed.as_secs_f64(),
-                    files_per_sec
-                );
+                p.message = if loaded_from_persistence && total_indexed < actual_file_count {
+                    format!(
+                        "Ready: {} files loaded from cache, {} updated in {:.1}s",
+                        actual_file_count,
+                        total_indexed,
+                        elapsed.as_secs_f64()
+                    )
+                } else {
+                    format!(
+                        "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
+                        actual_file_count,
+                        elapsed.as_secs_f64(),
+                        files_per_sec
+                    )
+                };
             });
         });
     } else if args.no_auto_index {

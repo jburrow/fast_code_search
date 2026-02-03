@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagnostics - Fast Code Search</title>
+    <link rel="stylesheet" href="/common.css">
+    <style>
+        .diagnostics-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        .diagnostics-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .diagnostics-header h1 {
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .back-link {
+            color: var(--accent);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .back-link:hover {
+            color: var(--accent-hover);
+        }
+
+        .status-banner {
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .status-banner.healthy {
+            background: rgba(166, 227, 161, 0.15);
+            border: 1px solid var(--success);
+        }
+
+        .status-banner.degraded {
+            background: rgba(249, 226, 175, 0.15);
+            border: 1px solid var(--warning);
+        }
+
+        .status-banner.unhealthy {
+            background: rgba(243, 139, 168, 0.15);
+            border: 1px solid var(--error);
+        }
+
+        .status-icon {
+            font-size: 2rem;
+        }
+
+        .status-text h2 {
+            font-size: 1.25rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .status-text p {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .refresh-btn {
+            margin-left: auto;
+            padding: 0.5rem 1rem;
+            background: var(--accent);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .refresh-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .refresh-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .refresh-btn.loading::after {
+            content: '';
+            width: 14px;
+            height: 14px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .card h3 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .stat-item {
+            background: var(--bg-primary);
+            padding: 0.75rem;
+            border-radius: 4px;
+        }
+
+        .stat-item .value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .stat-item .label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .extension-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .extension-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .extension-item:last-child {
+            border-bottom: none;
+        }
+
+        .extension-name {
+            font-family: monospace;
+            color: var(--accent);
+        }
+
+        .extension-count {
+            color: var(--text-secondary);
+        }
+
+        .test-results {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .test-results-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .test-results-header h3 {
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .test-summary {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .test-summary .passed {
+            color: var(--success);
+        }
+
+        .test-summary .failed {
+            color: var(--error);
+        }
+
+        .test-list {
+            list-style: none;
+        }
+
+        .test-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .test-item:last-child {
+            border-bottom: none;
+        }
+
+        .test-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .test-icon.pass {
+            color: var(--success);
+        }
+
+        .test-icon.fail {
+            color: var(--error);
+        }
+
+        .test-content {
+            flex: 1;
+        }
+
+        .test-name {
+            font-weight: 500;
+            font-family: monospace;
+        }
+
+        .test-message {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .test-details {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+            font-family: monospace;
+            background: var(--bg-primary);
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .test-duration {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .sample-files {
+            background: var(--bg-primary);
+            border-radius: 4px;
+            padding: 0.5rem;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.75rem;
+        }
+
+        .sample-file {
+            padding: 0.25rem 0;
+            color: var(--text-secondary);
+            word-break: break-all;
+        }
+
+        .meta-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .loading-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .error-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--error);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="diagnostics-container">
+        <div class="diagnostics-header">
+            <div>
+                <a href="/" class="back-link">← Back to Search</a>
+                <h1>🔧 Server Diagnostics</h1>
+            </div>
+        </div>
+
+        <div id="content">
+            <div class="loading-state">
+                <p>Loading diagnostics...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isLoading = false;
+
+        async function loadDiagnostics(forceRefresh = false) {
+            if (isLoading) return;
+            isLoading = true;
+
+            const content = document.getElementById('content');
+            const refreshBtn = document.getElementById('refresh-btn');
+
+            if (refreshBtn) {
+                refreshBtn.disabled = true;
+                refreshBtn.classList.add('loading');
+            }
+
+            try {
+                const url = `/api/diagnostics?force_refresh=${forceRefresh}&sample_count=10`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+                renderDiagnostics(data);
+            } catch (error) {
+                content.innerHTML = `
+                    <div class="error-state">
+                        <h2>Failed to load diagnostics</h2>
+                        <p>${error.message}</p>
+                        <button class="refresh-btn" onclick="loadDiagnostics(true)">🔄 Retry</button>
+                    </div>
+                `;
+            } finally {
+                isLoading = false;
+                if (refreshBtn) {
+                    refreshBtn.disabled = false;
+                    refreshBtn.classList.remove('loading');
+                }
+            }
+        }
+
+        function renderDiagnostics(data) {
+            const statusIcon = data.status === 'healthy' ? '✅' :
+                data.status === 'degraded' ? '⚠️' : '❌';
+            const statusText = data.status === 'healthy' ? 'All Systems Operational' :
+                data.status === 'degraded' ? 'Degraded Performance' : 'System Unhealthy';
+
+            const content = document.getElementById('content');
+            content.innerHTML = `
+                <div class="status-banner ${data.status}">
+                    <span class="status-icon">${statusIcon}</span>
+                    <div class="status-text">
+                        <h2>${statusText}</h2>
+                        <p>Version ${data.version} • Uptime: ${data.uptime_human}</p>
+                    </div>
+                    <button id="refresh-btn" class="refresh-btn" onclick="loadDiagnostics(true)">
+                        🔄 Refresh
+                    </button>
+                </div>
+
+                <div class="cards-grid">
+                    <div class="card">
+                        <h3>📊 Index Statistics</h3>
+                        <div class="stat-grid">
+                            <div class="stat-item">
+                                <div class="value">${data.index.num_files.toLocaleString()}</div>
+                                <div class="label">Files Indexed</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="value">${data.index.total_size_human}</div>
+                                <div class="label">Total Size</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="value">${data.index.num_trigrams.toLocaleString()}</div>
+                                <div class="label">Trigrams</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="value">${data.index.dependency_edges.toLocaleString()}</div>
+                                <div class="label">Dependencies</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>📁 Files by Extension</h3>
+                        <div class="extension-list">
+                            ${data.index.files_by_extension.slice(0, 10).map(ext => `
+                                <div class="extension-item">
+                                    <span class="extension-name">.${ext.extension}</span>
+                                    <span class="extension-count">${ext.count.toLocaleString()} files</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>📂 Sample Indexed Files</h3>
+                        <div class="sample-files">
+                            ${data.index.sample_files.map(f => `
+                                <div class="sample-file">${escapeHtml(f)}</div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>⚙️ Configuration</h3>
+                        <div class="sample-files">
+                            <div class="sample-file"><strong>Indexed Paths:</strong></div>
+                            ${data.config.indexed_paths.map(p => `
+                                <div class="sample-file">&nbsp;&nbsp;${escapeHtml(p)}</div>
+                            `).join('')}
+                            ${data.config.exclude_patterns.length > 0 ? `
+                                <div class="sample-file" style="margin-top: 0.5rem;"><strong>Exclusions:</strong></div>
+                                ${data.config.exclude_patterns.slice(0, 5).map(p => `
+                                    <div class="sample-file">&nbsp;&nbsp;${escapeHtml(p)}</div>
+                                `).join('')}
+                            ` : ''}
+                            <div class="sample-file" style="margin-top: 0.5rem;">
+                                <strong>File Watcher:</strong> ${data.config.watch_enabled ? 'Enabled' : 'Disabled'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-results">
+                    <div class="test-results-header">
+                        <h3>🧪 Self-Test Results</h3>
+                        <div class="test-summary">
+                            <span class="passed">✓ ${data.test_summary.passed} passed</span>
+                            <span class="failed">${data.test_summary.failed > 0 ? '✗ ' + data.test_summary.failed + ' failed' : ''}</span>
+                            <span>• ${data.test_summary.total_duration_ms.toFixed(1)}ms total</span>
+                        </div>
+                    </div>
+                    <ul class="test-list">
+                        ${data.self_tests.map(test => `
+                            <li class="test-item">
+                                <span class="test-icon ${test.passed ? 'pass' : 'fail'}">
+                                    ${test.passed ? '✓' : '✗'}
+                                </span>
+                                <div class="test-content">
+                                    <div class="test-name">${escapeHtml(test.name)}</div>
+                                    <div class="test-message">${escapeHtml(test.message)}</div>
+                                    ${test.details ? `<div class="test-details">${escapeHtml(test.details)}</div>` : ''}
+                                </div>
+                                <span class="test-duration">${test.duration_ms.toFixed(1)}ms</span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+
+                <div class="meta-info">
+                    <span>Generated: ${data.generated_at}</span>
+                    <span>Server Type: Keyword Search (Trigram-based)</span>
+                </div>
+            `;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load on page load
+        loadDiagnostics();
+
+        // Auto-refresh every 60 seconds
+        setInterval(() => loadDiagnostics(false), 60000);
+    </script>
+</body>
+
+</html>

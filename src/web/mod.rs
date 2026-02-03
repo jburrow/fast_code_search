@@ -51,6 +51,7 @@ pub fn create_router(
         .route("/api/stats", get(api::stats_handler))
         .route("/api/status", get(api::status_handler))
         .route("/api/health", get(api::health_handler))
+        .route("/api/diagnostics", get(api::diagnostics_handler))
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
         // WebSocket for progress streaming

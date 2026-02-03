@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use clap::Parser;
+use fast_code_search::diagnostics;
 use fast_code_search::semantic::{SemanticConfig, SemanticSearchEngine};
 use fast_code_search::semantic_web::{
     self, create_semantic_progress_broadcaster, SemanticProgress, SemanticProgressBroadcaster,
@@ -85,6 +86,9 @@ async fn main() -> Result<()> {
         .with_file(false)
         .with_line_number(false)
         .init();
+
+    // Initialize diagnostics server start time
+    diagnostics::init_server_start_time();
 
     // Handle --init flag
     if let Some(init_path) = args.init {

@@ -7,7 +7,10 @@ pub use api::{
     SemanticProgressBroadcaster, SharedSemanticProgress, WebState,
 };
 
-use api::{health_handler, search_handler, stats_handler, status_handler, ws_progress_handler};
+use api::{
+    diagnostics_handler, health_handler, search_handler, stats_handler, status_handler,
+    ws_progress_handler,
+};
 use axum::{
     body::Body,
     http::{header, Response, StatusCode},
@@ -28,6 +31,7 @@ pub fn create_router(state: WebState) -> Router {
         .route("/api/stats", get(stats_handler))
         .route("/api/status", get(status_handler))
         .route("/api/health", get(health_handler))
+        .route("/api/diagnostics", get(diagnostics_handler))
         // WebSocket for progress streaming
         .route("/ws/progress", get(ws_progress_handler))
         // Static files
