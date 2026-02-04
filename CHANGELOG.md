@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.3] - 2026-02-04
 
 ### Added
+- **Terminal progress bars for index loading**: Added animated progress bars when loading a persisted index from disk
+  - Shows phase-specific indicators: 📖 Reading file, 🔄 Deserializing, 🔍 Checking files, 🧠 Restoring index, 📁 Loading files
+  - Progress bar shows elapsed time, visual progress, position/total count, and ETA
+  - Displays summary with file count when loading completes
+
 - **Whitebox validator binary**: New `fast_code_search_validator` binary for comprehensive search engine validation
   - Generates deterministic synthetic corpus with seeded randomness for reproducible tests
   - Multi-language corpus: Rust (40%), Python (25%), TypeScript (20%), JavaScript (15%)

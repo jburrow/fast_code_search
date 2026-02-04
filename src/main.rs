@@ -8,6 +8,7 @@ use fast_code_search::search::{
 };
 use fast_code_search::server;
 use fast_code_search::web;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing::{info, Level};
@@ -193,28 +194,112 @@ async fn main() -> Result<()> {
 
                     info!(path = %index_path.display(), "Attempting to load persisted index");
 
+                    // Create terminal progress bar for loading
+                    let spinner_style = ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap();
+                    let bar_style = ProgressStyle::default_bar()
+                        .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
+                        .unwrap()
+                        .progress_chars("█▓░");
+
+                    let terminal_progress = ProgressBar::new_spinner();
+                    terminal_progress.set_style(spinner_style.clone());
+                    terminal_progress.enable_steady_tick(std::time::Duration::from_millis(80));
+                    terminal_progress.set_message("📂 Loading persisted index...");
+
+                    // Track which phase we're in for progress bar management
+                    let terminal_pb = std::sync::Arc::new(std::sync::Mutex::new(terminal_progress));
+                    let bar_style_arc = std::sync::Arc::new(bar_style);
+                    let spinner_style_arc = std::sync::Arc::new(spinner_style);
+
                     match index_engine.write() {
                         Ok(mut engine) => {
                             // Create a progress callback that updates shared progress
                             let progress_ref = &index_progress;
                             let tx_ref = &index_progress_tx;
+                            let pb_ref = terminal_pb.clone();
+                            let bar_style_ref = bar_style_arc.clone();
+                            let spinner_style_ref = spinner_style_arc.clone();
 
                             let result = engine.load_index_with_progress(
                                 index_path,
                                 &indexer_config,
                                 |phase, total, processed, message| {
+                                    // Update broadcast progress for web UI
                                     broadcast_progress(progress_ref, tx_ref, |p| {
                                         p.loading_phase = phase;
                                         p.loading_total_files = total;
                                         p.loading_files_processed = processed;
                                         p.message = message.to_string();
                                     });
+
+                                    // Update terminal progress bar
+                                    if let Ok(pb) = pb_ref.lock() {
+                                        match phase {
+                                            LoadingPhase::ReadingFile => {
+                                                pb.set_style(spinner_style_ref.as_ref().clone());
+                                                pb.set_message(
+                                                    "📖 Reading index file from disk...",
+                                                );
+                                            }
+                                            LoadingPhase::Deserializing => {
+                                                pb.set_message("🔄 Deserializing index data...");
+                                            }
+                                            LoadingPhase::CheckingFiles => {
+                                                if let (Some(total), Some(processed)) =
+                                                    (total, processed)
+                                                {
+                                                    pb.set_style(bar_style_ref.as_ref().clone());
+                                                    pb.set_length(total as u64);
+                                                    pb.set_position(processed as u64);
+                                                    pb.set_message("🔍 Checking files for changes");
+                                                }
+                                            }
+                                            LoadingPhase::RestoringTrigrams => {
+                                                pb.set_style(spinner_style_ref.as_ref().clone());
+                                                pb.set_message("🧠 Restoring search index...");
+                                            }
+                                            LoadingPhase::MappingFiles => {
+                                                if let (Some(total), Some(processed)) =
+                                                    (total, processed)
+                                                {
+                                                    pb.set_style(bar_style_ref.as_ref().clone());
+                                                    pb.set_length(total as u64);
+                                                    pb.set_position(processed as u64);
+                                                    pb.set_message("📁 Loading files into memory");
+                                                }
+                                            }
+                                            LoadingPhase::None => {}
+                                        }
+                                    }
                                 },
                             );
+
+                            // Finish progress bar
+                            if let Ok(pb) = terminal_pb.lock() {
+                                pb.finish_and_clear();
+                            }
 
                             match result {
                                 Ok(result) => {
                                     let files_loaded = engine.get_stats().num_files;
+
+                                    // Print a nice summary line
+                                    println!(
+                                        "✅ Loaded {} files from persisted index",
+                                        format_number(files_loaded)
+                                    );
+                                    if !result.stale_files.is_empty()
+                                        || !result.new_paths.is_empty()
+                                    {
+                                        println!(
+                                            "   {} stale files to re-index, {} new paths to scan",
+                                            result.stale_files.len(),
+                                            result.new_paths.len()
+                                        );
+                                    }
+
                                     info!(
                                         files_loaded = files_loaded,
                                         stale_files = result.stale_files.len(),
@@ -720,4 +805,17 @@ fn load_config(args: &Args) -> Result<Config> {
 
     // Apply CLI overrides
     Ok(base_config.with_overrides(args.address.clone(), args.index_paths.clone()))
+}
+
+/// Format a number with underscore separators for readability (e.g., 89210 -> "89_210")
+fn format_number(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push('_');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
 }
