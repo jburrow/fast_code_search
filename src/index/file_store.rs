@@ -89,8 +89,7 @@ impl FileStore {
             Err(e) => {
                 // Log canonicalization failures but continue with the original path
                 warn!(
-                    "Failed to canonicalize path '{}': {}. This may be due to broken symlinks, \
-                     permission issues, or non-existent files. Using original path.",
+                    "Failed to canonicalize path '{}': {}. This may be due to broken symlinks, permission issues, or non-existent files. Using original path.",
                     path.display(),
                     e
                 );

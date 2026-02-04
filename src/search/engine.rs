@@ -382,8 +382,7 @@ impl PreIndexedFile {
         }))
         .unwrap_or_else(|_| {
             warn!(
-                "Symbol extraction panicked for file '{}'. This typically occurs with deeply \
-                 nested or malformed syntax. Continuing without symbols.",
+                "Symbol extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
                 path.display()
             );
             Vec::new()
