@@ -9,6 +9,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// Case-insensitive substring search without heap allocation.
 /// Both `haystack` and `needle` are compared using ASCII case-insensitive matching.
@@ -358,7 +359,13 @@ impl PreIndexedFile {
         let filename_stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("")
+            .unwrap_or_else(|| {
+                warn!(
+                    "Failed to extract filename stem from path: {}",
+                    path.display()
+                );
+                ""
+            })
             .to_string();
 
         // Extract trigrams from lowercase content for case-insensitive search
@@ -373,7 +380,14 @@ impl PreIndexedFile {
         let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor.extract(&content).unwrap_or_default()
         }))
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            warn!(
+                "Symbol extraction panicked for file '{}': {:?}. Continuing without symbols.",
+                path.display(),
+                e
+            );
+            Vec::new()
+        });
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
         if !filename_stem.is_empty() {
@@ -442,7 +456,16 @@ impl SearchEngine {
             .unwrap_or("");
 
         // Extract filename stem for indexing (enables searching by filename)
-        let filename_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let filename_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| {
+                warn!(
+                    "Failed to extract filename stem from path: {}",
+                    path.display()
+                );
+                ""
+            });
 
         // Index the lowercase content with trigrams for case-insensitive search
         // Prepend filename so it's also searchable

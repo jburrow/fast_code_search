@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use tracing::warn;
 
 /// Represents a memory-mapped file
 pub struct MappedFile {
@@ -83,7 +84,19 @@ impl FileStore {
         let path = path.as_ref();
 
         // Canonicalize path to handle symlinks and different path representations
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                // Log canonicalization failures but continue with the original path
+                // This can happen with broken symlinks, permission issues, or non-existent files
+                warn!(
+                    "Failed to canonicalize path '{}': {}. Using original path.",
+                    path.display(),
+                    e
+                );
+                path.to_path_buf()
+            }
+        };
 
         // Check if already indexed
         if let Some(&existing_id) = self.path_to_id.get(&canonical) {

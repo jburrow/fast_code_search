@@ -6,6 +6,27 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Normalize a path string for cross-platform comparison.
+/// Converts all path separators to forward slashes for consistent comparison.
+fn normalize_path_for_comparison(path: &str) -> String {
+    // Convert backslashes to forward slashes for consistent comparison
+    let normalized = path.replace('\\', "/");
+
+    // On Windows, paths are case-insensitive. On Unix, they are case-sensitive.
+    // For config comparison, we use case-insensitive on all platforms to handle
+    // user input variations.
+    #[cfg(target_os = "windows")]
+    {
+        normalized.to_lowercase()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // On Unix systems, still use case-insensitive for config path comparison
+        // to be lenient with user input
+        normalized.to_lowercase()
+    }
+}
+
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -135,7 +156,7 @@ impl IndexerConfig {
         let mut sorted_paths: Vec<_> = self
             .paths
             .iter()
-            .map(|p| p.replace('\\', "/").to_lowercase())
+            .map(|p| normalize_path_for_comparison(p))
             .collect();
         sorted_paths.sort();
 
