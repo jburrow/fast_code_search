@@ -1,5 +1,5 @@
 use crate::dependencies::DependencyIndex;
-use crate::index::{extract_unique_trigrams, FileStore, Trigram, TrigramIndex};
+use crate::index::{extract_unique_trigrams, LazyFileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
 use crate::search::regex_search::RegexAnalysis;
 use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
@@ -420,7 +420,7 @@ impl PreIndexedFile {
 }
 
 pub struct SearchEngine {
-    pub file_store: FileStore,
+    pub file_store: LazyFileStore,
     pub trigram_index: TrigramIndex,
     pub dependency_index: DependencyIndex,
     symbol_cache: Vec<Vec<Symbol>>,
@@ -431,7 +431,7 @@ pub struct SearchEngine {
 impl SearchEngine {
     pub fn new() -> Self {
         Self {
-            file_store: FileStore::new(),
+            file_store: LazyFileStore::new(),
             trigram_index: TrigramIndex::new(),
             dependency_index: DependencyIndex::new(),
             symbol_cache: Vec::new(),
@@ -1319,7 +1319,7 @@ impl SearchEngine {
     pub fn get_stats(&self) -> SearchStats {
         SearchStats {
             num_files: self.file_store.len(),
-            total_size: self.file_store.total_size(),
+            total_size: self.file_store.total_mapped_size(),
             num_trigrams: self.trigram_index.num_trigrams(),
             dependency_edges: self.dependency_index.total_edges(),
         }
@@ -1385,10 +1385,18 @@ impl SearchEngine {
                     })
                     .cloned();
 
+                // Use len_if_mapped() to avoid triggering lazy loading during save
+                // If file isn't mapped yet, get size from filesystem
+                let size = mapped_file.len_if_mapped().unwrap_or_else(|| {
+                    std::fs::metadata(&mapped_file.path)
+                        .map(|m| m.len() as usize)
+                        .unwrap_or(0)
+                });
+
                 files.push(PersistedFileMetadata {
                     path: mapped_file.path.clone(),
                     mtime,
-                    size: mapped_file.len() as u64,
+                    size: size as u64,
                     source_base_path: source_base,
                 });
             }
@@ -1595,38 +1603,33 @@ impl SearchEngine {
             let trigram_map = persisted.restore_trigram_index()?;
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
-            // Phase 5: Memory-map files in parallel batches with progress updates
+            // Phase 5: Register file paths (LAZY - no I/O, instant!)
             progress_callback(
                 LoadingPhase::MappingFiles,
                 Some(valid_count),
                 Some(0),
-                &format!("Loading {} files into memory...", valid_count),
+                &format!("Registering {} files...", valid_count),
             );
 
-            // Collect paths for loading
-            let paths_to_load: Vec<std::path::PathBuf> = valid_file_indices
+            // Collect paths for lazy registration
+            let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
                 .iter()
                 .map(|&idx| persisted.files[idx].path.clone())
                 .collect();
 
-            // Process in batches to allow progress updates while still getting parallelism
-            const BATCH_SIZE: usize = 1000;
-            let mut loaded = 0;
+            // Pre-allocate capacity for efficiency
+            self.file_store.reserve(paths_to_register.len());
 
-            for batch in paths_to_load.chunks(BATCH_SIZE) {
-                // Load this batch in parallel
-                let batch_vec: Vec<std::path::PathBuf> = batch.to_vec();
-                let _results = self.file_store.add_files_parallel(&batch_vec);
-                loaded += batch.len();
+            // Register all files instantly (no I/O, just storing paths)
+            let _ids = self.file_store.register_files_bulk(&paths_to_register);
 
-                // Update progress after each batch
-                progress_callback(
-                    LoadingPhase::MappingFiles,
-                    Some(valid_count),
-                    Some(loaded),
-                    &format!("Loaded {} / {} files", loaded, valid_count),
-                );
-            }
+            // Final progress update
+            progress_callback(
+                LoadingPhase::MappingFiles,
+                Some(valid_count),
+                Some(valid_count),
+                &format!("Registered {} files (lazy loading enabled)", valid_count),
+            );
 
             self.trigram_index.finalize();
         }
@@ -1681,12 +1684,13 @@ impl SearchEngine {
         let trigram_map = persisted.restore_trigram_index()?;
         self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
-        // Memory-map valid files in parallel (major performance optimization)
-        let paths_to_load: Vec<std::path::PathBuf> = valid_file_indices
+        // Register file paths lazily (no I/O - instant!)
+        let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
             .map(|&idx| persisted.files[idx].path.clone())
             .collect();
-        let _results = self.file_store.add_files_parallel(&paths_to_load);
+        self.file_store.reserve(paths_to_register.len());
+        let _ids = self.file_store.register_files_bulk(&paths_to_register);
 
         self.trigram_index.finalize();
 

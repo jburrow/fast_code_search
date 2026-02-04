@@ -566,7 +566,8 @@ pub async fn diagnostics_handler(
 
             let entry = ext_map.entry(ext).or_insert((0, 0));
             entry.0 += 1;
-            entry.1 += mapped_file.len() as u64;
+            // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
+            entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
         }
     }
 

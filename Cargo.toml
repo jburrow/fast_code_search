@@ -1,5 +1,5 @@
 [package]
-keywords = ["search", "code-search", "trigram", 392"grpc", "indexing"]name = "fast_code_search"
+name = "fast_code_search"
 version = "0.2.3"
 edition = "2021"
 authors = ["James Burrow"]
@@ -9,6 +9,7 @@ repository = "https://github.com/jburrow/fast_code_search"
 homepage = "https://github.com/jburrow/fast_code_search"
 documentation = "https://docs.rs/fast_code_search"
 readme = "README.md"
+keywords = ["search", "code-search", "trigram", "grpc", "indexing"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**"]
 default-run = "fast_code_search_server"
