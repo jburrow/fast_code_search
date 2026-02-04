@@ -1595,7 +1595,7 @@ impl SearchEngine {
             let trigram_map = persisted.restore_trigram_index()?;
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
-            // Phase 5: Memory-map files
+            // Phase 5: Memory-map files in parallel batches with progress updates
             progress_callback(
                 LoadingPhase::MappingFiles,
                 Some(valid_count),
@@ -1603,20 +1603,29 @@ impl SearchEngine {
                 &format!("Loading {} files into memory...", valid_count),
             );
 
-            // Re-add valid files to the file store with progress updates
-            for (i, &idx) in valid_file_indices.iter().enumerate() {
-                let file_meta = &persisted.files[idx];
-                let _ = self.file_store.add_file(&file_meta.path);
+            // Collect paths for loading
+            let paths_to_load: Vec<std::path::PathBuf> = valid_file_indices
+                .iter()
+                .map(|&idx| persisted.files[idx].path.clone())
+                .collect();
 
-                // Update progress every 100 files or on last file
-                if i % 100 == 0 || i == valid_count - 1 {
-                    progress_callback(
-                        LoadingPhase::MappingFiles,
-                        Some(valid_count),
-                        Some(i + 1),
-                        &format!("Loaded {} / {} files", i + 1, valid_count),
-                    );
-                }
+            // Process in batches to allow progress updates while still getting parallelism
+            const BATCH_SIZE: usize = 1000;
+            let mut loaded = 0;
+
+            for batch in paths_to_load.chunks(BATCH_SIZE) {
+                // Load this batch in parallel
+                let batch_vec: Vec<std::path::PathBuf> = batch.to_vec();
+                let _results = self.file_store.add_files_parallel(&batch_vec);
+                loaded += batch.len();
+
+                // Update progress after each batch
+                progress_callback(
+                    LoadingPhase::MappingFiles,
+                    Some(valid_count),
+                    Some(loaded),
+                    &format!("Loaded {} / {} files", loaded, valid_count),
+                );
             }
 
             self.trigram_index.finalize();
@@ -1672,10 +1681,12 @@ impl SearchEngine {
         let trigram_map = persisted.restore_trigram_index()?;
         self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
 
-        // Re-add valid files to the file store (errors are silently ignored as files may have been removed)
-        for &idx in &valid_file_indices {
-            let _ = self.file_store.add_file(&persisted.files[idx].path);
-        }
+        // Memory-map valid files in parallel (major performance optimization)
+        let paths_to_load: Vec<std::path::PathBuf> = valid_file_indices
+            .iter()
+            .map(|&idx| persisted.files[idx].path.clone())
+            .collect();
+        let _results = self.file_store.add_files_parallel(&paths_to_load);
 
         self.trigram_index.finalize();
 

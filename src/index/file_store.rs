@@ -109,6 +109,63 @@ impl FileStore {
         Ok(id)
     }
 
+    /// Add a file to the store with a pre-canonicalized path (fast path for persistence loading).
+    /// This skips the expensive canonicalize() syscall when we know the path is already canonical.
+    /// Returns the file ID on success.
+    pub fn add_file_precanonicalized(&mut self, path: impl AsRef<Path>) -> Result<u32> {
+        let path = path.as_ref();
+
+        // Use the path directly as the canonical key (skip syscall)
+        let canonical = path.to_path_buf();
+
+        // Check if already indexed
+        if let Some(&existing_id) = self.path_to_id.get(&canonical) {
+            return Ok(existing_id);
+        }
+
+        let mapped = MappedFile::new(path)?;
+        let id = self.files.len() as u32;
+        self.path_to_id.insert(canonical, id);
+        self.files.push(mapped);
+        Ok(id)
+    }
+
+    /// Bulk add files with pre-canonicalized paths in parallel.
+    /// This is optimized for loading from persistence where paths are already verified.
+    /// Returns a vector of (index, Result<u32>) pairs for each input path.
+    pub fn add_files_parallel(&mut self, paths: &[PathBuf]) -> Vec<(usize, Result<u32>)> {
+        use rayon::prelude::*;
+
+        // First, memory-map all files in parallel
+        let mapped_results: Vec<(usize, Result<MappedFile>)> = paths
+            .par_iter()
+            .enumerate()
+            .map(|(idx, path)| (idx, MappedFile::new(path)))
+            .collect();
+
+        // Then, add them sequentially to maintain consistent IDs
+        let mut results = Vec::with_capacity(paths.len());
+        for (idx, mapped_result) in mapped_results {
+            match mapped_result {
+                Ok(mapped) => {
+                    let canonical = mapped.path.clone();
+                    if let Some(&existing_id) = self.path_to_id.get(&canonical) {
+                        results.push((idx, Ok(existing_id)));
+                    } else {
+                        let id = self.files.len() as u32;
+                        self.path_to_id.insert(canonical, id);
+                        self.files.push(mapped);
+                        results.push((idx, Ok(id)));
+                    }
+                }
+                Err(e) => {
+                    results.push((idx, Err(e)));
+                }
+            }
+        }
+        results
+    }
+
     /// Get a file by ID
     pub fn get(&self, id: u32) -> Option<&MappedFile> {
         self.files.get(id as usize)
