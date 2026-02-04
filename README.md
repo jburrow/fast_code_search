@@ -70,36 +70,46 @@ The **optional semantic engine** understands code meaning, not just text pattern
   - **gRPC API** using `tonic` with streaming results (port 50051/50052)
   - **REST API** using `axum` with JSON responses (port 8080/8081)
 - **Embedded Web UI** — browser-based search interface with real-time results
+- **Diagnostics & Self-Testing** — comprehensive health checks with automated tests
 - **Supports 10GB+ codebases** efficiently
 
 ## Why an In-Memory Server?
 
-Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_search runs as an **always-on, in-memory server**. This architecture provides unique advantages:
+Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_search runs as an **always-on, in-memory server**. This architecture is optimized for **repeated searches** where you query the same codebase many times.
 
-| Advantage | Impact |
-|-----------|--------|
-| **Zero cold-start** | Index always hot in RAM — no disk I/O on first query |
-| **Sub-millisecond search** | Memory access is 100-1000x faster than SSD |
-| **Warm CPU caches** | Repeated queries hit L1/L2 cache |
-| **Live dependency graph** | Track imports across the entire codebase |
-| **Concurrent access** | RwLock allows many simultaneous searches |
-| **Real-time streaming** | gRPC streams results to IDEs as they're found |
+### Performance Benefits
+
+| Advantage | What It Means |
+|-----------|---------------|
+| **Zero cold-start delay** | Index stays in RAM — first search is as fast as the 100th |
+| **Sub-millisecond search** | RAM access is 100-1000x faster than reading from SSD |
+| **CPU cache locality** | Repeated queries benefit from L1/L2 cache hits |
+| **Live dependency graph** | Instant answers to "what imports this file?" without re-scanning |
+| **Parallel queries** | Multiple developers can search simultaneously without blocking |
+| **Streaming results** | gRPC delivers results as they're found — no waiting for completion |
+
+### The Trade-off
+
+**Upfront cost**: Initial indexing takes time (~100s for 10GB codebase)  
+**Ongoing benefit**: Each subsequent search takes 1-20ms instead of seconds
+
+After ~50 queries on a typical codebase, fast_code_search becomes faster than ripgrep's cumulative time.
 
 ### Best For
 
-- **IDE integration** — Sub-10ms latency enables "search as you type"
-- **Repeated queries** — Same patterns searched throughout a coding session
-- **Large codebases** — 10GB+ where per-query scanning takes seconds
-- **Dependency queries** — "What files import this module?"
-- **Team search** — Multiple developers querying the same codebase
+- **IDE integration** — Sub-10ms latency enables "search as you type" features
+- **Active development** — Many searches during a coding session (refactoring, code review, debugging)
+- **Large codebases** — 10GB+ where tools like ripgrep take 5+ seconds per query
+- **Dependency analysis** — "What files import this module?" answered instantly
+- **Team environments** — Shared server supports multiple developers querying the same codebase
 
 ### When to Use Other Tools
 
-- **One-off searches**: ripgrep is instant for single searches, no server needed
-- **Disk-constrained**: Zoekt's persistent index survives restarts without rebuild
-- **Planet-scale**: GitHub Code Search scales horizontally across data centers
+- **One-off searches**: Use ripgrep — no indexing overhead, instant results for single queries
+- **Persistent storage needed**: Use Zoekt — disk-based index survives server restarts
+- **Horizontal scaling**: Use GitHub Code Search — designed for planet-scale with distributed indexing
 
-📖 **See [PRIOR_ART.md](docs/design/PRIOR_ART.md) for a detailed comparison with ripgrep, Zoekt, GitHub Code Search, and improvement roadmap.**
+📖 **See [PRIOR_ART.md](docs/design/PRIOR_ART.md) for detailed benchmarks comparing fast_code_search with ripgrep, Zoekt, and GitHub Code Search.**
 
 ## Architecture
 
@@ -353,7 +363,8 @@ The REST API is available at `http://localhost:8080` when `enable_web_ui` is tru
 | `/api/search` | GET | Search the index |
 | `/api/stats` | GET | Get index statistics |
 | `/api/status` | GET | Get indexing progress and status |
-| `/api/health` | GET | Health check |
+| `/api/health` | GET | Health check (simple status response) |
+| `/api/diagnostics` | GET | Comprehensive diagnostics with self-tests |
 | `/api/dependents` | GET | Get files that import a given file |
 | `/api/dependencies` | GET | Get files imported by a given file |
 | `/ws/progress` | WS | WebSocket for real-time indexing progress |
@@ -397,13 +408,84 @@ The semantic engine excels at:
 
 See [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) for detailed documentation.
 
+### Diagnostics & Self-Testing
+
+Both keyword and semantic search servers include comprehensive diagnostics and self-testing capabilities to verify system health and functionality.
+
+#### Diagnostics Endpoint
+
+Access `/api/diagnostics` to get detailed system information:
+
+```bash
+curl "http://localhost:8080/api/diagnostics"
+```
+
+The diagnostics response includes:
+
+- **Health Status**: Overall system health (healthy/degraded/unhealthy)
+- **Server Uptime**: How long the server has been running
+- **Configuration Summary**: Active settings (indexed paths, exclusions, file size limits)
+- **Index Statistics**: File count, total size, trigram count, dependency edges
+- **File Extension Breakdown**: Distribution of files by type
+- **Self-Test Results**: Automated tests that verify core functionality
+- **Test Summary**: Pass/fail counts and total test duration
+
+#### Self-Tests
+
+The diagnostics endpoint automatically runs self-tests that validate:
+
+1. **Basic Search**: Searches indexed files to verify the search engine is working
+2. **Regex Search**: Tests regex pattern matching capabilities
+3. **Symbol Search**: Validates symbol extraction and symbol-only search
+4. **Dependency Graph**: Verifies import tracking is functional
+5. **Index Consistency**: Checks that the index is internally consistent
+
+**Query Parameters:**
+- `force_refresh=true`: Force re-running tests instead of using cached results
+- `sample_count=N`: Number of random files to sample for tests (default: 5)
+
+**Example:**
+```bash
+# Run diagnostics with fresh test results on 10 sample files
+curl "http://localhost:8080/api/diagnostics?force_refresh=true&sample_count=10"
+```
+
+#### Web UI
+
+Both servers include a diagnostics page in the web UI:
+- Keyword search: `http://localhost:8080/diagnostics.html`
+- Semantic search: `http://localhost:8081/diagnostics-semantic.html`
+
+The web UI provides a visual dashboard showing server health, index statistics, and test results with color-coded pass/fail indicators.
+
 ## Performance Characteristics
 
-- **Indexing**: Parallel file processing, ~100MB/s on modern hardware
-- **Search**: Sub-millisecond for most queries on 10GB+ codebases
-- **Memory**: Uses memory mapping, so actual RAM usage is much lower than codebase size
-- **Scalability**: Handles 10GB+ of text efficiently
-- **Persistence**: Load pre-built index on restart (no re-indexing needed)
+fast_code_search is optimized for **repeated searches** on large codebases. Here's what you can expect:
+
+### Indexing Speed
+- **Throughput**: ~100MB/s on modern hardware with parallel processing
+- **10GB codebase**: Initial indexing takes ~100 seconds
+- **Incremental updates**: File watcher mode detects and re-indexes changed files in milliseconds
+
+### Search Speed
+- **Small queries** (rare terms): 0.1-0.3ms — trigram index narrows to few candidates
+- **Common queries** (frequent terms): 1-22ms — depends on corpus size and result count
+- **Regex patterns**: 5-45ms — trigram acceleration helps with literal prefixes
+- **10GB+ codebases**: Still sub-millisecond for most queries due to in-memory index
+
+**Key insight**: Search time grows sub-linearly with corpus size thanks to trigram filtering.
+
+### Memory Efficiency
+- **Index overhead**: ~2-5% of total codebase size (Roaring bitmap compression)
+- **File storage**: Memory-mapped, so OS manages paging — doesn't load entire codebase into RAM
+- **Practical usage**: A 10GB codebase might use 500MB RAM for the index + memory-mapped files
+- **Concurrent searches**: Shared RwLock allows multiple readers without copying data
+
+### Persistence & Startup
+- **Cold start** (no saved index): Full re-indexing required (~100s for 10GB)
+- **Warm start** (saved index): Loads pre-built index from disk (~1-5s for 10GB)
+- **Staleness detection**: Checks file mtimes/sizes; only re-indexes changed files
+- **Configuration**: Set `index_path` in config to enable persistence
 
 ## Benchmarks
 
