@@ -380,11 +380,11 @@ impl PreIndexedFile {
         let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor.extract(&content).unwrap_or_default()
         }))
-        .unwrap_or_else(|e| {
+        .unwrap_or_else(|_| {
             warn!(
-                "Symbol extraction panicked for file '{}': {:?}. Continuing without symbols.",
-                path.display(),
-                e
+                "Symbol extraction panicked for file '{}'. This typically occurs with deeply \
+                 nested or malformed syntax. Continuing without symbols.",
+                path.display()
             );
             Vec::new()
         });
