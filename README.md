@@ -2,7 +2,43 @@
 
 High-performance, in-memory code search service built in Rust. Designed to handle 10GB+ of text with blazing fast search capabilities.
 
+## Two Search Engines, One Platform
+
+fast_code_search provides **two complementary search engines** optimized for different use cases:
+
+| Engine | Best For | How It Works | Port |
+|--------|----------|--------------|------|
+| **🔍 Keyword Search** | Finding exact code patterns, function calls, variable names | Trigram index + AST-based ranking | 8080 |
+| **🧠 Semantic Search** | Natural language queries like "authentication logic" | TF-IDF or ML embeddings (CodeBERT) | 8081 |
+
+### Keyword Search Engine
+
+The **primary search engine** uses trigram-based indexing with **AST-aware ranking**:
+
+- **Trigram Index**: Splits code into 3-character sequences for O(1) candidate lookup
+- **Tree-sitter Parsing**: Extracts function/class definitions from Rust, Python, JS, TS
+- **Smart Scoring**: Boosts symbol definitions (3x), exact matches (2x), heavily-imported files (PageRank-style)
+- **Regex Support**: Full regex with trigram acceleration for literal prefixes
+- **Symbols-Only Mode**: Search only function/class names for targeted results
+
+**Example queries**: `fn main`, `class.*Handler`, `import useState`
+
+### Semantic Search Engine
+
+The **optional semantic engine** understands code meaning, not just text patterns:
+
+- **Natural Language**: Query with phrases like "database connection pooling" or "error handling middleware"
+- **Code Chunking**: Splits files into semantic units (functions, classes, modules)
+- **Embedding Models**: TF-IDF (fast, no GPU) or CodeBERT/UniXcoder (better quality)
+- **Similarity Search**: Finds conceptually related code even without keyword matches
+
+**Example queries**: "retry logic with exponential backoff", "validate user input", "websocket message handler"
+
+> 📖 See [Semantic Search README](docs/semantic/SEMANTIC_SEARCH_README.md) for setup instructions.
+
 ## Features
+
+### Keyword Search Engine Features
 
 - **Trigram-based inverted index** using Roaring bitmaps for efficient storage and fast lookup
 - **Memory-mapped files** using `memmap2` for optimal memory usage
@@ -11,18 +47,29 @@ High-performance, in-memory code search service built in Rust. Designed to handl
 - **Index persistence** — save index to disk and reload on restart for faster startup times
 - **File watcher** — incremental indexing monitors filesystem changes in real-time
 - **Symbols-only search** — search only in function/class names for faster, targeted results
-- **Weight-based scoring** that boosts:
+- **AST-based scoring** that boosts:
   - Symbol definitions (3.0x)
   - Primary source directories (src/, lib/) (1.5x)
   - Exact case-sensitive matches (2.0x)
   - Matches at the start of lines (1.5x)
   - Shorter lines (inverse length factor)
   - **Heavily-imported files** — logarithmic boost based on dependent count (PageRank-style)
+
+### Semantic Search Engine Features
+
+- **Natural language queries** — search by concept, not just keywords
+- **Code-aware chunking** — splits files into functions, classes, and modules
+- **Dual embedding support**:
+  - TF-IDF (default): Fast, no dependencies, good for exact terms
+  - ML models (optional): CodeBERT/UniXcoder for deeper semantic understanding
+- **Similarity scoring** — ranks results by conceptual relevance
+
+### Shared Infrastructure
+
 - **Dual API access**:
-  - **gRPC API** using `tonic` with streaming results (port 50051)
-  - **REST API** using `axum` with JSON responses (port 8080)
+  - **gRPC API** using `tonic` with streaming results (port 50051/50052)
+  - **REST API** using `axum` with JSON responses (port 8080/8081)
 - **Embedded Web UI** — browser-based search interface with real-time results
-- **Semantic search** (optional) — natural language queries using TF-IDF or ML embeddings
 - **Supports 10GB+ codebases** efficiently
 
 ## Why an In-Memory Server?
@@ -56,7 +103,7 @@ Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_sea
 
 ## Architecture
 
-### Core Components
+### Keyword Search Engine Components
 
 1. **Trigram Index** (`src/index/trigram.rs`)
    - Extracts 3-character sequences from text
@@ -81,7 +128,7 @@ Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_sea
 
 5. **Search Engine** (`src/search/engine.rs`)
    - Parallel search using rayon
-   - Sophisticated scoring algorithm
+   - Sophisticated AST-based scoring algorithm
    - Returns ranked results
    - Four search methods: text, filtered, regex, and symbols-only
 
@@ -99,6 +146,31 @@ Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_sea
    - JSON REST API on port 8080
    - Embedded browser-based search interface
    - WebSocket for real-time progress updates
+
+### Semantic Search Engine Components
+
+1. **Semantic Engine** (`src/semantic/engine.rs`)
+   - Manages code chunking and embedding generation
+   - Coordinates indexing and search operations
+
+2. **Code Chunker** (`src/semantic/chunking.rs`)
+   - Splits files into semantic units (functions, classes, modules)
+   - Preserves context for better embeddings
+
+3. **Embeddings** (`src/semantic/embeddings.rs`)
+   - TF-IDF vectorization for fast, dependency-free operation
+   - Optional ML model support via ONNX Runtime
+
+4. **Vector Index** (`src/semantic/vector_index.rs`)
+   - Stores and searches embedding vectors
+   - Cosine similarity scoring
+
+5. **Semantic gRPC Server** (`src/semantic_server/service.rs`)
+   - Streaming semantic search results (port 50052)
+
+6. **Semantic Web UI** (`src/semantic_web/`)
+   - JSON REST API on port 8081
+   - Natural language search interface
 
 ## Building
 
@@ -142,7 +214,7 @@ cargo test
 
 ## Usage
 
-### Starting the Server
+### Starting the Keyword Search Server
 
 ```bash
 # Start with default settings
@@ -155,9 +227,25 @@ cargo run --release --bin fast_code_search_server -- --config config.toml
 cargo run --release --bin fast_code_search_server -- --init fast_code_search.toml
 ```
 
-The server will start on:
+The keyword search server starts on:
 - **gRPC**: `0.0.0.0:50051`
 - **Web UI**: `http://localhost:8080`
+
+### Starting the Semantic Search Server
+
+```bash
+# Generate a config file
+cargo run --release --bin fast_code_search_semantic -- --init fast_code_search_semantic.toml
+
+# Start the semantic server
+cargo run --release --bin fast_code_search_semantic -- --config fast_code_search_semantic.toml
+```
+
+The semantic search server starts on:
+- **gRPC**: `0.0.0.0:50052`
+- **Web UI**: `http://localhost:8081`
+
+> 💡 **Tip**: You can run both servers simultaneously for combined keyword + semantic search capabilities.
 
 ### CLI Options
 
@@ -286,9 +374,9 @@ The REST API is available at `http://localhost:8080` when `enable_web_ui` is tru
 curl "http://localhost:8080/api/search?q=fn%20main&max=10&regex=true"
 ```
 
-### Search Modes
+### Search Modes (Keyword Engine)
 
-The search engine supports multiple modes:
+The keyword search engine supports multiple modes:
 
 | Mode | REST Flag | gRPC Flag | Description |
 |------|-----------|-----------|-------------|
@@ -298,19 +386,14 @@ The search engine supports multiple modes:
 
 **Symbols-only search** is ideal when you're looking for definitions rather than usages. It searches the symbol cache (extracted via tree-sitter) and returns only matches where the query appears in a symbol name. This is significantly faster than full-text search when you know you're looking for a function or class.
 
-### Semantic Search
+### Semantic Search Mode
 
-For natural language queries like "authentication logic" or "database connection handling", use the semantic search server:
+For natural language queries like "authentication logic" or "database connection handling", use the semantic search server on port 8081.
 
-```bash
-# Generate config
-cargo run --bin fast_code_search_semantic -- --init
-
-# Start server
-cargo run --bin fast_code_search_semantic -- --config fast_code_search_semantic.toml
-```
-
-Visit `http://localhost:8081` for the semantic search Web UI.
+The semantic engine excels at:
+- **Conceptual queries**: "error handling with retry" finds related code even without exact matches
+- **Exploratory search**: "how does authentication work" across unfamiliar codebases
+- **Finding related code**: Discover similar implementations across the project
 
 See [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) for detailed documentation.
 

@@ -15,6 +15,8 @@ pub enum SymbolType {
     Enum,
     Trait,
     Struct,
+    /// File name - indexed for path-based searches
+    FileName,
 }
 
 #[derive(Debug, Clone)]

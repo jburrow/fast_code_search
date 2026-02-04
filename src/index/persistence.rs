@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::trigram::Trigram;
+use crate::utils::normalize_path_for_comparison;
 
 /// Serializable representation of the trigram index
 #[derive(Serialize, Deserialize)]
@@ -167,13 +168,13 @@ impl PersistedIndex {
     pub fn paths_to_remove(&self, current_paths: &[String]) -> Vec<String> {
         let current_set: std::collections::HashSet<_> = current_paths
             .iter()
-            .map(|p| p.replace('\\', "/").to_lowercase())
+            .map(|p| normalize_path_for_comparison(p))
             .collect();
 
         self.indexed_paths
             .iter()
             .filter(|p| {
-                let normalized = p.replace('\\', "/").to_lowercase();
+                let normalized = normalize_path_for_comparison(p);
                 !current_set.contains(&normalized)
             })
             .cloned()
@@ -185,13 +186,13 @@ impl PersistedIndex {
         let indexed_set: std::collections::HashSet<_> = self
             .indexed_paths
             .iter()
-            .map(|p| p.replace('\\', "/").to_lowercase())
+            .map(|p| normalize_path_for_comparison(p))
             .collect();
 
         current_paths
             .iter()
             .filter(|p| {
-                let normalized = p.replace('\\', "/").to_lowercase();
+                let normalized = normalize_path_for_comparison(p);
                 !indexed_set.contains(&normalized)
             })
             .cloned()

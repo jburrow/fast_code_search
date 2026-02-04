@@ -2,13 +2,14 @@ use crate::dependencies::DependencyIndex;
 use crate::index::{extract_unique_trigrams, FileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
 use crate::search::regex_search::RegexAnalysis;
-use crate::symbols::{Symbol, SymbolExtractor};
+use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
 use anyhow::Result;
 use memchr::memmem;
 use rayon::prelude::*;
 use regex::Regex;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// Case-insensitive substring search without heap allocation.
 /// Both `haystack` and `needle` are compared using ASCII case-insensitive matching.
@@ -354,17 +355,49 @@ impl PreIndexedFile {
         // Read file content
         let content = std::fs::read_to_string(path).ok()?;
 
+        // Extract filename stem for indexing (enables searching by filename)
+        let filename_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| {
+                warn!(
+                    "Failed to extract filename stem from path: {}",
+                    path.display()
+                );
+                ""
+            })
+            .to_string();
+
         // Extract trigrams from lowercase content for case-insensitive search
+        // Prepend filename so it's also searchable
         // Note: We lowercase during indexing so queries can be lowercased at search time
-        let content_lower = content.to_lowercase();
+        let content_with_filename = format!("{}\n{}", filename_stem, content);
+        let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
         // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
         let extractor = SymbolExtractor::new(path);
-        let symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor.extract(&content).unwrap_or_default()
         }))
-        .unwrap_or_default();
+        .unwrap_or_else(|_| {
+            warn!(
+                "Symbol extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
+                path.display()
+            );
+            Vec::new()
+        });
+
+        // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
+        if !filename_stem.is_empty() {
+            symbols.push(Symbol {
+                name: filename_stem.clone(),
+                symbol_type: SymbolType::FileName,
+                line: 0,
+                column: 0,
+                is_definition: true,
+            });
+        }
 
         // Extract imports with panic protection
         let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -421,14 +454,39 @@ impl SearchEngine {
             .and_then(|f| f.as_str().ok())
             .unwrap_or("");
 
+        // Extract filename stem for indexing (enables searching by filename)
+        let filename_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| {
+                warn!(
+                    "Failed to extract filename stem from path: {}",
+                    path.display()
+                );
+                ""
+            });
+
         // Index the lowercase content with trigrams for case-insensitive search
+        // Prepend filename so it's also searchable
         // Note: We lowercase during indexing so queries can be lowercased at search time
-        let content_lower = content.to_lowercase();
+        let content_with_filename = format!("{}\n{}", filename_stem, content);
+        let content_lower = content_with_filename.to_lowercase();
         self.trigram_index.add_document(file_id, &content_lower);
 
         // Extract symbols
         let extractor = SymbolExtractor::new(path);
-        let symbols = extractor.extract(content).unwrap_or_default();
+        let mut symbols = extractor.extract(content).unwrap_or_default();
+
+        // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
+        if !filename_stem.is_empty() {
+            symbols.push(Symbol {
+                name: filename_stem.to_string(),
+                symbol_type: SymbolType::FileName,
+                line: 0,
+                column: 0,
+                is_definition: true,
+            });
+        }
 
         // Extract imports and store for later resolution
         if let Ok(imports) = extractor.extract_imports(content) {
@@ -1439,6 +1497,151 @@ impl SearchEngine {
         })
     }
 
+    /// Load an index from disk with reconciliation and progress reporting
+    ///
+    /// The progress callback receives updates during each phase of loading:
+    /// - ReadingFile: Starting to read the index file
+    /// - Deserializing: Deserializing persisted data
+    /// - CheckingFiles: Checking file staleness (with file count progress)
+    /// - RestoringTrigrams: Restoring the trigram index
+    /// - MappingFiles: Memory-mapping files (with file count progress)
+    pub fn load_index_with_progress<F>(
+        &mut self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+        mut progress_callback: F,
+    ) -> anyhow::Result<LoadIndexResult>
+    where
+        F: FnMut(LoadingPhase, Option<usize>, Option<usize>, &str),
+    {
+        use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
+
+        // Phase 1: Reading file from disk
+        progress_callback(
+            LoadingPhase::ReadingFile,
+            None,
+            None,
+            "Reading index file from disk...",
+        );
+
+        // Phase 2: Deserializing
+        progress_callback(
+            LoadingPhase::Deserializing,
+            None,
+            None,
+            "Deserializing index data...",
+        );
+        let persisted = PersistedIndex::load(path)?;
+        let total_files = persisted.files.len();
+
+        // Check config compatibility
+        let current_fingerprint = config.fingerprint();
+        let config_compatible = persisted.is_config_compatible(&current_fingerprint);
+
+        if !config_compatible {
+            tracing::info!(
+                old_fingerprint = %persisted.config_fingerprint,
+                new_fingerprint = %current_fingerprint,
+                "Config fingerprint changed, will reconcile"
+            );
+        }
+
+        // Determine paths to add/remove based on config changes
+        let new_paths = persisted.paths_to_add(&config.paths);
+        let removed_paths = persisted.paths_to_remove(&config.paths);
+
+        // Phase 3: Checking files for staleness
+        progress_callback(
+            LoadingPhase::CheckingFiles,
+            Some(total_files),
+            Some(0),
+            &format!("Checking {} files for changes...", total_files),
+        );
+
+        let file_statuses = batch_check_files(&persisted.files, &removed_paths);
+
+        progress_callback(
+            LoadingPhase::CheckingFiles,
+            Some(total_files),
+            Some(total_files),
+            &format!("Checked {} files", total_files),
+        );
+
+        // Categorize files based on status
+        let mut stale_files = Vec::new();
+        let mut removed_files = Vec::new();
+        let mut valid_file_indices = Vec::new();
+
+        for (idx, status) in file_statuses {
+            match status {
+                FileStatus::Valid => valid_file_indices.push(idx),
+                FileStatus::Stale => stale_files.push(persisted.files[idx].path.clone()),
+                FileStatus::Removed => removed_files.push(persisted.files[idx].path.clone()),
+            }
+        }
+
+        let valid_count = valid_file_indices.len();
+
+        // Only restore index if we have valid files
+        if !valid_file_indices.is_empty() {
+            // Phase 4: Restore trigram index
+            progress_callback(
+                LoadingPhase::RestoringTrigrams,
+                None,
+                None,
+                "Restoring search index...",
+            );
+
+            let trigram_map = persisted.restore_trigram_index()?;
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
+
+            // Phase 5: Memory-map files
+            progress_callback(
+                LoadingPhase::MappingFiles,
+                Some(valid_count),
+                Some(0),
+                &format!("Loading {} files into memory...", valid_count),
+            );
+
+            // Re-add valid files to the file store with progress updates
+            for (i, &idx) in valid_file_indices.iter().enumerate() {
+                let file_meta = &persisted.files[idx];
+                let _ = self.file_store.add_file(&file_meta.path);
+
+                // Update progress every 100 files or on last file
+                if i % 100 == 0 || i == valid_count - 1 {
+                    progress_callback(
+                        LoadingPhase::MappingFiles,
+                        Some(valid_count),
+                        Some(i + 1),
+                        &format!("Loaded {} / {} files", i + 1, valid_count),
+                    );
+                }
+            }
+
+            self.trigram_index.finalize();
+        }
+
+        tracing::info!(
+            path = %path.display(),
+            files_loaded = self.file_store.len(),
+            stale_files = stale_files.len(),
+            removed_files = removed_files.len(),
+            new_paths = new_paths.len(),
+            removed_paths = removed_paths.len(),
+            config_compatible = config_compatible,
+            "Index loaded from disk with reconciliation"
+        );
+
+        Ok(LoadIndexResult {
+            stale_files,
+            removed_files,
+            new_paths,
+            removed_paths,
+            config_compatible,
+        })
+    }
+
     /// Load an index from disk if available and not stale (legacy method)
     /// Returns the list of stale files that need re-indexing
     pub fn load_index(
@@ -1544,6 +1747,25 @@ pub enum IndexingStatus {
     Completed,
 }
 
+/// Sub-phases during index loading for detailed progress reporting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadingPhase {
+    /// Not currently loading
+    #[default]
+    None,
+    /// Reading index file from disk
+    ReadingFile,
+    /// Deserializing the persisted index data
+    Deserializing,
+    /// Checking files for staleness
+    CheckingFiles,
+    /// Restoring trigram index
+    RestoringTrigrams,
+    /// Memory-mapping files
+    MappingFiles,
+}
+
 /// Progress information for the indexing process
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexingProgress {
@@ -1565,6 +1787,20 @@ pub struct IndexingProgress {
     pub errors: usize,
     /// Message describing current activity
     pub message: String,
+    /// Sub-phase during index loading (when status == LoadingIndex)
+    #[serde(skip_serializing_if = "is_loading_phase_none")]
+    pub loading_phase: LoadingPhase,
+    /// Total files in persisted index (for loading progress)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loading_total_files: Option<usize>,
+    /// Files processed during loading
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loading_files_processed: Option<usize>,
+}
+
+/// Helper for serde skip_serializing_if
+fn is_loading_phase_none(phase: &LoadingPhase) -> bool {
+    *phase == LoadingPhase::None
 }
 
 impl Default for IndexingProgress {
@@ -1579,6 +1815,9 @@ impl Default for IndexingProgress {
             started_at: None,
             errors: 0,
             message: String::from("Ready"),
+            loading_phase: LoadingPhase::None,
+            loading_total_files: None,
+            loading_files_processed: None,
         }
     }
 }
@@ -1612,7 +1851,39 @@ impl IndexingProgress {
     pub fn progress_percent(&self) -> u8 {
         match self.status {
             IndexingStatus::Idle => 0,
-            IndexingStatus::LoadingIndex => 2,
+            IndexingStatus::LoadingIndex => {
+                // Show more granular progress during loading based on phase
+                match self.loading_phase {
+                    LoadingPhase::None => 1,
+                    LoadingPhase::ReadingFile => 2,
+                    LoadingPhase::Deserializing => 5,
+                    LoadingPhase::CheckingFiles => {
+                        // 10-30% for file checking
+                        if let (Some(total), Some(processed)) =
+                            (self.loading_total_files, self.loading_files_processed)
+                        {
+                            if total > 0 {
+                                let pct = (processed as f64 / total as f64) * 20.0;
+                                return (10.0 + pct).min(30.0) as u8;
+                            }
+                        }
+                        15
+                    }
+                    LoadingPhase::RestoringTrigrams => 40,
+                    LoadingPhase::MappingFiles => {
+                        // 50-90% for file mapping
+                        if let (Some(total), Some(processed)) =
+                            (self.loading_total_files, self.loading_files_processed)
+                        {
+                            if total > 0 {
+                                let pct = (processed as f64 / total as f64) * 40.0;
+                                return (50.0 + pct).min(90.0) as u8;
+                            }
+                        }
+                        60
+                    }
+                }
+            }
             IndexingStatus::Discovering => 5,
             IndexingStatus::Indexing => {
                 if self.total_batches == 0 {

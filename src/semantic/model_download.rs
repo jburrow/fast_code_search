@@ -55,13 +55,15 @@ impl ModelInfo {
             name: "microsoft/unixcoder-base".to_string(),
             // Using community ONNX-converted model
             // Note: model.onnx is in root, not in onnx/ subfolder for this repo
-            onnx_url: "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/model.onnx"
-                .to_string(),
+            onnx_url:
+                "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/model.onnx"
+                    .to_string(),
             tokenizer_url:
                 "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/tokenizer.json"
                     .to_string(),
-            config_url: "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/config.json"
-                .to_string(),
+            config_url:
+                "https://huggingface.co/sailesh27/unixcoder-base-onnx/resolve/main/config.json"
+                    .to_string(),
             expected_sha256: None,
         }
     }

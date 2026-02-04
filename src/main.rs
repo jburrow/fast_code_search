@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
+use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    create_progress_broadcaster, IndexingProgress, IndexingStatus, PreIndexedFile,
+    create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadingPhase, PreIndexedFile,
     ProgressBroadcaster, SharedIndexingProgress,
 };
 use fast_code_search::server;
@@ -59,6 +60,9 @@ async fn main() -> Result<()> {
         .with_file(false)
         .with_line_number(false)
         .init();
+
+    // Initialize diagnostics server start time
+    diagnostics::init_server_start_time();
 
     // Handle --init flag: generate template config and exit
     if let Some(init_path) = args.init {
@@ -183,6 +187,7 @@ async fn main() -> Result<()> {
                 if index_path.exists() {
                     broadcast_progress(&index_progress, &index_progress_tx, |p| {
                         p.status = IndexingStatus::LoadingIndex;
+                        p.loading_phase = LoadingPhase::ReadingFile;
                         p.message = String::from("Loading persisted index...");
                     });
 
@@ -190,8 +195,24 @@ async fn main() -> Result<()> {
 
                     match index_engine.write() {
                         Ok(mut engine) => {
-                            match engine.load_index_with_reconciliation(index_path, &indexer_config)
-                            {
+                            // Create a progress callback that updates shared progress
+                            let progress_ref = &index_progress;
+                            let tx_ref = &index_progress_tx;
+
+                            let result = engine.load_index_with_progress(
+                                index_path,
+                                &indexer_config,
+                                |phase, total, processed, message| {
+                                    broadcast_progress(progress_ref, tx_ref, |p| {
+                                        p.loading_phase = phase;
+                                        p.loading_total_files = total;
+                                        p.loading_files_processed = processed;
+                                        p.message = message.to_string();
+                                    });
+                                },
+                            );
+
+                            match result {
                                 Ok(result) => {
                                     let files_loaded = engine.get_stats().num_files;
                                     info!(
@@ -205,6 +226,9 @@ async fn main() -> Result<()> {
 
                                     broadcast_progress(&index_progress, &index_progress_tx, |p| {
                                         p.files_indexed = files_loaded;
+                                        p.loading_phase = LoadingPhase::None;
+                                        p.loading_total_files = None;
+                                        p.loading_files_processed = None;
                                         p.message = format!(
                                             "Loaded {} files from cache, reconciling...",
                                             files_loaded
@@ -613,17 +637,38 @@ async fn main() -> Result<()> {
             }
 
             // Update progress: completed
+            // Get the actual file count from the engine (includes files loaded from persistence)
+            let actual_file_count = {
+                let engine = index_engine
+                    .read()
+                    .expect("Failed to acquire read lock on search engine");
+                engine.get_stats().num_files
+            };
+
             broadcast_progress(&index_progress, &index_progress_tx, |p| {
                 p.status = IndexingStatus::Completed;
-                p.files_indexed = total_indexed;
-                p.files_discovered = final_discovered;
+                p.files_indexed = actual_file_count;
+                p.files_discovered = if loaded_from_persistence {
+                    actual_file_count // Show total files, not just newly discovered
+                } else {
+                    final_discovered
+                };
                 p.current_path = None;
-                p.message = format!(
-                    "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
-                    total_indexed,
-                    elapsed.as_secs_f64(),
-                    files_per_sec
-                );
+                p.message = if loaded_from_persistence && total_indexed < actual_file_count {
+                    format!(
+                        "Ready: {} files loaded from cache, {} updated in {:.1}s",
+                        actual_file_count,
+                        total_indexed,
+                        elapsed.as_secs_f64()
+                    )
+                } else {
+                    format!(
+                        "Indexing complete: {} files in {:.1}s ({:.0} files/sec)",
+                        actual_file_count,
+                        elapsed.as_secs_f64(),
+                        files_per_sec
+                    )
+                };
             });
         });
     } else if args.no_auto_index {

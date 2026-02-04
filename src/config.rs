@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::utils::normalize_path_for_comparison;
+
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -135,7 +137,7 @@ impl IndexerConfig {
         let mut sorted_paths: Vec<_> = self
             .paths
             .iter()
-            .map(|p| p.replace('\\', "/").to_lowercase())
+            .map(|p| normalize_path_for_comparison(p))
             .collect();
         sorted_paths.sort();
 

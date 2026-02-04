@@ -134,10 +134,16 @@ impl EmbeddingModel {
         let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
-        // Configure tokenizer
-        if let Some(truncation) = tokenizer.get_truncation_mut() {
-            truncation.max_length = max_length;
-        }
+        // Configure tokenizer with explicit truncation to prevent ONNX shape errors
+        tokenizer
+            .with_truncation(Some(tokenizers::TruncationParams {
+                max_length,
+                strategy: tokenizers::TruncationStrategy::LongestFirst,
+                stride: 0,
+                direction: tokenizers::TruncationDirection::Right,
+            }))
+            .map_err(|e| anyhow::anyhow!("Failed to set truncation: {}", e))?;
+
         tokenizer.with_padding(Some(tokenizers::PaddingParams {
             strategy: tokenizers::PaddingStrategy::BatchLongest,
             ..Default::default()

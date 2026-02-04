@@ -142,6 +142,153 @@ function showEmpty(containerId, message, icon = '🔍') {
     }
 }
 
+// ============================================
+// SEARCH READINESS MANAGER
+// ============================================
+
+/**
+ * Manages search UI readiness state based on indexing status.
+ * Disables search inputs during indexing/loading and enables when ready.
+ */
+class SearchReadinessManager {
+    constructor(options = {}) {
+        // Elements to enable/disable
+        this.searchInputId = options.searchInputId || 'query';
+        this.searchButtonId = options.searchButtonId || 'search-btn';
+        this.resultsContainerId = options.resultsContainerId || 'results';
+        
+        // Additional elements to manage (array of IDs)
+        this.additionalInputIds = options.additionalInputIds || [];
+        
+        // Callback when readiness changes
+        this.onReadyChange = options.onReadyChange || (() => {});
+        
+        // Current state
+        this.isReady = false;
+        this.lastStatus = null;
+    }
+    
+    /**
+     * Check if a status indicates the index is ready for searching
+     * @param {string} status - Indexing status string
+     * @returns {boolean} True if ready to search
+     */
+    isStatusReady(status) {
+        // Ready states: idle (fully ready) or completed
+        // Also ready during reconciling since we have a loaded index
+        const readyStates = ['idle', 'completed', 'reconciling', 'resolving_imports'];
+        return readyStates.includes(status);
+    }
+    
+    /**
+     * Get user-friendly message for current status
+     * @param {object} statusObj - Status object from WebSocket
+     * @returns {string} User-friendly message
+     */
+    getStatusMessage(statusObj) {
+        const status = statusObj.status;
+        const message = statusObj.message;
+        
+        switch (status) {
+            case 'loading_index':
+                return message || 'Loading search index...';
+            case 'discovering':
+                return message || 'Discovering files...';
+            case 'indexing':
+                const pct = statusObj.progress_percent || 0;
+                return message || `Indexing files (${pct}%)...`;
+            case 'reconciling':
+                return 'Updating index...';
+            case 'resolving_imports':
+                return 'Resolving imports...';
+            default:
+                return '';
+        }
+    }
+    
+    /**
+     * Update readiness state based on status
+     * @param {object} statusObj - Status object from WebSocket/API
+     */
+    update(statusObj) {
+        const status = statusObj.status || 'idle';
+        const wasReady = this.isReady;
+        this.isReady = this.isStatusReady(status);
+        this.lastStatus = statusObj;
+        
+        // Update UI elements
+        this.updateUI();
+        
+        // Notify if readiness changed
+        if (wasReady !== this.isReady) {
+            this.onReadyChange(this.isReady, statusObj);
+        }
+    }
+    
+    /**
+     * Update UI elements based on current readiness
+     */
+    updateUI() {
+        const searchInput = document.getElementById(this.searchInputId);
+        const searchButton = document.getElementById(this.searchButtonId);
+        const resultsContainer = document.getElementById(this.resultsContainerId);
+        
+        if (searchInput) {
+            searchInput.disabled = !this.isReady;
+            searchInput.classList.toggle('search-disabled', !this.isReady);
+            
+            if (!this.isReady && this.lastStatus) {
+                searchInput.placeholder = this.getStatusMessage(this.lastStatus);
+            } else {
+                // Restore default placeholder
+                searchInput.placeholder = searchInput.dataset.defaultPlaceholder || 'Search code...';
+            }
+        }
+        
+        if (searchButton) {
+            searchButton.disabled = !this.isReady;
+            searchButton.classList.toggle('search-disabled', !this.isReady);
+        }
+        
+        // Update additional inputs
+        this.additionalInputIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.disabled = !this.isReady;
+                el.classList.toggle('search-disabled', !this.isReady);
+            }
+        });
+        
+        // Show loading message in results if not ready and results is empty
+        if (!this.isReady && resultsContainer && this.lastStatus) {
+            const hasContent = resultsContainer.querySelector('.result-item, .no-results');
+            if (!hasContent) {
+                const msg = this.getStatusMessage(this.lastStatus);
+                const pct = this.lastStatus.progress_percent || 0;
+                resultsContainer.innerHTML = `
+                    <div class="loading-index-state">
+                        <div class="loading-spinner"></div>
+                        <p class="loading-message">${escapeHtml(msg)}</p>
+                        <div class="loading-progress">
+                            <div class="loading-progress-bar" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    }
+    
+    /**
+     * Store default placeholder for restoration
+     */
+    storeDefaultPlaceholder() {
+        const searchInput = document.getElementById(this.searchInputId);
+        if (searchInput && !searchInput.dataset.defaultPlaceholder) {
+            searchInput.dataset.defaultPlaceholder = searchInput.placeholder;
+        }
+    }
+}
+
 /**
  * Create a result summary header
  * @param {number} count - Number of results
@@ -331,6 +478,7 @@ if (typeof module !== 'undefined' && module.exports) {
         formatCodeWithLineNumbers,
         highlightMatches,
         ProgressWebSocket,
-        StatusPoller
+        StatusPoller,
+        SearchReadinessManager
     };
 }

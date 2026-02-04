@@ -34,6 +34,20 @@ const progressMessage = document.getElementById('progress-message');
 let searchTimeout = null;
 const DEBOUNCE_MS = 300;
 
+// Search readiness manager (disables search until index is ready)
+const searchReadiness = new SearchReadinessManager({
+    searchInputId: 'query',
+    resultsContainerId: 'results',
+    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode'],
+    onReadyChange: (isReady, status) => {
+        console.log(`Search readiness changed: ${isReady ? 'READY' : 'NOT READY'}`, status?.status);
+        if (isReady && queryInput.value.trim()) {
+            // If user typed while waiting, trigger search now
+            performSearch();
+        }
+    }
+});
+
 // ============================================
 // STATS & STATUS
 // ============================================
@@ -72,6 +86,9 @@ const progressWS = new ProgressWebSocket({
 function updateProgressUI(status) {
     const isIdle = status.status === 'idle';
     const isCompleted = status.status === 'completed';
+    
+    // Update search readiness based on status
+    searchReadiness.update(status);
     
     toggleElement('progress-panel', !isIdle, 'flex');
     
@@ -127,6 +144,12 @@ function getMatchTypeLabel(matchType) {
 }
 
 async function performSearch() {
+    // Don't search if index isn't ready yet
+    if (!searchReadiness.isReady) {
+        console.log('Search blocked: index not ready');
+        return;
+    }
+    
     const query = queryInput.value.trim();
     const maxResults = parseInt(maxResultsSelect.value, 10);
     const includeFilter = includeFilterInput?.value.trim() || '';
@@ -281,6 +304,12 @@ if (excludeFilterInput) {
 // ============================================
 // INITIALIZATION
 // ============================================
+
+// Store original placeholder before readiness manager may change it
+searchReadiness.storeDefaultPlaceholder();
+
+// Start with search disabled until we know the status
+searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
 
 fetchStats();
 progressWS.start();

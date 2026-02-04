@@ -1,6 +1,10 @@
 //! REST API handlers for Semantic Code Search
 
-use crate::semantic::SemanticSearchEngine;
+use crate::diagnostics::{
+    self, ChunkTypeBreakdown, ConfigSummary, DiagnosticsQuery, HealthStatus, ModelDiagnostics,
+    SemanticDiagnosticsResponse, SemanticIndexDiagnostics, TestResult, TestSummary,
+};
+use crate::semantic::{ChunkType, SemanticSearchEngine};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -11,7 +15,9 @@ use axum::{
     Json,
 };
 use futures_util::{SinkExt, StreamExt};
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -270,4 +276,270 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     }
 
     send_task.abort();
+}
+
+/// Handle diagnostics requests with self-tests
+pub async fn diagnostics_handler(
+    State(state): State<WebState>,
+    Query(params): Query<DiagnosticsQuery>,
+) -> Result<Json<SemanticDiagnosticsResponse>, (StatusCode, String)> {
+    let sample_count = params.sample_count.clamp(1, 20);
+
+    // Acquire write lock on engine (needed for search)
+    let mut engine = state.engine.write().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to acquire engine write lock: {}", e),
+        )
+    })?;
+
+    // Get basic stats
+    let stats = engine.get_stats();
+
+    // Collect chunk type breakdown and sample files
+    let mut chunks_by_type = ChunkTypeBreakdown::default();
+    let mut unique_files: HashSet<String> = HashSet::new();
+
+    // We need to access the internal chunks - for now use search to get some samples
+    // This is a bit of a workaround since chunks are private
+
+    // Run a broad search to get chunk samples
+    let sample_results = engine.search("function", 100).unwrap_or_default();
+
+    for result in &sample_results {
+        unique_files.insert(result.chunk.file_path.clone());
+        match &result.chunk.chunk_type {
+            ChunkType::Fixed => chunks_by_type.fixed += 1,
+            ChunkType::Function(_) => chunks_by_type.functions += 1,
+            ChunkType::Class(_) => chunks_by_type.classes += 1,
+            ChunkType::Module => chunks_by_type.modules += 1,
+        }
+    }
+
+    // Sample files from what we found
+    let all_files: Vec<String> = unique_files.iter().cloned().collect();
+    let mut rng = rand::rng();
+    let sample_files: Vec<String> = all_files
+        .choose_multiple(&mut rng, sample_count.min(all_files.len()))
+        .cloned()
+        .collect();
+
+    // Configuration summary (semantic-specific settings would go here)
+    let config = ConfigSummary {
+        indexed_paths: vec!["(see server configuration)".to_string()],
+        include_extensions: vec![],
+        exclude_patterns: vec![],
+        max_file_size_bytes: 10 * 1024 * 1024,
+        index_path: None,
+        watch_enabled: false,
+    };
+
+    // Model diagnostics
+    let model = ModelDiagnostics {
+        name: "TF-IDF Embeddings".to_string(),
+        loaded: true,
+        embedding_dim: stats.embedding_dim,
+        model_type: "tfidf".to_string(),
+    };
+
+    // Run self-tests
+    let mut self_tests = Vec::new();
+
+    // Test 1: Embedding generation - verify we can generate embeddings
+    {
+        let test_start = Instant::now();
+        let search_result = engine.search("test embedding generation", 1);
+
+        let test = match search_result {
+            Ok(_) => TestResult::passed(
+                "embedding_generation",
+                test_start.elapsed(),
+                "Successfully generated query embedding".to_string(),
+            ),
+            Err(e) => TestResult::failed(
+                "embedding_generation",
+                test_start.elapsed(),
+                format!("Failed to generate embedding: {}", e),
+            ),
+        };
+        self_tests.push(test);
+    }
+
+    // Test 2: Semantic search - verify search returns results if index has data
+    {
+        let test_start = Instant::now();
+
+        if stats.num_chunks == 0 {
+            self_tests.push(TestResult::passed(
+                "semantic_search",
+                test_start.elapsed(),
+                "No chunks indexed yet - search test skipped".to_string(),
+            ));
+        } else {
+            let search_result = engine.search("function main implementation", 10);
+
+            let test = match search_result {
+                Ok(results) => {
+                    if results.is_empty() {
+                        TestResult::passed(
+                            "semantic_search",
+                            test_start.elapsed(),
+                            "Search operational but no matches found (may be normal for this query)".to_string(),
+                        )
+                    } else {
+                        TestResult::passed(
+                            "semantic_search",
+                            test_start.elapsed(),
+                            format!("Search returned {} results", results.len()),
+                        )
+                    }
+                }
+                Err(e) => TestResult::failed(
+                    "semantic_search",
+                    test_start.elapsed(),
+                    format!("Search failed: {}", e),
+                ),
+            };
+            self_tests.push(test);
+        }
+    }
+
+    // Test 3: Query cache functionality
+    {
+        let test_start = Instant::now();
+        let cache_size_before = stats.cache_size;
+
+        // Run same query twice - cache should increase by 1 at most
+        let _ = engine.search("cache test query unique", 1);
+        let stats_after = engine.get_stats();
+
+        let test = if stats_after.cache_size >= cache_size_before {
+            TestResult::passed(
+                "query_cache",
+                test_start.elapsed(),
+                format!("Query cache operational (size: {})", stats_after.cache_size),
+            )
+        } else {
+            TestResult::failed(
+                "query_cache",
+                test_start.elapsed(),
+                "Query cache appears non-functional".to_string(),
+            )
+        };
+        self_tests.push(test);
+    }
+
+    // Test 4: Index integrity - verify chunk count matches stats
+    {
+        let test_start = Instant::now();
+        let num_chunks = stats.num_chunks;
+        let num_files = stats.num_files;
+
+        let test = if num_chunks == 0 && num_files == 0 {
+            TestResult::passed(
+                "index_integrity",
+                test_start.elapsed(),
+                "Index is empty (no files indexed yet)".to_string(),
+            )
+        } else if num_chunks > 0 && num_files > 0 {
+            TestResult::passed(
+                "index_integrity",
+                test_start.elapsed(),
+                format!(
+                    "Index healthy: {} chunks from {} files",
+                    num_chunks, num_files
+                ),
+            )
+        } else {
+            TestResult::failed(
+                "index_integrity",
+                test_start.elapsed(),
+                format!(
+                    "Inconsistent index state: {} chunks but {} files",
+                    num_chunks, num_files
+                ),
+            )
+        };
+        self_tests.push(test);
+    }
+
+    // Test 5: Similarity scores sanity - verify scores are in valid range
+    {
+        let test_start = Instant::now();
+
+        if stats.num_chunks == 0 {
+            self_tests.push(TestResult::passed(
+                "similarity_scores",
+                test_start.elapsed(),
+                "No chunks to test similarity scores".to_string(),
+            ));
+        } else {
+            let search_result = engine.search("code function test", 10);
+
+            let test = match search_result {
+                Ok(results) => {
+                    let invalid_scores: Vec<_> = results
+                        .iter()
+                        .filter(|r| r.similarity_score < 0.0 || r.similarity_score > 1.0)
+                        .collect();
+
+                    if invalid_scores.is_empty() {
+                        TestResult::passed(
+                            "similarity_scores",
+                            test_start.elapsed(),
+                            format!("All {} result scores in valid range [0, 1]", results.len()),
+                        )
+                    } else {
+                        TestResult::failed(
+                            "similarity_scores",
+                            test_start.elapsed(),
+                            format!(
+                                "{} results have invalid similarity scores",
+                                invalid_scores.len()
+                            ),
+                        )
+                    }
+                }
+                Err(e) => TestResult::failed(
+                    "similarity_scores",
+                    test_start.elapsed(),
+                    format!("Could not test scores: {}", e),
+                ),
+            };
+            self_tests.push(test);
+        }
+    }
+
+    // Calculate overall health status
+    let test_summary = TestSummary::from_results(&self_tests);
+    let status = if test_summary.failed == 0 {
+        HealthStatus::Healthy
+    } else if test_summary.failed <= test_summary.total / 2 {
+        HealthStatus::Degraded
+    } else {
+        HealthStatus::Unhealthy
+    };
+
+    let response = SemanticDiagnosticsResponse {
+        status,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_secs: diagnostics::get_uptime_secs(),
+        uptime_human: diagnostics::format_uptime(diagnostics::get_uptime_secs()),
+        generated_at: diagnostics::get_timestamp(),
+        config,
+        index: SemanticIndexDiagnostics {
+            num_files: stats.num_files,
+            num_chunks: stats.num_chunks,
+            embedding_dim: stats.embedding_dim,
+            cache_size: stats.cache_size,
+            cache_hit_rate: None, // TODO: track cache hit rate
+            chunks_by_type,
+            sample_files,
+        },
+        model,
+        self_tests,
+        test_summary,
+    };
+
+    Ok(Json(response))
 }

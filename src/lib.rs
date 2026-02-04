@@ -1,5 +1,6 @@
 pub mod config;
 pub mod dependencies;
+pub mod diagnostics;
 pub mod index;
 pub mod search;
 pub mod semantic;
@@ -7,4 +8,5 @@ pub mod semantic_server;
 pub mod semantic_web;
 pub mod server;
 pub mod symbols;
+pub mod utils;
 pub mod web;
