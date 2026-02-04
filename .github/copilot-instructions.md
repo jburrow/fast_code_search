@@ -203,13 +203,125 @@ TOML config in `config.toml` or `fast_code_search.toml`. Key settings:
 
 ## Testing
 
-Unit tests live in same file using `#[cfg(test)]` modules. Integration tests in `tests/integration_tests.rs` spin up real gRPC/HTTP servers with temp directories.
+### Testing Philosophy
+
+**Integration tests are prioritized above all else.** They provide end-to-end validation of real-world scenarios and catch issues that unit tests might miss.
+
+### Test Structure
+
+The project uses a two-tier testing approach:
+
+1. **Integration Tests** (`tests/integration_tests.rs`) - **PRIMARY FOCUS**
+   - Spin up real gRPC and HTTP servers with temporary directories
+   - Test complete user workflows end-to-end
+   - Validate both server interfaces (gRPC and REST)
+   - Test cross-language search capabilities
+   - **Always add integration tests for new features or bug fixes**
+
+2. **Unit Tests** (inline `#[cfg(test)]` modules) - **SECONDARY**
+   - Test individual functions and components in isolation
+   - Useful for testing edge cases and internal logic
+   - Should complement, not replace, integration tests
+
+### Running Tests
 
 ```bash
-cargo test index::trigram          # Specific module
-cargo test -- --nocapture          # See output
-cargo test integration             # Integration tests only
+# Run all tests (unit + integration) - PREFERRED
+cargo test
+
+# Run only integration tests (most important)
+cargo test --test integration_tests
+
+# Run specific integration test
+cargo test test_grpc_search_finds_rust_function
+
+# Run only unit tests
+cargo test --lib
+
+# Run tests for specific module
+cargo test index::trigram
+
+# Show test output
+cargo test -- --nocapture
+
+# Run tests in parallel (default)
+cargo test
+
+# Run tests sequentially (helpful for debugging)
+cargo test -- --test-threads=1
 ```
+
+### Adding New Tests
+
+**When adding a new feature:**
+1. **ALWAYS** write integration tests first to validate end-to-end behavior
+2. Add unit tests only if needed for complex internal logic
+3. Ensure tests cover both success and failure scenarios
+4. Test edge cases (empty queries, non-existent files, etc.)
+
+**Integration Test Structure:**
+- Use `setup_test_server()` helper to create a test environment
+- Index test files with appropriate content
+- Test both gRPC and HTTP interfaces when applicable
+- Clean up with temporary directories (automatic via `TempDir`)
+
+**Example Integration Test Pattern:**
+```rust
+#[tokio::test]
+async fn test_new_feature() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    
+    // Test via HTTP API
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/api/endpoint", ctx.http_url))
+        .query(&[("param", "value")])
+        .send()
+        .await?;
+    
+    assert!(response.status().is_success());
+    // ... more assertions
+    
+    Ok(())
+}
+```
+
+### Test Coverage Guidelines
+
+**Integration tests should cover:**
+- ✅ All API endpoints (gRPC and HTTP)
+- ✅ Search functionality across different languages (Rust, Python, JS, TS)
+- ✅ Symbol-only search mode
+- ✅ Regex search patterns
+- ✅ Path filtering (include/exclude)
+- ✅ Edge cases (empty queries, no matches, max results)
+- ✅ Server health and status endpoints
+- ✅ Indexing operations
+
+**Unit tests should cover:**
+- Internal data structures (trigram index, file store, etc.)
+- Complex algorithms (regex parsing, path filtering)
+- Configuration parsing and validation
+- Error handling and edge cases
+
+### Test Quality Standards
+
+1. **Descriptive names**: Test names should clearly describe what is being tested
+2. **Isolation**: Each test should be independent and not rely on other tests
+3. **Assertions**: Use meaningful assertion messages
+4. **Cleanup**: Use `TempDir` for automatic cleanup of test files
+5. **Performance**: Keep tests fast; use minimal test data
+6. **Reliability**: Tests should not be flaky or timing-dependent
+
+### Before Committing
+
+**CRITICAL**: Run the full test suite before every commit:
+
+```bash
+cargo test
+```
+
+If tests fail, investigate and fix before committing. Do not commit code with failing tests.
 
 ## Performance Optimization Workflow
 

@@ -599,3 +599,371 @@ async fn test_grpc_search_symbols_only() -> Result<()> {
 
     Ok(())
 }
+
+// =============================================================================
+// Regex search tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_regex_search() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Search for a regex pattern matching function names
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", r"fn \w+"), ("regex", "true")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+    let results = body["results"].as_array().unwrap();
+
+    // Should find Rust function definitions
+    assert!(
+        !results.is_empty(),
+        "Expected at least one result for regex pattern"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_regex_search() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    // Search for class definitions across languages
+    let request = SearchRequest {
+        query: r"class \w+".to_string(),
+        max_results: 10,
+        include_paths: vec![],
+        exclude_paths: vec![],
+        is_regex: true,
+        symbols_only: false,
+    };
+
+    let mut stream = client.search(request).await?.into_inner();
+
+    let mut results = vec![];
+    while let Some(result) = stream.message().await? {
+        results.push(result);
+    }
+
+    // Should find class definitions in Python and JavaScript
+    assert!(
+        !results.is_empty(),
+        "Expected at least one result for class regex pattern"
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// Path filtering tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_search_with_include_filter() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Search only in Python files
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "class"), ("include", "*.py")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+    let results = body["results"].as_array().unwrap();
+
+    // All results should be from .py files
+    for result in results {
+        let path = result["file_path"].as_str().unwrap();
+        assert!(
+            path.ends_with(".py"),
+            "Expected only Python files, got: {}",
+            path
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_http_search_with_exclude_filter() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Search but exclude JavaScript files
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "function"), ("exclude", "*.js")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+    let results = body["results"].as_array().unwrap();
+
+    // No results should be from .js files
+    for result in results {
+        let path = result["file_path"].as_str().unwrap();
+        assert!(
+            !path.ends_with(".js"),
+            "Expected no JavaScript files, got: {}",
+            path
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_search_with_path_filters() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    // Include only Rust files
+    let request = SearchRequest {
+        query: "struct".to_string(),
+        max_results: 10,
+        include_paths: vec!["*.rs".to_string()],
+        exclude_paths: vec![],
+        is_regex: false,
+        symbols_only: false,
+    };
+
+    let mut stream = client.search(request).await?.into_inner();
+
+    let mut results = vec![];
+    while let Some(result) = stream.message().await? {
+        results.push(result);
+    }
+
+    // All results should be from .rs files
+    for result in &results {
+        assert!(
+            result.file_path.ends_with(".rs"),
+            "Expected only Rust files, got: {}",
+            result.file_path
+        );
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Max results limiting tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_search_max_results_limit() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Search with max results limit
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "e"), ("max", "2")]) // 'e' should match many lines
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+    let results = body["results"].as_array().unwrap();
+
+    // Should respect max results limit
+    assert!(
+        results.len() <= 2,
+        "Expected at most 2 results, got {}",
+        results.len()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_search_max_results_limit() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    // Search with max results limit
+    let request = SearchRequest {
+        query: "e".to_string(), // Common character
+        max_results: 3,
+        include_paths: vec![],
+        exclude_paths: vec![],
+        is_regex: false,
+        symbols_only: false,
+    };
+
+    let mut stream = client.search(request).await?.into_inner();
+
+    let mut results = vec![];
+    while let Some(result) = stream.message().await? {
+        results.push(result);
+    }
+
+    // Should respect max results limit
+    assert!(
+        results.len() <= 3,
+        "Expected at most 3 results, got {}",
+        results.len()
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// Dependency tracking tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_dependencies_endpoint() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Query dependencies for a file
+    let response = client
+        .get(format!("{}/api/dependencies", ctx.http_url))
+        .query(&[("file", "test_file.js")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+
+    // Response should have expected structure
+    assert!(body["file"].as_str().is_some());
+    assert!(
+        body["files"].as_array().is_some(),
+        "Expected 'files' array in response"
+    );
+    assert!(
+        body["count"].as_u64().is_some(),
+        "Expected 'count' field in response"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_http_dependents_endpoint() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Query dependents for a file
+    let response = client
+        .get(format!("{}/api/dependents", ctx.http_url))
+        .query(&[("file", "test_file.py")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+
+    // Response should have expected structure
+    assert!(body["file"].as_str().is_some());
+    assert!(
+        body["files"].as_array().is_some(),
+        "Expected 'files' array in response"
+    );
+    assert!(
+        body["count"].as_u64().is_some(),
+        "Expected 'count' field in response"
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// Diagnostics and monitoring tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_diagnostics_endpoint() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Get diagnostics
+    let response = client
+        .get(format!("{}/api/diagnostics", ctx.http_url))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+
+    // Check for expected diagnostic fields based on KeywordDiagnosticsResponse struct
+    // HealthStatus is an enum that serializes as a string ("healthy", "degraded", or "unhealthy")
+    assert!(
+        body["status"].as_str().is_some(),
+        "Expected status string (HealthStatus enum) in diagnostics"
+    );
+    assert!(
+        body["version"].as_str().is_some(),
+        "Expected version string"
+    );
+    assert!(
+        body["uptime_secs"].as_u64().is_some(),
+        "Expected uptime_secs"
+    );
+    assert!(body["config"].is_object(), "Expected config object");
+    assert!(
+        body["index"].is_object(),
+        "Expected index diagnostics object"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_http_diagnostics_with_test_mode() -> Result<()> {
+    let ctx = setup_test_server().await?;
+
+    let client = reqwest::Client::new();
+
+    // Get diagnostics with self-test enabled
+    let response = client
+        .get(format!("{}/api/diagnostics", ctx.http_url))
+        .query(&[("test", "true")])
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let body: serde_json::Value = response.json().await?;
+
+    // Check for self-test results (self_tests is an array, test_summary is the summary)
+    assert!(
+        body["self_tests"].as_array().is_some(),
+        "Expected self_tests array when test=true"
+    );
+    assert!(
+        body["test_summary"].is_object(),
+        "Expected test_summary object"
+    );
+
+    Ok(())
+}
