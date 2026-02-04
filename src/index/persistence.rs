@@ -12,29 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::trigram::Trigram;
-
-/// Normalize a path string for cross-platform comparison.
-/// Converts all path separators to forward slashes and handles case sensitivity
-/// based on the platform (case-insensitive on Windows, case-sensitive elsewhere).
-fn normalize_path_for_comparison(path: &str) -> String {
-    // Convert backslashes to forward slashes for consistent comparison
-    let normalized = path.replace('\\', "/");
-
-    // On Windows, paths are case-insensitive. On Unix, they are case-sensitive.
-    // For config comparison, we use case-insensitive on all platforms to handle
-    // user input variations, but we should preserve the original case in storage.
-    #[cfg(target_os = "windows")]
-    {
-        normalized.to_lowercase()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        // On Unix systems, use case-sensitive comparison by default
-        // However, for config paths that users type, we still want to be lenient
-        // So we lowercase for comparison but this is a policy decision
-        normalized.to_lowercase()
-    }
-}
+use crate::utils::normalize_path_for_comparison;
 
 /// Serializable representation of the trigram index
 #[derive(Serialize, Deserialize)]
