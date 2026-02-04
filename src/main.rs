@@ -261,14 +261,9 @@ async fn main() -> Result<()> {
                                                 pb.set_message("🧠 Restoring search index...");
                                             }
                                             LoadingPhase::MappingFiles => {
-                                                if let (Some(total), Some(processed)) =
-                                                    (total, processed)
-                                                {
-                                                    pb.set_style(bar_style_ref.as_ref().clone());
-                                                    pb.set_length(total as u64);
-                                                    pb.set_position(processed as u64);
-                                                    pb.set_message("📁 Loading files into memory");
-                                                }
+                                                // Lazy loading - just show a quick message, no bar needed
+                                                pb.set_style(spinner_style_ref.as_ref().clone());
+                                                pb.set_message("📁 Registering files...");
                                             }
                                             LoadingPhase::None => {}
                                         }
@@ -692,31 +687,44 @@ async fn main() -> Result<()> {
                 "Background indexing completed"
             );
 
-            // Save index after build if configured
+            // Save index after build if configured (but skip if nothing changed)
             if indexer_config.save_after_build {
                 if let Some(ref index_path_str) = indexer_config.index_path {
-                    let index_path = std::path::Path::new(index_path_str);
-                    info!(path = %index_path.display(), "Saving index to disk...");
+                    // Only save if we actually indexed something new
+                    let should_save = if loaded_from_persistence {
+                        // If loaded from persistence, only save if files were re-indexed
+                        total_indexed > 0
+                    } else {
+                        // Fresh index - always save
+                        true
+                    };
 
-                    match index_engine.read() {
-                        Ok(engine) => {
-                            if let Err(e) = engine.save_index(index_path, &indexer_config) {
-                                tracing::error!(
-                                    error = %e,
-                                    path = %index_path.display(),
-                                    "Failed to save index"
-                                );
-                            } else {
-                                info!(
-                                    path = %index_path.display(),
-                                    files = engine.get_stats().num_files,
-                                    "Index saved successfully"
-                                );
+                    if should_save {
+                        let index_path = std::path::Path::new(index_path_str);
+                        info!(path = %index_path.display(), "Saving index to disk...");
+
+                        match index_engine.read() {
+                            Ok(engine) => {
+                                if let Err(e) = engine.save_index(index_path, &indexer_config) {
+                                    tracing::error!(
+                                        error = %e,
+                                        path = %index_path.display(),
+                                        "Failed to save index"
+                                    );
+                                } else {
+                                    info!(
+                                        path = %index_path.display(),
+                                        files = engine.get_stats().num_files,
+                                        "Index saved successfully"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to acquire read lock to save index");
                             }
                         }
-                        Err(e) => {
-                            tracing::error!(error = %e, "Failed to acquire read lock to save index");
-                        }
+                    } else {
+                        info!("Index unchanged, skipping save");
                     }
                 }
             }

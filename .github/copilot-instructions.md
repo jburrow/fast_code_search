@@ -70,6 +70,12 @@ Use `anyhow::Result` with context for all error propagation.
 - Line numbers: 1-based in results, 0-based internally
 - Trigrams: raw bytes, not Unicode graphemes
 
+### Running Servers
+- **NEVER** kill running server processes to "check if running" - use a separate terminal or API call
+- Test API endpoints with `curl` or `Invoke-WebRequest` in a **new terminal**
+- If you need to rebuild, ask the user first or use a separate terminal
+- Server ports: gRPC 50051/50059, Web UI 8080, Semantic 8081
+
 ## Before Every Commit
 
 ```bash
