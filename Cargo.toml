@@ -61,6 +61,7 @@ ndarray = "0.15"                                                              # 
 fs2 = "0.4"
 chrono = "0.4"                                                                # For timestamp formatting in diagnostics
 rand = "0.9"                                                                  # For random file sampling in self-tests
+tempfile = "3"                                                                # For validator temporary corpus
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
 ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
     "load-dynamic",
@@ -107,3 +108,7 @@ path = "src/main.rs"
 [[bin]]
 name = "fast_code_search_semantic"
 path = "src/bin/fast_code_search_semantic.rs"
+
+[[bin]]
+name = "fast_code_search_validator"
+path = "src/bin/fast_code_search_validator.rs"

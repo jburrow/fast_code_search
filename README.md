@@ -523,6 +523,31 @@ Other file types are still searchable, just without symbol-awareness.
 - [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md) — Comparison with ripgrep, Zoekt, etc.
 - [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) — Semantic search setup
 
+## Validation & Load Testing
+
+A built-in validator binary generates a synthetic corpus and validates the search engine:
+
+```bash
+# Run validation with default settings
+cargo run --release --bin fast_code_search_validator
+
+# Custom corpus size and reproducible seed
+cargo run --release --bin fast_code_search_validator -- --corpus-size 200 --seed 12345
+
+# Include load testing (throughput and latency measurement)
+cargo run --release --bin fast_code_search_validator -- --load-test --duration 30
+
+# JSON output for CI integration
+cargo run --release --bin fast_code_search_validator -- --json
+```
+
+**What it validates:**
+- Index completeness (all generated content is findable)
+- Line number accuracy
+- Symbol extraction
+- All query options: basic search, path filters, regex, symbols-only
+- (Optional) Throughput and latency under load
+
 ## License
 
 MIT — See [LICENSE](LICENSE) file.

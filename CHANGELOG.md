@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Whitebox validator binary**: New `fast_code_search_validator` binary for comprehensive search engine validation
+  - Generates deterministic synthetic corpus with seeded randomness for reproducible tests
+  - Multi-language corpus: Rust (40%), Python (25%), TypeScript (20%), JavaScript (15%)
+  - Varied file sizes and complexity (functions, classes, nested structures)
+  - Validates index completeness via embedded "needle" markers at known locations
+  - Tests all query options: `search()`, `search_with_filter()`, `search_regex()`, `search_symbols()`
+  - Verifies line number accuracy and symbol extraction
+  - Optional load testing mode with throughput (queries/sec) and latency percentiles (p50/p95/p99)
+  - JSON output mode for CI integration
+  - Run with: `cargo run --release --bin fast_code_search_validator`
+
 - **Index persistence**: The trigram index can now be saved to disk and loaded on restart for faster startup times
   - Configure `index_path` in config to enable persistence
   - `save_after_build = true` (default) saves after initial indexing completes

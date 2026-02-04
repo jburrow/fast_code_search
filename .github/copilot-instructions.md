@@ -1,393 +1,163 @@
 # Copilot Instructions for fast_code_search
 
-High-performance, in-memory code search service built in Rust. Handles 10GB+ codebases with trigram-based indexing, symbol awareness, and parallel search.
+High-performance, in-memory code search service in Rust. Trigram indexing + symbol awareness for 10GB+ codebases.
 
-## Architecture Overview
+## Quick Reference: File Map
 
-The system has five layers that communicate through shared `Arc<RwLock<SearchEngine>>`:
+| File | Responsibility |
+|------|----------------|
+| `src/index/trigram.rs` | Roaring bitmap trigram index (trigrams → doc IDs) |
+| `src/index/file_store.rs` | Memory-mapped file storage via `memmap2` |
+| `src/index/persistence.rs` | Save/load index to disk with file locking |
+| `src/symbols/extractor.rs` | Tree-sitter parsing for Rust/Python/JS/TS symbols |
+| `src/dependencies/mod.rs` | Import graph for PageRank-style scoring |
+| `src/search/engine.rs` | Core parallel search with rayon + scoring |
+| `src/search/regex_search.rs` | Regex pattern analysis for trigram acceleration |
+| `src/search/path_filter.rs` | Glob-based include/exclude filtering |
+| `src/server/service.rs` | gRPC streaming server (port 50051) |
+| `src/web/api.rs` | REST/JSON API via axum (port 8080) |
+| `src/semantic/engine.rs` | Semantic search coordinator |
+| `src/semantic/embeddings.rs` | TF-IDF / ONNX ML embeddings |
+| `src/semantic/chunking.rs` | Code chunking into functions/classes |
+| `src/semantic_server/service.rs` | Semantic gRPC server (port 50052) |
+| `src/semantic_web/api.rs` | Semantic REST API (port 8081) |
+| `proto/search.proto` | gRPC service definitions |
+| `tests/integration_tests.rs` | End-to-end integration tests |
+| `static/` | Embedded web UI files |
 
-1. **Index Layer** (`src/index/`) - File discovery, trigram indexing, and persistence
-   - `file_store.rs`: Memory-mapped files via `memmap2` for zero-copy access
-   - `trigram.rs`: Roaring bitmap-based inverted index mapping trigrams → document IDs (`u32`)
-   - `persistence.rs`: Save/load index to disk with file locking and config fingerprinting
+## Common Tasks Cheatsheet
 
-2. **Symbol Layer** (`src/symbols/extractor.rs`) - Tree-sitter parsing for Rust/Python/JS/TS
-   - Extracts function/class definitions to boost search relevance
-   - Also extracts import statements for dependency analysis
+| Task | Steps |
+|------|-------|
+| **Add new language** | 1. Add tree-sitter dep to `Cargo.toml` 2. Update `language_for_file()` in `src/symbols/extractor.rs` 3. Add tests |
+| **Modify gRPC API** | 1. Edit `proto/search.proto` 2. `cargo build` 3. Update `src/server/service.rs` 4. Update `examples/client.rs` |
+| **Add REST endpoint** | Edit `src/web/api.rs` — params: `q` (query), `max`, `include`, `exclude`, `regex`, `symbols` |
+| **Add new scoring factor** | Edit `calculate_score()` in `src/search/engine.rs` |
+| **Change config options** | Edit `src/config.rs` — TOML config loaded at startup |
 
-3. **Dependency Layer** (`src/dependencies/mod.rs`) - Import graph for PageRank-style scoring
-   - `imports`: file_id → set of file_ids it imports
-   - `imported_by`: file_id → set of file_ids that import it (reverse index)
-   - `import_counts`: cached counts for fast scoring lookups
-   - Files with more dependents get logarithmic boost: `1.0 + log10(count) * 0.5`
-
-4. **Search Layer** (`src/search/`) - Parallel search with scoring
-   - `engine.rs`: Core search using rayon for parallel line-by-line search
-   - `regex_search.rs`: Regex pattern analysis for trigram acceleration
-   - `path_filter.rs`: Glob-based include/exclude filtering
-   - Multi-factor scoring: symbol defs (3x), exact match (2x), src/lib dirs (1.5x)
-   - Four search methods:
-     - `search()`: Basic text search
-     - `search_with_filter()`: Text search with path filtering
-     - `search_regex()`: Regex pattern matching with trigram acceleration
-     - `search_symbols()`: Symbols-only search for function/class names
-
-5. **Server Layer** - Dual API exposure (shared engine via `Arc<RwLock<>>`)
-   - `src/server/service.rs`: gRPC streaming via tonic (port 50051)
-   - `src/web/api.rs`: REST/JSON via axum (port 8080)
-   - `static/`: Web UI files embedded via `rust-embed`
+## Architecture Summary
 
 **Data Flow**: Query → trigram extraction → bitmap intersection → candidate docs → parallel search → scored results → streaming response
 
-### Index Persistence
+**Five Layers** (shared via `Arc<RwLock<SearchEngine>>`):
+1. **Index** (`src/index/`) — trigram indexing, file storage, persistence
+2. **Symbols** (`src/symbols/`) — tree-sitter extraction for function/class defs
+3. **Dependencies** (`src/dependencies/`) — import graph for scoring boost
+4. **Search** (`src/search/`) — parallel search, regex, path filtering
+5. **Server** (`src/server/`, `src/web/`) — gRPC + REST APIs
 
-The index can be saved to disk and loaded on restart for faster startup:
+**Scoring factors**: Symbol defs (3x), exact match (2x), src/lib dirs (1.5x), import count (log boost)
 
-- **Configuration**: Set `index_path` in config to enable persistence
-- **Save triggers**: After initial build (`save_after_build = true`), or after N file updates (`save_after_updates`)
-- **Load on startup**: If index file exists, loads it with reconciliation against current config
-- **Staleness detection**: Checks mtime + size of each file; stale files are re-indexed
-- **Config fingerprint**: Hash of paths/extensions/excludes stored in index; if config changes, affected paths are reconciled
-- **File locking**: Exclusive lock for writes, shared lock for reads (multiple servers can share read-only access)
-- **Reconciliation**: Background task walks filesystem to find new files, updates index incrementally
+> See [README.md](../README.md#architecture) for detailed architecture docs.
 
-## Build & Development
+## Key Patterns
+
+### Error Handling
+```rust
+File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?;
+```
+Use `anyhow::Result` with context for all error propagation.
+
+### Threading Model
+- **Indexing**: Single-threaded, I/O bound (memory-mapping)
+- **Search**: Parallel via rayon (CPU bound)
+- **Servers**: Tokio async runtime for gRPC/HTTP
+
+### Project Conventions
+- Default branch: `main`
+- Shared state: `Arc<RwLock<SearchEngine>>`
+- Document IDs: `u32` indices into `FileStore.files`
+- Line numbers: 1-based in results, 0-based internally
+- Trigrams: raw bytes, not Unicode graphemes
+
+## Before Every Commit
 
 ```bash
-# Build (requires protoc for gRPC codegen)
-cargo build --release
-
-# Run server with config
-cargo run --release -- --config ./config.toml
-
-# Generate template config file
-cargo run --release -- --init fast_code_search.toml
-
-# Run tests (unit + integration)
-cargo test
+cargo fmt                      # REQUIRED - CI rejects unformatted code
+cargo clippy -- -D warnings    # REQUIRED - CI rejects clippy warnings
+cargo test                     # Run full test suite
 ```
 
-The `build.rs` compiles `proto/search.proto` via tonic-build on each build.
+## Testing
 
-### ML Models Feature (Semantic Search)
+**Integration tests are prioritized.** Always add integration tests for new features.
 
-The `ml-models` feature enables ONNX-based embeddings for semantic search:
+```bash
+cargo test                           # All tests
+cargo test --test integration_tests  # Integration only
+cargo test -- --nocapture            # Show output
+```
+
+Test pattern: Use `setup_test_server()` helper, test both gRPC and HTTP, use `TempDir` for cleanup.
+
+> See [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#testing) for detailed testing guide.
+
+## Validator Tool
+
+Whitebox testing binary for validating search engines with synthetic corpus generation.
+
+```bash
+# Basic validation (generates 100 files, runs all tests)
+cargo run --release --bin fast_code_search_validator
+
+# Custom corpus size and seed for reproducibility
+cargo run --release --bin fast_code_search_validator -- --corpus-size 200 --seed 12345
+
+# With load testing (measure throughput and latency)
+cargo run --release --bin fast_code_search_validator -- --load-test --duration 30
+
+# JSON output for CI integration
+cargo run --release --bin fast_code_search_validator -- --json
+```
+
+**CLI Options:**
+- `--corpus-size N` — Number of files to generate (default: 100)
+- `--seed N` — Random seed for reproducible corpus (default: 42)
+- `--sample-count N` — Additional random samples for validation (default: 10)
+- `--load-test` — Enable throughput/latency measurement
+- `--concurrent N` — Parallel query threads for load test (default: 4)
+- `--duration N` — Load test duration in seconds (default: 10)
+- `--json` — Output results as JSON
+- `--keep-corpus` — Don't delete temp directory after run
+
+**What it tests:**
+- Index completeness: All generated needles are findable
+- Line number accuracy: Matches report correct line numbers
+- Symbol extraction: Generated symbols are searchable
+- Query options: `search()`, `search_with_filter()`, `search_regex()`, `search_symbols()`
+- Path filtering: Include/exclude patterns work correctly
+
+**CI Integration:**
+```yaml
+- run: cargo run --release --bin fast_code_search_validator -- --json
+```
+
+> Source: `src/bin/fast_code_search_validator.rs`, `src/bin/validator/corpus.rs`
+
+## Semantic Search (Optional)
+
+Requires `ml-models` feature + ONNX Runtime 1.18-1.22:
 
 ```bash
 cargo build --release --bin fast_code_search_semantic --features ml-models
 ```
 
-**ONNX Runtime Compatibility**: The project uses `ort 2.0.0-rc.10` which requires ONNX Runtime **1.18.x - 1.22.x**. Do NOT use ONNX Runtime 1.23+ (incompatible with rc.10) or older than 1.18.
+Windows: Use `scripts\run_semantic_server.ps1` (sets `ORT_DYLIB_PATH`).
 
-**Windows-specific**: Due to CRT linking conflicts between `ort` (dynamic /MD) and `tokenizers` (static /MT), the `ort` crate uses `load-dynamic` feature. This requires:
+> See [docs/semantic/SEMANTIC_SEARCH_README.md](../docs/semantic/SEMANTIC_SEARCH_README.md) for setup.
 
-1. Download ONNX Runtime 1.22.0 from https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0
-2. Extract to `onnxruntime/onnxruntime-win-x64-1.22.0/` in the project root
-3. Use the launcher script: `scripts\run_semantic_server.ps1` (sets `ORT_DYLIB_PATH` automatically)
+## Documentation Updates
 
-See `docs/semantic/SEMANTIC_SEARCH_README.md` for detailed setup instructions.
+When changing code, update:
+1. This file — for architecture/pattern changes
+2. `README.md` — for user-facing changes
+3. `CHANGELOG.md` — for every user-visible change
 
-## Before Every Commit
-
-**IMPORTANT**: Always run these commands before committing to avoid CI failures:
-
-```bash
-# Format code (REQUIRED - CI will reject unformatted code)
-cargo fmt
-
-# Run linter (REQUIRED - CI will reject code with clippy warnings)
-cargo clippy -- -D warnings
-
-# Run tests
-cargo test
-```
-
-The CI pipeline runs `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` on every PR. Commits that fail these checks will block the PR.
-
-## Documentation Requirements
-
-**IMPORTANT**: Documentation must be kept up-to-date with every change. This includes:
-
-### Files to Update with Every Change
-
-1. **This file** (`.github/copilot-instructions.md`):
-   - Update architecture descriptions when adding/modifying components
-   - Add new patterns or conventions when established
-   - Update API documentation when endpoints change
-   - Add new build/test commands when introduced
-
-2. **README.md**:
-   - Update feature descriptions for user-facing changes
-   - Update usage examples when CLI or API changes
-   - Update installation instructions when dependencies change
-   - Update benchmark results table after performance changes
-
-3. **CHANGELOG.md**:
-   - Add entry for every user-facing change
-   - Follow Keep a Changelog format (Added, Changed, Deprecated, Removed, Fixed, Security)
-
-4. **Code comments and doc comments**:
-   - Update function/struct doc comments when behavior changes
-   - Keep inline comments accurate with code changes
-
-### When Adding New Features
-
-- Add new section to this instructions file explaining the feature
-- Update README.md with user-facing documentation
-- Add CHANGELOG.md entry
-- Update any relevant design docs (e.g., `DESIGN-*.md` files)
-
-### When Modifying Existing Features
-
-- Review and update all documentation that references the changed behavior
-- Search for outdated references in markdown files
-- Update examples if API signatures change
-
-### When Removing Features
-
-- Remove or update references in all documentation files
-- Add deprecation notice to CHANGELOG.md
-- Update this instructions file to remove obsolete sections
-
-## Handling Merge Conflicts
-
-When there are merge conflicts with the main branch, **always resolve them automatically** by:
-
-1. Fetching the latest main branch
-2. Merging or rebasing to incorporate upstream changes
-3. Resolving any conflicts by keeping both sets of changes when possible
-4. Running `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` after resolution
-5. Committing the resolved changes
-
-This ensures the PR stays up-to-date with the latest main branch changes.
-
-## Key Patterns
-
-### Error Handling
-Use `anyhow::Result` for propagation with context:
-```rust
-File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?;
-```
-
-### Adding New Language Support
-1. Add tree-sitter dependency in `Cargo.toml`
-2. Update `language_for_file()` match in `src/symbols/extractor.rs`
-3. Add extraction tests
-
-### Modifying gRPC API
-1. Edit `proto/search.proto`
-2. Run `cargo build` to regenerate bindings
-3. Update `src/server/service.rs` implementation
-4. Update `examples/client.rs`
-
-### REST API Endpoints (src/web/api.rs)
-The REST API supports the following search parameters:
-- `q`: Query string (required)
-- `max`: Maximum results (default: 50)
-- `include`: Semicolon-delimited glob patterns for paths to include
-- `exclude`: Semicolon-delimited glob patterns for paths to exclude
-- `regex`: Set to `true` for regex pattern matching
-- `symbols`: Set to `true` for symbols-only search (functions/classes)
-
-### Configuration
-TOML config in `config.toml` or `fast_code_search.toml`. Key settings:
-- `server.address`: gRPC bind address
-- `indexer.paths`: Directories to auto-index
-- `indexer.exclude_patterns`: Glob patterns to skip (node_modules, target, .git)
-
-## Threading Model
-
-- **Indexing**: Single-threaded, I/O bound (memory-mapping)
-- **Search**: Parallel via rayon (CPU bound)
-- **Servers**: Tokio async runtime for gRPC/HTTP
-
-## Testing
-
-### Testing Philosophy
-
-**Integration tests are prioritized above all else.** They provide end-to-end validation of real-world scenarios and catch issues that unit tests might miss.
-
-### Test Structure
-
-The project uses a two-tier testing approach:
-
-1. **Integration Tests** (`tests/integration_tests.rs`) - **PRIMARY FOCUS**
-   - Spin up real gRPC and HTTP servers with temporary directories
-   - Test complete user workflows end-to-end
-   - Validate both server interfaces (gRPC and REST)
-   - Test cross-language search capabilities
-   - **Always add integration tests for new features or bug fixes**
-
-2. **Unit Tests** (inline `#[cfg(test)]` modules) - **SECONDARY**
-   - Test individual functions and components in isolation
-   - Useful for testing edge cases and internal logic
-   - Should complement, not replace, integration tests
-
-### Running Tests
+## Benchmarks
 
 ```bash
-# Run all tests (unit + integration) - PREFERRED
-cargo test
-
-# Run only integration tests (most important)
-cargo test --test integration_tests
-
-# Run specific integration test
-cargo test test_grpc_search_finds_rust_function
-
-# Run only unit tests
-cargo test --lib
-
-# Run tests for specific module
-cargo test index::trigram
-
-# Show test output
-cargo test -- --nocapture
-
-# Run tests in parallel (default)
-cargo test
-
-# Run tests sequentially (helpful for debugging)
-cargo test -- --test-threads=1
+cargo bench -- --save-baseline before  # Before changes
+cargo bench -- --baseline before       # After changes, compare
 ```
 
-### Adding New Tests
-
-**When adding a new feature:**
-1. **ALWAYS** write integration tests first to validate end-to-end behavior
-2. Add unit tests only if needed for complex internal logic
-3. Ensure tests cover both success and failure scenarios
-4. Test edge cases (empty queries, non-existent files, etc.)
-
-**Integration Test Structure:**
-- Use `setup_test_server()` helper to create a test environment
-- Index test files with appropriate content
-- Test both gRPC and HTTP interfaces when applicable
-- Clean up with temporary directories (automatic via `TempDir`)
-
-**Example Integration Test Pattern:**
-```rust
-#[tokio::test]
-async fn test_new_feature() -> Result<()> {
-    let ctx = setup_test_server().await?;
-    
-    // Test via HTTP API
-    let client = reqwest::Client::new();
-    let response = client
-        .get(format!("{}/api/endpoint", ctx.http_url))
-        .query(&[("param", "value")])
-        .send()
-        .await?;
-    
-    assert!(response.status().is_success());
-    // ... more assertions
-    
-    Ok(())
-}
-```
-
-### Test Coverage Guidelines
-
-**Integration tests should cover:**
-- ✅ All API endpoints (gRPC and HTTP)
-- ✅ Search functionality across different languages (Rust, Python, JS, TS)
-- ✅ Symbol-only search mode
-- ✅ Regex search patterns
-- ✅ Path filtering (include/exclude)
-- ✅ Edge cases (empty queries, no matches, max results)
-- ✅ Server health and status endpoints
-- ✅ Indexing operations
-
-**Unit tests should cover:**
-- Internal data structures (trigram index, file store, etc.)
-- Complex algorithms (regex parsing, path filtering)
-- Configuration parsing and validation
-- Error handling and edge cases
-
-### Test Quality Standards
-
-1. **Descriptive names**: Test names should clearly describe what is being tested
-2. **Isolation**: Each test should be independent and not rely on other tests
-3. **Assertions**: Use meaningful assertion messages
-4. **Cleanup**: Use `TempDir` for automatic cleanup of test files
-5. **Performance**: Keep tests fast; use minimal test data
-6. **Reliability**: Tests should not be flaky or timing-dependent
-
-### Before Committing
-
-**CRITICAL**: Run the full test suite before every commit:
-
-```bash
-cargo test
-```
-
-If tests fail, investigate and fix before committing. Do not commit code with failing tests.
-
-## Performance Optimization Workflow
-
-When doing optimization work, **always use benchmarks to measure impact**:
-
-### Before Making Changes
-```bash
-# Save current performance as baseline
-cargo bench -- --save-baseline before
-```
-
-### After Making Changes
-```bash
-# Compare against baseline to quantify improvement
-cargo bench -- --baseline before
-```
-
-### Benchmark Suite
-Benchmarks are in `benches/search_benchmark.rs`. Key groups:
-- `text_search` - Basic search with varying corpus sizes
-- `regex_search` - Regex patterns with/without trigram acceleration
-- `filtered_search` - Path filtering impact
-- `case_sensitivity` - Case folding overhead
-- `result_limits` - Impact of max_results parameter
-- `indexing` - File indexing throughput
-
-### Quick Benchmark Check
-```bash
-# Run specific benchmark with fewer samples for fast feedback
-cargo bench -- "text_search/common_query/100" --sample-size 10
-```
-
-### View Detailed Reports
-HTML reports with graphs are generated at `target/criterion/report/index.html`
-
-### What NOT to Commit
-- Benchmark baselines (`target/criterion/`) - machine-specific, already gitignored
-- Only commit the benchmark code itself
-
-## Release Checklist
-
-Before preparing a release:
-
-1. **Update benchmarks in README.md**:
-   ```bash
-   cargo bench
-   ```
-   Then update the Benchmarks table in `README.md` with latest results.
-
-2. **Update version** in `Cargo.toml`
-
-3. **Update CHANGELOG.md** with notable changes
-
-4. **Run full test suite and formatting**:
-   ```bash
-   cargo fmt
-   cargo clippy -- -D warnings
-   cargo test
-   ```
-
-5. **Tag the release**: `git tag v0.x.x`
-
-## Project-Specific Conventions
-
-- Default branch is `main` (not `master`)
-- Use `Arc<RwLock<SearchEngine>>` for shared engine state between gRPC and web servers
-- Document IDs are `u32` indices into `FileStore.files` vector
-- Line numbers in results are 1-based; internally 0-based
-- Trigrams operate on raw bytes, not Unicode graphemes
+Reports at `target/criterion/report/index.html`. Benchmark groups: `text_search`, `regex_search`, `filtered_search`, `indexing`.
