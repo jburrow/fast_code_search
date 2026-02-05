@@ -6,37 +6,17 @@
 use anyhow::Result;
 use clap::Parser;
 use fast_code_search::diagnostics;
+use fast_code_search::search::discover_files;
 use fast_code_search::semantic::{SemanticConfig, SemanticSearchEngine};
 use fast_code_search::semantic_web::{
     self, create_semantic_progress_broadcaster, SemanticProgress, SemanticProgressBroadcaster,
     SharedSemanticProgress, WebState,
 };
+use fast_code_search::utils::is_binary_content;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
-
-/// Check if content appears to be binary (contains null bytes or high ratio of non-printable chars)
-fn is_binary_content(content: &str) -> bool {
-    // Check first 8KB for binary indicators
-    let check_len = content.len().min(8192);
-    let sample = &content[..check_len];
-
-    let mut non_text_count = 0;
-    for byte in sample.bytes() {
-        // Null bytes are a strong indicator of binary content
-        if byte == 0 {
-            return true;
-        }
-        // Count non-printable, non-whitespace characters (excluding common control chars)
-        if byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r') {
-            non_text_count += 1;
-        }
-    }
-
-    // If more than 10% non-text characters, likely binary
-    non_text_count > check_len / 10
-}
 
 /// Fast Code Search Semantic Server
 #[derive(Parser, Debug)]
@@ -184,8 +164,6 @@ async fn main() -> Result<()> {
             .stack_size(16 * 1024 * 1024)
             .name("semantic-indexer".to_string())
             .spawn(move || {
-                use walkdir::WalkDir;
-
                 // Initialize progress
                 broadcast_progress(&index_progress, &index_progress_tx, |p| {
                     p.status = "indexing".to_string();
@@ -193,130 +171,74 @@ async fn main() -> Result<()> {
                     p.message = "Starting indexing...".to_string();
                 });
 
-                let binary_extensions: std::collections::HashSet<&str> = [
-                    "exe", "dll", "so", "dylib", "bin", "o", "a", "png", "jpg", "jpeg", "gif",
-                    "ico", "bmp", "zip", "tar", "gz", "7z", "rar", "woff", "woff2", "ttf", "eot",
-                    "pdf",
-                ]
-                .into_iter()
-                .collect();
-
-                let exclude_patterns: Vec<String> = indexer_config
-                    .exclude_patterns
-                    .iter()
-                    .map(|p| p.trim_matches('*').trim_matches('/').to_string())
-                    .collect();
-
                 let mut total_indexed = 0;
                 let mut total_chunks = 0;
 
-                for path_str in &indexer_config.paths {
-                    let path = std::path::Path::new(path_str);
-                    if !path.exists() {
-                        tracing::warn!(path = %path_str, "Path does not exist, skipping");
-                        continue;
+                for entry_path in
+                    discover_files(&indexer_config.paths, &indexer_config.exclude_patterns)
+                {
+                    // Skip very large files that could cause parsing issues (> 1MB)
+                    if let Ok(metadata) = entry_path.metadata() {
+                        if metadata.len() > 1024 * 1024 {
+                            tracing::debug!(
+                                path = %entry_path.display(),
+                                size = metadata.len(),
+                                "Skipping large file"
+                            );
+                            continue;
+                        }
                     }
 
-                    info!(path = %path_str, "Indexing path");
-
-                    for entry in WalkDir::new(path)
-                        .follow_links(true)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
-                        if !entry.file_type().is_file() {
+                    // Index the file, catching any panics from tree-sitter parsing
+                    if let Ok(content) = std::fs::read_to_string(&entry_path) {
+                        // Skip binary files that slipped through (e.g., cache files without extensions)
+                        if is_binary_content(&content) {
+                            tracing::debug!(
+                                path = %entry_path.display(),
+                                "Skipping binary file"
+                            );
                             continue;
                         }
 
-                        let entry_path = entry.path();
-                        let path_str_check = entry_path.to_string_lossy();
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let mut engine = index_engine.write().unwrap();
+                            engine.index_file(&entry_path, &content)
+                        }));
 
-                        // Check exclude patterns
-                        if exclude_patterns
-                            .iter()
-                            .any(|pattern| path_str_check.contains(pattern))
-                        {
-                            continue;
-                        }
+                        match result {
+                            Ok(Ok(num_chunks)) => {
+                                total_indexed += 1;
+                                total_chunks += num_chunks;
 
-                        // Skip binary files
-                        if let Some(ext) = entry_path.extension() {
-                            let ext = ext.to_string_lossy().to_lowercase();
-                            if binary_extensions.contains(ext.as_str()) {
-                                continue;
-                            }
-                        }
-
-                        // Skip very large files that could cause parsing issues (> 1MB)
-                        if let Ok(metadata) = entry_path.metadata() {
-                            if metadata.len() > 1024 * 1024 {
-                                tracing::debug!(
-                                    path = %entry_path.display(),
-                                    size = metadata.len(),
-                                    "Skipping large file"
-                                );
-                                continue;
-                            }
-                        }
-
-                        // Index the file, catching any panics from tree-sitter parsing
-                        if let Ok(content) = std::fs::read_to_string(entry_path) {
-                            // Skip binary files that slipped through (e.g., cache files without extensions)
-                            if is_binary_content(&content) {
-                                tracing::debug!(
-                                    path = %entry_path.display(),
-                                    "Skipping binary file"
-                                );
-                                continue;
-                            }
-
-                            let entry_path_owned = entry_path.to_path_buf();
-                            let result =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    let mut engine = index_engine.write().unwrap();
-                                    engine.index_file(&entry_path_owned, &content)
-                                }));
-
-                            match result {
-                                Ok(Ok(num_chunks)) => {
-                                    total_indexed += 1;
-                                    total_chunks += num_chunks;
-
-                                    if total_indexed % 100 == 0 {
-                                        info!(
-                                            files = total_indexed,
-                                            chunks = total_chunks,
-                                            "Indexing progress"
-                                        );
-                                        broadcast_progress(
-                                            &index_progress,
-                                            &index_progress_tx,
-                                            |p| {
-                                                p.files_indexed = total_indexed;
-                                                p.chunks_indexed = total_chunks;
-                                                p.current_path =
-                                                    Some(entry_path_owned.display().to_string());
-                                                p.message = format!(
-                                                    "Indexing {} files, {} chunks...",
-                                                    total_indexed, total_chunks
-                                                );
-                                            },
-                                        );
-                                    }
-                                }
-                                Ok(Err(e)) => {
-                                    tracing::warn!(
-                                        path = %entry_path.display(),
-                                        error = %e,
-                                        "Failed to index file"
+                                if total_indexed % 100 == 0 {
+                                    info!(
+                                        files = total_indexed,
+                                        chunks = total_chunks,
+                                        "Indexing progress"
                                     );
+                                    broadcast_progress(&index_progress, &index_progress_tx, |p| {
+                                        p.files_indexed = total_indexed;
+                                        p.chunks_indexed = total_chunks;
+                                        p.current_path = Some(entry_path.display().to_string());
+                                        p.message = format!(
+                                            "Indexing {} files, {} chunks...",
+                                            total_indexed, total_chunks
+                                        );
+                                    });
                                 }
-                                Err(_) => {
-                                    tracing::warn!(
-                                        path = %entry_path.display(),
-                                        "File parsing caused a panic, skipping"
-                                    );
-                                }
+                            }
+                            Ok(Err(e)) => {
+                                tracing::warn!(
+                                    path = %entry_path.display(),
+                                    error = %e,
+                                    "Failed to index file"
+                                );
+                            }
+                            Err(_) => {
+                                tracing::warn!(
+                                    path = %entry_path.display(),
+                                    "File parsing caused a panic, skipping"
+                                );
                             }
                         }
                     }

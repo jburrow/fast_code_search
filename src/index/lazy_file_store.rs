@@ -106,7 +106,10 @@ impl LazyMappedFile {
 
     /// Get the file size if already mapped, without triggering a map
     pub fn len_if_mapped(&self) -> Option<usize> {
-        self.mmap.get().and_then(|r| r.as_ref().ok()).map(|m| m.len())
+        self.mmap
+            .get()
+            .and_then(|r| r.as_ref().ok())
+            .map(|m| m.len())
     }
 
     /// Check if the file is empty
@@ -189,8 +192,8 @@ impl LazyFileStore {
         }
 
         // Open and map the file immediately
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open file: {}", path.display()))?;
+        let file =
+            File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
         let mmap = unsafe {
             Mmap::map(&file).with_context(|| format!("Failed to mmap file: {}", path.display()))?
         };
@@ -257,10 +260,7 @@ impl LazyFileStore {
 
     /// Get the number of files that have been actually mapped
     pub fn mapped_count(&self) -> usize {
-        self.mapped_count
-            .read()
-            .map(|guard| *guard)
-            .unwrap_or(0)
+        self.mapped_count.read().map(|guard| *guard).unwrap_or(0)
     }
 
     /// Pre-reserve capacity for a known number of files
