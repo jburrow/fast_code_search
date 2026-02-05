@@ -5,7 +5,7 @@ use crate::diagnostics::{
     self, ConfigSummary, DiagnosticsQuery, ExtensionBreakdown, HealthStatus,
     KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
 };
-use crate::search::IndexingStatus;
+use crate::search::{IndexingStatus, RankMode};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -41,6 +41,9 @@ pub struct SearchQuery {
     /// Whether to search only in symbols (function/class names)
     #[serde(default)]
     symbols: bool,
+    /// Ranking mode: "auto" (default), "fast", or "full"
+    #[serde(default)]
+    rank: String,
 }
 
 fn default_max_results() -> usize {
@@ -72,6 +75,15 @@ pub struct SearchResponse {
     pub total_results: usize,
     /// Time taken by the search in milliseconds
     pub elapsed_ms: f64,
+    /// Ranking mode used: "auto", "fast", or "full"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank_mode: Option<String>,
+    /// Total candidate files considered
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_candidates: Option<usize>,
+    /// Files actually searched (may be less in fast mode)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates_searched: Option<usize>,
 }
 
 /// Index stats response
@@ -128,6 +140,9 @@ pub async fn search_handler(
             query: String::new(),
             total_results: 0,
             elapsed_ms: 0.0,
+            rank_mode: None,
+            total_candidates: None,
+            candidates_searched: None,
         }));
     }
 
@@ -136,6 +151,13 @@ pub async fn search_handler(
     let exclude_patterns = params.exclude.as_str();
     let is_regex = params.regex;
     let symbols_only = params.symbols;
+
+    // Parse ranking mode
+    let rank_mode = match params.rank.to_lowercase().as_str() {
+        "fast" => RankMode::Fast,
+        "full" => RankMode::Full,
+        _ => RankMode::Auto, // Default to auto
+    };
 
     // Start timing the search
     let start_time = std::time::Instant::now();
@@ -149,39 +171,44 @@ pub async fn search_handler(
     })?;
 
     // Choose search method based on flags
-    let matches = if symbols_only {
+    // For regex and symbols, we don't have ranking info yet (they use internal fast ranking)
+    let (matches, ranking_info) = if symbols_only {
         // Search only in discovered symbols
-        engine
+        let m = engine
             .search_symbols(query, include_patterns, exclude_patterns, max_results)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
                     format!("Invalid filter pattern: {}", e),
                 )
-            })?
+            })?;
+        (m, None)
     } else if is_regex {
         // Use regex search with optional path filtering
-        engine
+        let m = engine
             .search_regex(query, include_patterns, exclude_patterns, max_results)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
                     format!("Invalid regex pattern: {}", e),
                 )
-            })?
+            })?;
+        (m, None)
     } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-        // Plain text search without filtering
-        engine.search(query, max_results)
+        // Plain text search with ranking
+        let (m, info) = engine.search_ranked(query, max_results, rank_mode);
+        (m, Some(info))
     } else {
-        // Plain text search with path filtering
-        engine
-            .search_with_filter(query, include_patterns, exclude_patterns, max_results)
+        // Plain text search with path filtering and ranking
+        let (m, info) = engine
+            .search_with_filter_ranked(query, include_patterns, exclude_patterns, max_results, rank_mode)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
                     format!("Invalid filter pattern: {}", e),
                 )
-            })?
+            })?;
+        (m, Some(info))
     };
 
     let results: Vec<SearchResultJson> = matches
@@ -211,6 +238,9 @@ pub async fn search_handler(
         query: query.to_string(),
         total_results,
         elapsed_ms,
+        rank_mode: ranking_info.as_ref().map(|r| format!("{:?}", r.mode).to_lowercase()),
+        total_candidates: ranking_info.as_ref().map(|r| r.total_candidates),
+        candidates_searched: ranking_info.as_ref().map(|r| r.candidates_searched),
     }))
 }
 

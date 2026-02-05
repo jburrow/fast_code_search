@@ -276,6 +276,18 @@ class SearchReadinessManager {
                 `;
             }
         }
+        
+        // Clear loading state when ready - restore empty state prompt
+        if (this.isReady && resultsContainer) {
+            const loadingState = resultsContainer.querySelector('.loading-index-state');
+            if (loadingState) {
+                resultsContainer.innerHTML = `
+                    <div class="empty-state">
+                        <p>Enter a search query to find code</p>
+                    </div>
+                `;
+            }
+        }
     }
     
     /**

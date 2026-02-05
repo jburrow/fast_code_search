@@ -8,8 +8,8 @@ pub mod watcher;
 pub use background_indexer::{run as run_background_indexer, BackgroundIndexerConfig};
 pub use engine::{
     create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase,
-    PreIndexedFile, ProgressBroadcaster, SearchEngine, SearchMatch, SearchStats,
-    SharedIndexingProgress,
+    PreIndexedFile, ProgressBroadcaster, RankMode, SearchEngine, SearchMatch, SearchRankingInfo,
+    SearchStats, SharedIndexingProgress,
 };
 pub use file_discovery::{discover_files, FileDiscoveryConfig, FileDiscoveryIterator};
 pub use path_filter::PathFilter;

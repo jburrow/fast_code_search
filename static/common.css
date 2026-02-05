@@ -82,10 +82,27 @@ body {
     flex-wrap: wrap;
 }
 
+.header-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .header-title h1 {
     font-size: 1.25rem;
     font-weight: 700;
     white-space: nowrap;
+}
+
+.header-link {
+    font-size: 1.1rem;
+    text-decoration: none;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.header-link:hover {
+    opacity: 1;
 }
 
 .header-stats {

@@ -311,6 +311,17 @@ pub struct SearchMatch {
     pub dependency_count: u32,
 }
 
+/// Information about how a search was ranked
+#[derive(Debug, Clone)]
+pub struct SearchRankingInfo {
+    /// The ranking mode that was used
+    pub mode: RankMode,
+    /// Total number of candidate documents from trigram index
+    pub total_candidates: usize,
+    /// Number of candidates actually searched (read from disk)
+    pub candidates_searched: usize,
+}
+
 /// Result of attempting to resolve imports for a single file.
 /// Used internally by resolve_imports_incremental.
 struct ImportResolutionResult {
@@ -419,11 +430,116 @@ impl PreIndexedFile {
     }
 }
 
+/// Ranking mode for search queries
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RankMode {
+    /// Automatically choose based on candidate count (fast if >5000 candidates)
+    #[default]
+    Auto,
+    /// Fast file-level ranking (no file reads for ranking, reads only top candidates)
+    Fast,
+    /// Full line-level ranking (reads all candidate files)
+    Full,
+}
+
+impl RankMode {
+    /// Parse from string (for API parameter)
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "fast" => RankMode::Fast,
+            "full" => RankMode::Full,
+            _ => RankMode::Auto,
+        }
+    }
+}
+
+/// Pre-computed file metadata for fast ranking without file reads.
+/// Populated once during finalize(), used during search.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FileMetadata {
+    /// Number of symbol definitions in this file
+    pub symbol_count: u16,
+    /// Whether file is in src/ or lib/ directory
+    pub is_src_lib: bool,
+    /// Pre-computed base score for ranking
+    pub base_score: f32,
+}
+
+impl FileMetadata {
+    /// Compute metadata for a file at index time
+    fn compute(path: &Path, symbol_count: usize, dependency_count: u32) -> Self {
+        let mut base_score: f32 = 1.0;
+
+        let path_str = path.to_string_lossy();
+        let path_lower = path_str.to_lowercase();
+
+        // Check if in source directories
+        let is_src_lib = path_lower.contains("/src/")
+            || path_lower.contains("\\src\\")
+            || path_lower.contains("/lib/")
+            || path_lower.contains("\\lib\\");
+
+        if is_src_lib {
+            base_score += 2.0;
+        }
+
+        // Boost for high-value extensions
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            match ext.to_lowercase().as_str() {
+                "rs" | "py" | "ts" | "js" | "go" | "java" | "c" | "cpp" | "h" => base_score += 1.5,
+                "md" | "txt" | "json" | "toml" | "yaml" | "yml" => base_score += 0.5,
+                _ => {}
+            }
+        }
+
+        // Boost for files with symbols (more likely to be important code)
+        if symbol_count > 0 {
+            base_score += (symbol_count as f32).log2().min(4.0); // Up to +4 for 16+ symbols
+        }
+
+        // Boost for dependency count (files imported by others are important)
+        if dependency_count > 0 {
+            base_score += (dependency_count as f32).log2().min(5.0);
+        }
+
+        // Penalty for test/example directories
+        if path_lower.contains("/test")
+            || path_lower.contains("\\test")
+            || path_lower.contains("/example")
+            || path_lower.contains("\\example")
+        {
+            base_score *= 0.7;
+        }
+
+        FileMetadata {
+            symbol_count: symbol_count.min(u16::MAX as usize) as u16,
+            is_src_lib,
+            base_score,
+        }
+    }
+
+    /// Compute ranking score for a specific query
+    /// This is called during search but doesn't require reading file content
+    #[inline]
+    fn query_score(&self, filename_matches: bool) -> f32 {
+        let mut score = self.base_score;
+        
+        // Big boost if query matches filename
+        if filename_matches {
+            score *= 5.0;
+        }
+        
+        score
+    }
+}
+
 pub struct SearchEngine {
     pub file_store: LazyFileStore,
     pub trigram_index: TrigramIndex,
     pub dependency_index: DependencyIndex,
     symbol_cache: Vec<Vec<Symbol>>,
+    /// Pre-computed file metadata for fast ranking
+    file_metadata: Vec<FileMetadata>,
     /// Pending imports to resolve after all files are indexed
     pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
 }
@@ -435,6 +551,7 @@ impl SearchEngine {
             trigram_index: TrigramIndex::new(),
             dependency_index: DependencyIndex::new(),
             symbol_cache: Vec::new(),
+            file_metadata: Vec::new(),
             pending_imports: Vec::new(),
         }
     }
@@ -663,51 +780,193 @@ impl SearchEngine {
     /// Call this after indexing is complete and before serving queries.
     pub fn finalize(&mut self) {
         self.trigram_index.finalize();
+
+        // Pre-compute file metadata for fast ranking
+        // This enables ranking by file-level signals without reading file content
+        let num_files = self.file_store.len();
+        self.file_metadata = Vec::with_capacity(num_files);
+
+        for file_id in 0..num_files as u32 {
+            let metadata = if let Some(file) = self.file_store.get(file_id) {
+                let symbol_count = self.symbol_cache
+                    .get(file_id as usize)
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                let dep_count = self.dependency_index.get_import_count(file_id);
+                FileMetadata::compute(&file.path, symbol_count, dep_count)
+            } else {
+                FileMetadata::default()
+            };
+            self.file_metadata.push(metadata);
+        }
+
+        tracing::info!(
+            num_files = num_files,
+            "Computed file metadata for fast ranking"
+        );
     }
 
-    /// Search for a query using parallel processing
-    pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
-        // Pre-compute lowercase query ONCE before parallel loop (avoids allocation per document)
+    /// Get the metadata for a file
+    #[inline]
+    fn get_file_metadata(&self, file_id: u32) -> FileMetadata {
+        self.file_metadata
+            .get(file_id as usize)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Check if query matches filename (for ranking boost)
+    #[inline]
+    fn filename_matches_query(&self, file_id: u32, query_lower: &str) -> bool {
+        self.file_store.get_path(file_id)
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .map(|name| name.to_lowercase().contains(query_lower))
+            .unwrap_or(false)
+    }
+
+    /// Threshold for using fast ranking mode in Auto mode
+    const FAST_RANKING_THRESHOLD: usize = 5000;
+
+    /// Maximum files to read in fast ranking mode
+    const FAST_RANKING_TOP_N: usize = 500;
+
+    /// Search with configurable ranking mode.
+    ///
+    /// # Ranking Modes
+    /// - `Auto`: Uses fast ranking if candidates > 5000, else full ranking
+    /// - `Fast`: Ranks by pre-computed file scores, reads only top N files
+    /// - `Full`: Reads all candidates for line-level scoring (slower but most accurate)
+    ///
+    /// Returns (matches, ranking_info) where ranking_info contains metadata about the search.
+    pub fn search_ranked(
+        &self,
+        query: &str,
+        max_results: usize,
+        rank_mode: RankMode,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo) {
         let query_lower = query.to_lowercase();
-
-        // Find candidate documents using trigram index
-        // Use lowercase query for case-insensitive trigram matching
         let candidate_docs = self.trigram_index.search(&query_lower);
+        let total_candidates = candidate_docs.len() as usize;
 
-        // Convert to vector for parallel processing
-        let doc_ids: Vec<u32> = candidate_docs.iter().collect();
+        // Determine effective ranking mode
+        let use_fast = match rank_mode {
+            RankMode::Fast => true,
+            RankMode::Full => false,
+            RankMode::Auto => total_candidates > Self::FAST_RANKING_THRESHOLD,
+        };
 
-        // Search in parallel using rayon
-        let mut matches: Vec<SearchMatch> = doc_ids
+        let effective_mode = if use_fast { RankMode::Fast } else { RankMode::Full };
+
+        if use_fast && !self.file_metadata.is_empty() {
+            // Fast ranking: score by file metadata, read only top N
+            let matches = self.search_fast_ranked(&query_lower, &candidate_docs, max_results);
+            let info = SearchRankingInfo {
+                mode: effective_mode,
+                total_candidates,
+                candidates_searched: Self::FAST_RANKING_TOP_N.min(total_candidates),
+            };
+            (matches, info)
+        } else {
+            // Full ranking: read all candidates
+            let matches = self.search_full_ranked(&query_lower, &candidate_docs, max_results);
+            let info = SearchRankingInfo {
+                mode: effective_mode,
+                total_candidates,
+                candidates_searched: total_candidates,
+            };
+            (matches, info)
+        }
+    }
+
+    /// Fast ranking: rank candidates by file-level score, read only top N
+    fn search_fast_ranked(
+        &self,
+        query_lower: &str,
+        candidate_docs: &roaring::RoaringBitmap,
+        max_results: usize,
+    ) -> Vec<SearchMatch> {
+        // Score all candidates by file metadata (no file reads)
+        let mut scored_candidates: Vec<(u32, f32)> = candidate_docs
+            .iter()
+            .map(|doc_id| {
+                let meta = self.get_file_metadata(doc_id);
+                let filename_match = self.filename_matches_query(doc_id, query_lower);
+                let score = meta.query_score(filename_match);
+                (doc_id, score)
+            })
+            .collect();
+
+        // Sort by score descending
+        scored_candidates.sort_unstable_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Take top N candidates to actually read
+        let top_n = Self::FAST_RANKING_TOP_N.min(scored_candidates.len());
+        let top_candidates: Vec<u32> = scored_candidates[..top_n]
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+
+        tracing::debug!(
+            total_candidates = candidate_docs.len(),
+            reading_top = top_n,
+            "Fast ranking: reading top candidates"
+        );
+
+        // Search in the top candidates
+        let mut matches: Vec<SearchMatch> = top_candidates
             .par_iter()
-            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, &query_lower))
+            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, query_lower))
             .flatten()
             .collect();
 
-        // Partial sort: only sort as much as needed for top N results
-        // Using sort_unstable_by is faster than stable sort (no need for stability)
+        // Sort by line-level score and return top results
+        self.sort_and_truncate(&mut matches, max_results);
+        matches
+    }
+
+    /// Full ranking: read all candidates for line-level scoring
+    fn search_full_ranked(
+        &self,
+        query_lower: &str,
+        candidate_docs: &roaring::RoaringBitmap,
+        max_results: usize,
+    ) -> Vec<SearchMatch> {
+        let doc_ids: Vec<u32> = candidate_docs.iter().collect();
+
+        let mut matches: Vec<SearchMatch> = doc_ids
+            .par_iter()
+            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, query_lower))
+            .flatten()
+            .collect();
+
+        self.sort_and_truncate(&mut matches, max_results);
+        matches
+    }
+
+    /// Helper to sort matches by score and truncate to max_results
+    fn sort_and_truncate(&self, matches: &mut Vec<SearchMatch>, max_results: usize) {
         if matches.len() > max_results {
-            // Partial sort to find top max_results
             matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
             });
             matches.truncate(max_results);
-            // Now fully sort the top N
             matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
             });
         } else {
             matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
             });
         }
+    }
 
+    /// Search for a query using parallel processing (uses Auto ranking mode).
+    /// For explicit control over ranking, use `search_ranked()`.
+    pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
+        let (matches, _info) = self.search_ranked(query, max_results, RankMode::Auto);
         matches
     }
 
@@ -716,7 +975,7 @@ impl SearchEngine {
     /// This extends the basic search with additional path-based filtering:
     /// 1. Trigram index narrows candidates based on query content
     /// 2. Path filter further narrows based on file paths
-    /// 3. Parallel search runs only on final candidates
+    /// 3. Uses fast or full ranking based on candidate count
     ///
     /// # Arguments
     /// * `query` - The search query string
@@ -730,56 +989,66 @@ impl SearchEngine {
         exclude_patterns: &str,
         max_results: usize,
     ) -> Result<Vec<SearchMatch>> {
+        let (matches, _) = self.search_with_filter_ranked(
+            query,
+            include_patterns,
+            exclude_patterns,
+            max_results,
+            RankMode::Auto,
+        )?;
+        Ok(matches)
+    }
+
+    /// Search with path filtering and explicit ranking mode control.
+    pub fn search_with_filter_ranked(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        max_results: usize,
+        rank_mode: RankMode,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
-        // Pre-compute lowercase query ONCE before parallel loop
         let query_lower = query.to_lowercase();
-
-        // Find candidate documents using trigram index
-        // Use lowercase query for case-insensitive trigram matching
         let candidate_docs = self.trigram_index.search(&query_lower);
 
-        // Apply path filter if it has any patterns (using closure to avoid cloning all paths)
+        // Apply path filter
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter
-                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
-        // Convert to vector for parallel processing
-        let doc_ids: Vec<u32> = filtered_docs.iter().collect();
+        let total_candidates = filtered_docs.len() as usize;
 
-        // Search in parallel using rayon
-        let mut matches: Vec<SearchMatch> = doc_ids
-            .par_iter()
-            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, &query_lower))
-            .flatten()
-            .collect();
+        // Determine ranking mode
+        let use_fast = match rank_mode {
+            RankMode::Fast => true,
+            RankMode::Full => false,
+            RankMode::Auto => total_candidates > Self::FAST_RANKING_THRESHOLD,
+        };
 
-        // Partial sort: only sort as much as needed for top N results
-        if matches.len() > max_results {
-            matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            matches.truncate(max_results);
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+        let effective_mode = if use_fast { RankMode::Fast } else { RankMode::Full };
+
+        let matches = if use_fast && !self.file_metadata.is_empty() {
+            self.search_fast_ranked(&query_lower, &filtered_docs, max_results)
         } else {
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
+            self.search_full_ranked(&query_lower, &filtered_docs, max_results)
+        };
 
-        Ok(matches)
+        let info = SearchRankingInfo {
+            mode: effective_mode,
+            total_candidates,
+            candidates_searched: if use_fast {
+                Self::FAST_RANKING_TOP_N.min(total_candidates)
+            } else {
+                total_candidates
+            },
+        };
+
+        Ok((matches, info))
     }
 
     /// Search using a regex pattern with trigram acceleration.
@@ -810,71 +1079,48 @@ impl SearchEngine {
 
         // Get candidate documents using trigram acceleration if possible
         let candidate_docs = if analysis.is_accelerated {
-            // Use the best (longest) literal for trigram filtering
             if let Some(literal) = analysis.best_literal() {
-                tracing::debug!(
-                    pattern = %pattern,
-                    literal = %literal,
-                    "Using trigram acceleration for regex search"
-                );
+                tracing::debug!(pattern = %pattern, literal = %literal, "Using trigram acceleration for regex");
                 self.trigram_index.search(literal)
             } else {
-                // Fallback to all documents
-                tracing::warn!(
-                    pattern = %pattern,
-                    "Regex has no usable literals - falling back to full scan"
-                );
+                tracing::warn!(pattern = %pattern, "Regex has no usable literals - full scan");
                 self.trigram_index.all_documents()
             }
         } else {
-            // No acceleration possible - scan all documents
-            tracing::warn!(
-                pattern = %pattern,
-                "Regex has no extractable literals >= 3 chars - falling back to full scan"
-            );
+            tracing::warn!(pattern = %pattern, "Regex has no extractable literals >= 3 chars - full scan");
             self.trigram_index.all_documents()
         };
 
-        // Apply path filter if it has any patterns (using closure to avoid cloning all paths)
+        // Apply path filter
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter
-                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
-        // Convert filtered bitmap to vector for parallel processing
-        let filtered_doc_ids: Vec<u32> = filtered_docs.iter().collect();
+        let total_candidates = filtered_docs.len() as usize;
+        let use_fast = total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
 
-        // Search in parallel using rayon with regex matching
+        let doc_ids: Vec<u32> = if use_fast {
+            // Fast ranking: sort by file score, take top N
+            let mut scored: Vec<(u32, f32)> = filtered_docs.iter()
+                .map(|id| (id, self.get_file_metadata(id).base_score))
+                .collect();
+            scored.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.iter().take(Self::FAST_RANKING_TOP_N).map(|(id, _)| *id).collect()
+        } else {
+            filtered_docs.iter().collect()
+        };
+
+        // Search with regex
         let regex = &analysis.regex;
-        let mut matches: Vec<SearchMatch> = filtered_doc_ids
+        let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
             .filter_map(|&doc_id| self.search_in_document_regex(doc_id, regex))
             .flatten()
             .collect();
 
-        // Partial sort: only sort as much as needed for top N results
-        if matches.len() > max_results {
-            matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            matches.truncate(max_results);
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        } else {
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-
+        self.sort_and_truncate(&mut matches, max_results);
         Ok(matches)
     }
 
@@ -912,37 +1158,28 @@ impl SearchEngine {
             path_filter.filter_documents_with(&all_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
-        // Convert to vector for parallel processing
-        let doc_ids: Vec<u32> = filtered_docs.iter().collect();
+        let total_candidates = filtered_docs.len() as usize;
+        let use_fast = total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
 
-        // Search symbols in parallel using rayon
+        let doc_ids: Vec<u32> = if use_fast {
+            // Fast ranking: sort by file score (prioritize files with more symbols)
+            let mut scored: Vec<(u32, f32)> = filtered_docs.iter()
+                .map(|id| (id, self.get_file_metadata(id).base_score))
+                .collect();
+            scored.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.iter().take(Self::FAST_RANKING_TOP_N).map(|(id, _)| *id).collect()
+        } else {
+            filtered_docs.iter().collect()
+        };
+
+        // Search symbols in parallel
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
             .filter_map(|&doc_id| self.search_symbols_in_document(doc_id, &query_lower))
             .flatten()
             .collect();
 
-        // Partial sort: only sort as much as needed for top N results
-        if matches.len() > max_results {
-            matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            matches.truncate(max_results);
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        } else {
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-
+        self.sort_and_truncate(&mut matches, max_results);
         Ok(matches)
     }
 

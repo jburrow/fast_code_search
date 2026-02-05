@@ -15,6 +15,7 @@ const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
+const rankingInfoEl = document.getElementById('ranking-info');
 const searchTimeEl = document.getElementById('search-time');
 
 // Stats elements
@@ -186,6 +187,19 @@ async function performSearch() {
         resultsHeader.style.display = 'flex';
         resultsCount.textContent = `${data.results.length} result${data.results.length !== 1 ? 's' : ''}`;
         searchTimeEl.textContent = `${duration.toFixed(1)}ms`;
+
+        // Show ranking info if available
+        if (data.rank_mode && data.total_candidates !== undefined) {
+            const modeLabel = data.rank_mode === 'fast' ? '⚡ Fast' : (data.rank_mode === 'full' ? '📊 Full' : '🔄 Auto');
+            const candidateInfo = data.candidates_searched !== data.total_candidates 
+                ? `${data.candidates_searched.toLocaleString()}/${data.total_candidates.toLocaleString()} files`
+                : `${data.total_candidates.toLocaleString()} files`;
+            rankingInfoEl.textContent = `${modeLabel} (${candidateInfo})`;
+            rankingInfoEl.title = `Ranking mode: ${data.rank_mode}\nTotal candidates: ${data.total_candidates}\nSearched: ${data.candidates_searched}`;
+        } else {
+            rankingInfoEl.textContent = '';
+            rankingInfoEl.title = '';
+        }
 
         if (data.results.length === 0) {
             resultsContainer.innerHTML = `<div class="empty-state"><p>No results found for "${escapeHtml(query)}"</p></div>`;

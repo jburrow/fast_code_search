@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentation - Fast Code Search</title>
+    <link rel="stylesheet" href="/common.css">
+    <style>
+        .docs-content {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 2rem;
+            margin-top: 1rem;
+            border: 1px solid var(--border);
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .docs-content h1 {
+            font-size: 1.75rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .docs-content h2 {
+            font-size: 1.35rem;
+            margin-top: 2rem;
+            margin-bottom: 0.75rem;
+            color: var(--accent);
+        }
+
+        .docs-content h3 {
+            font-size: 1.1rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .docs-content p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        .docs-content code {
+            background: var(--code-bg);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9em;
+        }
+
+        .docs-content pre {
+            background: var(--code-bg);
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        .docs-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .docs-content ul,
+        .docs-content ol {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .docs-content li {
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+
+        .docs-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+
+        .docs-content th,
+        .docs-content td {
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            text-align: left;
+        }
+
+        .docs-content th {
+            background: var(--bg-tertiary);
+            font-weight: 600;
+        }
+
+        .docs-content td {
+            background: var(--bg-primary);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .badge-fast {
+            background: #a6e3a1;
+            color: #1e1e2e;
+        }
+
+        .badge-full {
+            background: #89b4fa;
+            color: #1e1e2e;
+        }
+
+        .badge-auto {
+            background: #f9e2af;
+            color: #1e1e2e;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .nav-links a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header class="header-compact">
+            <div class="header-title">
+                <h1>📚 Documentation</h1>
+            </div>
+            <div class="nav-links">
+                <a href="/">← Keyword Search</a>
+                <a href="/semantic.html">Semantic Search</a>
+                <a href="/diagnostics.html">Diagnostics</a>
+            </div>
+        </header>
+
+        <div class="docs-content">
+            <h1>Fast Code Search Documentation</h1>
+
+            <p>Fast Code Search is a high-performance, in-memory code search service that uses trigram indexing and
+                symbol awareness for searching 10GB+ codebases in milliseconds.</p>
+
+            <h2>Search Modes</h2>
+
+            <h3>Keyword Search (Default)</h3>
+            <p>Searches for exact text matches across all indexed files. Uses trigram indexing for fast candidate
+                filtering.</p>
+            <ul>
+                <li>Case-insensitive matching</li>
+                <li>Supports glob-based path filtering</li>
+                <li>Can filter to symbol definitions only</li>
+            </ul>
+
+            <h3>Regex Search</h3>
+            <p>Enable the <code>Regex</code> checkbox to search with regular expression patterns. When possible,
+                literals in the regex are used to accelerate the search via trigram filtering.</p>
+
+            <h3>Symbols Only</h3>
+            <p>Enable <code>Symbols Only</code> to search only in function, class, and method definitions. This is much
+                faster when you're looking for code definitions rather than all usages.</p>
+
+            <h2>Ranking System</h2>
+
+            <p>For large candidate sets (>5,000 files), the search engine uses a two-phase ranking system to maintain
+                fast response times while preserving result quality.</p>
+
+            <table>
+                <tr>
+                    <th>Mode</th>
+                    <th>Icon</th>
+                    <th>Description</th>
+                    <th>When Used</th>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-auto">Auto</span></td>
+                    <td>🔄</td>
+                    <td>Automatically chooses Fast or Full based on candidate count</td>
+                    <td>Default mode</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-fast">Fast</span></td>
+                    <td>⚡</td>
+                    <td>Ranks by file metadata, reads top 500 files only</td>
+                    <td>>5,000 candidates (Auto) or explicit</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-full">Full</span></td>
+                    <td>📊</td>
+                    <td>Reads all candidate files for full scoring</td>
+                    <td>≤5,000 candidates (Auto) or explicit</td>
+                </tr>
+            </table>
+
+            <h3>File-Level Scoring Factors</h3>
+            <p>In <span class="badge badge-fast">Fast</span> mode, files are ranked by pre-computed metadata:</p>
+            <ul>
+                <li><strong>Symbol density</strong>: Files with more function/class definitions rank higher (+4 max)
+                </li>
+                <li><strong>Source location</strong>: Files in <code>src/</code> or <code>lib/</code> directories get a
+                    boost (+2)</li>
+                <li><strong>Import count</strong>: Files imported by many others rank higher (+5 max)</li>
+                <li><strong>Test/example penalty</strong>: Test and example files are deprioritized (0.7×)</li>
+            </ul>
+
+            <h3>Match-Level Scoring Factors</h3>
+            <p>After reading file content, matches are scored by:</p>
+            <ul>
+                <li><strong>Symbol definition</strong>: 3× boost for matches in function/class names</li>
+                <li><strong>Exact match</strong>: 2× boost when query matches exactly (not a substring)</li>
+                <li><strong>File score</strong>: Base file score is carried through</li>
+            </ul>
+
+            <h2>API Reference</h2>
+
+            <h3>Search Endpoint</h3>
+            <pre><code>GET /api/search</code></pre>
+
+            <table>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Type</th>
+                    <th>Default</th>
+                    <th>Description</th>
+                </tr>
+                <tr>
+                    <td><code>q</code></td>
+                    <td>string</td>
+                    <td>(required)</td>
+                    <td>Search query</td>
+                </tr>
+                <tr>
+                    <td><code>max</code></td>
+                    <td>integer</td>
+                    <td>50</td>
+                    <td>Maximum results (1-1000)</td>
+                </tr>
+                <tr>
+                    <td><code>include</code></td>
+                    <td>string</td>
+                    <td></td>
+                    <td>Semicolon-delimited include patterns</td>
+                </tr>
+                <tr>
+                    <td><code>exclude</code></td>
+                    <td>string</td>
+                    <td></td>
+                    <td>Semicolon-delimited exclude patterns</td>
+                </tr>
+                <tr>
+                    <td><code>regex</code></td>
+                    <td>boolean</td>
+                    <td>false</td>
+                    <td>Treat query as regex pattern</td>
+                </tr>
+                <tr>
+                    <td><code>symbols</code></td>
+                    <td>boolean</td>
+                    <td>false</td>
+                    <td>Search only in symbol definitions</td>
+                </tr>
+                <tr>
+                    <td><code>rank</code></td>
+                    <td>string</td>
+                    <td>auto</td>
+                    <td>Ranking mode: <code>auto</code>, <code>fast</code>, or <code>full</code></td>
+                </tr>
+            </table>
+
+            <h3>Example Requests</h3>
+            <pre><code># Basic search
+curl "http://localhost:8080/api/search?q=function"
+
+# Search with path filter
+curl "http://localhost:8080/api/search?q=parse&include=src/**/*.rs"
+
+# Force fast ranking
+curl "http://localhost:8080/api/search?q=error&rank=fast"
+
+# Regex search for function definitions
+curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
+
+            <h3>Response Format</h3>
+            <pre><code>{
+  "results": [
+    {
+      "file_path": "src/parser.rs",
+      "content": "fn parse_token(...)",
+      "line_number": 42,
+      "match_start": 0,
+      "match_end": 5,
+      "score": 12.5,
+      "match_type": "SYMBOL_DEFINITION",
+      "dependency_count": 8
+    }
+  ],
+  "query": "parse",
+  "total_results": 1,
+  "elapsed_ms": 23.4,
+  "rank_mode": "fast",
+  "total_candidates": 15000,
+  "candidates_searched": 500
+}</code></pre>
+
+            <h2>Path Filter Patterns</h2>
+            <p>Use glob patterns to filter which files are searched:</p>
+            <table>
+                <tr>
+                    <th>Pattern</th>
+                    <th>Matches</th>
+                </tr>
+                <tr>
+                    <td><code>*.rs</code></td>
+                    <td>All Rust files</td>
+                </tr>
+                <tr>
+                    <td><code>src/**/*.py</code></td>
+                    <td>Python files under src/</td>
+                </tr>
+                <tr>
+                    <td><code>**/test/**</code></td>
+                    <td>Files in any test/ directory</td>
+                </tr>
+                <tr>
+                    <td><code>!**/vendor/**</code></td>
+                    <td>Exclude vendor directories</td>
+                </tr>
+            </table>
+            <p>Separate multiple patterns with semicolons: <code>src/**;lib/**</code></p>
+
+            <h2>Other Endpoints</h2>
+            <table>
+                <tr>
+                    <th>Endpoint</th>
+                    <th>Description</th>
+                </tr>
+                <tr>
+                    <td><code>GET /api/stats</code></td>
+                    <td>Index statistics (files, size, trigrams)</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/status</code></td>
+                    <td>Indexing progress and status</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/health</code></td>
+                    <td>Health check</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/dependents?file=...</code></td>
+                    <td>List files that import a given file</td>
+                </tr>
+                <tr>
+                    <td><code>WS /ws/progress</code></td>
+                    <td>WebSocket for real-time indexing progress</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</body>
+
+</html>
