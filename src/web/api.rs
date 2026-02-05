@@ -201,7 +201,13 @@ pub async fn search_handler(
     } else {
         // Plain text search with path filtering and ranking
         let (m, info) = engine
-            .search_with_filter_ranked(query, include_patterns, exclude_patterns, max_results, rank_mode)
+            .search_with_filter_ranked(
+                query,
+                include_patterns,
+                exclude_patterns,
+                max_results,
+                rank_mode,
+            )
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -238,7 +244,9 @@ pub async fn search_handler(
         query: query.to_string(),
         total_results,
         elapsed_ms,
-        rank_mode: ranking_info.as_ref().map(|r| format!("{:?}", r.mode).to_lowercase()),
+        rank_mode: ranking_info
+            .as_ref()
+            .map(|r| format!("{:?}", r.mode).to_lowercase()),
         total_candidates: ranking_info.as_ref().map(|r| r.total_candidates),
         candidates_searched: ranking_info.as_ref().map(|r| r.candidates_searched),
     }))

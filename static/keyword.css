@@ -71,3 +71,27 @@
 #ranking-info:empty {
     display: none;
 }
+
+/* Ranking mode dropdown */
+.rank-mode-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.rank-mode-label select {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.rank-mode-label select:focus {
+    outline: none;
+    border-color: var(--accent);
+}

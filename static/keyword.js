@@ -12,6 +12,7 @@ const includeFilterInput = document.getElementById('include-filter');
 const excludeFilterInput = document.getElementById('exclude-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
+const rankModeSelect = document.getElementById('rank-mode');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
@@ -39,7 +40,7 @@ const DEBOUNCE_MS = 300;
 const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     resultsContainerId: 'results',
-    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode'],
+    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'rank-mode'],
     onReadyChange: (isReady, status) => {
         console.log(`Search readiness changed: ${isReady ? 'READY' : 'NOT READY'}`, status?.status);
         if (isReady && queryInput.value.trim()) {
@@ -159,6 +160,7 @@ async function performSearch() {
     const excludeFilter = excludeFilterInput?.value.trim() || '';
     const isRegex = regexModeCheckbox?.checked || false;
     const symbolsOnly = symbolsModeCheckbox?.checked || false;
+    const rankMode = rankModeSelect?.value || 'auto';
 
     if (!query) {
         resultsHeader.style.display = 'none';
@@ -177,6 +179,7 @@ async function performSearch() {
         if (excludeFilter) params.set('exclude', excludeFilter);
         if (isRegex) params.set('regex', 'true');
         if (symbolsOnly) params.set('symbols', 'true');
+        if (rankMode !== 'auto') params.set('rank', rankMode);
         
         const response = await fetch(`${API_BASE}/api/search?${params}`);
         if (!response.ok) throw new Error(`Search failed: ${response.statusText}`);
@@ -307,6 +310,7 @@ maxResultsSelect.addEventListener('change', performSearch);
 
 if (regexModeCheckbox) regexModeCheckbox.addEventListener('change', performSearch);
 if (symbolsModeCheckbox) symbolsModeCheckbox.addEventListener('change', performSearch);
+if (rankModeSelect) rankModeSelect.addEventListener('change', performSearch);
 
 if (includeFilterInput) {
     includeFilterInput.addEventListener('input', debouncedSearch);

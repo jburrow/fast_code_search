@@ -444,7 +444,7 @@ pub enum RankMode {
 
 impl RankMode {
     /// Parse from string (for API parameter)
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "fast" => RankMode::Fast,
             "full" => RankMode::Full,
@@ -523,12 +523,12 @@ impl FileMetadata {
     #[inline]
     fn query_score(&self, filename_matches: bool) -> f32 {
         let mut score = self.base_score;
-        
+
         // Big boost if query matches filename
         if filename_matches {
             score *= 5.0;
         }
-        
+
         score
     }
 }
@@ -788,7 +788,8 @@ impl SearchEngine {
 
         for file_id in 0..num_files as u32 {
             let metadata = if let Some(file) = self.file_store.get(file_id) {
-                let symbol_count = self.symbol_cache
+                let symbol_count = self
+                    .symbol_cache
                     .get(file_id as usize)
                     .map(|s| s.len())
                     .unwrap_or(0);
@@ -818,7 +819,8 @@ impl SearchEngine {
     /// Check if query matches filename (for ranking boost)
     #[inline]
     fn filename_matches_query(&self, file_id: u32, query_lower: &str) -> bool {
-        self.file_store.get_path(file_id)
+        self.file_store
+            .get_path(file_id)
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
             .map(|name| name.to_lowercase().contains(query_lower))
@@ -856,7 +858,11 @@ impl SearchEngine {
             RankMode::Auto => total_candidates > Self::FAST_RANKING_THRESHOLD,
         };
 
-        let effective_mode = if use_fast { RankMode::Fast } else { RankMode::Full };
+        let effective_mode = if use_fast {
+            RankMode::Fast
+        } else {
+            RankMode::Full
+        };
 
         if use_fast && !self.file_metadata.is_empty() {
             // Fast ranking: score by file metadata, read only top N
@@ -898,9 +904,8 @@ impl SearchEngine {
             .collect();
 
         // Sort by score descending
-        scored_candidates.sort_unstable_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored_candidates
+            .sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top N candidates to actually read
         let top_n = Self::FAST_RANKING_TOP_N.min(scored_candidates.len());
@@ -950,15 +955,21 @@ impl SearchEngine {
     fn sort_and_truncate(&self, matches: &mut Vec<SearchMatch>, max_results: usize) {
         if matches.len() > max_results {
             matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             matches.truncate(max_results);
             matches.sort_unstable_by(|a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         } else {
             matches.sort_unstable_by(|a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
     }
@@ -1018,7 +1029,8 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter
+                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
         let total_candidates = filtered_docs.len() as usize;
@@ -1030,7 +1042,11 @@ impl SearchEngine {
             RankMode::Auto => total_candidates > Self::FAST_RANKING_THRESHOLD,
         };
 
-        let effective_mode = if use_fast { RankMode::Fast } else { RankMode::Full };
+        let effective_mode = if use_fast {
+            RankMode::Fast
+        } else {
+            RankMode::Full
+        };
 
         let matches = if use_fast && !self.file_metadata.is_empty() {
             self.search_fast_ranked(&query_lower, &filtered_docs, max_results)
@@ -1095,19 +1111,28 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter
+                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
         let total_candidates = filtered_docs.len() as usize;
-        let use_fast = total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
+        let use_fast =
+            total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
 
         let doc_ids: Vec<u32> = if use_fast {
             // Fast ranking: sort by file score, take top N
-            let mut scored: Vec<(u32, f32)> = filtered_docs.iter()
+            let mut scored: Vec<(u32, f32)> = filtered_docs
+                .iter()
                 .map(|id| (id, self.get_file_metadata(id).base_score))
                 .collect();
-            scored.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.iter().take(Self::FAST_RANKING_TOP_N).map(|(id, _)| *id).collect()
+            scored.sort_unstable_by(|a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            scored
+                .iter()
+                .take(Self::FAST_RANKING_TOP_N)
+                .map(|(id, _)| *id)
+                .collect()
         } else {
             filtered_docs.iter().collect()
         };
@@ -1159,15 +1184,23 @@ impl SearchEngine {
         };
 
         let total_candidates = filtered_docs.len() as usize;
-        let use_fast = total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
+        let use_fast =
+            total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
 
         let doc_ids: Vec<u32> = if use_fast {
             // Fast ranking: sort by file score (prioritize files with more symbols)
-            let mut scored: Vec<(u32, f32)> = filtered_docs.iter()
+            let mut scored: Vec<(u32, f32)> = filtered_docs
+                .iter()
                 .map(|id| (id, self.get_file_metadata(id).base_score))
                 .collect();
-            scored.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.iter().take(Self::FAST_RANKING_TOP_N).map(|(id, _)| *id).collect()
+            scored.sort_unstable_by(|a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            scored
+                .iter()
+                .take(Self::FAST_RANKING_TOP_N)
+                .map(|(id, _)| *id)
+                .collect()
         } else {
             filtered_docs.iter().collect()
         };
