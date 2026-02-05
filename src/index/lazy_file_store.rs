@@ -129,6 +129,8 @@ pub struct LazyFileStore {
     path_to_id: HashMap<PathBuf, u32>,
     /// Statistics: number of files that have been mapped
     mapped_count: RwLock<usize>,
+    /// Statistics: total bytes of content indexed (accumulated as files are added)
+    total_content_bytes: RwLock<u64>,
 }
 
 impl LazyFileStore {
@@ -137,6 +139,7 @@ impl LazyFileStore {
             files: Vec::new(),
             path_to_id: HashMap::new(),
             mapped_count: RwLock::new(0),
+            total_content_bytes: RwLock::new(0),
         }
     }
 
@@ -198,13 +201,19 @@ impl LazyFileStore {
             Mmap::map(&file).with_context(|| format!("Failed to mmap file: {}", path.display()))?
         };
 
+        // Track content size before storing
+        let content_size = mmap.len() as u64;
+
         let id = self.files.len() as u32;
         self.path_to_id.insert(canonical, id);
         self.files.push(LazyMappedFile::with_mmap(path, mmap));
 
-        // Update mapped count
+        // Update mapped count and content bytes
         if let Ok(mut count) = self.mapped_count.write() {
             *count += 1;
+        }
+        if let Ok(mut bytes) = self.total_content_bytes.write() {
+            *bytes += content_size;
         }
 
         Ok(id)
@@ -246,6 +255,22 @@ impl LazyFileStore {
             .filter_map(|f| f.len_if_mapped())
             .map(|len| len as u64)
             .sum()
+    }
+
+    /// Get total content bytes that have been indexed
+    /// This tracks the actual text content size, not just memory-mapped size
+    pub fn total_content_bytes(&self) -> u64 {
+        self.total_content_bytes
+            .read()
+            .map(|guard| *guard)
+            .unwrap_or(0)
+    }
+
+    /// Add to the total content bytes counter (used when loading from persistence)
+    pub fn add_content_bytes(&self, bytes: u64) {
+        if let Ok(mut total) = self.total_content_bytes.write() {
+            *total += bytes;
+        }
     }
 
     /// Get a file path by ID (always available, no I/O needed)

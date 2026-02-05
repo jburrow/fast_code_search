@@ -81,6 +81,8 @@ pub struct StatsResponse {
     pub total_size: u64,
     pub num_trigrams: usize,
     pub dependency_edges: usize,
+    /// Total bytes of text content indexed
+    pub total_content_bytes: u64,
 }
 
 /// Health check response
@@ -109,6 +111,8 @@ pub struct StatusResponse {
     pub total_size: u64,
     pub num_trigrams: usize,
     pub dependency_edges: usize,
+    /// Total bytes of text content indexed
+    pub total_content_bytes: u64,
 }
 
 /// Handle search requests
@@ -229,6 +233,7 @@ pub async fn stats_handler(
         total_size: stats.total_size,
         num_trigrams: stats.num_trigrams,
         dependency_edges: stats.dependency_edges,
+        total_content_bytes: stats.total_content_bytes,
     }))
 }
 
@@ -271,7 +276,7 @@ pub async fn status_handler(
     );
 
     // Get stats from the engine if available
-    let (num_files, total_size, num_trigrams, dependency_edges) = {
+    let (num_files, total_size, num_trigrams, dependency_edges, total_content_bytes) = {
         match state.engine.read() {
             Ok(engine) => {
                 let stats = engine.get_stats();
@@ -280,9 +285,10 @@ pub async fn status_handler(
                     stats.total_size,
                     stats.num_trigrams,
                     stats.dependency_edges,
+                    stats.total_content_bytes,
                 )
             }
-            Err(_) => (0, 0, 0, 0),
+            Err(_) => (0, 0, 0, 0, 0),
         }
     };
 
@@ -302,6 +308,7 @@ pub async fn status_handler(
         total_size,
         num_trigrams,
         dependency_edges,
+        total_content_bytes,
     }))
 }
 
@@ -410,6 +417,7 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
                 total_size: stats.total_size,
                 num_trigrams: stats.num_trigrams,
                 dependency_edges: stats.dependency_edges,
+                total_content_bytes: stats.total_content_bytes,
             }
         })
         .unwrap_or_default()
@@ -484,6 +492,7 @@ pub struct ProgressStats {
     pub total_size: u64,
     pub num_trigrams: usize,
     pub dependency_edges: usize,
+    pub total_content_bytes: u64,
 }
 
 /// Convert IndexingProgress to StatusResponse with stats
@@ -527,6 +536,7 @@ fn progress_to_status(
         total_size: stats.total_size,
         num_trigrams: stats.num_trigrams,
         dependency_edges: stats.dependency_edges,
+        total_content_bytes: stats.total_content_bytes,
     }
 }
 

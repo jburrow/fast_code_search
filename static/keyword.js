@@ -59,12 +59,13 @@ async function fetchStats() {
         
         const stats = await response.json();
         updateStat('stat-files', formatNumber(stats.num_files));
+        updateStat('stat-content', formatBytes(stats.total_content_bytes || 0));
         updateStat('stat-size', formatBytes(stats.total_size));
         updateStat('stat-trigrams', formatNumber(stats.num_trigrams));
         updateStat('stat-deps', formatNumber(stats.dependency_edges || 0));
     } catch (error) {
         console.error('Failed to fetch stats:', error);
-        ['stat-files', 'stat-size', 'stat-trigrams', 'stat-deps'].forEach(id => updateStat(id, '-'));
+        ['stat-files', 'stat-content', 'stat-size', 'stat-trigrams', 'stat-deps'].forEach(id => updateStat(id, '-'));
     }
 }
 
@@ -120,6 +121,7 @@ function updateProgressUI(status) {
     // Update stats from WebSocket message (no separate HTTP request needed)
     if (status.num_files !== undefined) {
         updateStat('stat-files', formatNumber(status.num_files));
+        updateStat('stat-content', formatBytes(status.total_content_bytes || 0));
         updateStat('stat-size', formatBytes(status.total_size || 0));
         updateStat('stat-trigrams', formatNumber(status.num_trigrams || 0));
         updateStat('stat-deps', formatNumber(status.dependency_edges || 0));

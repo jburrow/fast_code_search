@@ -1322,6 +1322,7 @@ impl SearchEngine {
             total_size: self.file_store.total_mapped_size(),
             num_trigrams: self.trigram_index.num_trigrams(),
             dependency_edges: self.dependency_index.total_edges(),
+            total_content_bytes: self.file_store.total_content_bytes(),
         }
     }
 
@@ -1617,11 +1618,20 @@ impl SearchEngine {
                 .map(|&idx| persisted.files[idx].path.clone())
                 .collect();
 
+            // Calculate total content bytes from persisted metadata
+            let total_content_bytes: u64 = valid_file_indices
+                .iter()
+                .map(|&idx| persisted.files[idx].size)
+                .sum();
+
             // Pre-allocate capacity for efficiency
             self.file_store.reserve(paths_to_register.len());
 
             // Register all files instantly (no I/O, just storing paths)
             let _ids = self.file_store.register_files_bulk(&paths_to_register);
+
+            // Track content bytes from persisted metadata
+            self.file_store.add_content_bytes(total_content_bytes);
 
             // Final progress update
             progress_callback(
@@ -1689,8 +1699,18 @@ impl SearchEngine {
             .iter()
             .map(|&idx| persisted.files[idx].path.clone())
             .collect();
+
+        // Calculate total content bytes from persisted metadata
+        let total_content_bytes: u64 = valid_file_indices
+            .iter()
+            .map(|&idx| persisted.files[idx].size)
+            .sum();
+
         self.file_store.reserve(paths_to_register.len());
         let _ids = self.file_store.register_files_bulk(&paths_to_register);
+
+        // Track content bytes from persisted metadata
+        self.file_store.add_content_bytes(total_content_bytes);
 
         self.trigram_index.finalize();
 
@@ -1724,6 +1744,8 @@ pub struct SearchStats {
     pub total_size: u64,
     pub num_trigrams: usize,
     pub dependency_edges: usize,
+    /// Total bytes of text content indexed
+    pub total_content_bytes: u64,
 }
 
 /// Result of loading a persisted index with reconciliation
