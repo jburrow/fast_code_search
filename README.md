@@ -214,6 +214,60 @@ cargo test
 
 ## Usage
 
+### Quick Start
+
+The easiest way to get started is using the cargo aliases:
+
+```bash
+# Generate default config files
+cargo run --release --bin fast_code_search_server -- --init .keyword_config.toml
+cargo run --release --bin fast_code_search_semantic --features ml-models -- --init .semantic_config.toml
+
+# Edit the config files to add your paths
+# Then start the servers using cargo aliases:
+cargo keyword   # Starts keyword search server on port 8080
+cargo semantic  # Starts semantic search server on port 8081
+```
+
+The aliases are defined in `.cargo/config.toml`:
+```toml
+[alias]
+keyword = "run --release --bin fast_code_search_server -- --config .keyword_config.toml"
+semantic = "run --release --bin fast_code_search_semantic --features ml-models -- --config .semantic_config.toml"
+```
+
+### Configuration Files
+
+Generate a config template using `--init`:
+
+```bash
+# Creates a template config file with all options documented
+cargo run --release --bin fast_code_search_server -- --init config.toml
+```
+
+Example config (`config.toml`):
+```toml
+# Server settings
+address = "0.0.0.0:50051"
+web_address = "0.0.0.0:8080"
+
+# Paths to index (required)
+paths = [
+    "/path/to/your/codebase",
+    "/another/project",
+]
+
+# File extensions to index (optional, defaults to common source files)
+extensions = ["rs", "py", "js", "ts", "go", "java", "c", "cpp", "h"]
+
+# Patterns to exclude
+exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**"]
+
+# Index persistence (optional)
+index_path = "/var/lib/fast_code_search/index.bin"
+save_after_build = true
+```
+
 ### Starting the Keyword Search Server
 
 ```bash
