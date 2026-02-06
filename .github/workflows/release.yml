@@ -128,8 +128,17 @@ jobs:
           VERSION_NUM="${VERSION#v}"
           
           if [ -f CHANGELOG.md ]; then
-            # Extract section between this version and next version header
-            NOTES=$(awk "/^## \[${VERSION_NUM}\]|^## ${VERSION_NUM}/,/^## \[?[0-9]/" CHANGELOG.md | head -n -1 | tail -n +2)
+            # Extract content between this version header and next version header
+            # Match: ## [0.2.4] - date  until next ## [
+            NOTES=$(awk -v ver="$VERSION_NUM" '
+              BEGIN { found=0 }
+              /^## \[/ {
+                if (found) { exit }
+                if (index($0, "[" ver "]") > 0) { found=1; next }
+              }
+              found { print }
+            ' CHANGELOG.md)
+            
             if [ -z "$NOTES" ]; then
               NOTES="Release ${VERSION}"
             fi
@@ -139,6 +148,9 @@ jobs:
           
           # Write to file for multiline support
           echo "$NOTES" > release_notes.md
+          
+          echo "=== Release Notes ==="
+          cat release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
