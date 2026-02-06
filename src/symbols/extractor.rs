@@ -73,10 +73,26 @@ impl SymbolExtractor {
         let extension = path.extension()?.to_str()?;
 
         match extension {
+            // Core programming languages
             "rs" => Some(tree_sitter_rust::LANGUAGE),
-            "py" => Some(tree_sitter_python::LANGUAGE),
-            "js" | "jsx" => Some(tree_sitter_javascript::LANGUAGE),
-            "ts" | "tsx" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            "py" | "pyi" | "pyw" => Some(tree_sitter_python::LANGUAGE),
+            "js" | "jsx" | "mjs" | "cjs" => Some(tree_sitter_javascript::LANGUAGE),
+            "ts" | "tsx" | "mts" | "cts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            "go" => Some(tree_sitter_go::LANGUAGE),
+            "c" | "h" => Some(tree_sitter_c::LANGUAGE),
+            "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Some(tree_sitter_cpp::LANGUAGE),
+            "java" => Some(tree_sitter_java::LANGUAGE),
+            "cs" => Some(tree_sitter_c_sharp::LANGUAGE),
+            "rb" | "rake" | "gemspec" => Some(tree_sitter_ruby::LANGUAGE),
+            "php" => Some(tree_sitter_php::LANGUAGE_PHP),
+            "sh" | "bash" | "zsh" => Some(tree_sitter_bash::LANGUAGE),
+            // Config and markup languages
+            "json" | "jsonc" => Some(tree_sitter_json::LANGUAGE),
+            "toml" => Some(tree_sitter_toml_ng::LANGUAGE),
+            "yaml" | "yml" => Some(tree_sitter_yaml::LANGUAGE),
+            "html" | "htm" => Some(tree_sitter_html::LANGUAGE),
+            "css" | "scss" => Some(tree_sitter_css::LANGUAGE),
+            "md" | "markdown" => Some(tree_sitter_md::LANGUAGE),
             _ => None,
         }
     }
@@ -115,20 +131,97 @@ impl SymbolExtractor {
 
             for child in current.children(&mut cursor) {
                 match child.kind() {
+                    // Functions: Rust, Python, JS/TS, PHP, Bash
+                    // Note: C/C++ function_definition has "declarator" not "name"
                     "function_item" | "function_declaration" | "function_definition" => {
+                        // Try "name" first (most languages), then "declarator" (C/C++)
+                        let name_opt = child.child_by_field_name("name").or_else(|| {
+                            // C/C++: name is inside declarator -> function_declarator -> identifier
+                            child
+                                .child_by_field_name("declarator")
+                                .and_then(|d| d.child_by_field_name("declarator"))
+                                .or_else(|| child.child_by_field_name("declarator"))
+                        });
+                        if let Some(name_node) = name_opt {
+                            // For C/C++, the declarator might be a function_declarator
+                            // We need to find the actual identifier
+                            let name_text = if name_node.kind() == "function_declarator" {
+                                name_node
+                                    .child_by_field_name("declarator")
+                                    .map(|n| &source[n.byte_range()])
+                            } else {
+                                Some(&source[name_node.byte_range()])
+                            };
+                            if let Some(name) = name_text {
+                                let start = child.start_position();
+                                symbols.push(Symbol {
+                                    name: name.to_string(),
+                                    symbol_type: SymbolType::Function,
+                                    line: start.row,
+                                    column: start.column,
+                                    is_definition: true,
+                                });
+                            }
+                        }
+                    }
+                    // Methods: Go, Java, C#, Ruby, PHP
+                    "method_declaration" | "method" | "singleton_method" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
                             let start = child.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
-                                symbol_type: SymbolType::Function,
+                                symbol_type: SymbolType::Method,
                                 line: start.row,
                                 column: start.column,
                                 is_definition: true,
                             });
                         }
                     }
-                    "class_declaration" | "class_definition" => {
+                    // Constructors: Java, C#
+                    "constructor_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Method,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // C# property declarations
+                    "property_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Method,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Classes: JS/TS, Python, Java, C#, PHP, Ruby
+                    "class_declaration" | "class_definition" | "class" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Class,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Ruby modules (similar to classes)
+                    "module" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
                             let start = child.start_position();
@@ -155,6 +248,7 @@ impl SymbolExtractor {
                             });
                         }
                     }
+                    // Interfaces: TS, Java, C#, PHP
                     "interface_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
@@ -168,6 +262,7 @@ impl SymbolExtractor {
                             });
                         }
                     }
+                    // Type aliases: TS, Rust
                     "type_alias_declaration" | "type_item" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
@@ -181,7 +276,7 @@ impl SymbolExtractor {
                             });
                         }
                     }
-                    // Enums: TypeScript enum_declaration, Rust enum_item
+                    // Enums: TS, Rust, Java, C#
                     "enum_declaration" | "enum_item" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
@@ -189,6 +284,20 @@ impl SymbolExtractor {
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Enum,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Records: Java, C#
+                    "record_declaration" | "record_struct_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Class,
                                 line: start.row,
                                 column: start.column,
                                 is_definition: true,
@@ -209,8 +318,22 @@ impl SymbolExtractor {
                             });
                         }
                     }
-                    // Rust structs
-                    "struct_item" => {
+                    // PHP traits
+                    "trait_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Trait,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // Structs: Rust, C#
+                    "struct_item" | "struct_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
                             let start = child.start_position();
@@ -235,6 +358,109 @@ impl SymbolExtractor {
                                 column: start.column,
                                 is_definition: true,
                             });
+                        }
+                    }
+                    // Go: type declarations (struct, interface, type alias)
+                    "type_declaration" => {
+                        let mut type_cursor = child.walk();
+                        for type_child in child.children(&mut type_cursor) {
+                            if type_child.kind() == "type_spec" {
+                                if let Some(name_node) = type_child.child_by_field_name("name") {
+                                    let name = &source[name_node.byte_range()];
+                                    let start = type_child.start_position();
+                                    let symbol_type = if let Some(type_node) =
+                                        type_child.child_by_field_name("type")
+                                    {
+                                        match type_node.kind() {
+                                            "struct_type" => SymbolType::Struct,
+                                            "interface_type" => SymbolType::Interface,
+                                            _ => SymbolType::Type,
+                                        }
+                                    } else {
+                                        SymbolType::Type
+                                    };
+                                    symbols.push(Symbol {
+                                        name: name.to_string(),
+                                        symbol_type,
+                                        line: start.row,
+                                        column: start.column,
+                                        is_definition: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    // Go: const and var declarations
+                    "const_declaration" | "var_declaration" => {
+                        let mut const_cursor = child.walk();
+                        for spec in child.children(&mut const_cursor) {
+                            if spec.kind() == "const_spec" || spec.kind() == "var_spec" {
+                                if let Some(name_node) = spec.child_by_field_name("name") {
+                                    let name = &source[name_node.byte_range()];
+                                    let start = spec.start_position();
+                                    let symbol_type = if child.kind() == "const_declaration" {
+                                        SymbolType::Constant
+                                    } else {
+                                        SymbolType::Variable
+                                    };
+                                    symbols.push(Symbol {
+                                        name: name.to_string(),
+                                        symbol_type,
+                                        line: start.row,
+                                        column: start.column,
+                                        is_definition: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    // C/C++: struct, union declarations
+                    "struct_specifier" | "union_specifier" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Struct,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // C/C++: enum specifier
+                    "enum_specifier" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Enum,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // C++: class specifier and namespace
+                    "class_specifier" | "namespace_definition" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = child.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Class,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // C++: template declarations - traverse into them
+                    "template_declaration" => {
+                        let mut template_cursor = child.walk();
+                        for template_child in child.children(&mut template_cursor) {
+                            stack.push(template_child);
                         }
                     }
                     _ => {}
@@ -662,6 +888,362 @@ impl Point {
                 .iter()
                 .any(|s| s.name == "process" && s.symbol_type == SymbolType::Function),
             "Should find process function"
+        );
+    }
+
+    #[test]
+    fn test_go_extraction() {
+        let source = r#"
+package main
+
+type User struct {
+    Name string
+    Age  int
+}
+
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+
+type UserID = string
+
+const MaxSize = 100
+
+var GlobalCount = 0
+
+func main() {
+    fmt.Println("Hello")
+}
+
+func (u *User) GetName() string {
+    return u.Name
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.go"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "User" && s.symbol_type == SymbolType::Struct),
+            "Should find User struct"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Reader" && s.symbol_type == SymbolType::Interface),
+            "Should find Reader interface"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "main" && s.symbol_type == SymbolType::Function),
+            "Should find main function"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "GetName" && s.symbol_type == SymbolType::Method),
+            "Should find GetName method"
+        );
+    }
+
+    #[test]
+    fn test_java_extraction() {
+        let source = r#"
+public class User {
+    private String name;
+    
+    public User(String name) {
+        this.name = name;
+    }
+    
+    public String getName() {
+        return name;
+    }
+}
+
+interface Readable {
+    void read();
+}
+
+enum Status {
+    ACTIVE, INACTIVE
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("Test.java"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "User" && s.symbol_type == SymbolType::Class),
+            "Should find User class"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Readable" && s.symbol_type == SymbolType::Interface),
+            "Should find Readable interface"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Status" && s.symbol_type == SymbolType::Enum),
+            "Should find Status enum"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "getName" && s.symbol_type == SymbolType::Method),
+            "Should find getName method"
+        );
+    }
+
+    #[test]
+    fn test_csharp_extraction() {
+        let source = r#"
+public class User {
+    public string Name { get; set; }
+    
+    public User(string name) {
+        Name = name;
+    }
+    
+    public void Greet() {
+        Console.WriteLine("Hello");
+    }
+}
+
+public struct Point {
+    public int X;
+    public int Y;
+}
+
+public interface IReadable {
+    void Read();
+}
+
+public enum Status {
+    Active,
+    Inactive
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("Test.cs"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "User" && s.symbol_type == SymbolType::Class),
+            "Should find User class"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Point" && s.symbol_type == SymbolType::Struct),
+            "Should find Point struct"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "IReadable" && s.symbol_type == SymbolType::Interface),
+            "Should find IReadable interface"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Status" && s.symbol_type == SymbolType::Enum),
+            "Should find Status enum"
+        );
+    }
+
+    #[test]
+    fn test_cpp_extraction() {
+        let source = r#"
+class MyClass {
+public:
+    void doSomething();
+};
+
+struct Point {
+    int x;
+    int y;
+};
+
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+namespace MyNamespace {
+    void helper() {}
+}
+
+void globalFunction() {
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.cpp"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "MyClass" && s.symbol_type == SymbolType::Class),
+            "Should find MyClass class"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Point" && s.symbol_type == SymbolType::Struct),
+            "Should find Point struct"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Color" && s.symbol_type == SymbolType::Enum),
+            "Should find Color enum"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "MyNamespace" && s.symbol_type == SymbolType::Class),
+            "Should find MyNamespace namespace"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "globalFunction" && s.symbol_type == SymbolType::Function),
+            "Should find globalFunction function"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "helper" && s.symbol_type == SymbolType::Function),
+            "Should find helper function inside namespace"
+        );
+    }
+
+    #[test]
+    fn test_ruby_extraction() {
+        let source = r#"
+class User
+  def initialize(name)
+    @name = name
+  end
+  
+  def greet
+    puts "Hello"
+  end
+  
+  def self.create
+    new("default")
+  end
+end
+
+module Helpers
+  def format
+  end
+end
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.rb"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "User" && s.symbol_type == SymbolType::Class),
+            "Should find User class"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Helpers" && s.symbol_type == SymbolType::Class),
+            "Should find Helpers module"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "greet" && s.symbol_type == SymbolType::Method),
+            "Should find greet method"
+        );
+    }
+
+    #[test]
+    fn test_php_extraction() {
+        let source = r#"<?php
+class User {
+    public function __construct($name) {
+        $this->name = $name;
+    }
+    
+    public function greet() {
+        echo "Hello";
+    }
+}
+
+interface Readable {
+    public function read();
+}
+
+trait Logger {
+    public function log($message) {}
+}
+
+function helper() {
+    return true;
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.php"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "User" && s.symbol_type == SymbolType::Class),
+            "Should find User class"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Readable" && s.symbol_type == SymbolType::Interface),
+            "Should find Readable interface"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Logger" && s.symbol_type == SymbolType::Trait),
+            "Should find Logger trait"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "helper" && s.symbol_type == SymbolType::Function),
+            "Should find helper function"
+        );
+    }
+
+    #[test]
+    fn test_bash_extraction() {
+        let source = r#"#!/bin/bash
+
+function greet() {
+    echo "Hello, $1"
+}
+
+helper() {
+    return 0
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.sh"));
+        let symbols = extractor.extract(source).unwrap();
+
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "greet" && s.symbol_type == SymbolType::Function),
+            "Should find greet function"
         );
     }
 }

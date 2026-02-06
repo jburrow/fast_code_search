@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-06
+
+### Added
+- **Expanded language support**: Tree-sitter symbol extraction now supports 18 languages (up from 4)
+  - **Programming languages**: Rust, Python, JavaScript, TypeScript, Go, C, C++, Java, C#, Ruby, PHP, Bash
+  - **Config & markup**: JSON, TOML, YAML, HTML, CSS, Markdown
+  - Additional file extensions: `.pyi`, `.pyw`, `.mjs`, `.cjs`, `.mts`, `.cts`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.hh`, `.rake`, `.gemspec`, `.jsonc`, `.scss`
+
+- **New symbol types extracted per language**:
+  - Go: functions, methods, structs, interfaces, type aliases, constants, variables
+  - C/C++: functions, structs, unions, enums, classes, namespaces (C++ templates traversed)
+  - Java: classes, interfaces, enums, records, methods, constructors
+  - C#: classes, structs, interfaces, enums, records, methods, properties, constructors
+  - Ruby: classes, modules, methods (including singleton methods)
+  - PHP: classes, interfaces, traits, functions, methods
+  - Bash: functions
+
+### Changed
+- Symbol extractor now handles C/C++ function declarators correctly (name is in `declarator` field, not `name`)
+
 ## [0.2.4] - 2026-02-05
 
 ### Added

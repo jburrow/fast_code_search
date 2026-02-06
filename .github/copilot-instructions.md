@@ -9,7 +9,7 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 | `src/index/trigram.rs` | Roaring bitmap trigram index (trigrams → doc IDs) |
 | `src/index/file_store.rs` | Memory-mapped file storage via `memmap2` |
 | `src/index/persistence.rs` | Save/load index to disk with file locking |
-| `src/symbols/extractor.rs` | Tree-sitter parsing for Rust/Python/JS/TS symbols |
+| `src/symbols/extractor.rs` | Tree-sitter parsing for 12+ languages (Rust, Python, JS/TS, Go, C/C++, Java, C#, Ruby, PHP, Bash) |
 | `src/dependencies/mod.rs` | Import graph for PageRank-style scoring |
 | `src/search/engine.rs` | Core parallel search with rayon + scoring |
 | `src/search/regex_search.rs` | Regex pattern analysis for trigram acceleration |
@@ -29,7 +29,7 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 
 | Task | Steps |
 |------|-------|
-| **Add new language** | 1. Add tree-sitter dep to `Cargo.toml` 2. Update `language_for_file()` in `src/symbols/extractor.rs` 3. Add tests |
+| **Add new language** | 1. Add tree-sitter dep to `Cargo.toml` 2. Update `language_for_file()` in `src/symbols/extractor.rs` 3. Add node type patterns in `extract_functions()` 4. Add tests |
 | **Modify gRPC API** | 1. Edit `proto/search.proto` 2. `cargo build` 3. Update `src/server/service.rs` 4. Update `examples/client.rs` |
 | **Add REST endpoint** | Edit `src/web/api.rs` — params: `q` (query), `max`, `include`, `exclude`, `regex`, `symbols` |
 | **Add new scoring factor** | Edit `calculate_score()` in `src/search/engine.rs` |

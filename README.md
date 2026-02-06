@@ -16,7 +16,7 @@ fast_code_search provides **two complementary search engines** optimized for dif
 The **primary search engine** uses trigram-based indexing with **AST-aware ranking**:
 
 - **Trigram Index**: Splits code into 3-character sequences for O(1) candidate lookup
-- **Tree-sitter Parsing**: Extracts function/class definitions from Rust, Python, JS, TS
+- **Tree-sitter Parsing**: Extracts function/class definitions from 12+ programming languages
 - **Smart Scoring**: Boosts symbol definitions (3x), exact matches (2x), heavily-imported files (PageRank-style)
 - **Regex Support**: Full regex with trigram acceleration for literal prefixes
 - **Symbols-Only Mode**: Search only function/class names for targeted results
@@ -42,7 +42,7 @@ The **optional semantic engine** understands code meaning, not just text pattern
 
 - **Trigram-based inverted index** using Roaring bitmaps for efficient storage and fast lookup
 - **Memory-mapped files** using `memmap2` for optimal memory usage
-- **Symbol awareness** using `tree-sitter` for Rust, Python, JavaScript, and TypeScript
+- **Symbol awareness** using `tree-sitter` for Rust, Python, JavaScript, TypeScript, Go, C, C++, Java, C#, Ruby, PHP, Bash, and more
 - **Parallel search** using `rayon` for maximum throughput
 - **Index persistence** — save index to disk and reload on restart for faster startup times
 - **File watcher** — incremental indexing monitors filesystem changes in real-time
@@ -562,10 +562,28 @@ The key insight: **amortized cost**. Traditional tools pay per-query costs, whil
 ## Supported Languages
 
 Tree-sitter symbol extraction is supported for:
+
+**Programming Languages:**
 - Rust (`.rs`)
-- Python (`.py`)
-- JavaScript (`.js`, `.jsx`)
-- TypeScript (`.ts`, `.tsx`)
+- Python (`.py`, `.pyi`, `.pyw`)
+- JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`)
+- TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`)
+- Go (`.go`)
+- C (`.c`, `.h`)
+- C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.hh`)
+- Java (`.java`)
+- C# (`.cs`)
+- Ruby (`.rb`, `.rake`, `.gemspec`)
+- PHP (`.php`)
+- Bash (`.sh`, `.bash`, `.zsh`)
+
+**Config & Markup Languages:**
+- JSON (`.json`, `.jsonc`)
+- TOML (`.toml`)
+- YAML (`.yaml`, `.yml`)
+- HTML (`.html`, `.htm`)
+- CSS (`.css`, `.scss`)
+- Markdown (`.md`, `.markdown`)
 
 Other file types are still searchable, just without symbol-awareness.
 
