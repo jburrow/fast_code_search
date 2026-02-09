@@ -7,6 +7,10 @@ use anyhow::Result;
 use hnsw_rs::prelude::*;
 use std::path::Path;
 
+/// Maximum number of layers in the HNSW graph
+/// Using 16 provides good balance between depth and construction time
+const HNSW_MAX_LAYER: usize = 16;
+
 /// Configuration for HNSW index
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HnswParams {
@@ -55,7 +59,7 @@ impl VectorIndex {
         let hnsw = Hnsw::<f32, DistCosine>::new(
             params.m,
             initial_capacity,
-            16, // max_layer (0 = auto)
+            HNSW_MAX_LAYER,
             params.ef_construction,
             DistCosine {},
         );
@@ -168,7 +172,7 @@ impl VectorIndex {
         let hnsw = Hnsw::<f32, DistCosine>::new(
             hnsw_params.m,
             initial_capacity,
-            16,
+            HNSW_MAX_LAYER,
             hnsw_params.ef_construction,
             DistCosine {},
         );
