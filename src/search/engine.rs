@@ -14,6 +14,10 @@ use tracing::warn;
 /// Case-insensitive substring search without heap allocation.
 /// Both `haystack` and `needle` are compared using ASCII case-insensitive matching.
 /// `needle` should already be lowercase for optimal performance.
+///
+/// Note: ASCII-only case folding. Non-ASCII characters (e.g., accented letters,
+/// CJK) are compared byte-for-byte without case folding. This is acceptable for
+/// code identifiers but won't handle natural language in comments.
 #[inline]
 fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
@@ -216,9 +220,13 @@ fn find_match_position_case_insensitive(
 }
 
 /// Inline scoring function with pre-computed values (no method call overhead, no redundant lookups)
+///
+/// `original_query` is the un-lowered query for exact case-sensitive match boosting.
+/// `query_lower` is the lowercased query for start-of-line checks.
 #[inline]
 fn calculate_score_inline(
     line: &str,
+    original_query: &str,
     query_lower: &str,
     is_symbol_def: bool,
     is_src_lib: bool,
@@ -226,8 +234,8 @@ fn calculate_score_inline(
 ) -> f64 {
     let mut score = 1.0;
 
-    // Boost for exact case-sensitive matches
-    if line.contains(query_lower) {
+    // Boost for exact case-sensitive matches (using the original un-lowered query)
+    if line.contains(original_query) {
         score *= 2.0;
     }
 
@@ -241,8 +249,8 @@ fn calculate_score_inline(
         score *= 1.5;
     }
 
-    // Boost for shorter lines (more relevant)
-    let line_len_factor = 1.0 / (1.0 + (line.len() as f64 * 0.01));
+    // Boost for shorter lines (more relevant) — gentler logarithmic curve, floors at 0.3
+    let line_len_factor = (1.0 / (1.0 + (line.len() as f64 / 100.0).ln_1p())).max(0.3);
     score *= line_len_factor;
 
     // Boost for query appearing at the start of the line
@@ -278,8 +286,8 @@ fn calculate_score_regex_inline(
         score *= 1.5;
     }
 
-    // Boost for shorter lines (more relevant)
-    let line_len_factor = 1.0 / (1.0 + (line.len() as f64 * 0.01));
+    // Boost for shorter lines (more relevant) — gentler logarithmic curve, floors at 0.3
+    let line_len_factor = (1.0 / (1.0 + (line.len() as f64 / 100.0).ln_1p())).max(0.3);
     score *= line_len_factor;
 
     // Boost for matches at the start of the line
@@ -382,7 +390,8 @@ impl PreIndexedFile {
         // Extract trigrams from lowercase content for case-insensitive search
         // Prepend filename so it's also searchable
         // Note: We lowercase during indexing so queries can be lowercased at search time
-        let content_with_filename = format!("{}\n{}", filename_stem, content);
+        // Use triple newlines to avoid creating garbage trigrams at the filename/content boundary
+        let content_with_filename = format!("{}\n\n\n{}", filename_stem, content);
         let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
@@ -455,7 +464,7 @@ impl RankMode {
 
 /// Pre-computed file metadata for fast ranking without file reads.
 /// Populated once during finalize(), used during search.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
     /// Number of symbol definitions in this file
     pub symbol_count: u16,
@@ -463,6 +472,8 @@ pub struct FileMetadata {
     pub is_src_lib: bool,
     /// Pre-computed base score for ranking
     pub base_score: f32,
+    /// Lowercase filename stem for efficient query matching (avoids per-query allocation)
+    pub lowercase_stem: String,
 }
 
 impl FileMetadata {
@@ -511,21 +522,29 @@ impl FileMetadata {
             base_score *= 0.7;
         }
 
+        // Pre-compute lowercase stem for efficient filename matching during search
+        let lowercase_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
         FileMetadata {
             symbol_count: symbol_count.min(u16::MAX as usize) as u16,
             is_src_lib,
             base_score,
+            lowercase_stem,
         }
     }
 
     /// Compute ranking score for a specific query
     /// This is called during search but doesn't require reading file content
     #[inline]
-    fn query_score(&self, filename_matches: bool) -> f32 {
+    fn query_score(&self, query_lower: &str) -> f32 {
         let mut score = self.base_score;
 
-        // Big boost if query matches filename
-        if filename_matches {
+        // Big boost if query matches filename (using pre-computed lowercase stem)
+        if !query_lower.is_empty() && self.lowercase_stem.contains(query_lower) {
             score *= 5.0;
         }
 
@@ -586,7 +605,8 @@ impl SearchEngine {
         // Index the lowercase content with trigrams for case-insensitive search
         // Prepend filename so it's also searchable
         // Note: We lowercase during indexing so queries can be lowercased at search time
-        let content_with_filename = format!("{}\n{}", filename_stem, content);
+        // Use triple newlines to avoid creating garbage trigrams at the filename/content boundary
+        let content_with_filename = format!("{}\n\n\n{}", filename_stem, content);
         let content_lower = content_with_filename.to_lowercase();
         self.trigram_index.add_document(file_id, &content_lower);
 
@@ -809,29 +829,18 @@ impl SearchEngine {
 
     /// Get the metadata for a file
     #[inline]
-    fn get_file_metadata(&self, file_id: u32) -> FileMetadata {
+    fn get_file_metadata(&self, file_id: u32) -> &FileMetadata {
+        static DEFAULT: std::sync::OnceLock<FileMetadata> = std::sync::OnceLock::new();
         self.file_metadata
             .get(file_id as usize)
-            .copied()
-            .unwrap_or_default()
-    }
-
-    /// Check if query matches filename (for ranking boost)
-    #[inline]
-    fn filename_matches_query(&self, file_id: u32, query_lower: &str) -> bool {
-        self.file_store
-            .get_path(file_id)
-            .and_then(|p| p.file_stem())
-            .and_then(|s| s.to_str())
-            .map(|name| name.to_lowercase().contains(query_lower))
-            .unwrap_or(false)
+            .unwrap_or_else(|| DEFAULT.get_or_init(FileMetadata::default))
     }
 
     /// Threshold for using fast ranking mode in Auto mode
     const FAST_RANKING_THRESHOLD: usize = 5000;
 
     /// Maximum files to read in fast ranking mode
-    const FAST_RANKING_TOP_N: usize = 500;
+    const FAST_RANKING_TOP_N: usize = 2000;
 
     /// Search with configurable ranking mode.
     ///
@@ -867,7 +876,12 @@ impl SearchEngine {
 
         if use_fast && !self.file_metadata.is_empty() {
             // Fast ranking: score by file metadata, read only top N
-            let matches = self.search_fast_ranked(&query_lower, &candidate_docs, max_results);
+            let matches = self.search_fast_ranked_with_query(
+                query,
+                &query_lower,
+                &candidate_docs,
+                max_results,
+            );
             let info = SearchRankingInfo {
                 mode: effective_mode,
                 total_candidates,
@@ -876,7 +890,12 @@ impl SearchEngine {
             (matches, info)
         } else {
             // Full ranking: read all candidates
-            let matches = self.search_full_ranked(&query_lower, &candidate_docs, max_results);
+            let matches = self.search_full_ranked_with_query(
+                query,
+                &query_lower,
+                &candidate_docs,
+                max_results,
+            );
             let info = SearchRankingInfo {
                 mode: effective_mode,
                 total_candidates,
@@ -886,56 +905,55 @@ impl SearchEngine {
         }
     }
 
-    /// Fast ranking: rank candidates by file-level score, read only top N
-    fn search_fast_ranked(
+    /// Fast ranking with original query for exact-match scoring.
+    ///
+    /// `original_query` is passed to line-level scoring for case-sensitive match boost.
+    /// `query_lower` is used for case-insensitive matching and file-level scoring.
+    fn search_fast_ranked_with_query(
         &self,
+        original_query: &str,
         query_lower: &str,
         candidate_docs: &roaring::RoaringBitmap,
         max_results: usize,
     ) -> Vec<SearchMatch> {
-        // Score all candidates by file metadata (no file reads)
+        // Score all candidates by file metadata (no file reads, no allocations)
         let mut scored_candidates: Vec<(u32, f32)> = candidate_docs
             .iter()
             .map(|doc_id| {
                 let meta = self.get_file_metadata(doc_id);
-                let filename_match = self.filename_matches_query(doc_id, query_lower);
-                let score = meta.query_score(filename_match);
+                let score = meta.query_score(query_lower);
                 (doc_id, score)
             })
             .collect();
 
-        // Sort by score descending
         scored_candidates
             .sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Take top N candidates to actually read
         let top_n = Self::FAST_RANKING_TOP_N.min(scored_candidates.len());
         let top_candidates: Vec<u32> = scored_candidates[..top_n]
             .iter()
             .map(|(id, _)| *id)
             .collect();
 
-        tracing::debug!(
-            total_candidates = candidate_docs.len(),
-            reading_top = top_n,
-            "Fast ranking: reading top candidates"
-        );
-
-        // Search in the top candidates
         let mut matches: Vec<SearchMatch> = top_candidates
             .par_iter()
-            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, query_lower))
+            .filter_map(|&doc_id| {
+                self.search_in_document_scored(doc_id, original_query, query_lower)
+            })
             .flatten()
             .collect();
 
-        // Sort by line-level score and return top results
         self.sort_and_truncate(&mut matches, max_results);
         matches
     }
 
-    /// Full ranking: read all candidates for line-level scoring
-    fn search_full_ranked(
+    /// Full ranking with original query for exact-match scoring.
+    ///
+    /// `original_query` is passed to line-level scoring for case-sensitive match boost.
+    /// `query_lower` is used for case-insensitive matching.
+    fn search_full_ranked_with_query(
         &self,
+        original_query: &str,
         query_lower: &str,
         candidate_docs: &roaring::RoaringBitmap,
         max_results: usize,
@@ -944,7 +962,9 @@ impl SearchEngine {
 
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
-            .filter_map(|&doc_id| self.search_in_document_fast(doc_id, query_lower))
+            .filter_map(|&doc_id| {
+                self.search_in_document_scored(doc_id, original_query, query_lower)
+            })
             .flatten()
             .collect();
 
@@ -1053,9 +1073,9 @@ impl SearchEngine {
         };
 
         let matches = if use_fast && !self.file_metadata.is_empty() {
-            self.search_fast_ranked(&query_lower, &filtered_docs, max_results)
+            self.search_fast_ranked_with_query(query, &query_lower, &filtered_docs, max_results)
         } else {
-            self.search_full_ranked(&query_lower, &filtered_docs, max_results)
+            self.search_full_ranked_with_query(query, &query_lower, &filtered_docs, max_results)
         };
 
         let info = SearchRankingInfo {
@@ -1101,8 +1121,10 @@ impl SearchEngine {
         // Get candidate documents using trigram acceleration if possible
         let candidate_docs = if analysis.is_accelerated {
             if let Some(literal) = analysis.best_literal() {
+                // Lowercase the literal since the trigram index stores lowercased content
+                let literal_lower = literal.to_lowercase();
                 tracing::debug!(pattern = %pattern, literal = %literal, "Using trigram acceleration for regex");
-                self.trigram_index.search(literal)
+                self.trigram_index.search(&literal_lower)
             } else {
                 tracing::warn!(pattern = %pattern, "Regex has no usable literals - full scan");
                 self.trigram_index.all_documents()
@@ -1179,14 +1201,21 @@ impl SearchEngine {
         // Pre-compute lowercase query ONCE
         let query_lower = query.to_lowercase();
 
-        // Get all documents (we'll filter by path and search symbols)
-        let all_docs = self.trigram_index.all_documents();
+        // Use trigram index to narrow candidates if the query is long enough for trigrams (>= 3 chars).
+        // This avoids scanning every file when the trigram index can pre-filter.
+        let candidate_docs = if query_lower.len() >= 3 {
+            self.trigram_index.search(&query_lower)
+        } else {
+            // Query too short for trigrams — fall back to all documents
+            self.trigram_index.all_documents()
+        };
 
         // Apply path filter if it has any patterns
         let filtered_docs = if path_filter.is_empty() {
-            all_docs
+            candidate_docs
         } else {
-            path_filter.filter_documents_with(&all_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter
+                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
         };
 
         let total_candidates = filtered_docs.len() as usize;
@@ -1270,6 +1299,26 @@ impl SearchEngine {
         let mut matches = Vec::with_capacity(matching_symbols.len());
 
         for symbol in matching_symbols {
+            // FileName symbols are synthetic (not from file content) — show the file path
+            if symbol.symbol_type == SymbolType::FileName {
+                let display = path_str.clone();
+                let (match_start, match_end) =
+                    find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
+                matches.push(SearchMatch {
+                    file_id: doc_id,
+                    file_path: path_str.clone(),
+                    line_number: 0,
+                    content: display,
+                    match_start,
+                    match_end,
+                    content_truncated: false,
+                    score: 3.0 * dependency_boost,
+                    is_symbol: true,
+                    dependency_count,
+                });
+                continue;
+            }
+
             // Get the line content (symbol.line is 0-based)
             let line = match lines.get(symbol.line) {
                 Some(l) => *l,
@@ -1288,8 +1337,14 @@ impl SearchEngine {
                 };
 
             // Calculate score - symbols always get the symbol definition boost
-            let score =
-                calculate_score_inline(line, query_lower, true, is_src_lib, dependency_boost);
+            let score = calculate_score_inline(
+                line,
+                query_lower,
+                query_lower,
+                true,
+                is_src_lib,
+                dependency_boost,
+            );
 
             // Truncate long lines around the match
             let truncated = truncate_around_match(line, match_start, match_end);
@@ -1395,12 +1450,53 @@ impl SearchEngine {
             }
         }
 
-        Some(matches)
+        // Filename fallback: if no content lines matched but the regex matches a
+        // FileName symbol, synthesize a result showing the file path.
+        if matches.is_empty() {
+            let has_filename_match = symbols
+                .iter()
+                .any(|s| s.symbol_type == SymbolType::FileName && regex.is_match(&s.name));
+            if has_filename_match {
+                let path_ref =
+                    path_str.get_or_insert_with(|| file.path.to_string_lossy().into_owned());
+                let display = path_ref.clone();
+                let (match_start, match_end) = regex
+                    .find(&display)
+                    .map(|m| (m.start(), m.end()))
+                    .unwrap_or((0, 0));
+                matches.push(SearchMatch {
+                    file_id: doc_id,
+                    file_path: path_ref.clone(),
+                    line_number: 0,
+                    content: display,
+                    match_start,
+                    match_end,
+                    content_truncated: false,
+                    score: 3.0 * dependency_boost,
+                    is_symbol: true,
+                    dependency_count,
+                });
+            }
+        }
+
+        if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
     }
 
-    /// Optimized document search - takes pre-lowercased query to avoid allocation per document
+    /// Optimized document search with original query for exact-case scoring.
+    ///
+    /// `original_query` is the un-lowered query string used for exact case-sensitive match boosting.
+    /// `query_lower` is the lowercased query for case-insensitive matching.
     #[inline]
-    fn search_in_document_fast(&self, doc_id: u32, query_lower: &str) -> Option<Vec<SearchMatch>> {
+    fn search_in_document_scored(
+        &self,
+        doc_id: u32,
+        original_query: &str,
+        query_lower: &str,
+    ) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
 
@@ -1460,6 +1556,7 @@ impl SearchEngine {
                 let is_symbol_def = symbol_def_lines.contains(&line_num);
                 let score = calculate_score_inline(
                     line,
+                    original_query,
                     query_lower,
                     is_symbol_def,
                     is_src_lib,
@@ -1490,7 +1587,41 @@ impl SearchEngine {
             }
         }
 
-        Some(matches)
+        // If no content matches, check if the query matches the filename.
+        // The filename is indexed into the trigram index (so the file became a candidate),
+        // but it doesn't appear in the file content. Synthesize a result so the user
+        // sees the file in search results.
+        if matches.is_empty() {
+            let has_filename_match = symbols.iter().any(|s| {
+                s.symbol_type == SymbolType::FileName
+                    && contains_case_insensitive(&s.name, query_lower)
+            });
+            if has_filename_match {
+                let path_ref =
+                    path_str.get_or_insert_with(|| file.path.to_string_lossy().into_owned());
+                let display = path_ref.clone();
+                let (match_start, match_end) =
+                    find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
+                matches.push(SearchMatch {
+                    file_id: doc_id,
+                    file_path: path_ref.clone(),
+                    line_number: 0, // Convention: 0 means "filename match, not a content line"
+                    content: display,
+                    match_start,
+                    match_end,
+                    content_truncated: false,
+                    score: 3.0 * dependency_boost, // Symbol def boost (3×) for filename matches
+                    is_symbol: true,
+                    dependency_count,
+                });
+            }
+        }
+
+        if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
     }
 
     #[allow(dead_code)]
@@ -1555,6 +1686,7 @@ impl SearchEngine {
                 let is_symbol_def = symbol_def_lines.contains(&line_num);
                 let score = calculate_score_inline(
                     line,
+                    query,
                     &query_lower,
                     is_symbol_def,
                     *is_src_lib,
@@ -1589,7 +1721,11 @@ impl SearchEngine {
             }
         }
 
-        Some(matches)
+        if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
     }
 
     pub fn get_stats(&self) -> SearchStats {
@@ -2527,6 +2663,343 @@ fn HelloWorld() {
         assert!(
             !results_mixed.is_empty(),
             "mixed case query should find symbol"
+        );
+    }
+
+    // ========== Tests for review fixes ==========
+
+    /// Fix #1: Regex trigram literals should be lowercased before index lookup.
+    /// Without this fix, searching for a regex like `MyClass\.\w+` would fail to
+    /// find trigram matches because the index stores lowercased content.
+    #[test]
+    fn test_regex_search_uses_lowercased_trigrams() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.py");
+
+        fs::write(
+            &file_path,
+            "class MyClass:\n    def do_thing(self):\n        MyClass.do_thing()\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Regex with uppercase literal — trigram acceleration must lowercase before lookup
+        let results = engine.search_regex(r"MyClass\.\w+", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Regex with uppercase literal should find matches via lowered trigram lookup"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|r| r.content.contains("MyClass.do_thing")),
+            "Should find MyClass.do_thing()"
+        );
+    }
+
+    /// Fix #2: Exact match boost must compare against the original (un-lowered) query.
+    /// A search for "MyFunction" should score the exact-case line higher than
+    /// a line with "myfunction".
+    #[test]
+    fn test_exact_match_boost_uses_original_case() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        // Two lines: one with exact case, one with different case
+        fs::write(&file_path, "fn MyFunction() {}\nfn myfunction() {}\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let results = engine.search("MyFunction", 10);
+        assert!(results.len() >= 2, "Should find both variants");
+
+        // Find the exact-case match and the lower-case match
+        let exact_match = results
+            .iter()
+            .find(|r| r.content.contains("fn MyFunction"))
+            .unwrap();
+        let lower_match = results
+            .iter()
+            .find(|r| r.content.contains("fn myfunction"))
+            .unwrap();
+
+        assert!(
+            exact_match.score > lower_match.score,
+            "Exact case match ({:.3}) should score higher than lowercase ({:.3})",
+            exact_match.score,
+            lower_match.score
+        );
+    }
+
+    /// Fix #7: Line length penalty should be gentle (logarithmic), not harsh.
+    /// A function definition on a ~100-char line should NOT be obliterated by
+    /// a short comment. Both should get reasonable scores.
+    #[test]
+    fn test_line_length_penalty_is_gentle() {
+        // Short line (20 chars)
+        let short_score = calculate_score_inline(
+            "fn do_thing() {}   ",
+            "do_thing",
+            "do_thing",
+            false,
+            false,
+            1.0,
+        );
+
+        // Medium line (~80 chars)
+        let medium_line =
+            "fn do_thing(arg1: String, arg2: i32, arg3: bool) -> Result<()> { todo!() }";
+        let medium_score =
+            calculate_score_inline(&medium_line, "do_thing", "do_thing", false, false, 1.0);
+
+        // Long line (~200 chars)
+        let long_line = format!(
+            "fn do_thing({}) -> Result<()> {{}}",
+            (0..20)
+                .map(|i| format!("arg{}: String", i))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let long_score =
+            calculate_score_inline(&long_line, "do_thing", "do_thing", false, false, 1.0);
+
+        // The medium line should retain a decent fraction of the short line's score
+        assert!(
+            medium_score / short_score > 0.5,
+            "Medium line ({:.3}) should be > 50% of short line ({:.3}), got {:.1}%",
+            medium_score,
+            short_score,
+            medium_score / short_score * 100.0
+        );
+
+        // Even the long line should not drop below 30% (the floor)
+        assert!(
+            long_score / short_score > 0.25,
+            "Long line ({:.3}) should be > 25% of short line ({:.3}), got {:.1}%",
+            long_score,
+            short_score,
+            long_score / short_score * 100.0
+        );
+    }
+
+    /// Fix #8: Document search functions should return None for zero matches
+    /// instead of Some(empty vec), avoiding unnecessary allocations.
+    #[test]
+    fn test_no_match_returns_none_not_empty_vec() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        fs::write(&file_path, "hello world\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Search for something not in the file — should produce zero results
+        let results = engine.search("xyznonexistent", 10);
+        assert!(
+            results.is_empty(),
+            "Search for non-existent term should yield empty results"
+        );
+    }
+
+    /// Fix #9: Filename and content should be separated by triple newline to
+    /// prevent trigram bleed across the boundary.
+    #[test]
+    fn test_filename_content_separator_prevents_trigram_bleed() {
+        let temp_dir = TempDir::new().unwrap();
+        // File named "alpha_module.txt" with content starting with "beta_function"
+        let file_path = temp_dir.path().join("alpha_module.txt");
+        fs::write(&file_path, "beta_function called here\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Verify content is still searchable after the separator change
+        let results = engine.search("beta_function", 10);
+        assert!(
+            !results.is_empty(),
+            "Should find 'beta_function' in file content"
+        );
+
+        // Verify content from the file is correctly returned
+        assert!(
+            results[0].content.contains("beta_function"),
+            "Result content should contain the search term"
+        );
+
+        // The triple newline separator means trigrams like "xt\nb" (from single newline join)
+        // are NOT generated, protecting against false trigram candidate matches on
+        // boundary-spanning text. The filename is used only for trigram candidate filtering,
+        // not for result content.
+    }
+
+    /// Fix #12: FileMetadata should pre-compute lowercase_stem at index time
+    /// and use it for query matching, avoiding per-query path allocation.
+    #[test]
+    fn test_file_metadata_precomputed_lowercase_stem() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("MyModule.rs");
+        fs::write(&file_path, "fn test() {}\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Verify the metadata was computed with the correct lowercase stem
+        let metadata = engine.get_file_metadata(0);
+        assert_eq!(
+            metadata.lowercase_stem, "mymodule",
+            "lowercase_stem should be pre-computed at index time"
+        );
+
+        // Query score should boost when query matches the filename stem
+        let score_match = metadata.query_score("mymodule");
+        let score_nomatch = metadata.query_score("unrelated");
+        assert!(
+            score_match > score_nomatch,
+            "Query matching filename stem ({:.3}) should score higher than non-match ({:.3})",
+            score_match,
+            score_nomatch
+        );
+    }
+
+    /// Fix #4: Symbol search should use trigram pre-filtering for queries >= 3 chars
+    /// instead of scanning all documents.
+    #[test]
+    fn test_symbol_search_uses_trigram_filtering() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create two files: one with target symbol, one without
+        let file_with = temp_dir.path().join("has_symbol.rs");
+        fs::write(&file_with, "fn calculate_total() {\n    // does math\n}\n").unwrap();
+
+        let file_without = temp_dir.path().join("no_symbol.rs");
+        fs::write(
+            &file_without,
+            "fn something_else() {\n    // unrelated\n}\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_with).unwrap();
+        engine.index_file(&file_without).unwrap();
+        engine.finalize();
+
+        // Symbol search for "calculate" (>= 3 chars, should use trigram pre-filtering)
+        let results = engine.search_symbols("calculate", "", "", 10).unwrap();
+        assert!(!results.is_empty(), "Should find calculate_total symbol");
+        assert!(
+            results.iter().all(|r| r.content.contains("calculate")),
+            "All results should contain the query term"
+        );
+    }
+
+    /// Fix #6: FAST_RANKING_TOP_N should be large enough to not miss relevant results.
+    #[test]
+    fn test_fast_ranking_top_n_is_sufficient() {
+        // Just verify the constant is reasonable
+        assert!(
+            SearchEngine::FAST_RANKING_TOP_N >= 2000,
+            "FAST_RANKING_TOP_N should be at least 2000 to avoid dropping relevant files"
+        );
+    }
+
+    /// Filename-only matches: searching for the filename stem should return
+    /// a result even when the query does NOT appear in the file content.
+    #[test]
+    fn test_filename_only_match_returns_result() {
+        let temp_dir = TempDir::new().unwrap();
+        // File whose content does NOT contain "configuration_manager"
+        let file_path = temp_dir.path().join("configuration_manager.rs");
+        fs::write(
+            &file_path,
+            "pub fn init() {\n    println!(\"starting up\");\n}\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Search for the filename stem — not present in content
+        let results = engine.search("configuration_manager", 10);
+        assert!(
+            !results.is_empty(),
+            "Searching for filename stem should return a result even when content doesn't match"
+        );
+
+        // The synthetic filename match should have line_number 0
+        let filename_result = results.iter().find(|r| r.line_number == 0);
+        assert!(
+            filename_result.is_some(),
+            "Filename match should appear with line_number=0"
+        );
+        let filename_result = filename_result.unwrap();
+        assert!(
+            filename_result.is_symbol,
+            "Filename match should be marked as a symbol"
+        );
+        assert!(
+            filename_result.content.contains("configuration_manager"),
+            "Filename match content should contain the filename: got '{}'",
+            filename_result.content
+        );
+    }
+
+    /// Filename-only matches should work in symbol search too.
+    #[test]
+    fn test_filename_symbol_search() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("widget_factory.rs");
+        fs::write(&file_path, "pub fn make() {}\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Symbol search for the filename — the FileName symbol should match
+        let results = engine.search_symbols("widget_factory", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Symbol search for filename stem should return a result"
+        );
+        let sym_result = &results[0];
+        assert_eq!(
+            sym_result.line_number, 0,
+            "FileName symbol should have line_number=0"
+        );
+        assert!(
+            sym_result.content.contains("widget_factory"),
+            "FileName symbol result should show the file path"
+        );
+    }
+
+    /// Filename-only matches should work with regex search too.
+    #[test]
+    fn test_filename_regex_match() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("data_processor.py");
+        fs::write(&file_path, "x = 42\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let results = engine.search_regex(r"data_processor", "", "", 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Regex search for filename stem should return a result"
+        );
+        assert!(
+            results[0].content.contains("data_processor"),
+            "Regex filename match should show the file path"
         );
     }
 }

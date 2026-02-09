@@ -118,20 +118,11 @@ impl TrigramIndex {
 
     /// Search for documents containing all trigrams from the query
     pub fn search(&self, query: &str) -> RoaringBitmap {
-        let query_trigrams = extract_trigrams(query);
+        let unique_trigrams = extract_unique_trigrams(query);
 
-        if query_trigrams.is_empty() {
+        if unique_trigrams.is_empty() {
             return RoaringBitmap::new();
         }
-
-        // Deduplicate trigrams using FxHashSet for better performance
-        let unique_trigrams: Vec<_> = {
-            let mut seen = FxHashSet::default();
-            query_trigrams
-                .into_iter()
-                .filter(|t| seen.insert(*t))
-                .collect()
-        };
 
         // Find all matching bitmaps and check for missing trigrams
         let mut bitmaps: Vec<&RoaringBitmap> = Vec::with_capacity(unique_trigrams.len());

@@ -457,12 +457,12 @@ impl SymbolExtractor {
                         }
                     }
                     // C++: template declarations - traverse into them
-                    "template_declaration" => {
-                        let mut template_cursor = child.walk();
-                        for template_child in child.children(&mut template_cursor) {
-                            stack.push(template_child);
-                        }
-                    }
+                    // C++: template declarations — just let the default stack.push(child)
+                    // below handle traversal. The template_declaration node will be pushed
+                    // to the stack, and when it becomes `current`, its children
+                    // (function_definition, class_specifier, etc.) will be matched naturally.
+                    // No special handling needed.
+                    "template_declaration" => {}
                     _ => {}
                 }
 
@@ -1244,6 +1244,66 @@ helper() {
                 .iter()
                 .any(|s| s.name == "greet" && s.symbol_type == SymbolType::Function),
             "Should find greet function"
+        );
+    }
+
+    /// Fix #3: C++ template declarations should NOT produce duplicate symbols.
+    /// A templated function like `template<class T> T max_val(T a, T b)` should
+    /// yield exactly one symbol "max_val", not two.
+    #[test]
+    fn test_cpp_template_no_duplicate_symbols() {
+        let source = r#"
+template<class T>
+T max_val(T a, T b) {
+    return a > b ? a : b;
+}
+
+template<typename T>
+class Container {
+public:
+    void add(T item);
+};
+
+void regular_function() {
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("test.cpp"));
+        let symbols = extractor.extract(source).unwrap();
+
+        // Count how many times max_val appears
+        let max_val_count = symbols.iter().filter(|s| s.name == "max_val").count();
+        assert_eq!(
+            max_val_count, 1,
+            "Templated function 'max_val' should appear exactly once, got {}",
+            max_val_count
+        );
+
+        // Count how many times Container appears
+        let container_count = symbols.iter().filter(|s| s.name == "Container").count();
+        assert_eq!(
+            container_count, 1,
+            "Templated class 'Container' should appear exactly once, got {}",
+            container_count
+        );
+
+        // Verify all expected symbols are present
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "max_val" && s.symbol_type == SymbolType::Function),
+            "Should find max_val function"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Container" && s.symbol_type == SymbolType::Class),
+            "Should find Container class"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "regular_function" && s.symbol_type == SymbolType::Function),
+            "Should find regular_function"
         );
     }
 }
