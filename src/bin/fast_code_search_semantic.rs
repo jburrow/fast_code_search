@@ -16,7 +16,6 @@ use fast_code_search::utils::is_binary_content;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
 
 /// Fast Code Search Semantic Server
 #[derive(Parser, Debug)]
@@ -52,26 +51,8 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize logging
-    let log_level = if args.verbose {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-
-    FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .init();
-
-    // Initialize diagnostics server start time
-    diagnostics::init_server_start_time();
-
-    // Handle --init flag
-    if let Some(init_path) = args.init {
+    // Handle --init flag (no logging needed yet)
+    if let Some(init_path) = args.init.clone() {
         let path = if init_path.as_os_str().is_empty() {
             PathBuf::from("fast_code_search_semantic.toml")
         } else {
@@ -96,6 +77,23 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let config = load_config(&args)?;
+
+    // Initialize tracing (must come after config load)
+    let log_level = if args.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+    let tele = config.telemetry.clone().with_env_overrides();
+    fast_code_search::telemetry::init_telemetry(
+        tele.enabled,
+        &tele.otlp_endpoint,
+        &tele.service_name,
+        log_level,
+    )?;
+
+    // Initialize diagnostics server start time
+    diagnostics::init_server_start_time();
 
     info!(
         server_address = %config.server.web_address,
@@ -298,6 +296,7 @@ async fn main() -> Result<()> {
         info!(address = %grpc_addr, "Semantic gRPC server listening on {}", grpc_addr);
 
         Server::builder()
+            .trace_fn(|_| tracing::info_span!("semantic_grpc"))
             .add_service(SemanticCodeSearchServer::new(service))
             .serve(addr)
             .await
@@ -338,6 +337,9 @@ async fn main() -> Result<()> {
     // Keep the main thread alive
     tokio::signal::ctrl_c().await?;
     info!("Shutting down...");
+
+    // Flush pending OTel spans on shutdown
+    fast_code_search::telemetry::shutdown_telemetry();
 
     Ok(())
 }

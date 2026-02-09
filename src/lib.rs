@@ -8,5 +8,6 @@ pub mod semantic_server;
 pub mod semantic_web;
 pub mod server;
 pub mod symbols;
+pub mod telemetry;
 pub mod utils;
 pub mod web;

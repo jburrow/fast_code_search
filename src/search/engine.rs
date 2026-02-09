@@ -841,6 +841,7 @@ impl SearchEngine {
     /// - `Full`: Reads all candidates for line-level scoring (slower but most accurate)
     ///
     /// Returns (matches, ranking_info) where ranking_info contains metadata about the search.
+    #[tracing::instrument(skip(self), fields(max_results, rank_mode = ?rank_mode))]
     pub fn search_ranked(
         &self,
         query: &str,
@@ -976,6 +977,7 @@ impl SearchEngine {
 
     /// Search for a query using parallel processing (uses Auto ranking mode).
     /// For explicit control over ranking, use `search_ranked()`.
+    #[tracing::instrument(skip(self))]
     pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchMatch> {
         let (matches, _info) = self.search_ranked(query, max_results, RankMode::Auto);
         matches
@@ -993,6 +995,7 @@ impl SearchEngine {
     /// * `include_patterns` - Semicolon-delimited glob patterns to include
     /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
     /// * `max_results` - Maximum number of results to return
+    #[tracing::instrument(skip(self))]
     pub fn search_with_filter(
         &self,
         query: &str,
@@ -1011,6 +1014,7 @@ impl SearchEngine {
     }
 
     /// Search with path filtering and explicit ranking mode control.
+    #[tracing::instrument(skip(self), fields(rank_mode = ?rank_mode))]
     pub fn search_with_filter_ranked(
         &self,
         query: &str,
@@ -1080,6 +1084,7 @@ impl SearchEngine {
     /// * `include_patterns` - Semicolon-delimited glob patterns to include
     /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
     /// * `max_results` - Maximum number of results to return
+    #[tracing::instrument(skip(self))]
     pub fn search_regex(
         &self,
         pattern: &str,
@@ -1160,6 +1165,7 @@ impl SearchEngine {
     /// * `include_patterns` - Semicolon-delimited glob patterns to include
     /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
     /// * `max_results` - Maximum number of results to return
+    #[tracing::instrument(skip(self))]
     pub fn search_symbols(
         &self,
         query: &str,

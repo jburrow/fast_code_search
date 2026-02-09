@@ -64,21 +64,25 @@ globset = "0.4"
 regex = "1.11"
 regex-syntax = "0.8"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace"] }
+tracing-opentelemetry = "0.28"
 sysinfo = "0.33"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = { version = "0.3", features = ["sink"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 rust-embed = "8"
 mime_guess = "2"
 md5 = "0.8"
 notify-debouncer-full = "0.7"
-ndarray = "0.15"                                                              # For vector operations in semantic search
+ndarray = "0.15"                                                                # For vector operations in semantic search
 fs2 = "0.4"
-chrono = "0.4"                                                                # For timestamp formatting in diagnostics
-rand = "0.9"                                                                  # For random file sampling in self-tests
-tempfile = "3"                                                                # For validator temporary corpus
-indicatif = "0.17"                                                            # Terminal progress bars
+chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
+rand = "0.9"                                                                    # For random file sampling in self-tests
+tempfile = "3"                                                                  # For validator temporary corpus
+indicatif = "0.17"                                                              # Terminal progress bars
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
 ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
     "load-dynamic",

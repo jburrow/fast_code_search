@@ -7,11 +7,11 @@ use fast_code_search::search::{
     ProgressBroadcaster, SharedIndexingProgress,
 };
 use fast_code_search::server;
+use fast_code_search::telemetry;
 use fast_code_search::web;
 use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
 
 /// Fast Code Search Server - High-performance code search service
 #[derive(Parser, Debug)]
@@ -47,23 +47,6 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize tracing subscriber
-    let log_level = if args.verbose {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-    FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .init();
-
-    // Initialize diagnostics server start time
-    diagnostics::init_server_start_time();
-
     // Handle --init flag: generate template config and exit
     if let Some(init_path) = args.init {
         let path = if init_path.as_os_str().is_empty() {
@@ -87,6 +70,18 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let config = load_config(&args)?;
+
+    // Initialize tracing subscriber (must come after config load so TOML telemetry values are available)
+    let log_level = if args.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+    let tele = config.telemetry.clone().with_env_overrides();
+    telemetry::init_telemetry(tele.enabled, &tele.otlp_endpoint, &tele.service_name, log_level)?;
+
+    // Initialize diagnostics server start time
+    diagnostics::init_server_start_time();
 
     info!(
         server_address = %config.server.address,
@@ -164,9 +159,13 @@ async fn main() -> Result<()> {
     info!("Ready to accept connections");
 
     Server::builder()
+        .trace_fn(|_| tracing::info_span!("grpc"))
         .add_service(search_service)
         .serve(addr)
         .await?;
+
+    // Flush pending OTel spans on shutdown
+    telemetry::shutdown_telemetry();
 
     Ok(())
 }

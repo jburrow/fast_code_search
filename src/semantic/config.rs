@@ -7,6 +7,73 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Telemetry / OpenTelemetry configuration for semantic search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticTelemetryConfig {
+    /// Enable OpenTelemetry trace export (default: true)
+    /// Can be overridden by env var FCS_TRACING_ENABLED or OTEL_SDK_DISABLED
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// OTLP exporter endpoint (default: http://localhost:4317)
+    /// Can be overridden by env var OTEL_EXPORTER_OTLP_ENDPOINT
+    #[serde(default = "default_otlp_endpoint")]
+    pub otlp_endpoint: String,
+
+    /// Service name reported to the collector (default: fast_code_search_semantic)
+    /// Can be overridden by env var OTEL_SERVICE_NAME
+    #[serde(default = "default_semantic_service_name")]
+    pub service_name: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_otlp_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+
+fn default_semantic_service_name() -> String {
+    "fast_code_search_semantic".to_string()
+}
+
+impl Default for SemanticTelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            otlp_endpoint: default_otlp_endpoint(),
+            service_name: default_semantic_service_name(),
+        }
+    }
+}
+
+impl SemanticTelemetryConfig {
+    /// Apply environment variable overrides.
+    /// Env vars take precedence over TOML config values.
+    pub fn with_env_overrides(mut self) -> Self {
+        if let Ok(val) = std::env::var("OTEL_SDK_DISABLED") {
+            if val.eq_ignore_ascii_case("true") {
+                self.enabled = false;
+            }
+        }
+        if let Ok(val) = std::env::var("FCS_TRACING_ENABLED") {
+            self.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        if let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+            if !val.is_empty() {
+                self.otlp_endpoint = val;
+            }
+        }
+        if let Ok(val) = std::env::var("OTEL_SERVICE_NAME") {
+            if !val.is_empty() {
+                self.service_name = val;
+            }
+        }
+        self
+    }
+}
+
 /// Main semantic search configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SemanticConfig {
@@ -15,6 +82,9 @@ pub struct SemanticConfig {
 
     #[serde(default)]
     pub indexer: SemanticIndexerConfig,
+
+    #[serde(default)]
+    pub telemetry: SemanticTelemetryConfig,
 }
 
 /// Server-related configuration
@@ -204,6 +274,20 @@ chunk_overlap = 5
 # Path to persistent index storage (optional)
 # If set, the index will be saved to disk and loaded on restart
 # index_path = "/var/lib/fast_code_search_semantic/index"
+
+[telemetry]
+# Enable OpenTelemetry trace export (default: true)
+# Set to false to disable OTLP export (console logging is always active)
+# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=false
+enabled = true
+
+# OTLP gRPC exporter endpoint (default: http://localhost:4317)
+# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
+otlp_endpoint = "http://localhost:4317"
+
+# Service name reported to the collector
+# Env override: OTEL_SERVICE_NAME
+service_name = "fast_code_search_semantic"
 "#
         .to_string()
     }

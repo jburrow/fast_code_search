@@ -195,6 +195,7 @@ impl Default for CodeSearchService {
 impl CodeSearch for CodeSearchService {
     type SearchStream = ReceiverStream<Result<SearchResult, Status>>;
 
+    #[tracing::instrument(skip(self, request), fields(query, max_results))]
     async fn search(
         &self,
         request: Request<SearchRequest>,
@@ -263,6 +264,7 @@ impl CodeSearch for CodeSearchService {
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn index(
         &self,
         request: Request<IndexRequest>,

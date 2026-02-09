@@ -8,6 +8,71 @@ use std::path::{Path, PathBuf};
 
 use crate::utils::normalize_path_for_comparison;
 
+/// Telemetry / OpenTelemetry configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryConfig {
+    /// Enable OpenTelemetry trace export (default: true)
+    /// Can be overridden by env var FCS_TRACING_ENABLED or OTEL_SDK_DISABLED
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// OTLP exporter endpoint (default: http://localhost:4317)
+    /// Can be overridden by env var OTEL_EXPORTER_OTLP_ENDPOINT
+    #[serde(default = "default_otlp_endpoint")]
+    pub otlp_endpoint: String,
+
+    /// Service name reported to the collector (default: fast_code_search)
+    /// Can be overridden by env var OTEL_SERVICE_NAME
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+}
+
+fn default_otlp_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+
+fn default_service_name() -> String {
+    "fast_code_search".to_string()
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            otlp_endpoint: default_otlp_endpoint(),
+            service_name: default_service_name(),
+        }
+    }
+}
+
+impl TelemetryConfig {
+    /// Apply environment variable overrides.
+    /// Env vars take precedence over TOML config values.
+    pub fn with_env_overrides(mut self) -> Self {
+        // OTEL_SDK_DISABLED=true → disabled (official OTel convention)
+        if let Ok(val) = std::env::var("OTEL_SDK_DISABLED") {
+            if val.eq_ignore_ascii_case("true") {
+                self.enabled = false;
+            }
+        }
+        // FCS_TRACING_ENABLED=false → disabled (project-specific kill-switch)
+        if let Ok(val) = std::env::var("FCS_TRACING_ENABLED") {
+            self.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        if let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+            if !val.is_empty() {
+                self.otlp_endpoint = val;
+            }
+        }
+        if let Ok(val) = std::env::var("OTEL_SERVICE_NAME") {
+            if !val.is_empty() {
+                self.service_name = val;
+            }
+        }
+        self
+    }
+}
+
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -16,6 +81,9 @@ pub struct Config {
 
     #[serde(default)]
     pub indexer: IndexerConfig,
+
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 /// Server-related configuration
@@ -252,6 +320,20 @@ exclude_patterns = [
 
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
+
+[telemetry]
+# Enable OpenTelemetry trace export (default: true)
+# Set to false to disable OTLP export (console logging is always active)
+# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=false
+enabled = true
+
+# OTLP gRPC exporter endpoint (default: http://localhost:4317)
+# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
+otlp_endpoint = "http://localhost:4317"
+
+# Service name reported to the collector
+# Env override: OTEL_SERVICE_NAME
+service_name = "fast_code_search"
 
 # Path to persistent index storage (optional)
 # If set, the index will be saved to disk and loaded on restart for faster startup

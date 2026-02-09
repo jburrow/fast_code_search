@@ -12,6 +12,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use std::sync::{Arc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -60,6 +61,7 @@ pub fn create_router(
         .route("/", get(index_handler))
         .route("/{*file}", get(static_handler))
         .layer(cors)
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 

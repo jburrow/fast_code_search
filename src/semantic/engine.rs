@@ -76,6 +76,7 @@ impl SemanticSearchEngine {
     }
 
     /// Search with natural language query
+    #[tracing::instrument(skip(self))]
     pub fn search(&mut self, query: &str, max_results: usize) -> Result<Vec<SemanticSearchResult>> {
         info!(query = query, max_results = max_results, "Semantic search");
 

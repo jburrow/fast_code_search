@@ -30,6 +30,7 @@ impl SemanticCodeSearch for SemanticSearchService {
     type SearchStream =
         tokio_stream::wrappers::ReceiverStream<Result<SemanticSearchResult, Status>>;
 
+    #[tracing::instrument(skip(self, request), fields(query, max_results))]
     async fn search(
         &self,
         request: Request<SemanticSearchRequest>,
@@ -87,6 +88,7 @@ impl SemanticCodeSearch for SemanticSearchService {
         )))
     }
 
+    #[tracing::instrument(skip(self, _request))]
     async fn get_stats(
         &self,
         _request: Request<StatsRequest>,
@@ -110,6 +112,7 @@ impl SemanticCodeSearch for SemanticSearchService {
         Ok(Response::new(response))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn reload_index(
         &self,
         request: Request<ReloadIndexRequest>,
