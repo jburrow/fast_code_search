@@ -1,9 +1,10 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tree_sitter::Parser;
 use tree_sitter_language::LanguageFn;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SymbolType {
     Function,
     Class,
@@ -19,7 +20,7 @@ pub enum SymbolType {
     FileName,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
     pub name: String,
     pub symbol_type: SymbolType,
@@ -29,7 +30,7 @@ pub struct Symbol {
 }
 
 /// Represents an import statement found in source code
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportStatement {
     /// The raw import path/module name as written in source
     pub path: String,
@@ -40,7 +41,7 @@ pub struct ImportStatement {
 }
 
 /// Type of import statement
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ImportType {
     /// Rust: `use crate::foo`, `use super::bar`, `mod foo`
     Rust,

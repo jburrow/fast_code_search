@@ -15,10 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Embeddings now persisted alongside HNSW index for proper save/load functionality
   - 2-10x faster query performance for large codebases (>10K chunks)
 
+- **Persisted symbols and dependencies for faster index loading** (v3 index format)
+  - Symbols and dependency graph now saved with the index file
+  - Eliminates 15-minute symbol/import rebuild on startup for large codebases
+  - 10-16x faster index loading compared to rebuild time
+  - Backward compatible: v2 indexes auto-rebuild on load
+
 ### Changed
 - Semantic search vector index now uses HNSW instead of linear search
 - Updated documentation with HNSW configuration and tuning guide
 - Memory overhead increased to ~3x indexed code size (from ~2x) due to HNSW graph structure
+- Persisted index format bumped to v3 with symbols and dependencies
 
 ## [0.4.0] - 2026-02-09
 

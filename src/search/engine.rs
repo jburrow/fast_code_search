@@ -833,12 +833,11 @@ impl SearchEngine {
 
     pub fn rebuild_symbols_and_dependencies_with_progress<F>(
         &mut self,
-        mut progress_callback: F,
+        progress_callback: F,
     ) -> RebuildCacheStats
     where
-        F: FnMut(usize, usize),
+        F: Fn(usize, usize) + Sync,
     {
-
         let total_files = self.file_store.len();
         if total_files == 0 {
             return RebuildCacheStats::default();
@@ -857,6 +856,9 @@ impl SearchEngine {
         }
 
         let file_store = &self.file_store;
+
+        const PROGRESS_UPDATE_EVERY: usize = 1000;
+        let progress = std::sync::atomic::AtomicUsize::new(0);
 
         progress_callback(0, total_files);
 
@@ -917,10 +919,20 @@ impl SearchEngine {
                     had_content,
                 })
             })
+            .inspect(|_| {
+                let processed = progress
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
+                if processed.is_multiple_of(PROGRESS_UPDATE_EVERY) || processed == total_files {
+                    progress_callback(processed, total_files);
+                }
+            })
             .collect();
 
-        let mut stats = RebuildCacheStats::default();
-        stats.files_processed = entries.len();
+        let mut stats = RebuildCacheStats {
+            files_processed: entries.len(),
+            ..Default::default()
+        };
 
         for entry in entries {
             stats.symbols_extracted += entry.symbols.len();
@@ -930,7 +942,8 @@ impl SearchEngine {
             }
 
             if entry.file_id as usize >= self.symbol_cache.len() {
-                self.symbol_cache.resize(entry.file_id as usize + 1, Vec::new());
+                self.symbol_cache
+                    .resize(entry.file_id as usize + 1, Vec::new());
             }
             self.symbol_cache[entry.file_id as usize] = entry.symbols;
 
@@ -1937,12 +1950,18 @@ impl SearchEngine {
             }
         }
 
+        // Collect symbols and dependency edges
+        let symbols = self.symbol_cache.clone();
+        let dependency_edges = self.dependency_index.export_edges();
+
         // Create persisted index with config fingerprint
         let persisted = PersistedIndex::new(
             config.fingerprint(),
             config.paths.clone(),
             files,
             self.trigram_index.get_trigram_map(),
+            symbols,
+            dependency_edges,
         )?;
         persisted.save(path)?;
 
@@ -1950,8 +1969,10 @@ impl SearchEngine {
             path = %path.display(),
             files = self.file_store.len(),
             trigrams = self.trigram_index.num_trigrams(),
+            symbols = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
+            dependency_edges = self.dependency_index.total_edges(),
             config_fingerprint = %config.fingerprint(),
-            "Index saved to disk"
+            "Index saved to disk with symbols and dependencies"
         );
 
         Ok(())
@@ -2020,9 +2041,39 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
+        // Restore symbols and dependencies from persisted data, or rebuild if not available
         let rebuild_stats = if self.file_store.is_empty() {
             RebuildCacheStats::default()
+        } else if !persisted.symbols.is_empty() {
+            // Restore from persisted data (v3+)
+            self.symbol_cache = persisted.symbols;
+
+            // Ensure symbol_cache is properly sized for all files
+            let total_files = self.file_store.len();
+            while self.symbol_cache.len() < total_files {
+                self.symbol_cache.push(Vec::new());
+            }
+
+            // Re-register all files for dependency resolution
+            for file_id in 0..total_files as u32 {
+                if let Some(path) = self.file_store.get_path(file_id) {
+                    self.dependency_index.register_file(file_id, path);
+                }
+            }
+
+            // Restore dependency edges
+            self.dependency_index
+                .restore_edges(persisted.dependency_edges);
+
+            tracing::info!(
+                symbols_restored = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
+                dependency_edges = self.dependency_index.total_edges(),
+                "Restored symbols and dependencies from persisted index"
+            );
+
+            RebuildCacheStats::default()
         } else {
+            // Fallback: rebuild if no persisted data (v2 or older)
             self.rebuild_symbols_and_dependencies()
         };
 
@@ -2061,10 +2112,10 @@ impl SearchEngine {
         &mut self,
         path: &std::path::Path,
         config: &crate::config::IndexerConfig,
-        mut progress_callback: F,
+        progress_callback: F,
     ) -> anyhow::Result<LoadIndexResult>
     where
-        F: FnMut(LoadingPhase, Option<usize>, Option<usize>, &str),
+        F: Fn(LoadingPhase, Option<usize>, Option<usize>, &str) + Sync,
     {
         use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
@@ -2187,13 +2238,56 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
-        if !self.file_store.is_empty() {
+        // Phase 6: Restore symbols and dependencies from persisted data
+        if !self.file_store.is_empty() && !persisted.symbols.is_empty() {
+            let total_files = self.file_store.len();
+
+            progress_callback(
+                LoadingPhase::RebuildingSymbols,
+                Some(total_files),
+                Some(0),
+                "Restoring symbols and dependency graph...",
+            );
+
+            // Restore symbol cache
+            self.symbol_cache = persisted.symbols;
+
+            // Ensure symbol_cache is properly sized for all files
+            while self.symbol_cache.len() < total_files {
+                self.symbol_cache.push(Vec::new());
+            }
+
+            // Re-register all files for dependency resolution
+            for file_id in 0..total_files as u32 {
+                if let Some(path) = self.file_store.get_path(file_id) {
+                    self.dependency_index.register_file(file_id, path);
+                }
+            }
+
+            // Restore dependency edges
+            self.dependency_index
+                .restore_edges(persisted.dependency_edges);
+
+            progress_callback(
+                LoadingPhase::RebuildingSymbols,
+                Some(total_files),
+                Some(total_files),
+                "Symbols and dependencies restored from index",
+            );
+
+            tracing::info!(
+                symbols_restored = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
+                dependency_edges = self.dependency_index.total_edges(),
+                "Restored symbols and dependencies from persisted index"
+            );
+        } else if !self.file_store.is_empty() {
+            // Fallback: rebuild if no persisted data (v2 or older index)
             let total_files = self.file_store.len();
             progress_callback(
                 LoadingPhase::RebuildingSymbols,
                 Some(total_files),
                 Some(0),
-                "Rebuilding symbols and import graph...",
+                "Rebuilding symbols and import graph (legacy index)...",
             );
 
             let _stats = self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
@@ -2283,14 +2377,44 @@ impl SearchEngine {
 
         self.trigram_index.finalize();
 
+        // Restore symbols and dependencies from persisted data, or rebuild if not available
         if !self.file_store.is_empty() {
-            let rebuild_stats = self.rebuild_symbols_and_dependencies();
-            tracing::info!(
-                symbols_rebuilt = rebuild_stats.symbols_extracted,
-                imports_rebuilt = rebuild_stats.imports_extracted,
-                files_skipped = rebuild_stats.files_skipped,
-                "Rebuilt symbol and dependency caches after load"
-            );
+            if !persisted.symbols.is_empty() {
+                // Restore from persisted data (v3+)
+                self.symbol_cache = persisted.symbols;
+
+                // Ensure symbol_cache is properly sized for all files
+                let total_files = self.file_store.len();
+                while self.symbol_cache.len() < total_files {
+                    self.symbol_cache.push(Vec::new());
+                }
+
+                // Re-register all files for dependency resolution
+                for file_id in 0..total_files as u32 {
+                    if let Some(path) = self.file_store.get_path(file_id) {
+                        self.dependency_index.register_file(file_id, path);
+                    }
+                }
+
+                // Restore dependency edges
+                self.dependency_index
+                    .restore_edges(persisted.dependency_edges);
+
+                tracing::info!(
+                    symbols_restored = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
+                    dependency_edges = self.dependency_index.total_edges(),
+                    "Restored symbols and dependencies from persisted index"
+                );
+            } else {
+                // Fallback: rebuild if no persisted data (v2 or older)
+                let rebuild_stats = self.rebuild_symbols_and_dependencies();
+                tracing::info!(
+                    symbols_rebuilt = rebuild_stats.symbols_extracted,
+                    imports_rebuilt = rebuild_stats.imports_extracted,
+                    files_skipped = rebuild_stats.files_skipped,
+                    "Rebuilt symbol and dependency caches after load"
+                );
+            }
         }
 
         tracing::info!(

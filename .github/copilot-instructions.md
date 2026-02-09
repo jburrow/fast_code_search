@@ -8,7 +8,7 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 |------|----------------|
 | `src/index/trigram.rs` | Roaring bitmap trigram index (trigrams → doc IDs) |
 | `src/index/file_store.rs` | Memory-mapped file storage via `memmap2` |
-| `src/index/persistence.rs` | Save/load index to disk with file locking |
+| `src/index/persistence.rs` | Save/load index to disk with file locking (v3: includes symbols & dependencies) |
 | `src/symbols/extractor.rs` | Tree-sitter parsing for 12+ languages (Rust, Python, JS/TS, Go, C/C++, Java, C#, Ruby, PHP, Bash) |
 | `src/dependencies/mod.rs` | Import graph for PageRank-style scoring |
 | `src/search/engine.rs` | Core parallel search with rayon + scoring |
