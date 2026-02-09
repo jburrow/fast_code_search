@@ -302,7 +302,10 @@ impl ModelDownloader {
             return Self::normalize_sha256(&expected).map(Some);
         }
 
-        let scoped_env = format!("FCS_MODEL_SHA256_{}", Self::env_model_suffix(&model_info.name));
+        let scoped_env = format!(
+            "FCS_MODEL_SHA256_{}",
+            Self::env_model_suffix(&model_info.name)
+        );
         let scoped_hash = std::env::var(scoped_env)
             .ok()
             .filter(|value| !value.trim().is_empty());
