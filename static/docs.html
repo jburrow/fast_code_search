@@ -162,9 +162,9 @@
             <p>Searches for exact text matches across all indexed files. Uses trigram indexing for fast candidate
                 filtering.</p>
             <ul>
-                <li>Case-insensitive matching</li>
+                <li>ASCII case-insensitive matching</li>
                 <li>Supports glob-based path filtering</li>
-                <li>Can filter to symbol definitions only</li>
+                <li>Can filter to symbol definitions only (plus filename matches)</li>
             </ul>
 
             <h3>Regex Search</h3>
@@ -172,8 +172,10 @@
                 literals in the regex are used to accelerate the search via trigram filtering.</p>
 
             <h3>Symbols Only</h3>
-            <p>Enable <code>Symbols Only</code> to search only in function, class, and method definitions. This is much
-                faster when you're looking for code definitions rather than all usages.</p>
+            <p>Enable <code>Symbols Only</code> to search only in symbol definitions (functions, classes, methods,
+                types, interfaces, enums, constants, variables, etc.). Filename matches are also included with
+                <code>line_number</code> set to 0. This is much faster when you're looking for definitions rather than
+                all usages.</p>
 
             <h2>Ranking System</h2>
 
@@ -196,7 +198,7 @@
                 <tr>
                     <td><span class="badge badge-fast">Fast</span></td>
                     <td>⚡</td>
-                    <td>Ranks by file metadata, reads top 500 files only</td>
+                    <td>Ranks by file metadata, reads top 2000 files only</td>
                     <td>>5,000 candidates (Auto) or explicit</td>
                 </tr>
                 <tr>
@@ -210,7 +212,7 @@
             <h3>File-Level Scoring Factors</h3>
             <p>In <span class="badge badge-fast">Fast</span> mode, files are ranked by pre-computed metadata:</p>
             <ul>
-                <li><strong>Symbol density</strong>: Files with more function/class definitions rank higher (+4 max)
+                <li><strong>Symbol density</strong>: Files with more symbol definitions rank higher (+4 max)
                 </li>
                 <li><strong>Source location</strong>: Files in <code>src/</code> or <code>lib/</code> directories get a
                     boost (+2)</li>
@@ -221,7 +223,7 @@
             <h3>Match-Level Scoring Factors</h3>
             <p>After reading file content, matches are scored by:</p>
             <ul>
-                <li><strong>Symbol definition</strong>: 3× boost for matches in function/class names</li>
+                <li><strong>Symbol definition</strong>: 3× boost for matches in symbol names</li>
                 <li><strong>Exact match</strong>: 2× boost when query matches exactly (not a substring)</li>
                 <li><strong>File score</strong>: Base file score is carried through</li>
             </ul>
@@ -272,7 +274,7 @@
                     <td><code>symbols</code></td>
                     <td>boolean</td>
                     <td>false</td>
-                    <td>Search only in symbol definitions</td>
+                    <td>Search only in symbol definitions and filename matches</td>
                 </tr>
                 <tr>
                     <td><code>rank</code></td>
@@ -281,6 +283,8 @@
                     <td>Ranking mode: <code>auto</code>, <code>fast</code>, or <code>full</code></td>
                 </tr>
             </table>
+            <p><strong>Note:</strong> <code>rank</code> applies to text searches only. Regex and symbols-only queries
+                use internal fast ranking and omit ranking metadata in the response.</p>
 
             <h3>Example Requests</h3>
             <pre><code># Basic search
@@ -313,8 +317,8 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
   "total_results": 1,
   "elapsed_ms": 23.4,
   "rank_mode": "fast",
-  "total_candidates": 15000,
-  "candidates_searched": 500
+    "total_candidates": 15000,
+    "candidates_searched": 2000
 }</code></pre>
 
             <h2>Path Filter Patterns</h2>
@@ -337,8 +341,8 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
                     <td>Files in any test/ directory</td>
                 </tr>
                 <tr>
-                    <td><code>!**/vendor/**</code></td>
-                    <td>Exclude vendor directories</td>
+                    <td><code>**/vendor/**</code></td>
+                    <td>Vendor directories (use <code>exclude</code> parameter)</td>
                 </tr>
             </table>
             <p>Separate multiple patterns with semicolons: <code>src/**;lib/**</code></p>

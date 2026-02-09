@@ -77,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Two-phase ranking system for large-scale search**: Dramatically improves search performance on codebases with 100k+ files
-  - Fast mode: Ranks candidates by pre-computed file metadata (symbols, imports, path), reads only top 500 files
+  - Fast mode: Ranks candidates by pre-computed file metadata (symbols, imports, path), reads only top 2000 files
   - Full mode: Reads all candidate files for complete scoring
   - Auto mode (default): Automatically switches to Fast when >5,000 candidates
   - File-level scoring factors: symbol density (+4 max), src/lib location (+2), import count (+5 max), test/example penalty (0.7×)
@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Response includes `rank_mode`, `total_candidates`, and `candidates_searched` metadata
 
 - **Ranking mode UI toggle**: New dropdown in Advanced Options to select ranking mode
-  - Results header shows actual mode used and files searched (e.g., "⚡ Fast (500/100,000 files)")
+  - Results header shows actual mode used and files searched (e.g., "⚡ Fast (2000/100,000 files)")
 
 - **Documentation page**: New `/docs.html` page in Web UI explaining the ranking system, API reference, and path filter patterns
 
@@ -133,7 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **New indexing status states**: UI shows `loading_index` when loading from disk and `reconciling` during background reconciliation
 
-- **Symbols-only search mode**: New search mode that searches only in discovered symbol names (functions, classes, methods). Enable via `symbols=true` query parameter in REST API or `symbols_only=true` in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.
+- **Symbols-only search mode**: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via `symbols=true` query parameter in REST API or `symbols_only=true` in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.
 
 ### Changed
 - **Updated performance comparison docs**: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep's official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.
@@ -185,11 +185,11 @@ Initial release of fast_code_search — a high-performance, in-memory code searc
 
 #### Symbol-Aware Search
 - Tree-sitter parsing for **Rust**, **Python**, **JavaScript**, and **TypeScript**
-- Extracts function definitions, class declarations, method signatures
+- Extracts symbol definitions (functions, classes, methods, types, etc.)
 - Import/dependency tracking for enhanced relevance
 
 #### Intelligent Scoring System
-- **Symbol definitions**: 3x boost for function/class definitions
+- **Symbol definitions**: 3x boost for symbol definitions
 - **Exact matches**: 2x boost for case-sensitive matches
 - **Source directories**: 1.5x boost for `src/` and `lib/` paths
 - **Line position**: Boost for matches at start of lines

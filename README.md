@@ -16,10 +16,10 @@ fast_code_search provides **two complementary search engines** optimized for dif
 The **primary search engine** uses trigram-based indexing with **AST-aware ranking**:
 
 - **Trigram Index**: Splits code into 3-character sequences for O(1) candidate lookup
-- **Tree-sitter Parsing**: Extracts function/class definitions from 12+ programming languages
+- **Tree-sitter Parsing**: Extracts symbols (functions, classes, methods, types, etc.) from 12+ programming languages
 - **Smart Scoring**: Boosts symbol definitions (3x), exact matches (2x), heavily-imported files (PageRank-style)
-- **Regex Support**: Full regex with trigram acceleration for literal prefixes
-- **Symbols-Only Mode**: Search only function/class names for targeted results
+- **Regex Support**: Full regex with trigram acceleration for literal substrings
+- **Symbols-Only Mode**: Search only symbol names (functions, classes, methods, types, etc.) plus filename matches
 
 **Example queries**: `fn main`, `class.*Handler`, `import useState`
 
@@ -46,7 +46,7 @@ The **optional semantic engine** understands code meaning, not just text pattern
 - **Parallel search** using `rayon` for maximum throughput
 - **Index persistence** — save index to disk and reload on restart for faster startup times
 - **File watcher** — incremental indexing monitors filesystem changes in real-time
-- **Symbols-only search** — search only in function/class names for faster, targeted results
+- **Symbols-only search** — search only in symbol names (functions, classes, methods, types, etc.) plus filename matches for faster, targeted results
 - **AST-based scoring** that boosts:
   - Symbol definitions (3.0x)
   - Primary source directories (src/, lib/) (1.5x)
@@ -124,7 +124,7 @@ Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_sea
 
 4. **Symbol Extractor** (`src/symbols/extractor.rs`)
    - Uses tree-sitter parsers for multiple languages
-   - Identifies function/class definitions
+   - Identifies symbol definitions (functions, classes, methods, types, etc.)
    - Enhances search results with semantic information
 
 5. **Search Engine** (`src/search/engine.rs`)
@@ -259,9 +259,9 @@ paths = [
 ]
 
 # File extensions to index (optional, defaults to common source files)
-extensions = ["rs", "py", "js", "ts", "go", "java", "c", "cpp", "h"]
+include_extensions = ["rs", "py", "js", "ts", "go", "java", "c", "cpp", "h"]
 
-# Patterns to exclude
+# Patterns to exclude (glob-like strings matched as path substrings)
 exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**"]
 
 # Index persistence (optional)
@@ -332,7 +332,7 @@ enable_web_ui = true           # Enable embedded Web UI
 paths = [                      # Directories to index
     "/path/to/codebase",
 ]
-exclude_patterns = [           # Glob patterns to exclude
+exclude_patterns = [           # Glob-like patterns matched as path substrings
     "**/node_modules/**",
     "**/target/**",
     "**/.git/**",
@@ -437,9 +437,9 @@ The keyword search engine supports multiple modes:
 |------|-----------|-----------|-------------|
 | **Text Search** | (default) | (default) | Full-text search across all file contents |
 | **Regex Search** | `regex=true` | `is_regex=true` | Regular expression pattern matching |
-| **Symbols-Only** | `symbols=true` | `symbols_only=true` | Search only in function/class names |
+| **Symbols-Only** | `symbols=true` | `symbols_only=true` | Search only in symbol names plus filename matches |
 
-**Symbols-only search** is ideal when you're looking for definitions rather than usages. It searches the symbol cache (extracted via tree-sitter) and returns only matches where the query appears in a symbol name. This is significantly faster than full-text search when you know you're looking for a function or class.
+**Symbols-only search** is ideal when you're looking for definitions rather than usages. It searches the symbol cache (extracted via tree-sitter) and returns only matches where the query appears in a symbol name. Filename matches are included with `line_number` set to 0. This is significantly faster than full-text search when you know you're looking for a definition.
 
 ### Semantic Search Mode
 
@@ -595,7 +595,7 @@ Other file types are still searchable, just without symbol-awareness.
 | **Trigram** | A 3-character sequence extracted from text. For example, "function" produces trigrams: "fun", "unc", "nct", "cti", "tio", "ion". Used as an index key to quickly find candidate files containing a search term. |
 | **Roaring Bitmap** | A compressed data structure for storing sets of integers efficiently. Used to store which document IDs contain each trigram. Supports fast set operations (intersection, union) for combining multiple trigram lookups. |
 | **Memory-mapped file** | A file access technique where the OS maps file contents directly into virtual memory. Allows reading files without explicit I/O calls—the OS handles paging data in/out as needed. Reduces memory usage for large codebases. |
-| **AST (Abstract Syntax Tree)** | A tree representation of source code structure. Used via tree-sitter to identify symbol definitions (functions, classes, methods) for smarter ranking. |
+| **AST (Abstract Syntax Tree)** | A tree representation of source code structure. Used via tree-sitter to identify symbol definitions (functions, classes, methods, types, etc.) for smarter ranking. |
 | **Symbol** | A named code element like a function, class, method, or variable. Extracted using tree-sitter parsing. Symbol matches are boosted 3x in search results. |
 | **TF-IDF** | Term Frequency–Inverse Document Frequency. A text vectorization technique that weights words by how important they are to a document relative to the corpus. Used for semantic search embeddings. |
 | **Embedding** | A vector (array of numbers) representing text in a high-dimensional space where similar meanings are close together. Enables "find similar code" queries. |

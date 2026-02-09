@@ -16,7 +16,7 @@ This guide provides detailed information for developers working on fast_code_sea
 
 ### System Requirements
 
-- **OS**: Linux, macOS, or Windows with WSL2
+- **OS**: Linux, macOS, or Windows (native or WSL2)
 - **Rust**: 1.70 or later
 - **Memory**: 4GB minimum, 8GB recommended
 - **Disk**: 2GB for dependencies and build artifacts
@@ -170,7 +170,7 @@ cargo +nightly udeps
 2. **Memory Mapping**: `memmap2` creates memory-mapped views of files
 3. **Trigram Extraction**: Text split into overlapping 3-character sequences
 4. **Bitmap Indexing**: Roaring bitmaps store document sets for each trigram
-5. **Symbol Parsing**: Tree-sitter extracts function/class definitions
+5. **Symbol Parsing**: Tree-sitter extracts symbol definitions (functions, classes, methods, types, etc.)
 
 ### Search Pipeline
 

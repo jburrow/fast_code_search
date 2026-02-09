@@ -14,7 +14,7 @@ use std::path::PathBuf;
 /// - Include patterns: Files must match at least one pattern (if any specified)
 /// - Exclude patterns: Files must not match any pattern
 ///
-/// Patterns are matched against relative paths from the indexed root.
+/// Patterns are matched against stored path strings (typically absolute paths).
 #[derive(Debug, Default)]
 pub struct PathFilter {
     /// Include patterns - file must match at least one (if non-empty)

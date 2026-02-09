@@ -113,7 +113,7 @@ pub struct IndexerConfig {
     #[serde(default)]
     pub include_extensions: Vec<String>,
 
-    /// Glob patterns to exclude
+    /// Glob-like patterns to exclude (matched as path substrings during discovery)
     #[serde(default = "default_exclude_patterns")]
     pub exclude_patterns: Vec<String>,
 

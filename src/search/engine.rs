@@ -1297,10 +1297,11 @@ impl SearchEngine {
         Ok(matches)
     }
 
-    /// Search only in discovered symbols (function/class names).
+    /// Search only in discovered symbols (functions, classes, methods, types, etc.).
     ///
     /// This method searches only in the symbol cache, returning matches where
-    /// symbol names (functions, classes, methods, etc.) match the query.
+    /// symbol names (functions, classes, methods, types, etc.) match the query.
+    /// Filename matches are included as synthetic symbol results.
     /// This is much faster than full-text search when you're looking for definitions.
     ///
     /// # Arguments
