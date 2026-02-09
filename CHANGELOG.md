@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **HNSW vector index for semantic search**: Replaced linear O(n) search with HNSW O(log n) algorithm
+  - New `hnsw_rs` dependency for fast approximate nearest neighbor search
+  - Configurable HNSW parameters in `[indexer.hnsw]` section: `m`, `ef_construction`, `ef_search`
+  - Default values optimized for moderate codebases (m=16, ef_construction=200, ef_search=100)
+  - Embeddings now persisted alongside HNSW index for proper save/load functionality
+  - 2-10x faster query performance for large codebases (>10K chunks)
+
+### Changed
+- Semantic search vector index now uses HNSW instead of linear search
+- Updated documentation with HNSW configuration and tuning guide
+- Memory overhead increased to ~3x indexed code size (from ~2x) due to HNSW graph structure
+
 ## [0.4.0] - 2026-02-09
 
 ### Added

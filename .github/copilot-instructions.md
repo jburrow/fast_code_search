@@ -19,6 +19,8 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 | `src/semantic/engine.rs` | Semantic search coordinator |
 | `src/semantic/embeddings.rs` | TF-IDF / ONNX ML embeddings |
 | `src/semantic/chunking.rs` | Code chunking into functions/classes |
+| `src/semantic/vector_index.rs` | HNSW vector index for fast similarity search |
+| `src/semantic/config.rs` | Semantic search configuration (HNSW params) |
 | `src/semantic_server/service.rs` | Semantic gRPC server (port 50052) |
 | `src/semantic_web/api.rs` | Semantic REST API (port 8081) |
 | `proto/search.proto` | gRPC service definitions |
