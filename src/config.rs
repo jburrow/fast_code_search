@@ -11,9 +11,9 @@ use crate::utils::normalize_path_for_comparison;
 /// Telemetry / OpenTelemetry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryConfig {
-    /// Enable OpenTelemetry trace export (default: true)
+    /// Enable OpenTelemetry trace export (default: false)
     /// Can be overridden by env var FCS_TRACING_ENABLED or OTEL_SDK_DISABLED
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
 
     /// OTLP exporter endpoint (default: http://localhost:4317)
@@ -38,7 +38,7 @@ fn default_service_name() -> String {
 impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             otlp_endpoint: default_otlp_endpoint(),
             service_name: default_service_name(),
         }
