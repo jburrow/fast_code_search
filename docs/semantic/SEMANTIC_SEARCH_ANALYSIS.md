@@ -1197,7 +1197,7 @@ pub struct CodeChunker {
 
 impl CodeChunker {
     pub fn chunk_file(&self, content: &str, file_path: &Path) -> Vec<Chunk> {
-        // Strategy 1: Function/class level (preferred)
+        // Strategy 1: Symbol level (preferred)
         if let Some(chunks) = self.chunk_by_symbols(content, file_path) {
             return chunks;
         }
@@ -1212,7 +1212,7 @@ impl CodeChunker {
         
         let mut chunks = Vec::new();
         for symbol in symbols {
-            // Extract function/class with context
+            // Extract symbol with context
             let chunk_text = self.extract_symbol_with_context(content, &symbol);
             
             chunks.push(Chunk {
@@ -1257,7 +1257,7 @@ pub struct Chunk {
 }
 
 pub enum ChunkType {
-    Symbol(String),  // Function/class name
+    Symbol(String),  // Symbol name
     Fixed,           // Fixed-size chunk
 }
 ```

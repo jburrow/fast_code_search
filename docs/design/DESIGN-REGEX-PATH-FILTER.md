@@ -105,7 +105,7 @@ The key insight is that most useful regex patterns contain **literal substrings*
 
 #### Literal Extraction Algorithm
 
-We can use the `regex-syntax` crate to parse regex and extract literal prefixes/sequences:
+We can use the `regex-syntax` crate to parse regex and extract literal substrings/sequences:
 
 ```rust
 use regex_syntax::hir::{Hir, HirKind, Literal};
@@ -370,7 +370,7 @@ pub struct SearchQuery {
 ### Design Goals
 
 1. **Zero re-indexing**: Path filtering happens at query time, not index time
-2. **Flexible patterns**: Support glob patterns like `src/**/*.rs`, `!**/test/**`
+2. **Flexible patterns**: Support glob patterns via separate include/exclude lists (e.g., include `src/**/*.rs`, exclude `**/test/**`)
 3. **Composable**: Works with both literal and regex search
 4. **Fast**: Use path index for O(1) per-file filtering
 
@@ -403,7 +403,7 @@ Support standard glob patterns with extensions:
 | Pattern | Matches |
 |---------|---------|
 | `src/**/*.rs` | All `.rs` files under `src/` |
-| `!**/test/**` | Exclude all paths containing `test/` |
+| `**/test/**` | Exclude all paths containing `test/` (via exclude list) |
 | `lib/**` | All files under `lib/` |
 | `*.{js,ts,tsx}` | Files with these extensions |
 

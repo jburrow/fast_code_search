@@ -129,7 +129,7 @@ message SemanticSearchResult {
   int32 end_line = 4;                  // Ending line of chunk
   float similarity_score = 5;           // Cosine similarity (0.0-1.0)
   ChunkType chunk_type = 6;
-  string symbol_name = 7;              // Function/class name if chunk_type is SYMBOL
+    string symbol_name = 7;              // Symbol name if chunk_type is SYMBOL
 }
 
 enum ChunkType {
