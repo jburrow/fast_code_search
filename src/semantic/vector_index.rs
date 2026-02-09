@@ -34,6 +34,8 @@ impl Default for HnswParams {
 
 /// Vector search index using HNSW for fast approximate nearest neighbor search
 pub struct VectorIndex {
+    /// HNSW index with 'static lifetime required because the index
+    /// can hold references to data that must outlive the struct
     hnsw: Hnsw<'static, f32, DistCosine>,
     embeddings: Vec<Vec<f32>>, // Store embeddings for persistence
     chunk_ids: Vec<u32>,       // Maps HNSW index to chunk ID
@@ -86,6 +88,7 @@ impl VectorIndex {
         }
 
         // Insert into HNSW with internal ID
+        // HNSW API expects (data: &[f32], id: usize)
         self.hnsw.insert((&embedding, self.next_id));
 
         // Store embedding for persistence
@@ -187,13 +190,20 @@ impl VectorIndex {
             hnsw_params,
         };
 
-        // Re-insert all embeddings
-        for (i, embedding) in embeddings.into_iter().enumerate() {
+        // Verify data integrity before rebuilding
+        if embeddings.len() != chunk_ids.len() {
+            anyhow::bail!(
+                "Data corruption: embeddings count ({}) != chunk_ids count ({})",
+                embeddings.len(),
+                chunk_ids.len()
+            );
+        }
+
+        // Re-insert all embeddings and chunk IDs
+        for (i, (embedding, &chunk_id)) in embeddings.into_iter().zip(&chunk_ids).enumerate() {
             index.hnsw.insert((&embedding, i));
             index.embeddings.push(embedding);
-            if i < chunk_ids.len() {
-                index.chunk_ids.push(chunk_ids[i]);
-            }
+            index.chunk_ids.push(chunk_id);
         }
 
         index.next_id = next_id;
