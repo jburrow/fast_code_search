@@ -37,12 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tower_http::trace::TraceLayer` on both HTTP/REST routers
   - `Server::builder().trace_fn()` on both gRPC servers
 
+- **Semantic model download verification**: Optional SHA256 verification via `FCS_MODEL_SHA256` or `FCS_MODEL_SHA256_<MODEL>`
+
 ### Changed
 - Tracing subscriber upgraded from simple `FmtSubscriber` to layered `Registry` (fmt + OTel)
 - `tracing-subscriber` now uses `registry` feature alongside `env-filter`
 - `tower-http` now enables `trace` feature alongside `cors`
 - Binary startup reordered: config loads before tracing init so TOML telemetry values are available
 - `--init` flag exits before tracing init (no subscriber needed for template generation)
+
+### Fixed
+- **Persisted index loads now rebuild symbol and dependency caches** to restore symbol scoring boosts and import-based ranking
+- **gRPC keyword service lock handling** now reports lock errors instead of panicking on poisoned locks
 
 ### Dependencies
 - Added `opentelemetry` 0.27, `opentelemetry_sdk` 0.27 (rt-tokio), `opentelemetry-otlp` 0.27 (tonic), `tracing-opentelemetry` 0.28

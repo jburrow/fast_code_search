@@ -131,6 +131,7 @@ Both share:
 - CodeBERT/UniXcoder models via ONNX Runtime
 - Higher quality semantic understanding
 - Requires model download (~500MB)
+- Optional SHA256 verification via `FCS_MODEL_SHA256` or `FCS_MODEL_SHA256_<MODEL>`
 - See "Building with ML Models" section for setup
 
 **Vector Index**: HNSW (Hierarchical Navigable Small World)

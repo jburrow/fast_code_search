@@ -44,7 +44,7 @@ impl ModelInfo {
                     .to_string(),
             config_url: "https://huggingface.co/onnx-community/codebert-base-ONNX/resolve/main/config.json"
                 .to_string(),
-            expected_sha256: None, // TODO: Add checksums for verification
+            expected_sha256: None,
         }
     }
 
@@ -153,11 +153,12 @@ impl ModelDownloader {
             "Config",
         )?;
 
-        // Verify checksum if provided
-        if let Some(expected_hash) = &model_info.expected_sha256 {
+        // Verify checksum if provided (or via env override)
+        let expected_hash = self.resolve_expected_sha256(model_info)?;
+        if let Some(expected_hash) = expected_hash {
             info!("Verifying model checksum...");
             let model_path = model_dir.join("model.onnx");
-            if !self.verify_checksum(&model_path, expected_hash)? {
+            if !self.verify_checksum(&model_path, &expected_hash)? {
                 anyhow::bail!(
                     "Model checksum verification failed. Downloaded file may be corrupted. \
                      Please delete {} and try again.",
@@ -165,6 +166,13 @@ impl ModelDownloader {
                 );
             }
             info!("Checksum verification passed");
+        } else {
+            warn!(
+                "No SHA256 checksum configured for model '{}'. \
+                 Set FCS_MODEL_SHA256 or FCS_MODEL_SHA256_{} to enable verification.",
+                model_info.name,
+                Self::env_model_suffix(&model_info.name)
+            );
         }
 
         info!(
@@ -280,6 +288,49 @@ impl ModelDownloader {
         let hash = format!("{:x}", hasher.finalize());
 
         Ok(hash.eq_ignore_ascii_case(expected_hash))
+    }
+
+    fn resolve_expected_sha256(&self, model_info: &ModelInfo) -> Result<Option<String>> {
+        if let Some(expected) = model_info.expected_sha256.as_ref() {
+            return Self::normalize_sha256(expected).map(Some);
+        }
+
+        let env_hash = std::env::var("FCS_MODEL_SHA256")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if let Some(expected) = env_hash {
+            return Self::normalize_sha256(&expected).map(Some);
+        }
+
+        let scoped_env = format!("FCS_MODEL_SHA256_{}", Self::env_model_suffix(&model_info.name));
+        let scoped_hash = std::env::var(scoped_env)
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+
+        if let Some(expected) = scoped_hash {
+            return Self::normalize_sha256(&expected).map(Some);
+        }
+
+        Ok(None)
+    }
+
+    fn normalize_sha256(value: &str) -> Result<String> {
+        let trimmed = value.trim();
+        if trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+            anyhow::bail!(
+                "Invalid SHA256 value '{}'. Expected 64 hex characters.",
+                trimmed
+            );
+        }
+        Ok(trimmed.to_lowercase())
+    }
+
+    fn env_model_suffix(model_name: &str) -> String {
+        model_name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .to_uppercase()
     }
 }
 

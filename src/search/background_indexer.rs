@@ -134,6 +134,17 @@ impl ProgressBarManager {
             LoadingPhase::MappingFiles => {
                 self.set_spinner("📁 Registering files...");
             }
+            LoadingPhase::RebuildingSymbols => {
+                if let (Some(total), Some(processed)) = (total, processed) {
+                    self.set_bar(
+                        total as u64,
+                        processed as u64,
+                        "🔧 Rebuilding symbols and imports",
+                    );
+                } else {
+                    self.set_spinner("🔧 Rebuilding symbols and imports...");
+                }
+            }
             LoadingPhase::None => {}
         }
     }

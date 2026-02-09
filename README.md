@@ -62,6 +62,7 @@ The **optional semantic engine** understands code meaning, not just text pattern
 - **Dual embedding support**:
   - TF-IDF (default): Fast, no dependencies, good for exact terms
   - ML models (optional): CodeBERT/UniXcoder for deeper semantic understanding
+- **Model integrity checks** — optional SHA256 verification via `FCS_MODEL_SHA256` or `FCS_MODEL_SHA256_<MODEL>`
 - **Similarity scoring** — ranks results by conceptual relevance
 
 ### Shared Infrastructure

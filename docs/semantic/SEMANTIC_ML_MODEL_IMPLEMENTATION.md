@@ -44,7 +44,7 @@ impl ModelDownloader {
 - Downloads tokenizer and config files
 - Caches in user's home directory
 - Automatic download on first use
-- Checksum verification support (for future)
+- Optional SHA256 verification via `FCS_MODEL_SHA256` or `FCS_MODEL_SHA256_<MODEL>`
 
 ### 3. ML-Based Embeddings with Fallback ✅
 
@@ -341,9 +341,9 @@ cargo run --bin fast_code_search_semantic --features ml-models
 ## Security Considerations
 
 1. **Model Download:**
-   - Downloads from huggingface.co
-   - TODO: Add SHA256 checksum verification
-   - TODO: Support airgapped environments
+    - Downloads from huggingface.co
+    - SHA256 verification supported via `FCS_MODEL_SHA256` or `FCS_MODEL_SHA256_<MODEL>`
+    - TODO: Support airgapped environments
 
 2. **Model Execution:**
    - ONNX Runtime sandboxing

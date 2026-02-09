@@ -827,6 +827,127 @@ impl SearchEngine {
         );
     }
 
+    pub fn rebuild_symbols_and_dependencies(&mut self) -> RebuildCacheStats {
+        self.rebuild_symbols_and_dependencies_with_progress(|_, _| {})
+    }
+
+    pub fn rebuild_symbols_and_dependencies_with_progress<F>(
+        &mut self,
+        mut progress_callback: F,
+    ) -> RebuildCacheStats
+    where
+        F: FnMut(usize, usize),
+    {
+
+        let total_files = self.file_store.len();
+        if total_files == 0 {
+            return RebuildCacheStats::default();
+        }
+
+        // Reset derived state
+        self.symbol_cache = vec![Vec::new(); total_files];
+        self.pending_imports.clear();
+        self.dependency_index.clear();
+
+        // Re-register all files for import resolution
+        for file_id in 0..total_files as u32 {
+            if let Some(path) = self.file_store.get_path(file_id) {
+                self.dependency_index.register_file(file_id, path);
+            }
+        }
+
+        let file_store = &self.file_store;
+
+        progress_callback(0, total_files);
+
+        let entries: Vec<RebuildEntry> = (0..total_files as u32)
+            .into_par_iter()
+            .filter_map(|file_id| {
+                let path = file_store.get_path(file_id)?.to_path_buf();
+
+                let mut symbols = Vec::new();
+                let mut imports = Vec::new();
+                let mut had_content = false;
+
+                if let Some(file) = file_store.get(file_id) {
+                    if let Ok(content) = file.as_str() {
+                        had_content = true;
+                        let extractor = SymbolExtractor::new(&path);
+
+                        symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            extractor.extract(content).unwrap_or_default()
+                        }))
+                        .unwrap_or_else(|_| {
+                            warn!(
+                                "Symbol extraction panicked for file '{}'. Continuing without symbols.",
+                                path.display()
+                            );
+                            Vec::new()
+                        });
+
+                        imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            extractor
+                                .extract_imports(content)
+                                .ok()
+                                .map(|imports| imports.into_iter().map(|i| i.path).collect())
+                                .unwrap_or_default()
+                        }))
+                        .unwrap_or_default();
+                    }
+                }
+
+                // Always add filename symbol for filename-only matches.
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if !stem.is_empty() {
+                        symbols.push(Symbol {
+                            name: stem.to_string(),
+                            symbol_type: SymbolType::FileName,
+                            line: 0,
+                            column: 0,
+                            is_definition: true,
+                        });
+                    }
+                }
+
+                Some(RebuildEntry {
+                    file_id,
+                    path,
+                    symbols,
+                    imports,
+                    had_content,
+                })
+            })
+            .collect();
+
+        let mut stats = RebuildCacheStats::default();
+        stats.files_processed = entries.len();
+
+        for entry in entries {
+            stats.symbols_extracted += entry.symbols.len();
+            stats.imports_extracted += entry.imports.len();
+            if !entry.had_content {
+                stats.files_skipped += 1;
+            }
+
+            if entry.file_id as usize >= self.symbol_cache.len() {
+                self.symbol_cache.resize(entry.file_id as usize + 1, Vec::new());
+            }
+            self.symbol_cache[entry.file_id as usize] = entry.symbols;
+
+            if !entry.imports.is_empty() {
+                self.pending_imports
+                    .push((entry.file_id, entry.path, entry.imports));
+            }
+        }
+
+        progress_callback(total_files, total_files);
+
+        self.resolve_imports();
+        self.finalize();
+
+        stats
+    }
+
     /// Get the metadata for a file
     #[inline]
     fn get_file_metadata(&self, file_id: u32) -> &FileMetadata {
@@ -1898,6 +2019,12 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
+        let rebuild_stats = if self.file_store.is_empty() {
+            RebuildCacheStats::default()
+        } else {
+            self.rebuild_symbols_and_dependencies()
+        };
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -1906,6 +2033,9 @@ impl SearchEngine {
             new_paths = new_paths.len(),
             removed_paths = removed_paths.len(),
             config_compatible = config_compatible,
+            symbols_rebuilt = rebuild_stats.symbols_extracted,
+            imports_rebuilt = rebuild_stats.imports_extracted,
+            files_skipped = rebuild_stats.files_skipped,
             "Index loaded from disk with reconciliation"
         );
 
@@ -2056,6 +2186,32 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
+        if !self.file_store.is_empty() {
+            let total_files = self.file_store.len();
+            progress_callback(
+                LoadingPhase::RebuildingSymbols,
+                Some(total_files),
+                Some(0),
+                "Rebuilding symbols and import graph...",
+            );
+
+            let _stats = self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
+                progress_callback(
+                    LoadingPhase::RebuildingSymbols,
+                    Some(total),
+                    Some(processed),
+                    "Rebuilding symbols and import graph...",
+                );
+            });
+
+            progress_callback(
+                LoadingPhase::RebuildingSymbols,
+                Some(total_files),
+                Some(total_files),
+                "Symbol and dependency caches rebuilt",
+            );
+        }
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -2126,6 +2282,16 @@ impl SearchEngine {
 
         self.trigram_index.finalize();
 
+        if !self.file_store.is_empty() {
+            let rebuild_stats = self.rebuild_symbols_and_dependencies();
+            tracing::info!(
+                symbols_rebuilt = rebuild_stats.symbols_extracted,
+                imports_rebuilt = rebuild_stats.imports_extracted,
+                files_skipped = rebuild_stats.files_skipped,
+                "Rebuilt symbol and dependency caches after load"
+            );
+        }
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -2158,6 +2324,23 @@ pub struct SearchStats {
     pub dependency_edges: usize,
     /// Total bytes of text content indexed
     pub total_content_bytes: u64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RebuildCacheStats {
+    pub files_processed: usize,
+    pub files_skipped: usize,
+    pub symbols_extracted: usize,
+    pub imports_extracted: usize,
+}
+
+#[derive(Debug)]
+struct RebuildEntry {
+    file_id: u32,
+    path: std::path::PathBuf,
+    symbols: Vec<Symbol>,
+    imports: Vec<String>,
+    had_content: bool,
 }
 
 /// Result of loading a persisted index with reconciliation
@@ -2213,6 +2396,8 @@ pub enum LoadingPhase {
     RestoringTrigrams,
     /// Memory-mapping files
     MappingFiles,
+    /// Rebuilding symbol and dependency caches
+    RebuildingSymbols,
 }
 
 /// Progress information for the indexing process
@@ -2330,6 +2515,17 @@ impl IndexingProgress {
                             }
                         }
                         60
+                    }
+                    LoadingPhase::RebuildingSymbols => {
+                        if let (Some(total), Some(processed)) =
+                            (self.loading_total_files, self.loading_files_processed)
+                        {
+                            if total > 0 {
+                                let pct = (processed as f64 / total as f64) * 15.0;
+                                return (80.0 + pct).min(95.0) as u8;
+                            }
+                        }
+                        85
                     }
                 }
             }
@@ -2502,11 +2698,12 @@ mod tests {
         use crate::config::IndexerConfig;
 
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.txt");
+        let file_path = temp_dir.path().join("test.rs");
         let index_path = temp_dir.path().join("index.bin");
 
         // Create a test file
         let mut file = fs::File::create(&file_path).unwrap();
+        writeln!(file, "fn hello_world() {{}}").unwrap();
         writeln!(file, "hello world").unwrap();
         writeln!(file, "rust programming").unwrap();
         drop(file);
@@ -2540,6 +2737,13 @@ mod tests {
         // Verify search works after load
         let results2 = engine2.search("hello", 10);
         assert!(!results2.is_empty(), "Should find hello after load");
+
+        // Verify symbol cache was rebuilt after load
+        let symbol_results = engine2.search_symbols("hello_world", "", "", 10).unwrap();
+        assert!(
+            !symbol_results.is_empty(),
+            "Should find hello_world symbol after load"
+        );
     }
 
     #[test]

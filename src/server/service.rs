@@ -70,7 +70,13 @@ impl CodeSearchService {
             let mut path_files = 0u64;
             let mut path_size = 0u64;
 
-            let mut engine = service.engine.write().unwrap();
+            let mut engine = match service.engine.write() {
+                Ok(engine) => engine,
+                Err(e) => {
+                    warn!(error = %e, "Search engine lock poisoned during auto-indexing");
+                    e.into_inner()
+                }
+            };
 
             for entry in WalkDir::new(path)
                 .follow_links(true)
@@ -168,7 +174,13 @@ impl CodeSearchService {
             total_size += path_size;
         }
 
-        let engine = service.engine.read().unwrap();
+        let engine = match service.engine.read() {
+            Ok(engine) => engine,
+            Err(e) => {
+                warn!(error = %e, "Search engine lock poisoned while reading stats");
+                e.into_inner()
+            }
+        };
         let stats = engine.get_stats();
         drop(engine);
 
@@ -209,7 +221,10 @@ impl CodeSearch for CodeSearchService {
         let symbols_only = req.symbols_only;
 
         // Use read lock for concurrent search access
-        let engine = self.engine.read().unwrap();
+        let engine = self
+            .engine
+            .read()
+            .map_err(|e| Status::internal(format!("Lock error: {}", e)))?;
 
         // Choose search method based on flags
         let matches = if symbols_only {
@@ -273,7 +288,10 @@ impl CodeSearch for CodeSearchService {
         info!(paths = ?req.paths, "Received index request");
         let start = Instant::now();
         // Use write lock for indexing operations
-        let mut engine = self.engine.write().unwrap();
+        let mut engine = self
+            .engine
+            .write()
+            .map_err(|e| Status::internal(format!("Lock error: {}", e)))?;
 
         let mut files_indexed = 0;
         let mut total_size = 0u64;

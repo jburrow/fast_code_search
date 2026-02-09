@@ -6,7 +6,7 @@
 ## Overview
 
 Comprehensive review of indexing and scoring identified **14 issues** across 4 severity levels.
-12 code fixes have been implemented. 1 newly-discovered issue (filename-only matches) has also been fixed. 3 items were deferred.
+13 code fixes have been implemented. 1 newly-discovered issue (filename-only matches) has also been fixed. 2 items were deferred.
 
 ---
 
@@ -116,18 +116,20 @@ All changes are in the working tree (unstaged). Files modified:
 
 ## Deferred Items
 
-### Fix #5 (P1): Post-persistence symbol rebuild
-**Problem:** After loading a persisted index, the symbol cache is empty (symbols aren't persisted for space efficiency). This means symbol-based scoring boosts don't work until files are re-scanned.
-**Why deferred:** Requires a new `IndexingStatus` variant (e.g. `RebuildingSymbols`), a background task to re-extract symbols for all loaded files, and progress reporting. Significant new feature rather than a fix.
-**Impact:** Symbol definition 3× boost is lost after index reload. Workaround: a full re-index recovers symbols.
-
-### Fix #11 (P3): Arc\<str\> for file paths
+### Fix #11 (P3): Arc<str> for file paths
 **Problem:** File paths are stored as `PathBuf` and cloned via `to_string_lossy().into_owned()` on every search match. Using `Arc<str>` would make cloning O(1).
 **Why deferred:** Wide API surface impact — `LazyFileStore`, `SearchMatch`, `FileMetadata`, and all consumers would need updating. Low ROI given paths are typically short.
 
 ### Fix #13 (P3): Parallel path filter
 **Problem:** `PathFilter::filter_documents_with()` runs sequentially. For large candidate sets with complex glob patterns, this could be slow.
 **Why deferred:** P3 optimization. Current performance is adequate. Would need benchmarking to justify the added complexity.
+
+---
+
+## Recently Completed
+
+### Fix #5 (P1): Post-persistence symbol rebuild
+**Status:** ✅ Implemented. Symbol and dependency caches are rebuilt after loading a persisted index with progress reporting.
 
 ---
 
@@ -189,4 +191,4 @@ In `search_in_document_scored()`: after the content line scan, if `matches` is e
    git commit -m "fix: indexing & scoring review — 13 fixes with tests"
    ```
 
-4. **Consider Fix #5** (post-persistence symbol rebuild) as a follow-up PR
+4. **Consider Fix #11 or #13** (deferred items) as follow-up PRs
