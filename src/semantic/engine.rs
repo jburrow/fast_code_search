@@ -5,8 +5,9 @@
 use super::{
     cache::QueryCache,
     chunking::{CodeChunk, CodeChunker},
+    config::HnswConfig,
     embeddings::EmbeddingModel,
-    vector_index::VectorIndex,
+    vector_index::{HnswParams, VectorIndex},
 };
 use anyhow::Result;
 use rustc_hash::FxHashMap;
@@ -31,11 +32,28 @@ pub struct SemanticSearchResult {
 }
 
 impl SemanticSearchEngine {
-    /// Create new engine
+    /// Create new engine with default HNSW parameters
     pub fn new(chunk_size: usize, chunk_overlap: usize) -> Self {
+        Self::with_hnsw_config(chunk_size, chunk_overlap, HnswConfig::default())
+    }
+
+    /// Create new engine with custom HNSW configuration
+    pub fn with_hnsw_config(
+        chunk_size: usize,
+        chunk_overlap: usize,
+        hnsw_config: HnswConfig,
+    ) -> Self {
         let embedding_model = EmbeddingModel::new();
         let embedding_dim = embedding_model.embedding_dim();
-        let vector_index = VectorIndex::new(embedding_dim);
+
+        // Convert config to HNSW params
+        let hnsw_params = HnswParams {
+            m: hnsw_config.m,
+            ef_construction: hnsw_config.ef_construction,
+            ef_search: hnsw_config.ef_search,
+        };
+
+        let vector_index = VectorIndex::with_params(embedding_dim, hnsw_params);
         let chunker = CodeChunker::new(chunk_size, chunk_overlap);
 
         Self {

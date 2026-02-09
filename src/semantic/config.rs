@@ -125,6 +125,32 @@ pub struct SemanticIndexerConfig {
     /// Path to persistent index storage (if set, index will be saved/loaded)
     #[serde(default)]
     pub index_path: Option<String>,
+
+    /// HNSW configuration
+    #[serde(default)]
+    pub hnsw: HnswConfig,
+}
+
+/// HNSW (Hierarchical Navigable Small World) vector index configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HnswConfig {
+    /// Number of bi-directional links per element (M parameter)
+    /// Higher values = better accuracy but more memory
+    /// Typical: 16-48
+    #[serde(default = "default_hnsw_m")]
+    pub m: usize,
+
+    /// Size of dynamic candidate list during index construction
+    /// Higher values = better quality but slower indexing
+    /// Typical: 100-400
+    #[serde(default = "default_hnsw_ef_construction")]
+    pub ef_construction: usize,
+
+    /// Size of dynamic candidate list during search
+    /// Higher values = better accuracy but slower search
+    /// Typical: 50-200
+    #[serde(default = "default_hnsw_ef_search")]
+    pub ef_search: usize,
 }
 
 fn default_grpc_address() -> String {
@@ -160,6 +186,28 @@ fn default_chunk_overlap() -> usize {
     5 // 5 lines overlap
 }
 
+fn default_hnsw_m() -> usize {
+    16 // 16 bi-directional links per element (good balance)
+}
+
+fn default_hnsw_ef_construction() -> usize {
+    200 // 200 candidates during construction (good quality)
+}
+
+fn default_hnsw_ef_search() -> usize {
+    100 // 100 candidates during search (good accuracy/speed tradeoff)
+}
+
+impl Default for HnswConfig {
+    fn default() -> Self {
+        Self {
+            m: default_hnsw_m(),
+            ef_construction: default_hnsw_ef_construction(),
+            ef_search: default_hnsw_ef_search(),
+        }
+    }
+}
+
 impl Default for SemanticServerConfig {
     fn default() -> Self {
         Self {
@@ -178,6 +226,7 @@ impl Default for SemanticIndexerConfig {
             chunk_size: default_chunk_size(),
             chunk_overlap: default_chunk_overlap(),
             index_path: None,
+            hnsw: HnswConfig::default(),
         }
     }
 }
@@ -274,6 +323,20 @@ chunk_overlap = 5
 # Path to persistent index storage (optional)
 # If set, the index will be saved to disk and loaded on restart
 # index_path = "/var/lib/fast_code_search_semantic/index"
+
+# HNSW (Hierarchical Navigable Small World) vector index settings
+[indexer.hnsw]
+# Number of bi-directional links per element (default: 16)
+# Higher = better accuracy but more memory. Range: 4-64
+m = 16
+
+# Size of dynamic candidate list during construction (default: 200)
+# Higher = better index quality but slower indexing. Range: 100-400
+ef_construction = 200
+
+# Size of dynamic candidate list during search (default: 100)
+# Higher = better accuracy but slower search. Range: 50-200
+ef_search = 100
 
 [telemetry]
 # Enable OpenTelemetry trace export (default: true)
