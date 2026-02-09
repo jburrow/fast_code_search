@@ -13,9 +13,9 @@ pub mod vector_index;
 
 pub use cache::QueryCache;
 pub use chunking::{ChunkType, CodeChunk, CodeChunker};
-pub use config::SemanticConfig;
+pub use config::{HnswConfig, SemanticConfig};
 pub use embeddings::EmbeddingModel;
 pub use engine::{EngineStats, SemanticSearchEngine, SemanticSearchResult};
 #[cfg(feature = "ml-models")]
 pub use model_download::{default_cache_dir, ModelDownloader, ModelInfo};
-pub use vector_index::VectorIndex;
+pub use vector_index::{HnswParams, VectorIndex};

@@ -102,8 +102,11 @@ async fn main() -> Result<()> {
 
     // Create semantic search engine
     info!("Initializing semantic search engine...");
-    let mut engine =
-        SemanticSearchEngine::new(config.indexer.chunk_size, config.indexer.chunk_overlap);
+    let mut engine = SemanticSearchEngine::with_hnsw_config(
+        config.indexer.chunk_size,
+        config.indexer.chunk_overlap,
+        config.indexer.hnsw.clone(),
+    );
 
     // Try to load existing index if configured
     if let Some(ref index_path) = config.indexer.index_path {
