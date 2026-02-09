@@ -42,8 +42,8 @@ pub fn init_telemetry(
         .with_line_number(false);
 
     // Build an env-filter that respects RUST_LOG, falling back to the CLI level
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(log_level.to_string()));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level.to_string()));
 
     if enabled {
         // Build OTLP exporter targeting the configured gRPC endpoint
@@ -55,9 +55,10 @@ pub fn init_telemetry(
 
         let provider = SdkTracerProvider::builder()
             .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-            .with_resource(Resource::new(vec![
-                opentelemetry::KeyValue::new("service.name", service_name.to_owned()),
-            ]))
+            .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
+                "service.name",
+                service_name.to_owned(),
+            )]))
             .build();
 
         let tracer = provider.tracer(service_name.to_owned());

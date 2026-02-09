@@ -78,7 +78,12 @@ async fn main() -> Result<()> {
         Level::INFO
     };
     let tele = config.telemetry.clone().with_env_overrides();
-    telemetry::init_telemetry(tele.enabled, &tele.otlp_endpoint, &tele.service_name, log_level)?;
+    telemetry::init_telemetry(
+        tele.enabled,
+        &tele.otlp_endpoint,
+        &tele.service_name,
+        log_level,
+    )?;
 
     // Initialize diagnostics server start time
     diagnostics::init_server_start_time();

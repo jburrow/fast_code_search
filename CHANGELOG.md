@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-09
+
+### Added
+- **OpenTelemetry distributed tracing**: Both server binaries now export traces via OTLP/gRPC
+  - New `[telemetry]` TOML config section with `enabled`, `otlp_endpoint`, and `service_name`
+  - Enabled by default — set `enabled = false` or `OTEL_SDK_DISABLED=true` to disable
+  - Standard env var overrides: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `FCS_TRACING_ENABLED`
+  - New `src/telemetry.rs` module with `init_telemetry()` / `shutdown_telemetry()` lifecycle
+  - Graceful shutdown flushes all pending spans before process exit
+
+- **Tracing instrumentation across the stack**:
+  - `#[tracing::instrument]` on all public search methods: `search`, `search_ranked`, `search_with_filter`, `search_with_filter_ranked`, `search_regex`, `search_symbols`
+  - `#[tracing::instrument]` on semantic engine `search` method
+  - `#[tracing::instrument]` on all gRPC handlers (keyword + semantic)
+  - `tower_http::trace::TraceLayer` on both HTTP/REST routers
+  - `Server::builder().trace_fn()` on both gRPC servers
+
+### Changed
+- Tracing subscriber upgraded from simple `FmtSubscriber` to layered `Registry` (fmt + OTel)
+- `tracing-subscriber` now uses `registry` feature alongside `env-filter`
+- `tower-http` now enables `trace` feature alongside `cors`
+- Binary startup reordered: config loads before tracing init so TOML telemetry values are available
+- `--init` flag exits before tracing init (no subscriber needed for template generation)
+
+### Dependencies
+- Added `opentelemetry` 0.27, `opentelemetry_sdk` 0.27 (rt-tokio), `opentelemetry-otlp` 0.27 (tonic), `tracing-opentelemetry` 0.28
+
 ## [0.3.0] - 2026-02-06
 
 ### Added
