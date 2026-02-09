@@ -833,10 +833,10 @@ impl SearchEngine {
 
     pub fn rebuild_symbols_and_dependencies_with_progress<F>(
         &mut self,
-        mut progress_callback: F,
+        progress_callback: F,
     ) -> RebuildCacheStats
     where
-        F: FnMut(usize, usize),
+        F: Fn(usize, usize) + Sync,
     {
 
         let total_files = self.file_store.len();
@@ -857,6 +857,9 @@ impl SearchEngine {
         }
 
         let file_store = &self.file_store;
+
+        const PROGRESS_UPDATE_EVERY: usize = 1000;
+        let progress = std::sync::atomic::AtomicUsize::new(0);
 
         progress_callback(0, total_files);
 
@@ -916,6 +919,14 @@ impl SearchEngine {
                     imports,
                     had_content,
                 })
+            })
+            .inspect(|_| {
+                let processed = progress
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
+                if processed.is_multiple_of(PROGRESS_UPDATE_EVERY) || processed == total_files {
+                    progress_callback(processed, total_files);
+                }
             })
             .collect();
 
@@ -2061,10 +2072,10 @@ impl SearchEngine {
         &mut self,
         path: &std::path::Path,
         config: &crate::config::IndexerConfig,
-        mut progress_callback: F,
+        progress_callback: F,
     ) -> anyhow::Result<LoadIndexResult>
     where
-        F: FnMut(LoadingPhase, Option<usize>, Option<usize>, &str),
+        F: Fn(LoadingPhase, Option<usize>, Option<usize>, &str) + Sync,
     {
         use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 

@@ -284,13 +284,24 @@ pub fn batch_check_files(
                 }
             }
 
-            // Check if file exists and is stale
-            if !file_meta.path.exists() {
-                (idx, FileStatus::Removed)
-            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
-                (idx, FileStatus::Stale)
-            } else {
-                (idx, FileStatus::Valid)
+            // Single metadata call per file to reduce I/O during load
+            match std::fs::metadata(&file_meta.path) {
+                Ok(metadata) => {
+                    let current_mtime = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let current_size = metadata.len();
+
+                    if current_mtime != file_meta.mtime || current_size != file_meta.size {
+                        (idx, FileStatus::Stale)
+                    } else {
+                        (idx, FileStatus::Valid)
+                    }
+                }
+                Err(_) => (idx, FileStatus::Removed),
             }
         })
         .collect()
