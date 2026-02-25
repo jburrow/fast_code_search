@@ -835,7 +835,6 @@ impl SearchEngine {
     where
         F: FnMut(usize, usize),
     {
-
         let total_files = self.file_store.len();
         if total_files == 0 {
             return RebuildCacheStats::default();
@@ -916,8 +915,10 @@ impl SearchEngine {
             })
             .collect();
 
-        let mut stats = RebuildCacheStats::default();
-        stats.files_processed = entries.len();
+        let mut stats = RebuildCacheStats {
+            files_processed: entries.len(),
+            ..RebuildCacheStats::default()
+        };
 
         for entry in entries {
             stats.symbols_extracted += entry.symbols.len();
@@ -927,7 +928,8 @@ impl SearchEngine {
             }
 
             if entry.file_id as usize >= self.symbol_cache.len() {
-                self.symbol_cache.resize(entry.file_id as usize + 1, Vec::new());
+                self.symbol_cache
+                    .resize(entry.file_id as usize + 1, Vec::new());
             }
             self.symbol_cache[entry.file_id as usize] = entry.symbols;
 

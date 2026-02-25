@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-02-25
+
+### Fixed
+- **OOM crash during background indexing**: `PreIndexedFile` was retaining a full copy of each file's content (`String`, up to 10 MB each) in memory while rayon processed batches in parallel. With a 500-file batch size this could accumulate up to 5 GB of redundant heap on top of the trigram index, causing an allocation failure on large codebases (~60K files). The `content` field has been removed from `PreIndexedFile` — it was only needed transiently inside `process()` to compute trigrams, symbols, and imports, all of which are now the only data carried into `index_batch`.
+
 ## [0.5.0] - 2026-02-25
 
 ### Added
