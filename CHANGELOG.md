@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-25
+
 ### Added
 - **HNSW vector index for semantic search**: Replaced linear O(n) search with HNSW O(log n) algorithm
   - New `hnsw_rs` dependency for fast approximate nearest neighbor search
