@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-02-25
+
+### Fixed
+- **SIGABRT / heap corruption during parallel batch indexing**: Tree-sitter C parsers were being
+  called concurrently from rayon's thread pool (`par_iter` over a 500-file batch). Tree-sitter's
+  internal C allocator is not thread-safe under concurrent use, causing intermittent heap corruption
+  manifesting as `memory allocation of N bytes failed` + `Aborted (core dumped)` after ~110 batches
+  (~55K files). Fixed by splitting `PreIndexedFile::process` into two phases:
+  1. `PartialIndexedFile::process` — pure-Rust trigram extraction, runs in parallel safely.
+  2. `PreIndexedFile::from_partial` — tree-sitter symbol/import extraction, runs sequentially.
+  Trigram extraction (the dominant CPU cost) remains parallel; only the tree-sitter FFI calls
+  are serialised.
+
 ## [0.5.1] - 2026-02-25
 
 ### Fixed

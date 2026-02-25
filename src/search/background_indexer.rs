@@ -6,8 +6,8 @@
 use crate::config::IndexerConfig;
 use crate::search::file_discovery::{FileDiscoveryConfig, FileDiscoveryIterator};
 use crate::search::{
-    IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase, PreIndexedFile,
-    ProgressBroadcaster, SearchEngine, SharedIndexingProgress,
+    IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase, PartialIndexedFile,
+    PreIndexedFile, ProgressBroadcaster, SearchEngine, SharedIndexingProgress,
 };
 use crate::utils::{format_bytes, format_number};
 
@@ -573,10 +573,19 @@ fn process_batch(
         p.message = format!("Indexing batch {} ({} files)...", batch_num, batch_len);
     });
 
-    // Process in parallel
-    let pre_indexed: Vec<PreIndexedFile> = batch
+    // Phase 1 (parallel, pure Rust — no tree-sitter C FFI):
+    // Extract file content and trigrams across rayon threads safely.
+    let partial: Vec<PartialIndexedFile> = batch
         .par_iter()
-        .filter_map(|path| PreIndexedFile::process(path))
+        .filter_map(|path| PartialIndexedFile::process(path))
+        .collect();
+
+    // Phase 2 (sequential — tree-sitter C parsers are not thread-safe):
+    // Extract symbols and imports one file at a time to prevent concurrent
+    // heap corruption in the C allocator causing SIGABRT.
+    let pre_indexed: Vec<PreIndexedFile> = partial
+        .into_iter()
+        .map(PreIndexedFile::from_partial)
         .collect();
 
     let batch_indexed_count = pre_indexed.len();

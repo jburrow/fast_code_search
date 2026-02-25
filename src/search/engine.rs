@@ -343,36 +343,30 @@ struct ImportResolutionResult {
     resolved_edges: Vec<(u32, u32)>,
 }
 
-/// Pre-processed file data ready to be merged into the engine.
-/// This is computed in parallel and then merged with a lock.
-pub struct PreIndexedFile {
-    /// Path to the file
+/// Intermediate result from phase 1 (parallel, pure-Rust, no FFI).
+/// Holds file content and trigrams. Tree-sitter is NOT called here.
+pub struct PartialIndexedFile {
     pub path: PathBuf,
-    /// Unique trigrams extracted from the content
     pub trigrams: FxHashSet<Trigram>,
-    /// Extracted symbols
-    pub symbols: Vec<Symbol>,
-    /// Extracted import paths
-    pub imports: Vec<String>,
+    pub filename_stem: String,
+    /// Raw file content kept for phase 2 symbol extraction
+    pub content: String,
 }
 
-impl PreIndexedFile {
-    /// Maximum file size to process (10MB) - larger files are skipped to avoid memory issues
+impl PartialIndexedFile {
+    /// Maximum file size to process (10MB) - larger files are skipped
     const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-    /// Process a file in parallel - does all CPU-heavy work without needing engine access
-    /// Uses catch_unwind to handle tree-sitter stack overflows gracefully
+    /// Phase 1: pure-Rust work only — safe to run in parallel across rayon threads.
+    /// Does NOT call tree-sitter (C FFI) to avoid concurrent heap corruption.
     pub fn process(path: &Path) -> Option<Self> {
-        // Check file size first - skip very large files
         let metadata = std::fs::metadata(path).ok()?;
         if metadata.len() > Self::MAX_FILE_SIZE {
             return None;
         }
 
-        // Read file content
         let content = std::fs::read_to_string(path).ok()?;
 
-        // Extract filename stem for indexing (enables searching by filename)
         let filename_stem = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -385,31 +379,57 @@ impl PreIndexedFile {
             })
             .to_string();
 
-        // Extract trigrams from lowercase content for case-insensitive search
-        // Prepend filename so it's also searchable
-        // Note: We lowercase during indexing so queries can be lowercased at search time
-        // Use triple newlines to avoid creating garbage trigrams at the filename/content boundary
+        // Prepend filename stem so filenames are searchable.
+        // Triple newline avoids garbage trigrams at the boundary.
         let content_with_filename = format!("{}\n\n\n{}", filename_stem, content);
         let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
+        Some(PartialIndexedFile {
+            path: path.to_path_buf(),
+            trigrams,
+            filename_stem,
+            content,
+        })
+    }
+}
+
+/// Pre-processed file data ready to be merged into the engine.
+/// Built from a PartialIndexedFile by adding symbols/imports (tree-sitter).
+pub struct PreIndexedFile {
+    /// Path to the file
+    pub path: PathBuf,
+    /// Unique trigrams extracted from the content
+    pub trigrams: FxHashSet<Trigram>,
+    /// Extracted symbols
+    pub symbols: Vec<Symbol>,
+    /// Extracted import paths
+    pub imports: Vec<String>,
+}
+
+impl PreIndexedFile {
+    /// Phase 2: run tree-sitter symbol/import extraction on an already-processed partial.
+    /// Must be called **sequentially** (not inside par_iter) because tree-sitter C parsers
+    /// are not safe to use concurrently from multiple threads.
+    pub fn from_partial(partial: PartialIndexedFile) -> Self {
+        let extractor = SymbolExtractor::new(&partial.path);
+
         // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
-        let extractor = SymbolExtractor::new(path);
         let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            extractor.extract(&content).unwrap_or_default()
+            extractor.extract(&partial.content).unwrap_or_default()
         }))
         .unwrap_or_else(|_| {
             warn!(
                 "Symbol extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
-                path.display()
+                partial.path.display()
             );
             Vec::new()
         });
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
-        if !filename_stem.is_empty() {
+        if !partial.filename_stem.is_empty() {
             symbols.push(Symbol {
-                name: filename_stem.clone(),
+                name: partial.filename_stem.clone(),
                 symbol_type: SymbolType::FileName,
                 line: 0,
                 column: 0,
@@ -420,19 +440,19 @@ impl PreIndexedFile {
         // Extract imports with panic protection
         let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             extractor
-                .extract_imports(&content)
+                .extract_imports(&partial.content)
                 .ok()
                 .map(|imports| imports.into_iter().map(|i| i.path).collect())
                 .unwrap_or_default()
         }))
         .unwrap_or_default();
 
-        Some(PreIndexedFile {
-            path: path.to_path_buf(),
-            trigrams,
+        PreIndexedFile {
+            path: partial.path,
+            trigrams: partial.trigrams,
             symbols,
             imports,
-        })
+        }
     }
 }
 
