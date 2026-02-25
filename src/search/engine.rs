@@ -348,8 +348,6 @@ struct ImportResolutionResult {
 pub struct PreIndexedFile {
     /// Path to the file
     pub path: PathBuf,
-    /// File content (owned for thread safety)
-    pub content: String,
     /// Unique trigrams extracted from the content
     pub trigrams: FxHashSet<Trigram>,
     /// Extracted symbols
@@ -431,7 +429,6 @@ impl PreIndexedFile {
 
         Some(PreIndexedFile {
             path: path.to_path_buf(),
-            content,
             trigrams,
             symbols,
             imports,
