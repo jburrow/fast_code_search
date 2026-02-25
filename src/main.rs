@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
     // Create gRPC service with shared engine
     let search_service = server::create_server_with_engine(shared_engine.clone());
 
-    info!(address = %addr, "Fast Code Search Server starting");
+    info!(version = env!("CARGO_PKG_VERSION"), address = %addr, "Fast Code Search Server starting");
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");
     info!("Ready to accept connections");
 

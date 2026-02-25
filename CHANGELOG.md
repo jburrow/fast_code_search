@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-02-25
+
+### Added
+- **Version logged on startup**: The binary version is now emitted as a structured log field
+  (`version=X.Y.Z`) alongside the startup address line, making it easy to confirm which build
+  is running.
+- **Debug builds in release artifacts**: Each GitHub release now also ships a debug build
+  (with full symbols) per platform, archived as `fast_code_search-VERSION-TARGET-debug.{tar.gz,zip}`.
+  Use these builds when diagnosing crashes — `RUST_BACKTRACE=full` will show real function names.
+
 ## [0.5.2] - 2026-02-25
 
 ### Fixed

@@ -54,8 +54,11 @@ jobs:
         if: matrix.musl == true
         run: sudo apt-get install -y musl-tools
 
-      - name: Build
+      - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build debug (with symbols)
+        run: cargo build --target ${{ matrix.target }}
 
       - name: Get version from tag
         id: version
@@ -81,25 +84,42 @@ jobs:
           cp README.md release/
           cp LICENSE release/
 
-      - name: Create archive (Unix)
+      - name: Create debug directory
+        shell: bash
+        run: |
+          mkdir -p release-debug
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/debug/${{ env.BINARY_NAME }}.exe release-debug/
+          else
+            cp target/${{ matrix.target }}/debug/${{ env.BINARY_NAME }} release-debug/
+          fi
+          cp README.md release-debug/
+          cp LICENSE release-debug/
+
+      - name: Create release archive (Unix)
         if: matrix.archive == 'tar.gz'
         run: |
           cd release
           tar -czvf ../fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz *
+          cd ../release-debug
+          tar -czvf ../fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}-debug.tar.gz *
 
-      - name: Create archive (Windows)
+      - name: Create release archive (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           Compress-Archive -Path release/* -DestinationPath fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip
+          Compress-Archive -Path release-debug/* -DestinationPath fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}-debug.zip
 
       - name: Generate checksums
         shell: bash
         run: |
           if [ "${{ matrix.archive }}" = "tar.gz" ]; then
             sha256sum fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz > fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz.sha256
+            sha256sum fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}-debug.tar.gz > fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}-debug.tar.gz.sha256
           else
             sha256sum fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip > fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip.sha256
+            sha256sum fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}-debug.zip > fast_code_search-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}-debug.zip.sha256
           fi
 
       - name: Upload artifacts
