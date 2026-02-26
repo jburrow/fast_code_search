@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-02-26
+
+### Fixed
+- **Binary-detection tests use genuine binary bytes**: Test helpers in `file_store`, `lazy_file_store`, `engine`, and `integration_tests` now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.
+
 ## [0.5.5] - 2026-02-26
 
 ### Changed
@@ -334,7 +339,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/jburrow/fast_code_search/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/jburrow/fast_code_search/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/jburrow/fast_code_search/compare/v0.5.2...v0.5.3
