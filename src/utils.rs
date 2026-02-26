@@ -487,16 +487,11 @@ mod tests {
         // Binary content with lots of null bytes — should be rejected
         let binary: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0xFF, 0xFD];
         let result = transcode_to_utf8(binary);
-        // Should either be Err or produce content flagged as binary
-        // (chardetng may try to decode it, but is_binary_content should catch it)
-        if let Ok(Some(t)) = &result {
-            // If it decoded, the content should be flagged by our binary check
-            assert!(
-                is_binary_content(&t.content),
-                "Expected binary detection for decoded content"
-            );
-        }
-        // Otherwise Err is also acceptable
+        assert!(
+            result.is_err(),
+            "Expected Err for binary content, got: {:?}",
+            result
+        );
     }
 
     #[test]

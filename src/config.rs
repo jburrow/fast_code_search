@@ -242,8 +242,8 @@ impl IndexerConfig {
 
         // Create a deterministic string representation
         let config_str = format!(
-            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}|exclude_files:{:?}",
-            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size, sorted_excluded_files
+            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}|exclude_files:{:?}|transcode_non_utf8:{}",
+            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size, sorted_excluded_files, self.transcode_non_utf8
         );
 
         // Generate MD5 hash

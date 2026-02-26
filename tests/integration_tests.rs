@@ -1084,6 +1084,8 @@ async fn test_config_disable_transcoding() -> Result<()> {
         result_enabled.is_some(),
         "Expected transcoding to succeed when enabled"
     );
+    let (_, transcoded) = result_enabled.unwrap();
+    assert!(transcoded, "Expected transcoded flag to be true for non-UTF-8 file");
 
     // With transcoding disabled, should return None for non-UTF-8 files
     let result_disabled = PartialIndexedFile::process(&file_path, false);

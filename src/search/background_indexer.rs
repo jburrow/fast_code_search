@@ -588,7 +588,7 @@ fn process_batch(
     // Phase 1 (parallel, pure Rust — no tree-sitter C FFI):
     // Extract file content and trigrams across rayon threads safely.
     // Files listed in `exclude_files` are silently skipped here.
-    let partial: Vec<PartialIndexedFile> = batch
+    let partial_with_flags: Vec<(PartialIndexedFile, bool)> = batch
         .par_iter()
         .filter(|path| {
             if exclude_files.is_empty() {
@@ -608,6 +608,9 @@ fn process_batch(
             PartialIndexedFile::process(path, transcode_non_utf8)
         })
         .collect();
+
+    let batch_transcoded: usize = partial_with_flags.iter().filter(|(_, t)| *t).count();
+    let partial: Vec<PartialIndexedFile> = partial_with_flags.into_iter().map(|(p, _)| p).collect();
 
     // Phase 2 (sequential — tree-sitter C parsers are not thread-safe):
     // Extract symbols and imports one file at a time to prevent concurrent
@@ -658,6 +661,7 @@ fn process_batch(
     // Update progress
     broadcast_progress(index_progress, index_progress_tx, |p| {
         p.files_indexed += batch_indexed_count;
+        p.files_transcoded += batch_transcoded;
     });
 
     if (*batch_num).is_multiple_of(10) {

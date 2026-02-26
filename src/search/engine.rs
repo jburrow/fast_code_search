@@ -363,15 +363,17 @@ impl PartialIndexedFile {
     /// When `transcode_non_utf8` is true, files in non-UTF-8 encodings (Latin-1,
     /// Shift-JIS, UTF-16, etc.) are automatically transcoded. When false, only
     /// UTF-8 files are accepted.
-    pub fn process(path: &Path, transcode_non_utf8: bool) -> Option<Self> {
+    /// Returns `Some((file, transcoded))` where `transcoded` is `true` when
+    /// the file was converted from a non-UTF-8 encoding via `transcode_to_utf8`.
+    pub fn process(path: &Path, transcode_non_utf8: bool) -> Option<(Self, bool)> {
         let metadata = std::fs::metadata(path).ok()?;
         if metadata.len() > Self::MAX_FILE_SIZE {
             return None;
         }
 
         let raw_bytes = std::fs::read(path).ok()?;
-        let content = match std::str::from_utf8(&raw_bytes) {
-            Ok(s) => s.to_string(), // UTF-8 fast path
+        let (content, transcoded) = match std::str::from_utf8(&raw_bytes) {
+            Ok(s) => (s.to_string(), false), // UTF-8 fast path
             Err(_) => {
                 if !transcode_non_utf8 {
                     return None; // Transcoding disabled
@@ -383,7 +385,7 @@ impl PartialIndexedFile {
                             encoding = result.encoding_name,
                             "Transcoded non-UTF-8 file for indexing"
                         );
-                        result.content
+                        (result.content, true)
                     }
                     _ => return None, // Binary or unrecognizable
                 }
@@ -418,12 +420,12 @@ impl PartialIndexedFile {
         let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
-        Some(PartialIndexedFile {
+        Some((PartialIndexedFile {
             path: path.to_path_buf(),
             trigrams,
             filename_stem,
             content,
-        })
+        }, transcoded))
     }
 }
 
