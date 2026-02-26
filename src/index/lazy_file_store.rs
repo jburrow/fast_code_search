@@ -468,14 +468,17 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = temp_dir.path().join("binary.bin");
 
+        // Genuinely binary bytes: not valid UTF-8, no BOM, contains null bytes.
+        // Even with encoding transcoding enabled, this should be rejected as binary.
+        let binary_bytes: &[u8] = &[0x81, 0x82, 0x83, 0x84, 0x00, 0x00, 0x01, 0x02];
         let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
-        file.write_all(&[0xFF, 0xFE, 0x00, 0x01]).unwrap();
+        file.write_all(binary_bytes).unwrap();
         drop(file);
 
         let lazy = LazyMappedFile::new(&file_path);
         assert!(lazy.as_str().is_err());
 
         // as_bytes should work
-        assert_eq!(lazy.as_bytes().unwrap(), &[0xFF, 0xFE, 0x00, 0x01]);
+        assert_eq!(lazy.as_bytes().unwrap(), binary_bytes);
     }
 }

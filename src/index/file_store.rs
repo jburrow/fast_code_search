@@ -287,16 +287,17 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = temp_dir.path().join("binary.bin");
 
-        // Write invalid UTF-8 bytes
+        // Genuinely binary bytes: not valid UTF-8, no BOM, contains null bytes.
+        // Even with encoding transcoding enabled, this should be rejected as binary.
+        let binary_bytes: &[u8] = &[0x81, 0x82, 0x83, 0x84, 0x00, 0x00, 0x01, 0x02];
         let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
-        file.write_all(&[0xFF, 0xFE, 0x00, 0x01])
-            .expect("Failed to write bytes");
+        file.write_all(binary_bytes).expect("Failed to write bytes");
         drop(file);
 
         let mapped = MappedFile::new(&file_path).expect("Failed to create MappedFile");
         assert!(mapped.as_str().is_err());
         // But as_bytes should still work
-        assert_eq!(mapped.as_bytes(), &[0xFF, 0xFE, 0x00, 0x01]);
+        assert_eq!(mapped.as_bytes(), binary_bytes);
     }
 
     #[test]
