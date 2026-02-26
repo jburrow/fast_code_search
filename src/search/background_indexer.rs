@@ -423,6 +423,7 @@ fn run_indexing_pipeline(
         index_progress,
         index_progress_tx,
         &indexer_config.exclude_files,
+        indexer_config.transcode_non_utf8,
     );
 
     // Wait for discovery thread
@@ -491,6 +492,7 @@ fn spawn_discovery_thread(
 }
 
 /// Process files in batches from the discovery channel.
+#[allow(clippy::too_many_arguments)]
 fn process_batches(
     rx: mpsc::Receiver<PathBuf>,
     files_discovered: &Arc<AtomicUsize>,
@@ -499,6 +501,7 @@ fn process_batches(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
     exclude_files: &[String],
+    transcode_non_utf8: bool,
 ) -> (usize, usize) {
     let mut batch: Vec<PathBuf> = Vec::with_capacity(BATCH_SIZE);
     let mut total_indexed = 0usize;
@@ -518,6 +521,7 @@ fn process_batches(
                         index_progress,
                         index_progress_tx,
                         exclude_files,
+                        transcode_non_utf8,
                     );
                     total_indexed += indexed;
                 }
@@ -543,6 +547,7 @@ fn process_batches(
             index_progress,
             index_progress_tx,
             exclude_files,
+            transcode_non_utf8,
         );
         total_indexed += indexed;
 
@@ -557,6 +562,7 @@ fn process_batches(
 }
 
 /// Process a single batch of files.
+#[allow(clippy::too_many_arguments)]
 fn process_batch(
     batch: &mut Vec<PathBuf>,
     batch_num: &mut usize,
@@ -565,6 +571,7 @@ fn process_batch(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
     exclude_files: &[String],
+    transcode_non_utf8: bool,
 ) -> usize {
     *batch_num += 1;
     let batch_start = Instant::now();
@@ -598,7 +605,7 @@ fn process_batch(
         })
         .filter_map(|path| {
             tracing::debug!(path = %path.display(), "Phase1: reading and extracting trigrams");
-            PartialIndexedFile::process(path)
+            PartialIndexedFile::process(path, transcode_non_utf8)
         })
         .collect();
 

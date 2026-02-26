@@ -147,6 +147,13 @@ pub struct IndexerConfig {
     ///   exclude_files = ["/repo/src/generated/huge_file.rs"]
     #[serde(default)]
     pub exclude_files: Vec<String>,
+
+    /// Enable encoding detection for non-UTF-8 text files (default: true).
+    /// When enabled, files in encodings like Latin-1, Shift-JIS, UTF-16 etc.
+    /// are automatically transcoded to UTF-8 for indexing.
+    /// Disable this if you only work with UTF-8 codebases for slightly faster indexing.
+    #[serde(default = "default_true")]
+    pub transcode_non_utf8: bool,
 }
 
 fn default_address() -> String {
@@ -204,6 +211,7 @@ impl Default for IndexerConfig {
             save_after_build: true,
             save_after_updates: 0, // Disabled by default
             exclude_files: Vec::new(),
+            transcode_non_utf8: true,
         }
     }
 }

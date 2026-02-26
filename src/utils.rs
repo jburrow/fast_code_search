@@ -3,6 +3,106 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+/// Result of encoding detection and transcoding
+#[derive(Debug)]
+pub struct TranscodeResult {
+    /// The transcoded UTF-8 string
+    pub content: String,
+    /// The name of the detected encoding (e.g. "windows-1252", "Shift_JIS")
+    pub encoding_name: &'static str,
+}
+
+/// Detect encoding of raw bytes and transcode to UTF-8 if needed.
+///
+/// Returns `Ok(None)` if already valid UTF-8 (zero-copy fast path).
+/// Returns `Ok(Some(TranscodeResult))` with transcoded content for non-UTF-8 text.
+/// Returns `Err` if the content appears to be binary (not text in any encoding).
+pub fn transcode_to_utf8(bytes: &[u8]) -> Result<Option<TranscodeResult>, &'static str> {
+    // Fast path: already valid UTF-8
+    if std::str::from_utf8(bytes).is_ok() {
+        return Ok(None);
+    }
+
+    // Check for UTF-8 BOM (EF BB BF) — strip it and re-validate
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        if let Ok(s) = std::str::from_utf8(&bytes[3..]) {
+            return Ok(Some(TranscodeResult {
+                content: s.to_string(),
+                encoding_name: "UTF-8 (BOM)",
+            }));
+        }
+    }
+
+    // Check for UTF-16 BOM and decode directly
+    if bytes.len() >= 2 {
+        if bytes[0] == 0xFF && bytes[1] == 0xFE {
+            // UTF-16 LE BOM
+            let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(bytes);
+            if !had_errors {
+                return Ok(Some(TranscodeResult {
+                    content: decoded.into_owned(),
+                    encoding_name: "UTF-16LE",
+                }));
+            }
+        } else if bytes[0] == 0xFE && bytes[1] == 0xFF {
+            // UTF-16 BE BOM
+            let (decoded, _, had_errors) = encoding_rs::UTF_16BE.decode(bytes);
+            if !had_errors {
+                return Ok(Some(TranscodeResult {
+                    content: decoded.into_owned(),
+                    encoding_name: "UTF-16BE",
+                }));
+            }
+        }
+    }
+
+    // Use chardetng to guess encoding from first 8KB
+    let sample_len = bytes.len().min(8192);
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(&bytes[..sample_len], sample_len == bytes.len());
+
+    // allow_utf8 = false because we already checked for valid UTF-8 above
+    let encoding = detector.guess(None, false);
+
+    // Decode the full content with the detected encoding
+    let (decoded, _actual_encoding, had_errors) = encoding.decode(bytes);
+
+    if had_errors {
+        return Err("encoding detection produced replacement characters");
+    }
+
+    // Sanity check: make sure the transcoded result looks like text
+    if is_binary_content(&decoded) {
+        return Err("transcoded content appears to be binary");
+    }
+
+    Ok(Some(TranscodeResult {
+        content: decoded.into_owned(),
+        encoding_name: encoding.name(),
+    }))
+}
+
+/// Check if raw bytes appear to be binary content.
+///
+/// Similar to `is_binary_content` but operates on raw `&[u8]` instead of `&str`.
+/// Checks the first 8KB for null bytes or high ratio of non-printable characters.
+pub fn is_binary_bytes(bytes: &[u8]) -> bool {
+    let check_len = bytes.len().min(8192);
+    let sample = &bytes[..check_len];
+
+    let mut non_text_count = 0;
+    for &byte in sample {
+        if byte == 0 {
+            return true;
+        }
+        if byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r') {
+            non_text_count += 1;
+        }
+    }
+
+    check_len > 0 && non_text_count > check_len / 10
+}
+
 /// Binary file extensions to skip during indexing.
 /// These are common binary formats that don't contain searchable text.
 pub const BINARY_EXTENSIONS: &[&str] = &[
@@ -295,5 +395,137 @@ mod tests {
         // 50KB line should be fine
         let long_line = "a".repeat(50_000);
         assert!(content_safety_check(&long_line).is_none());
+    }
+
+    // --- Encoding transcoding tests ---
+
+    #[test]
+    fn test_transcode_utf8_passthrough() {
+        // Valid UTF-8 returns Ok(None) — zero-copy fast path
+        let utf8 = "Hello, world! café résumé naïve";
+        let result = transcode_to_utf8(utf8.as_bytes());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_transcode_empty() {
+        let result = transcode_to_utf8(b"");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none()); // Empty is valid UTF-8
+    }
+
+    #[test]
+    fn test_transcode_latin1() {
+        // "café" in Latin-1: c=0x63, a=0x61, f=0x66, é=0xE9
+        let latin1_bytes: &[u8] = &[0x63, 0x61, 0x66, 0xE9];
+        let result = transcode_to_utf8(latin1_bytes);
+        assert!(result.is_ok());
+        let transcoded = result.unwrap();
+        assert!(transcoded.is_some());
+        let t = transcoded.unwrap();
+        assert!(t.content.contains("caf"));
+        assert_eq!(&t.content[3..], "é");
+    }
+
+    #[test]
+    fn test_transcode_utf16_le_bom() {
+        // UTF-16 LE with BOM: "Hello"
+        // BOM FF FE, then H=48 00, e=65 00, l=6C 00, l=6C 00, o=6F 00
+        let utf16le: &[u8] = &[
+            0xFF, 0xFE, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F, 0x00,
+        ];
+        let result = transcode_to_utf8(utf16le);
+        assert!(result.is_ok());
+        let transcoded = result.unwrap();
+        assert!(transcoded.is_some());
+        let t = transcoded.unwrap();
+        // encoding_rs may include BOM replacement char, content should contain "Hello"
+        assert!(t.content.contains("Hello"), "Got: {}", t.content);
+        assert_eq!(t.encoding_name, "UTF-16LE");
+    }
+
+    #[test]
+    fn test_transcode_utf16_be_bom() {
+        // UTF-16 BE with BOM: "Hello"
+        // BOM FE FF, then H=00 48, e=00 65, l=00 6C, l=00 6C, o=00 6F
+        let utf16be: &[u8] = &[
+            0xFE, 0xFF, 0x00, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F,
+        ];
+        let result = transcode_to_utf8(utf16be);
+        assert!(result.is_ok());
+        let transcoded = result.unwrap();
+        assert!(transcoded.is_some());
+        let t = transcoded.unwrap();
+        assert!(t.content.contains("Hello"), "Got: {}", t.content);
+        assert_eq!(t.encoding_name, "UTF-16BE");
+    }
+
+    #[test]
+    fn test_transcode_shift_jis() {
+        // A longer Shift-JIS sample to give chardetng enough context for detection.
+        // "日本語のテストです。これは日本語のテキストです。" in Shift-JIS
+        // We encode via encoding_rs to get correct bytes.
+        let text = "日本語のテストです。これは日本語のテキストです。";
+        let (encoded, _, _) = encoding_rs::SHIFT_JIS.encode(text);
+        let shift_jis_bytes = encoded.to_vec();
+
+        let result = transcode_to_utf8(&shift_jis_bytes);
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let transcoded = result.unwrap();
+        assert!(transcoded.is_some(), "Expected Some transcoded result");
+        let t = transcoded.unwrap();
+        assert!(
+            t.content.contains("日本語"),
+            "Expected '日本語' in result, got: {}",
+            t.content
+        );
+    }
+
+    #[test]
+    fn test_transcode_binary_rejected() {
+        // Binary content with lots of null bytes — should be rejected
+        let binary: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0xFF, 0xFD];
+        let result = transcode_to_utf8(binary);
+        // Should either be Err or produce content flagged as binary
+        // (chardetng may try to decode it, but is_binary_content should catch it)
+        if let Ok(Some(t)) = &result {
+            // If it decoded, the content should be flagged by our binary check
+            assert!(
+                is_binary_content(&t.content),
+                "Expected binary detection for decoded content"
+            );
+        }
+        // Otherwise Err is also acceptable
+    }
+
+    #[test]
+    fn test_transcode_windows_1252() {
+        // Windows-1252 "smart quotes": left double quote 0x93, right 0x94
+        // Plus some normal ASCII around them
+        let win1252: &[u8] = b"He said \x93hello\x94 to her.";
+        let result = transcode_to_utf8(win1252);
+        assert!(result.is_ok());
+        let transcoded = result.unwrap();
+        assert!(transcoded.is_some());
+        let t = transcoded.unwrap();
+        assert!(t.content.contains("hello"));
+        assert!(t.content.contains("He said"));
+    }
+
+    #[test]
+    fn test_is_binary_bytes() {
+        // Text bytes
+        assert!(!is_binary_bytes(b"Hello, world!\n"));
+        assert!(!is_binary_bytes(b"fn main() { }"));
+
+        // Binary with null bytes
+        assert!(is_binary_bytes(b"Hello\0World"));
+
+        // Pure binary
+        assert!(is_binary_bytes(&[0x00, 0x01, 0x02, 0x03]));
+
+        // Empty
+        assert!(!is_binary_bytes(b""));
     }
 }

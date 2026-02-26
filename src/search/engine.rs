@@ -359,13 +359,36 @@ impl PartialIndexedFile {
 
     /// Phase 1: pure-Rust work only — safe to run in parallel across rayon threads.
     /// Does NOT call tree-sitter (C FFI) to avoid concurrent heap corruption.
-    pub fn process(path: &Path) -> Option<Self> {
+    ///
+    /// When `transcode_non_utf8` is true, files in non-UTF-8 encodings (Latin-1,
+    /// Shift-JIS, UTF-16, etc.) are automatically transcoded. When false, only
+    /// UTF-8 files are accepted.
+    pub fn process(path: &Path, transcode_non_utf8: bool) -> Option<Self> {
         let metadata = std::fs::metadata(path).ok()?;
         if metadata.len() > Self::MAX_FILE_SIZE {
             return None;
         }
 
-        let content = std::fs::read_to_string(path).ok()?;
+        let raw_bytes = std::fs::read(path).ok()?;
+        let content = match std::str::from_utf8(&raw_bytes) {
+            Ok(s) => s.to_string(), // UTF-8 fast path
+            Err(_) => {
+                if !transcode_non_utf8 {
+                    return None; // Transcoding disabled
+                }
+                match crate::utils::transcode_to_utf8(&raw_bytes) {
+                    Ok(Some(result)) => {
+                        tracing::debug!(
+                            path = %path.display(),
+                            encoding = result.encoding_name,
+                            "Transcoded non-UTF-8 file for indexing"
+                        );
+                        result.content
+                    }
+                    _ => return None, // Binary or unrecognizable
+                }
+            }
+        };
 
         // Safety check: skip files that could crash tree-sitter or produce garbage trigrams
         if let Some(reason) = crate::utils::content_safety_check(&content) {
@@ -2464,6 +2487,8 @@ pub struct IndexingProgress {
     pub files_discovered: usize,
     /// Number of files indexed so far
     pub files_indexed: usize,
+    /// Number of files transcoded from non-UTF-8 encodings
+    pub files_transcoded: usize,
     /// Current batch number (1-based)
     pub current_batch: usize,
     /// Total number of batches to process
@@ -2498,6 +2523,7 @@ impl Default for IndexingProgress {
             status: IndexingStatus::Idle,
             files_discovered: 0,
             files_indexed: 0,
+            files_transcoded: 0,
             current_batch: 0,
             total_batches: 0,
             current_path: None,

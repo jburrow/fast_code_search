@@ -12,6 +12,10 @@ pub struct MappedFile {
     pub mmap: Mmap,
     /// Cached result of UTF-8 validation (validated once, reused on subsequent calls)
     utf8_valid: OnceLock<bool>,
+    /// Transcoded UTF-8 content for non-UTF-8 files (None if natively UTF-8)
+    transcoded: OnceLock<Option<String>>,
+    /// Detected encoding name for diagnostics (None if natively UTF-8)
+    detected_encoding: OnceLock<Option<&'static str>>,
 }
 
 impl MappedFile {
@@ -29,10 +33,14 @@ impl MappedFile {
             path: path.to_path_buf(),
             mmap,
             utf8_valid: OnceLock::new(),
+            transcoded: OnceLock::new(),
+            detected_encoding: OnceLock::new(),
         })
     }
 
-    /// Get the content as a string slice (if valid UTF-8)
+    /// Get the content as a string slice.
+    /// For valid UTF-8 files, returns a zero-copy reference to the mmap.
+    /// For non-UTF-8 text files, returns a reference to the transcoded content.
     /// UTF-8 validation is cached after the first call for performance.
     pub fn as_str(&self) -> Result<&str> {
         let is_valid = *self
@@ -41,10 +49,46 @@ impl MappedFile {
 
         if is_valid {
             // SAFETY: We validated UTF-8 above and cached the result
-            Ok(unsafe { std::str::from_utf8_unchecked(&self.mmap) })
-        } else {
-            anyhow::bail!("File is not valid UTF-8: {}", self.path.display())
+            return Ok(unsafe { std::str::from_utf8_unchecked(&self.mmap) });
         }
+
+        // Slow path: try transcoding non-UTF-8 content
+        let transcoded =
+            self.transcoded
+                .get_or_init(|| match crate::utils::transcode_to_utf8(&self.mmap) {
+                    Ok(Some(result)) => {
+                        let _ = self.detected_encoding.set(Some(result.encoding_name));
+                        tracing::info!(
+                            path = %self.path.display(),
+                            encoding = result.encoding_name,
+                            "Transcoded non-UTF-8 file"
+                        );
+                        Some(result.content)
+                    }
+                    _ => {
+                        let _ = self.detected_encoding.set(None);
+                        None
+                    }
+                });
+
+        match transcoded {
+            Some(s) => Ok(s.as_str()),
+            None => anyhow::bail!("File is not valid text: {}", self.path.display()),
+        }
+    }
+
+    /// Get the detected encoding name, if the file was transcoded.
+    /// Returns None if the file is natively UTF-8 or hasn't been accessed yet.
+    pub fn detected_encoding(&self) -> Option<&'static str> {
+        self.detected_encoding.get().copied().flatten()
+    }
+
+    /// Returns true if this file was transcoded from a non-UTF-8 encoding.
+    pub fn was_transcoded(&self) -> bool {
+        self.transcoded
+            .get()
+            .map(|opt| opt.is_some())
+            .unwrap_or(false)
     }
 
     /// Get the content as bytes
