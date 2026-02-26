@@ -5,66 +5,68 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Semantic Code Search</title>
-    <link rel="stylesheet" href="/common.css">
-    <link rel="stylesheet" href="/semantic.css">
+    <link rel="stylesheet" href="/tailwind.css">
 </head>
 
-<body>
-    <div class="container">
-        <header class="header-compact">
-            <div class="header-title">
-                <h1>🧠 Semantic Code Search</h1>
+<body class="bg-zinc-950 text-zinc-300 font-sans antialiased">
+    <div id="main-container" class="min-h-screen flex flex-col justify-center items-center transition-all duration-500 ease-in-out p-4">
+        <header class="w-full max-w-4xl flex justify-between items-center mb-8">
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-zinc-100 tracking-tight">🧠 Semantic Code Search</h1>
             </div>
 
-            <div class="header-stats" id="stats">
-                <div class="stat">
-                    <span class="stat-value" id="stat-files">-</span>
-                    <span class="stat-label">Files</span>
+            <div id="stats" class="flex gap-4 text-sm">
+                <div class="flex flex-col items-end">
+                    <span id="stat-files" class="font-mono text-zinc-300">-</span>
+                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Files</span>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="stat-chunks">-</span>
-                    <span class="stat-label">Chunks</span>
+                <div class="flex flex-col items-end">
+                    <span id="stat-chunks" class="font-mono text-zinc-300">-</span>
+                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Chunks</span>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="stat-cache">-</span>
-                    <span class="stat-label">Cache</span>
+                <div class="flex flex-col items-end">
+                    <span id="stat-cache" class="font-mono text-zinc-300">-</span>
+                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Cache</span>
                 </div>
-                <div class="stat">
-                    <span class="stat-value" id="stat-latency">-</span>
-                    <span class="stat-label">Latency</span>
+                <div class="flex flex-col items-end">
+                    <span id="stat-latency" class="font-mono text-zinc-300">-</span>
+                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Latency</span>
                 </div>
             </div>
 
-            <div class="header-progress" id="progress-panel" style="display: none;">
-                <span class="status-badge" id="progress-status">Ready</span>
-                <div class="progress-bar-container">
-                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
+            <div id="progress-panel" class="hidden items-center gap-3 bg-zinc-900/50 border border-zinc-800/80 rounded-full px-4 py-1.5">
+                <span id="progress-status" class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Ready</span>
+                <div class="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <div id="progress-bar" class="h-full bg-purple-500 transition-all duration-300" style="width: 0%"></div>
                 </div>
-                <span class="progress-percent" id="progress-percent">0%</span>
-                <span class="progress-message" id="progress-message"></span>
+                <span id="progress-percent" class="text-xs text-zinc-400">0%</span>
+                <span id="progress-message" class="text-xs text-zinc-500 truncate max-w-[100px]"></span>
             </div>
         </header>
 
-        <div class="search-box">
-            <div class="query-input-wrapper">
+        <div class="w-full max-w-4xl relative group">
+            <div class="relative flex items-center">
+                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <span class="text-zinc-500 text-xl">🧠</span>
+                </div>
                 <input type="text" id="query"
                     placeholder="Ask in natural language... (e.g., 'authentication logic' or 'error handling')"
-                    autocomplete="off" autofocus>
-                <button id="search-btn" class="search-button">
-                    <span class="search-icon">🔍</span>
+                    autocomplete="off" autofocus
+                    class="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl pl-12 pr-32 py-4 text-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 shadow-2xl transition-all">
+                <button id="search-btn" class="absolute right-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
                     Search
                 </button>
             </div>
 
-            <details class="advanced-options">
-                <summary class="advanced-toggle">
-                    <span class="toggle-icon">▶</span> Advanced Options
+            <details class="mt-4 group/details">
+                <summary class="cursor-pointer text-sm text-zinc-500 hover:text-zinc-300 flex items-center gap-2 select-none transition-colors">
+                    <span class="transform group-open/details:rotate-90 transition-transform text-xs">▶</span> Advanced Options
                 </summary>
-                <div class="advanced-content">
-                    <div class="search-options">
-                        <label>
-                            Max results:
-                            <select id="max-results">
+                <div class="mt-4 p-5 bg-zinc-900/50 border border-zinc-800/80 rounded-xl shadow-lg space-y-6">
+                    <div class="flex items-center gap-4">
+                        <label class="flex items-center gap-3 text-sm">
+                            <span class="text-zinc-400">Max results:</span>
+                            <select id="max-results" class="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none focus:border-purple-500">
                                 <option value="5">5</option>
                                 <option value="10" selected>10</option>
                                 <option value="25">25</option>
@@ -73,20 +75,21 @@
                         </label>
                     </div>
 
-                    <div class="examples">
-                        <span class="examples-label">Try these examples:</span>
-                        <button class="example-btn" data-query="authentication and login">authentication and
-                            login</button>
-                        <button class="example-btn" data-query="error handling">error handling</button>
-                        <button class="example-btn" data-query="database connection">database connection</button>
-                        <button class="example-btn" data-query="API endpoints">API endpoints</button>
-                        <button class="example-btn" data-query="configuration loading">configuration loading</button>
+                    <div>
+                        <span class="block text-sm text-zinc-400 mb-3">Try these examples:</span>
+                        <div class="flex flex-wrap gap-2">
+                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="authentication and login">authentication and login</button>
+                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="error handling">error handling</button>
+                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="database connection">database connection</button>
+                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="API endpoints">API endpoints</button>
+                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="configuration loading">configuration loading</button>
+                        </div>
                     </div>
                 </div>
             </details>
         </div>
 
-        <div id="results" class="results-container"></div>
+        <div id="results" class="w-full max-w-4xl mt-8 space-y-4"></div>
     </div>
 
     <script src="/common.js"></script>

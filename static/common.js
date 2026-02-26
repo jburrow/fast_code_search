@@ -100,9 +100,9 @@ function showLoading(containerId, message = 'Loading...') {
     const container = document.getElementById(containerId);
     if (container) {
         container.innerHTML = `
-            <div class="loading">
-                <div class="loading-spinner"></div>
-                <p style="margin-top: 0.75rem;">${escapeHtml(message)}</p>
+            <div class="flex flex-col items-center justify-center py-12 text-zinc-400">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mb-4"></div>
+                <p>${escapeHtml(message)}</p>
             </div>
         `;
     }
@@ -117,7 +117,7 @@ function showError(containerId, message) {
     const container = document.getElementById(containerId);
     if (container) {
         container.innerHTML = `
-            <div class="error-message">
+            <div class="bg-red-950/30 border border-red-900/50 text-red-400 px-4 py-3 rounded-lg my-4">
                 <strong>Error:</strong> ${escapeHtml(message)}
             </div>
         `;
@@ -134,8 +134,8 @@ function showEmpty(containerId, message, icon = '🔍') {
     const container = document.getElementById(containerId);
     if (container) {
         container.innerHTML = `
-            <div class="no-results">
-                <div class="no-results-icon">${icon}</div>
+            <div class="text-center py-12 text-zinc-500">
+                <div class="text-4xl mb-4">${icon}</div>
                 <p>${escapeHtml(message)}</p>
             </div>
         `;
@@ -309,9 +309,9 @@ class SearchReadinessManager {
  */
 function createResultsSummary(count, latencyMs) {
     return `
-        <div style="margin-bottom: 0.5rem; color: var(--text-secondary); text-align: center; font-size: 0.85rem;">
-            Found <strong style="color: var(--accent);">${count}</strong> results 
-            in <strong style="color: var(--success);">${latencyMs}ms</strong>
+        <div class="flex justify-between items-center mb-4 text-sm text-zinc-400">
+            <span>Found <strong class="text-indigo-400 font-medium">${count}</strong> results</span>
+            <span class="font-mono text-zinc-500">${latencyMs}ms</span>
         </div>
     `;
 }
@@ -326,7 +326,7 @@ function formatCodeWithLineNumbers(content, startLine = 1) {
     const lines = content.split('\n');
     return lines.map((line, i) => {
         const lineNum = startLine + i;
-        return `<span class="line-number">${lineNum}</span>${escapeHtml(line)}`;
+        return `<span class="inline-block w-8 text-right mr-4 text-zinc-600 select-none border-r border-zinc-800 pr-2">${lineNum}</span>${escapeHtml(line)}`;
     }).join('\n');
 }
 
@@ -342,7 +342,7 @@ function highlightMatches(content, query) {
     const escaped = escapeHtml(content);
     const queryEscaped = escapeHtml(query);
     const regex = new RegExp(`(${queryEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    return escaped.replace(regex, '<span class="highlight">$1</span>');
+    return escaped.replace(regex, '<span class="bg-yellow-500/20 text-yellow-200 border border-yellow-500/30 rounded px-0.5">$1</span>');
 }
 
 // ============================================
