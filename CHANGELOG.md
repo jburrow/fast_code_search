@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-02-26
+
+### Fixed
+- **Fix panic in `content_safety_check` on multi-byte UTF-8 content**: `is_binary_content()` sliced a `&str` at a raw byte offset (8192) which panics when that position falls inside a multi-byte UTF-8 character (e.g. CJK text, emoji). The function now operates on `as_bytes()` directly, avoiding the invalid slice.
+
 ## [0.5.7] - 2026-02-26
 
 ### Added

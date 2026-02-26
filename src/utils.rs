@@ -136,12 +136,15 @@ pub fn has_binary_extension(path: &Path) -> bool {
 /// - Null bytes are a strong indicator of binary content
 /// - More than 10% non-printable characters suggests binary content
 pub fn is_binary_content(content: &str) -> bool {
-    // Check first 8KB for binary indicators
-    let check_len = content.len().min(8192);
-    let sample = &content[..check_len];
+    // Check first 8KB for binary indicators.
+    // Operate on the byte slice directly to avoid panicking when
+    // position 8192 falls inside a multi-byte UTF-8 character.
+    let bytes = content.as_bytes();
+    let check_len = bytes.len().min(8192);
+    let sample = &bytes[..check_len];
 
     let mut non_text_count = 0;
-    for byte in sample.bytes() {
+    for &byte in sample {
         // Null bytes are a strong indicator of binary content
         if byte == 0 {
             return true;
