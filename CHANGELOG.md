@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-02-25
+
+### Added
+- **`exclude_files` config option**: Explicitly exclude specific file paths from indexing.
+  Use this when a file causes a crash — identify it via `fcs_last_processed.txt` then add it:
+  ```toml
+  [indexer]
+  exclude_files = ["/repo/src/generated/bad_file.rs"]
+  ```
+- **Crash probe file `fcs_last_processed.txt`**: Written to the working directory before each
+  tree-sitter symbol extraction call. After a SIGABRT crash, read this file to identify the
+  exact file being processed at the time of the crash.
+- **Per-file DEBUG logging**: Both indexing phases now emit `tracing::debug!` with the file path.
+  Run with `RUST_LOG=fast_code_search=debug` to see a rolling log of files being processed,
+  making the crashing file identifiable from the last log entry.
+
 ## [0.5.3] - 2026-02-25
 
 ### Added

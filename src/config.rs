@@ -137,6 +137,16 @@ pub struct IndexerConfig {
     /// When enabled, the index is periodically saved after this many files are updated
     #[serde(default)]
     pub save_after_updates: usize,
+
+    /// Exact file paths to permanently exclude from indexing.
+    /// Use this to skip files that cause crashes or other issues.
+    /// After a crash, check `fcs_last_processed.txt` in the working directory
+    /// to identify the offending file, then add its absolute path here.
+    ///
+    /// Example:
+    ///   exclude_files = ["/repo/src/generated/huge_file.rs"]
+    #[serde(default)]
+    pub exclude_files: Vec<String>,
 }
 
 fn default_address() -> String {
@@ -193,6 +203,7 @@ impl Default for IndexerConfig {
             watch: false,
             save_after_build: true,
             save_after_updates: 0, // Disabled by default
+            exclude_files: Vec::new(),
         }
     }
 }
@@ -217,14 +228,30 @@ impl IndexerConfig {
         let mut sorted_excludes = self.exclude_patterns.to_vec();
         sorted_excludes.sort();
 
+        // Sort excluded files
+        let mut sorted_excluded_files = self.exclude_files.to_vec();
+        sorted_excluded_files.sort();
+
         // Create a deterministic string representation
         let config_str = format!(
-            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}",
-            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size
+            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}|exclude_files:{:?}",
+            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size, sorted_excluded_files
         );
 
         // Generate MD5 hash
         format!("{:x}", md5::compute(config_str.as_bytes()))
+    }
+
+    /// Check if a file path is explicitly excluded via `exclude_files`.
+    pub fn is_file_excluded(&self, path: &std::path::Path) -> bool {
+        if self.exclude_files.is_empty() {
+            return false;
+        }
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        self.exclude_files.iter().any(|excluded| {
+            let excluded_normalized = excluded.replace('\\', "/");
+            path_str == excluded_normalized
+        })
     }
 
     /// Check if a path is within the configured index paths

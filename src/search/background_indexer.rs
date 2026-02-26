@@ -422,6 +422,7 @@ fn run_indexing_pipeline(
         index_engine,
         index_progress,
         index_progress_tx,
+        &indexer_config.exclude_files,
     );
 
     // Wait for discovery thread
@@ -497,6 +498,7 @@ fn process_batches(
     index_engine: &Arc<RwLock<SearchEngine>>,
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
+    exclude_files: &[String],
 ) -> (usize, usize) {
     let mut batch: Vec<PathBuf> = Vec::with_capacity(BATCH_SIZE);
     let mut total_indexed = 0usize;
@@ -515,6 +517,7 @@ fn process_batches(
                         index_engine,
                         index_progress,
                         index_progress_tx,
+                        exclude_files,
                     );
                     total_indexed += indexed;
                 }
@@ -539,6 +542,7 @@ fn process_batches(
             index_engine,
             index_progress,
             index_progress_tx,
+            exclude_files,
         );
         total_indexed += indexed;
 
@@ -560,6 +564,7 @@ fn process_batch(
     index_engine: &Arc<RwLock<SearchEngine>>,
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
+    exclude_files: &[String],
 ) -> usize {
     *batch_num += 1;
     let batch_start = Instant::now();
@@ -575,17 +580,42 @@ fn process_batch(
 
     // Phase 1 (parallel, pure Rust — no tree-sitter C FFI):
     // Extract file content and trigrams across rayon threads safely.
+    // Files listed in `exclude_files` are silently skipped here.
     let partial: Vec<PartialIndexedFile> = batch
         .par_iter()
-        .filter_map(|path| PartialIndexedFile::process(path))
+        .filter(|path| {
+            if exclude_files.is_empty() {
+                return true;
+            }
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            let excluded = exclude_files.iter().any(|e| e.replace('\\', "/") == path_str);
+            if excluded {
+                tracing::warn!(path = %path.display(), "Skipping excluded file");
+            }
+            !excluded
+        })
+        .filter_map(|path| {
+            tracing::debug!(path = %path.display(), "Phase1: reading and extracting trigrams");
+            PartialIndexedFile::process(path)
+        })
         .collect();
 
     // Phase 2 (sequential — tree-sitter C parsers are not thread-safe):
     // Extract symbols and imports one file at a time to prevent concurrent
     // heap corruption in the C allocator causing SIGABRT.
+    //
+    // We also write the current file path to `fcs_last_processed.txt` before
+    // each call so that after a crash (SIGABRT) the file can be identified
+    // by reading that file and added to `exclude_files` in config.toml.
+    let probe_path = std::path::Path::new("fcs_last_processed.txt");
     let pre_indexed: Vec<PreIndexedFile> = partial
         .into_iter()
-        .map(PreIndexedFile::from_partial)
+        .map(|p| {
+            tracing::debug!(path = %p.path.display(), "Phase2: extracting symbols");
+            // Best-effort probe write — ignore errors (read-only fs, etc.)
+            let _ = std::fs::write(probe_path, p.path.display().to_string());
+            PreIndexedFile::from_partial(p)
+        })
         .collect();
 
     let batch_indexed_count = pre_indexed.len();
