@@ -353,6 +353,13 @@ save_after_updates = 0         # Save after N file updates (0 = disabled)
 watch = true                   # Monitor filesystem for changes
 ```
 
+**Note for RHEL7/CentOS7 Users**: The server automatically detects your system's `vm.max_map_count` limit
+and will stop indexing if it would exceed 85% of the limit. If you see errors about reaching the mmap limit:  
+- **WITH sudo**: `sudo sysctl -w vm.max_map_count=524288` (recommended for large codebases)
+- **WITHOUT sudo**: Reduce scope with more aggressive `exclude_patterns` and lower `max_file_size`
+
+See [DEPLOYMENT.md](docs/DEPLOYMENT.md#memory-allocation-errors-on-rhel7centos7) for details.
+
 ### Example Client
 
 See `examples/client.rs` for a complete example. Run it with:

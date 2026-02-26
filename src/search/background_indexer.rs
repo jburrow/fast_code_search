@@ -534,7 +534,7 @@ fn process_batches(
 
                     // Periodic save after N updates if configured
                     if indexer_config.save_after_updates > 0
-                        && total_indexed % indexer_config.save_after_updates == 0
+                        && total_indexed.is_multiple_of(indexer_config.save_after_updates)
                     {
                         save_index_if_needed(indexer_config, index_engine, true, total_indexed);
                     }

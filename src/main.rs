@@ -8,6 +8,7 @@ use fast_code_search::search::{
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
+use fast_code_search::utils::SystemLimits;
 use fast_code_search::web;
 use std::path::PathBuf;
 use tonic::transport::Server;
@@ -97,6 +98,16 @@ async fn main() -> Result<()> {
     if args.verbose {
         info!(paths = ?config.indexer.paths, "Paths to index");
         info!(exclude_patterns = ?config.indexer.exclude_patterns, "Exclude patterns");
+    }
+
+    // Check system limits on Linux and warn if too low
+    let limits = SystemLimits::collect();
+    limits.log_limits();
+    if let Some(warning) = limits.check_and_warn() {
+        eprintln!("{}", warning);
+        eprintln!("The server will automatically stop indexing at 85% of the limit.");
+        eprintln!("Press Ctrl+C to abort or wait 3 seconds to continue...");
+        std::thread::sleep(std::time::Duration::from_secs(3));
     }
 
     let addr = config.server.address.parse()?;

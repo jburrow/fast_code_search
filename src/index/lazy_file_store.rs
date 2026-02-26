@@ -168,6 +168,9 @@ impl LazyMappedFile {
 ///
 /// Files are registered by path at startup, but only memory-mapped when
 /// first accessed. This provides near-instant startup even with millions of files.
+///
+/// Automatically detects system mmap limits on Linux and prevents indexing
+/// too many files to avoid allocation errors.
 pub struct LazyFileStore {
     /// Files indexed by ID
     files: Vec<LazyMappedFile>,
@@ -177,16 +180,47 @@ pub struct LazyFileStore {
     mapped_count: RwLock<usize>,
     /// Statistics: total bytes of content indexed (accumulated as files are added)
     total_content_bytes: RwLock<u64>,
+    /// Safe mmap limit (85% of system max, None on non-Linux)
+    mmap_safe_limit: Option<usize>,
 }
 
 impl LazyFileStore {
     pub fn new() -> Self {
+        let limits = crate::utils::SystemLimits::collect();
+        let mmap_safe_limit = limits.safe_mmap_limit();
+
+        if let Some(limit) = mmap_safe_limit {
+            tracing::info!(
+                max_map_count = ?limits.max_map_count,
+                safe_limit = limit,
+                "Mmap limit detected (85% of max), will stop indexing if reached"
+            );
+        }
+
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
             mapped_count: RwLock::new(0),
             total_content_bytes: RwLock::new(0),
+            mmap_safe_limit,
         }
+    }
+
+    /// Check if we are approaching the mmap limit
+    fn check_mmap_limit(&self) -> Result<()> {
+        if let Some(limit) = self.mmap_safe_limit {
+            let current = self.mapped_count.read().map(|c| *c).unwrap_or(0);
+            if current >= limit {
+                anyhow::bail!(
+                    "Reached mmap limit ({}/{}). Cannot index more files.\n\n\
+                    Your system's vm.max_map_count is too low for this many files.\n\
+                    See error details or run with increased limit.",
+                    current,
+                    limit
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Register a file path and return its ID (does NOT map the file)
@@ -221,6 +255,9 @@ impl LazyFileStore {
     /// content immediately for trigram extraction.
     pub fn add_file(&mut self, path: impl AsRef<Path>) -> Result<u32> {
         let path = path.as_ref();
+
+        // Check mmap limit before attempting to map
+        self.check_mmap_limit()?;
 
         // Canonicalize path to handle symlinks
         let canonical = match path.canonicalize() {

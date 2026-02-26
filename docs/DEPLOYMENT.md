@@ -468,6 +468,83 @@ telnet server-host 50051
 grpcurl -plaintext -v server-host:50051 list
 ```
 
+### Memory Allocation Errors on RHEL7/CentOS7
+
+**Symptoms**:
+- "cannot allocate memory" during indexing
+- "Reached mmap limit" error message
+- Server crashes with mmap errors
+- Works fine on other systems
+
+**Root Cause**: Low `vm.max_map_count` limit (often 65530 on RHEL7, need 262144+)
+
+**Automatic Detection**: The server automatically detects your system's mmap limit at startup
+and will refuse to index more files once it reaches 85% of the safe limit.
+
+**Solution 1: WITH sudo access (recommended for large codebases)**:
+```bash
+# Check current limit
+sysctl vm.max_map_count
+
+# Temporary fix (until reboot)
+sudo sysctl -w vm.max_map_count=524288
+
+# Permanent fix
+echo "vm.max_map_count=524288" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+# Verify
+sysctl vm.max_map_count
+```
+
+**Solution 2: WITHOUT sudo access (reduce indexing scope)**:
+
+Edit `config.toml`:
+```toml
+[indexer]
+# Reduce file size limit
+max_file_size = 2097152  # 2MB instead of 10MB
+
+# Exclude more directories
+exclude_patterns = [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/vendor/**",
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/*.lock",
+    "**/*.svg"
+]
+
+# Only index specific file types  
+include_extensions = ["rs", "py", "js", "ts", "java", "go", "c", "cpp", "h"]
+```
+
+**How the Automatic Limit Works**:
+1. Server detects `vm.max_map_count` at startup (Linux only)
+2. Calculates safe limit at 85% of maximum
+3. Tracks mapped file count during indexing
+4. Stops indexing with clear error when limit would be exceeded
+5. Existing indexed files remain searchable
+
+**Verification**:
+```bash
+# Watch mmap usage during indexing
+watch -n 1 "cat /proc/\$(pgrep fast_code_search)/maps | wc -l"
+
+# Check system limits
+ulimit -a
+cat /proc/sys/vm/max_map_count
+```
+
+**Example**: With default RHEL7 limit of 65530:
+- Safe limit: ~55,700 mappings (85%)
+- Can index ~55,000 files before hitting limit
+- Server will stop and show clear error message with remediation steps
+
 ## Security Considerations
 
 ### Network Security
