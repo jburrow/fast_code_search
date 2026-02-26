@@ -588,7 +588,9 @@ fn process_batch(
                 return true;
             }
             let path_str = path.to_string_lossy().replace('\\', "/");
-            let excluded = exclude_files.iter().any(|e| e.replace('\\', "/") == path_str);
+            let excluded = exclude_files
+                .iter()
+                .any(|e| e.replace('\\', "/") == path_str);
             if excluded {
                 tracing::warn!(path = %path.display(), "Skipping excluded file");
             }
@@ -610,11 +612,28 @@ fn process_batch(
     let probe_path = std::path::Path::new("fcs_last_processed.txt");
     let pre_indexed: Vec<PreIndexedFile> = partial
         .into_iter()
-        .map(|p| {
+        .filter_map(|p| {
             tracing::debug!(path = %p.path.display(), "Phase2: extracting symbols");
             // Best-effort probe write — ignore errors (read-only fs, etc.)
             let _ = std::fs::write(probe_path, p.path.display().to_string());
-            PreIndexedFile::from_partial(p)
+
+            // Catch panics from tree-sitter C FFI on malformed files.
+            // from_partial already wraps individual tree-sitter calls, but this
+            // outer catch_unwind provides defense-in-depth against unexpected
+            // panics anywhere in the processing pipeline.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                PreIndexedFile::from_partial(p)
+            })) {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    tracing::error!(
+                        "Phase2 panicked during symbol extraction — \
+                         check fcs_last_processed.txt and add the file to \
+                         exclude_files in config.toml"
+                    );
+                    None
+                }
+            }
         })
         .collect();
 

@@ -367,6 +367,16 @@ impl PartialIndexedFile {
 
         let content = std::fs::read_to_string(path).ok()?;
 
+        // Safety check: skip files that could crash tree-sitter or produce garbage trigrams
+        if let Some(reason) = crate::utils::content_safety_check(&content) {
+            tracing::debug!(
+                path = %path.display(),
+                reason = reason,
+                "Skipping unsafe file during indexing"
+            );
+            return None;
+        }
+
         let filename_stem = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -606,6 +616,16 @@ impl SearchEngine {
             .get(file_id)
             .and_then(|f| f.as_str().ok())
             .unwrap_or("");
+
+        // Safety check: skip files that could crash tree-sitter or produce garbage
+        if let Some(reason) = crate::utils::content_safety_check(content) {
+            tracing::warn!(
+                path = %path.display(),
+                reason = reason,
+                "Skipping unsafe file during indexing"
+            );
+            return Ok(());
+        }
 
         // Extract filename stem for indexing (enables searching by filename)
         let filename_stem = path
@@ -888,27 +908,42 @@ impl SearchEngine {
                 if let Some(file) = file_store.get(file_id) {
                     if let Ok(content) = file.as_str() {
                         had_content = true;
-                        let extractor = SymbolExtractor::new(&path);
 
-                        symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            extractor.extract(content).unwrap_or_default()
-                        }))
-                        .unwrap_or_else(|_| {
-                            warn!(
-                                "Symbol extraction panicked for file '{}'. Continuing without symbols.",
-                                path.display()
+                        // Skip files that are unsafe for tree-sitter parsing
+                        if let Some(reason) = crate::utils::content_safety_check(content) {
+                            tracing::debug!(
+                                path = %path.display(),
+                                reason = reason,
+                                "Skipping unsafe file during symbol rebuild"
                             );
-                            Vec::new()
-                        });
+                            // Fall through — filename symbol is still added below
+                        } else {
+                            let extractor = SymbolExtractor::new(&path);
 
-                        imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            extractor
-                                .extract_imports(content)
-                                .ok()
-                                .map(|imports| imports.into_iter().map(|i| i.path).collect())
-                                .unwrap_or_default()
-                        }))
-                        .unwrap_or_default();
+                            symbols =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    extractor.extract(content).unwrap_or_default()
+                                }))
+                                .unwrap_or_else(|_| {
+                                    warn!(
+                                    "Symbol extraction panicked for file '{}'. Continuing without symbols.",
+                                    path.display()
+                                );
+                                    Vec::new()
+                                });
+
+                            imports =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    extractor
+                                        .extract_imports(content)
+                                        .ok()
+                                        .map(|imports| {
+                                            imports.into_iter().map(|i| i.path).collect()
+                                        })
+                                        .unwrap_or_default()
+                                }))
+                                .unwrap_or_default();
+                        }
                     }
                 }
 

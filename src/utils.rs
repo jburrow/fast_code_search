@@ -56,6 +56,57 @@ pub fn is_binary_content(content: &str) -> bool {
     non_text_count > check_len / 10
 }
 
+/// Maximum line length (bytes) before we consider a file unsafe for tree-sitter parsing.
+/// Deeply-minified files with extremely long lines can cause stack overflow in C parsers.
+const MAX_SAFE_LINE_LENGTH: usize = 100_000;
+
+/// Maximum nesting depth heuristic: count of unmatched open brackets in a single scan.
+const MAX_NESTING_DEPTH: usize = 500;
+
+/// Check if file content is safe to pass to tree-sitter and trigram indexing.
+///
+/// Returns `None` if safe, or `Some(reason)` describing why it's unsafe.
+/// This acts as a gate before any tree-sitter C FFI calls to prevent crashes
+/// from malformed, generated, or binary-masquerading files.
+pub fn content_safety_check(content: &str) -> Option<&'static str> {
+    // Check for binary content masquerading as valid UTF-8
+    if is_binary_content(content) {
+        return Some("appears to be binary content");
+    }
+
+    // Check for excessively long lines (minified JS/CSS, generated code).
+    // Tree-sitter can stack-overflow or spend excessive time on these.
+    for line in content.as_bytes().split(|&b| b == b'\n') {
+        if line.len() > MAX_SAFE_LINE_LENGTH {
+            return Some("contains line exceeding 100KB (likely minified/generated)");
+        }
+    }
+
+    // Check for extreme nesting depth (generated code, fuzzer output).
+    // Deeply nested bracket structures cause unbounded recursion in C parsers.
+    let mut depth: usize = 0;
+    let mut max_depth: usize = 0;
+    for &b in content.as_bytes() {
+        match b {
+            b'{' | b'(' | b'[' => {
+                depth = depth.saturating_add(1);
+                if depth > max_depth {
+                    max_depth = depth;
+                }
+            }
+            b'}' | b')' | b']' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    if max_depth > MAX_NESTING_DEPTH {
+        return Some("extreme nesting depth (likely generated code)");
+    }
+
+    None
+}
+
 /// Format a number with underscore separators for readability (e.g., 89210 -> "89_210")
 pub fn format_number(n: usize) -> String {
     let s = n.to_string();
@@ -195,5 +246,54 @@ mod tests {
         assert_eq!(format_bytes(1536), "1.50 KB");
         assert_eq!(format_bytes(1048576), "1.00 MB");
         assert_eq!(format_bytes(1073741824), "1.00 GB");
+    }
+
+    #[test]
+    fn test_content_safety_check_normal_file() {
+        let content = "fn main() {\n    println!(\"hello\");\n}\n";
+        assert!(content_safety_check(content).is_none());
+    }
+
+    #[test]
+    fn test_content_safety_check_empty() {
+        assert!(content_safety_check("").is_none());
+    }
+
+    #[test]
+    fn test_content_safety_check_long_line() {
+        let long_line = "a".repeat(200_000);
+        let reason = content_safety_check(&long_line);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("minified"));
+    }
+
+    #[test]
+    fn test_content_safety_check_deep_nesting() {
+        let deep = "{".repeat(600) + &"}".repeat(600);
+        let reason = content_safety_check(&deep);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("nesting"));
+    }
+
+    #[test]
+    fn test_content_safety_check_binary() {
+        let binary = "\0\0\0\0\x01\x02\x03\x04";
+        let reason = content_safety_check(binary);
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("binary"));
+    }
+
+    #[test]
+    fn test_content_safety_check_acceptable_nesting() {
+        // 100 levels of nesting should be fine
+        let nested = "{".repeat(100) + &"}".repeat(100);
+        assert!(content_safety_check(&nested).is_none());
+    }
+
+    #[test]
+    fn test_content_safety_check_acceptable_line_length() {
+        // 50KB line should be fine
+        let long_line = "a".repeat(50_000);
+        assert!(content_safety_check(&long_line).is_none());
     }
 }
