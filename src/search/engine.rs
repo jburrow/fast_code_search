@@ -420,12 +420,15 @@ impl PartialIndexedFile {
         let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
-        Some((PartialIndexedFile {
-            path: path.to_path_buf(),
-            trigrams,
-            filename_stem,
-            content,
-        }, transcoded))
+        Some((
+            PartialIndexedFile {
+                path: path.to_path_buf(),
+                trigrams,
+                filename_stem,
+                content,
+            },
+            transcoded,
+        ))
     }
 }
 
