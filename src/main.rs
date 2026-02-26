@@ -3,8 +3,8 @@ use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    create_progress_broadcaster, run_background_indexer, BackgroundIndexerConfig, IndexingProgress,
-    ProgressBroadcaster, SharedIndexingProgress,
+    create_progress_broadcaster, run_background_indexer, BackgroundIndexerConfig, FileChange,
+    FileWatcher, IndexingProgress, ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
@@ -154,6 +154,72 @@ async fn main() -> Result<()> {
         info!("Auto-indexing disabled via --no-auto-index flag");
     } else {
         info!("No paths configured for indexing");
+    }
+
+    // Start file watcher for incremental re-indexing if configured
+    if config.indexer.watch {
+        let watch_engine = shared_engine.clone();
+        let watch_paths: Vec<std::path::PathBuf> = config
+            .indexer
+            .paths
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let watch_exclude = config.indexer.exclude_patterns.clone();
+        info!("Starting file watcher for incremental indexing");
+
+        std::thread::spawn(move || {
+            let watcher_config = WatcherConfig {
+                paths: watch_paths,
+                exclude_patterns: watch_exclude,
+                ..WatcherConfig::default()
+            };
+            match FileWatcher::new(watcher_config) {
+                Ok(watcher) => {
+                    info!("File watcher started");
+                    loop {
+                        match watcher.recv_timeout(std::time::Duration::from_secs(1)) {
+                            Some(FileChange::Modified(path)) => {
+                                tracing::debug!(path = %path.display(), "File modified, updating index");
+                                if let Ok(mut engine) = watch_engine.write() {
+                                    if let Err(e) = engine.update_file(&path) {
+                                        tracing::warn!(
+                                            path = %path.display(),
+                                            error = %e,
+                                            "Failed to update file in index"
+                                        );
+                                    }
+                                }
+                            }
+                            Some(FileChange::Renamed { from: _, to }) => {
+                                tracing::debug!(path = %to.display(), "File renamed, indexing new path");
+                                if let Ok(mut engine) = watch_engine.write() {
+                                    if let Err(e) = engine.update_file(&to) {
+                                        tracing::warn!(
+                                            path = %to.display(),
+                                            error = %e,
+                                            "Failed to index renamed file"
+                                        );
+                                    }
+                                }
+                            }
+                            Some(FileChange::Deleted(path)) => {
+                                // Engine does not yet support file removal from index;
+                                // log for observability and no-op.
+                                tracing::debug!(
+                                    path = %path.display(),
+                                    "File deleted (removal from index not yet supported)"
+                                );
+                            }
+                            None => {} // recv_timeout returned nothing, loop again
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to start file watcher");
+                }
+            }
+        });
     }
 
     // Create gRPC service with shared engine

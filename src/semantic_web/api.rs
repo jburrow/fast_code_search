@@ -182,7 +182,7 @@ pub async fn stats_handler(
 /// Handle health check requests
 pub async fn health_handler() -> Json<HealthResponse> {
     Json(HealthResponse {
-        status: "ok",
+        status: "healthy",
         version: env!("CARGO_PKG_VERSION"),
     })
 }

@@ -356,20 +356,6 @@ exclude_patterns = [
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
 
-[telemetry]
-# Enable OpenTelemetry trace export (default: true)
-# Set to false to disable OTLP export (console logging is always active)
-# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=false
-enabled = true
-
-# OTLP gRPC exporter endpoint (default: http://localhost:4317)
-# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
-otlp_endpoint = "http://localhost:4317"
-
-# Service name reported to the collector
-# Env override: OTEL_SERVICE_NAME
-service_name = "fast_code_search"
-
 # Path to persistent index storage (optional)
 # If set, the index will be saved to disk and loaded on restart for faster startup
 # The index file stores trigrams, file metadata, and config fingerprint for reconciliation
@@ -387,6 +373,20 @@ service_name = "fast_code_search"
 # Enable file watcher for incremental indexing (default: false)
 # When enabled, changes to indexed files are detected and re-indexed automatically
 # watch = false
+
+[telemetry]
+# Enable OpenTelemetry trace export (default: false)
+# Set to true to enable OTLP export (console logging is always active)
+# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=true
+enabled = false
+
+# OTLP gRPC exporter endpoint (default: http://localhost:4317)
+# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
+otlp_endpoint = "http://localhost:4317"
+
+# Service name reported to the collector
+# Env override: OTEL_SERVICE_NAME
+service_name = "fast_code_search"
 "#
         .to_string()
     }

@@ -396,6 +396,8 @@ fn run_indexing_pipeline(
         paths_to_index.to_vec(),
         stale_files,
         indexer_config.exclude_patterns.clone(),
+        indexer_config.include_extensions.clone(),
+        indexer_config.max_file_size,
         tx,
         files_discovered.clone(),
         discovery_done.clone(),
@@ -422,8 +424,7 @@ fn run_indexing_pipeline(
         index_engine,
         index_progress,
         index_progress_tx,
-        &indexer_config.exclude_files,
-        indexer_config.transcode_non_utf8,
+        indexer_config,
     );
 
     // Wait for discovery thread
@@ -447,6 +448,8 @@ fn spawn_discovery_thread(
     paths_to_index: Vec<String>,
     stale_files: Vec<PathBuf>,
     exclude_patterns: Vec<String>,
+    include_extensions: Vec<String>,
+    max_file_size: u64,
     tx: SyncSender<PathBuf>,
     files_discovered: Arc<AtomicUsize>,
     discovery_done: Arc<AtomicBool>,
@@ -465,7 +468,13 @@ fn spawn_discovery_thread(
         }
 
         // Then discover files from paths that need indexing
-        let discovery_config = FileDiscoveryConfig::new(paths_to_index, exclude_patterns);
+        let discovery_config = FileDiscoveryConfig {
+            paths: paths_to_index,
+            exclude_patterns,
+            include_extensions,
+            max_file_size: Some(max_file_size),
+            ..Default::default()
+        };
 
         for path in FileDiscoveryIterator::new(&discovery_config) {
             if tx.send(path).is_err() {
@@ -492,7 +501,6 @@ fn spawn_discovery_thread(
 }
 
 /// Process files in batches from the discovery channel.
-#[allow(clippy::too_many_arguments)]
 fn process_batches(
     rx: mpsc::Receiver<PathBuf>,
     files_discovered: &Arc<AtomicUsize>,
@@ -500,8 +508,7 @@ fn process_batches(
     index_engine: &Arc<RwLock<SearchEngine>>,
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
-    exclude_files: &[String],
-    transcode_non_utf8: bool,
+    indexer_config: &IndexerConfig,
 ) -> (usize, usize) {
     let mut batch: Vec<PathBuf> = Vec::with_capacity(BATCH_SIZE);
     let mut total_indexed = 0usize;
@@ -520,10 +527,17 @@ fn process_batches(
                         index_engine,
                         index_progress,
                         index_progress_tx,
-                        exclude_files,
-                        transcode_non_utf8,
+                        &indexer_config.exclude_files,
+                        indexer_config.transcode_non_utf8,
                     );
                     total_indexed += indexed;
+
+                    // Periodic save after N updates if configured
+                    if indexer_config.save_after_updates > 0
+                        && total_indexed % indexer_config.save_after_updates == 0
+                    {
+                        save_index_if_needed(indexer_config, index_engine, true, total_indexed);
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -546,8 +560,8 @@ fn process_batches(
             index_engine,
             index_progress,
             index_progress_tx,
-            exclude_files,
-            transcode_non_utf8,
+            &indexer_config.exclude_files,
+            indexer_config.transcode_non_utf8,
         );
         total_indexed += indexed;
 

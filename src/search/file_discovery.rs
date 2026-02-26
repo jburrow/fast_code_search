@@ -18,6 +18,11 @@ pub struct FileDiscoveryConfig {
     /// Common patterns: "**/node_modules/**", "**/target/**", "**/.git/**"
     pub exclude_patterns: Vec<String>,
 
+    /// File extensions to include (empty = all non-binary text files).
+    /// When non-empty, only files with a matching extension are indexed.
+    /// Example: `["rs", "py", "ts"]`
+    pub include_extensions: Vec<String>,
+
     /// Maximum file size to include (in bytes). Files larger than this are skipped.
     /// Default is 10MB (10 * 1024 * 1024).
     pub max_file_size: Option<u64>,
@@ -31,6 +36,7 @@ impl Default for FileDiscoveryConfig {
         Self {
             paths: Vec::new(),
             exclude_patterns: Vec::new(),
+            include_extensions: Vec::new(),
             max_file_size: Some(10 * 1024 * 1024), // 10MB
             extra_binary_extensions: Vec::new(),
         }
@@ -79,6 +85,9 @@ pub struct FileDiscoveryIterator {
     /// Compiled exclude patterns for substring matching.
     exclude_patterns: Vec<String>,
 
+    /// Allowed file extensions (lowercased; empty = allow all).
+    include_extensions: Vec<String>,
+
     /// Binary extensions to skip.
     binary_extensions: HashSet<String>,
 
@@ -106,6 +115,11 @@ impl FileDiscoveryIterator {
         Self {
             walkers,
             exclude_patterns: config.compile_exclude_patterns(),
+            include_extensions: config
+                .include_extensions
+                .iter()
+                .map(|e| e.to_lowercase())
+                .collect(),
             binary_extensions: config.get_all_binary_extensions(),
             max_file_size: config.max_file_size,
         }
@@ -158,6 +172,19 @@ impl Iterator for FileDiscoveryIterator {
                     // Skip excluded paths
                     if self.is_excluded(path) {
                         continue;
+                    }
+
+                    // Filter by allowed extensions when a whitelist is configured
+                    if !self.include_extensions.is_empty() {
+                        match path.extension() {
+                            Some(ext) => {
+                                let ext_lower = ext.to_string_lossy().to_lowercase();
+                                if !self.include_extensions.contains(&ext_lower) {
+                                    continue;
+                                }
+                            }
+                            None => continue, // no extension → skip when filter is active
+                        }
                     }
 
                     // Skip binary files

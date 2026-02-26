@@ -492,8 +492,12 @@ impl SymbolExtractor {
 
         match self.extension.as_str() {
             "rs" => Self::extract_rust_imports(&root_node, source, &mut imports),
-            "py" => Self::extract_python_imports(&root_node, source, &mut imports),
-            "js" | "jsx" | "ts" | "tsx" => {
+            // Include stub files (.pyi) and Windows-specific (.pyw) as Python
+            "py" | "pyi" | "pyw" => {
+                Self::extract_python_imports(&root_node, source, &mut imports)
+            }
+            // Include ESM/CJS variants and TypeScript module variants
+            "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" => {
                 Self::extract_js_imports(&root_node, source, &mut imports)
             }
             _ => {}
