@@ -7,14 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-02-26
+
+### Added
+- **Automatic mmap limit detection**: On Linux the server now reads `vm.max_map_count` at startup, computes a safe 85 % ceiling, and refuses to map additional files once that ceiling is reached — preventing "cannot allocate memory" crashes on RHEL 7 / CentOS 7 and similar systems with low default limits.
+- **Startup system-limits logging**: `SystemLimits::collect()` gathers `max_map_count`, current map count, open file descriptors, and `file-max`, then logs them at `INFO` level on every launch.
+- **Startup warning for low limits**: When `vm.max_map_count < 131072` the server prints an actionable warning to stderr with both "with sudo" and "without sudo" remediation steps, then pauses 3 seconds before continuing.
+- **`diagnose_mmap_error()` helper**: Mmap failures that look like resource-limit errors now produce a rich diagnostic message including current system limits and concrete fix instructions.
+- **Deployment troubleshooting docs**: New "Memory Allocation Errors on RHEL7/CentOS7" section in `DEPLOYMENT.md` covering symptoms, root cause, automatic detection behaviour, and two solution paths (with/without sudo).
+
 ### Fixed
-- **`include_extensions` config now honoured during indexing**: Previously the field was parsed but never passed to the file discovery layer, so it had no effect. The `FileDiscoveryConfig` struct now carries an `include_extensions` whitelist that the iterator enforces, and `BackgroundIndexerConfig` threads the value from `IndexerConfig` end-to-end.
-- **`max_file_size` config now honoured during indexing**: The indexer was hardcoding 10 MB in both `PartialIndexedFile` and `FileDiscoveryConfig::default()`. The configured value is now forwarded to `FileDiscoveryConfig::max_file_size` via `spawn_discovery_thread`, so large-file filtering respects the TOML setting.
-- **`watch = true` in config now starts the file watcher**: `main.rs` was never reading the `watch` flag. A background thread is now spawned that uses `FileWatcher` to detect `Modified`, `Renamed`, and `Deleted` events and calls `engine.update_file()` accordingly.
-- **`save_after_updates` now triggers periodic index saves**: The config field existed and was documented but was never checked. `process_batches` now saves the index every `save_after_updates` files when the field is non-zero.
-- **Import extraction extended to all supported file-extension variants**: `extract_imports` previously handled only `py`, `js/jsx/ts/tsx`. It now also handles `pyi`, `pyw` (Python stubs / Windows scripts) and `mjs`, `cjs`, `mts`, `cts` (ESM/CJS module variants), matching the language-detection coverage in `language_for_file`.
-- **Uniform health endpoint status string**: The semantic REST API `/health` was returning `"ok"` while the keyword API returned `"healthy"`. Both now return `"healthy"`.
-- **Config template corrected**: The generated TOML template placed `index_path`, `save_after_build`, `save_after_updates`, and `watch` under a `[telemetry]` heading. They are now correctly placed under `[indexer]`. The `telemetry.enabled` default was also incorrect (`true` in the template, `false` at runtime); the template now emits `enabled = false` with an accurate comment.
+- **`include_extensions` config now honoured during indexing**: The field was parsed but never forwarded to file discovery; it now filters files correctly.
+- **`max_file_size` config now honoured during indexing**: The configured value is forwarded to `FileDiscoveryConfig` instead of hardcoding 10 MB.
+- **`watch = true` in config now starts the file watcher**: A background thread is spawned to detect and apply file-system changes.
+- **`save_after_updates` now triggers periodic index saves**: The config field was previously ignored; it now saves every N files.
+- **Import extraction extended to all supported variants**: `pyi`, `pyw`, `mjs`, `cjs`, `mts`, `cts` now handled.
+- **Uniform `/health` status string**: Both keyword and semantic REST APIs now return `"healthy"`.
+- **Config template corrected**: `index_path`, `save_after_build`, `save_after_updates`, `watch` placed under `[indexer]`; `telemetry.enabled` default fixed.
 
 ## [0.5.6] - 2026-02-26
 
