@@ -117,8 +117,11 @@ Includes tests for class and function definitions.
 1. Update documentation if you've changed functionality
 2. Ensure all tests pass and code is formatted
 3. Update the README.md if you've added new features
-4. Submit your pull request with a clear description of changes
-5. Address any review comments promptly
+4. Update `CHANGELOG.md` for user-visible changes
+5. Submit your pull request with a clear description of changes
+6. Address any review comments promptly
+
+Instruction-file ownership and anti-drift policy: [Instruction Files Blueprint](docs/INSTRUCTION_FILES_BLUEPRINT.md)
 
 ### PR Description Template
 
@@ -141,6 +144,7 @@ Describe how you tested your changes
 - [ ] Code is formatted (`cargo fmt`)
 - [ ] No clippy warnings (`cargo clippy`)
 - [ ] Documentation updated
+- [ ] `CHANGELOG.md` updated for user-visible changes
 ```
 
 ## Areas for Contribution

@@ -213,6 +213,11 @@ Semantic search runs as a separate server on port 50052 (gRPC) and 8081 (Web UI)
 cargo test
 ```
 
+### Documentation Governance
+
+- Instruction-file ownership and anti-drift policy: [Instruction Files Blueprint](docs/INSTRUCTION_FILES_BLUEPRINT.md)
+- Contributor workflow canonical reference: [Development Guide](docs/DEVELOPMENT.md)
+
 ## Usage
 
 ### Quick Start

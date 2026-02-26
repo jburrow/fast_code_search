@@ -32,7 +32,7 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 | Task | Steps |
 |------|-------|
 | **Add new language** | 1. Add tree-sitter dep to `Cargo.toml` 2. Update `language_for_file()` in `src/symbols/extractor.rs` 3. Add node type patterns in `extract_functions()` 4. Add tests |
-| **Modify gRPC API** | 1. Edit `proto/search.proto` 2. `cargo build` 3. Update `src/server/service.rs` 4. Update `examples/client.rs` |
+| **Modify gRPC API** | 1. Edit `proto/search.proto` and/or `proto/semantic_search.proto` 2. `cargo build` 3. Update `src/server/service.rs` and/or `src/semantic_server/service.rs` 4. Update corresponding client examples |
 | **Add REST endpoint** | Edit `src/web/api.rs` — params: `q` (query), `max`, `include`, `exclude`, `regex`, `symbols` |
 | **Add new scoring factor** | Edit `calculate_score()` in `src/search/engine.rs` |
 | **Change config options** | Edit `src/config.rs` — TOML config loaded at startup |
@@ -76,7 +76,7 @@ Use `anyhow::Result` with context for all error propagation.
 - **NEVER** kill running server processes to "check if running" - use a separate terminal or API call
 - Test API endpoints with `curl` or `Invoke-WebRequest` in a **new terminal**
 - If you need to rebuild, ask the user first or use a separate terminal
-- Server ports: gRPC 50051/50059, Web UI 8080, Semantic 8081
+- Server ports: keyword gRPC 50051 + web 8080, semantic gRPC 50052 + web 8081
 
 ## Before Every Commit
 
@@ -88,7 +88,7 @@ cargo test                     # Run full test suite
 
 ## Testing
 
-**Integration tests are prioritized.** Always add integration tests for new features.
+**Integration tests are prioritized.** Add integration tests for user-visible behavior and targeted unit tests for module logic.
 
 ```bash
 cargo test                           # All tests
@@ -160,6 +160,8 @@ When changing code, update:
 1. This file — for architecture/pattern changes
 2. `README.md` — for user-facing changes
 3. `CHANGELOG.md` — for every user-visible change
+
+Instruction governance source: `docs/INSTRUCTION_FILES_BLUEPRINT.md`
 
 ## Benchmarks
 
