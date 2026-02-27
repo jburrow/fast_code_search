@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-02-27
+
 ### Added
 - **Code coverage reports in CI**: A new `coverage` job runs on every push and pull request using `cargo-llvm-cov`. The HTML coverage report is uploaded as a `coverage-report` GitHub Actions artifact and LCOV data is uploaded to Codecov. See the [Code Coverage](#code-coverage) section in the copilot instructions for how to generate reports locally.
 
@@ -439,7 +441,11 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.7...HEAD
+[0.6.7]: https://github.com/jburrow/fast_code_search/compare/v0.6.6...v0.6.7
+[0.6.6]: https://github.com/jburrow/fast_code_search/compare/v0.6.5...v0.6.6
+[0.6.5]: https://github.com/jburrow/fast_code_search/compare/v0.6.4...v0.6.5
+[0.6.4]: https://github.com/jburrow/fast_code_search/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/jburrow/fast_code_search/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/jburrow/fast_code_search/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/jburrow/fast_code_search/compare/v0.6.0...v0.6.1
