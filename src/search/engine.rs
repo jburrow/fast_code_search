@@ -1128,6 +1128,11 @@ impl SearchEngine {
     /// Maximum files to read in fast ranking mode
     const FAST_RANKING_TOP_N: usize = 2000;
 
+    /// Maximum matches to collect per document during a search.
+    /// Prevents OOM on large indexes when a common keyword appears on
+    /// thousands of lines in the same file.
+    const MAX_MATCHES_PER_DOC: usize = 100;
+
     /// Search with configurable ranking mode.
     ///
     /// # Ranking Modes
@@ -1173,6 +1178,24 @@ impl SearchEngine {
                 mode: effective_mode,
                 total_candidates,
                 candidates_searched: Self::FAST_RANKING_TOP_N.min(total_candidates),
+            };
+            (matches, info)
+        } else if use_fast {
+            // Fast ranking requested but file metadata is unavailable (e.g. freshly
+            // loaded index). Fall back to reading a capped number of candidates to
+            // avoid OOM when the candidate set is very large.
+            let capped: roaring::RoaringBitmap = candidate_docs
+                .iter()
+                .take(Self::FAST_RANKING_TOP_N)
+                .collect();
+            let candidates_searched = capped.len() as usize;
+            let matches =
+                self.search_full_ranked_with_query(query, &query_lower, &capped, max_results);
+            self.file_store.evict_all_fallbacks();
+            let info = SearchRankingInfo {
+                mode: effective_mode,
+                total_candidates,
+                candidates_searched,
             };
             (matches, info)
         } else {
@@ -1360,20 +1383,38 @@ impl SearchEngine {
             RankMode::Full
         };
 
-        let matches = if use_fast && !self.file_metadata.is_empty() {
-            self.search_fast_ranked_with_query(query, &query_lower, &filtered_docs, max_results)
+        let (matches, candidates_searched) = if use_fast && !self.file_metadata.is_empty() {
+            let m = self.search_fast_ranked_with_query(
+                query,
+                &query_lower,
+                &filtered_docs,
+                max_results,
+            );
+            (m, Self::FAST_RANKING_TOP_N.min(total_candidates))
+        } else if use_fast {
+            // Fast ranking requested but file metadata is unavailable. Cap candidates
+            // to FAST_RANKING_TOP_N to prevent OOM on very large candidate sets.
+            let capped: roaring::RoaringBitmap = filtered_docs
+                .iter()
+                .take(Self::FAST_RANKING_TOP_N)
+                .collect();
+            let candidates_searched = capped.len() as usize;
+            let m = self.search_full_ranked_with_query(query, &query_lower, &capped, max_results);
+            (m, candidates_searched)
         } else {
-            self.search_full_ranked_with_query(query, &query_lower, &filtered_docs, max_results)
+            let m = self.search_full_ranked_with_query(
+                query,
+                &query_lower,
+                &filtered_docs,
+                max_results,
+            );
+            (m, total_candidates)
         };
 
         let info = SearchRankingInfo {
             mode: effective_mode,
             total_candidates,
-            candidates_searched: if use_fast {
-                Self::FAST_RANKING_TOP_N.min(total_candidates)
-            } else {
-                total_candidates
-            },
+            candidates_searched,
         };
 
         Ok((matches, info))
@@ -1696,6 +1737,12 @@ impl SearchEngine {
 
         // Search in each line using regex
         for (line_num, line) in content.lines().enumerate() {
+            // Bail out early once we have enough matches from this document to
+            // prevent unbounded memory growth when a broad regex matches
+            // thousands of lines (OOM fix).
+            if matches.len() >= Self::MAX_MATCHES_PER_DOC {
+                break;
+            }
             if let Some(m) = regex.find(line) {
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = path_str.get_or_insert_with(|| {
@@ -1829,6 +1876,12 @@ impl SearchEngine {
 
         // Search in each line using case-insensitive matching without allocation
         for (line_num, line) in content.lines().enumerate() {
+            // Bail out early once we have enough matches from this document to
+            // prevent unbounded memory growth when a common keyword matches
+            // thousands of lines (OOM fix).
+            if matches.len() >= Self::MAX_MATCHES_PER_DOC {
+                break;
+            }
             if let Some((match_start, match_end)) =
                 find_match_position_case_insensitive(line, query_lower)
             {

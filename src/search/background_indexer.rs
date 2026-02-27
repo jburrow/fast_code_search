@@ -756,7 +756,7 @@ fn process_batch(
                 return true;
             }
             let path_str = path.to_string_lossy().replace('\\', "/");
-            let excluded = normalized_exclude_files.iter().any(|e| *e == path_str);
+            let excluded = normalized_exclude_files.contains(&path_str);
             if excluded {
                 tracing::warn!(path = %path.display(), "Skipping excluded file");
             }
