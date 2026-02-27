@@ -532,7 +532,7 @@ pub async fn diagnostics_handler(
             num_chunks: stats.num_chunks,
             embedding_dim: stats.embedding_dim,
             cache_size: stats.cache_size,
-            cache_hit_rate: None, // TODO: track cache hit rate
+            cache_hit_rate: stats.cache_hit_rate,
             chunks_by_type,
             sample_files,
         },
