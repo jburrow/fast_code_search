@@ -36,7 +36,6 @@ pub struct LazyMappedFile {
     ///
     /// TODO: replace with a `Mutex<Option<Vec<u8>>>` + caller-provided buffer
     /// so that fallback bytes can be evicted after each search round-trip.
-    /// Tracking: https://github.com/jburrow/fast_code_search/issues/XX
     content_fallback: OnceLock<Result<Vec<u8>, String>>,
     /// Cached result of UTF-8 validation
     utf8_valid: OnceLock<bool>,
