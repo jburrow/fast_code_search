@@ -1,6 +1,6 @@
 [package]
 name = "fast_code_search"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 authors = ["James Burrow"]
 description = "High-performance, in-memory code search service with trigram indexing and symbol awareness"

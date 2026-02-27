@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-02-27
+
+### Improved
+- **Mmap-limit warning emitted only once**: Previously, every file registered without mmap (after the OS `vm.max_map_count` safe limit was reached) emitted its own `WARN` log line, flooding logs on large codebases. A single warning is now issued when the limit is first hit; all subsequent files are silently registered under the direct-read fallback.
+- **Mmap-limit error message clarified**: The internal error text now states that remaining files will be indexed via direct-read fallback (slower retrieval, but search still works) instead of the previous misleading "Cannot index more files" wording.
+- **Background indexer logs persistence settings at startup**: When `index_path` is configured, the indexer now emits an `INFO` log with the active `save_after_build`, `save_after_updates`, and `checkpoint_interval_files` values so operators can confirm persistence is active without reading config files.
+- **README and startup warning updated**: Messaging around `vm.max_map_count` now accurately describes the graceful fallback behaviour introduced in 0.6.2 rather than implying hard failures.
+
 ## [0.6.2] - 2026-02-27
 
 ### Fixed
@@ -396,7 +404,10 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/jburrow/fast_code_search/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/jburrow/fast_code_search/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/jburrow/fast_code_search/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jburrow/fast_code_search/compare/v0.5.8...v0.6.0
 [0.5.8]: https://github.com/jburrow/fast_code_search/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/jburrow/fast_code_search/compare/v0.5.6...v0.5.7
