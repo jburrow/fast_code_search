@@ -104,8 +104,15 @@ impl TrigramIndex {
         self.all_docs_cache = None;
     }
 
+    /// Release over-allocated bucket memory from incremental inserts.
+    /// Complements `finalize()` — safe to call at any time between batches.
+    pub fn shrink_to_fit(&mut self) {
+        self.trigram_to_docs.shrink_to_fit();
+    }
+
     /// Finalize the index after bulk loading. Call this after indexing is complete
     /// to pre-compute the all_documents bitmap for faster regex fallback queries.
+    /// Also shrinks the internal HashMap to release over-allocated bucket memory.
     pub fn finalize(&mut self) {
         if self.all_docs_cache.is_none() {
             let mut all_docs = RoaringBitmap::new();
@@ -114,6 +121,9 @@ impl TrigramIndex {
             }
             self.all_docs_cache = Some(all_docs);
         }
+        // Release over-allocated hash-map bucket slots accumulated during incremental inserts.
+        // FxHashMap doubles capacity on rehash; after bulk load the table may be ~50% empty.
+        self.trigram_to_docs.shrink_to_fit();
     }
 
     /// Search for documents containing all trigrams from the query

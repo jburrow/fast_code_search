@@ -854,6 +854,26 @@ impl SearchEngine {
             .sum()
     }
 
+    /// Release over-allocated backing memory accumulated during incremental batch indexing.
+    ///
+    /// Vec and HashMap growth is doubling; after N inserts the backing store may hold
+    /// capacity for 2N entries.  Calling this periodically (e.g. every 50 batches) and
+    /// once in `finalize()` can reclaim tens to hundreds of MB on large codebases.
+    ///
+    /// This is a best-effort operation — it does NOT force the OS to reclaim pages
+    /// (that depends on the allocator), but it does return capacity to the allocator
+    /// so subsequent allocations can reuse the freed slots instead of growing the heap.
+    pub fn compact_memory(&mut self) {
+        // Shrink the outer symbol-cache Vec and every inner Vec<Symbol>.
+        // Tree-sitter extraction uses push(), so inner Vecs often carry 2× over-allocation.
+        for syms in &mut self.symbol_cache {
+            syms.shrink_to_fit();
+        }
+        self.symbol_cache.shrink_to_fit();
+        self.pending_imports.shrink_to_fit();
+        self.trigram_index.shrink_to_fit();
+    }
+
     /// Finalize the index after all files have been indexed.
     /// This pre-computes caches for optimal query performance.
     /// Call this after indexing is complete and before serving queries.
@@ -884,6 +904,19 @@ impl SearchEngine {
             num_files = num_files,
             "Computed file metadata for fast ranking"
         );
+
+        // Release over-allocated Vec capacity accumulated during incremental push().
+        // Vec doubles on growth; after indexing N files the backing store may be 2N slots.
+        // Shrinking here can save tens to hundreds of MB on large codebases.
+        self.file_metadata.shrink_to_fit();
+        self.pending_imports.shrink_to_fit();
+        // Shrink the outer symbol_cache Vec and every inner Vec<Symbol>.
+        // Inner Vecs are built by tree-sitter extraction which also uses push(),
+        // so each may carry up to 2× over-allocation.
+        for syms in &mut self.symbol_cache {
+            syms.shrink_to_fit();
+        }
+        self.symbol_cache.shrink_to_fit();
     }
 
     pub fn rebuild_symbols_and_dependencies(&mut self) -> RebuildCacheStats {

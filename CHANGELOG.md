@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **OOM during indexing of large codebases (Vec/HashMap over-allocation)**: After each doubling growth, Rust's `Vec` and `FxHashMap` may carry up to 2× excess capacity. On a 62 000-file corpus this contributes tens to hundreds of MB of wasted heap. Three changes address this:
+  1. `SearchEngine::compact_memory()` — a new method that calls `shrink_to_fit()` on `symbol_cache` (both outer Vec and every inner `Vec<Symbol>`), `pending_imports`, and the trigram HashMap. Called automatically every 50 batches during the initial index build, so memory is reclaimed without waiting for `finalize()`.
+  2. `SearchEngine::finalize()` — additionally shrinks `file_metadata` and runs a full `compact_memory()` pass once indexing completes.
+  3. `TrigramIndex::finalize()` — now includes `shrink_to_fit()` on the `FxHashMap<Trigram, RoaringBitmap>` which can hold ~50% empty bucket slots after bulk insertion.
+
 ## [0.6.5] - 2026-02-27
 
 ### Fixed

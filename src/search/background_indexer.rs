@@ -800,6 +800,13 @@ fn process_batch(
         };
         engine.index_batch(pre_indexed);
         engine.resolve_imports_incremental();
+
+        // Periodically release over-allocated Vec/HashMap capacity so the
+        // OS allocator can reuse it instead of growing the heap further.
+        // Every 50 batches balances compaction cost vs. memory savings.
+        if (*batch_num).is_multiple_of(50) {
+            engine.compact_memory();
+        }
     }
 
     // Update progress
