@@ -2544,11 +2544,19 @@ pub struct IndexingProgress {
     /// Files processed during loading
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loading_files_processed: Option<usize>,
+    /// Number of files loaded from a persisted cache (baseline for reconciliation progress)
+    #[serde(skip_serializing_if = "is_usize_zero")]
+    pub files_loaded_from_cache: usize,
 }
 
 /// Helper for serde skip_serializing_if
 fn is_loading_phase_none(phase: &LoadingPhase) -> bool {
     *phase == LoadingPhase::None
+}
+
+/// Helper for serde skip_serializing_if
+fn is_usize_zero(v: &usize) -> bool {
+    *v == 0
 }
 
 impl Default for IndexingProgress {
@@ -2567,6 +2575,7 @@ impl Default for IndexingProgress {
             loading_phase: LoadingPhase::None,
             loading_total_files: None,
             loading_files_processed: None,
+            files_loaded_from_cache: 0,
         }
     }
 }
@@ -2654,7 +2663,25 @@ impl IndexingProgress {
                     (10.0 + batch_progress).min(90.0) as u8
                 }
             }
-            IndexingStatus::Reconciling => 92,
+            IndexingStatus::Reconciling => {
+                // When reconciling after a cache load, compute progress based on
+                // newly-indexed files vs newly-discovered files so the bar actually
+                // moves rather than sitting at a fixed 92%.
+                let new_discovered = self
+                    .files_discovered
+                    .saturating_sub(self.files_loaded_from_cache);
+                if new_discovered == 0 {
+                    // No new files yet (discovery still starting or nothing to do)
+                    92
+                } else {
+                    let new_indexed = self
+                        .files_indexed
+                        .saturating_sub(self.files_loaded_from_cache);
+                    let pct = new_indexed as f64 / new_discovered as f64;
+                    // Map [0, 1] → [92, 99] so we leave room for ResolvingImports
+                    (92.0 + pct * 7.0).min(99.0) as u8
+                }
+            }
             IndexingStatus::ResolvingImports => 96,
             IndexingStatus::Completed => 100,
         }
@@ -3323,5 +3350,46 @@ fn HelloWorld() {
             results[0].content.contains("data_processor"),
             "Regex filename match should show the file path"
         );
+    }
+
+    #[test]
+    fn test_reconciling_progress_percent_with_new_files() {
+        // Simulate starting from a saved index (1000 cached) with 50 new files to index.
+        let mut progress = IndexingProgress {
+            status: IndexingStatus::Reconciling,
+            files_indexed: 1000,
+            files_discovered: 1000, // pre-seeded with offset
+            files_loaded_from_cache: 1000,
+            ..Default::default()
+        };
+
+        // Before any new files are discovered the percentage should be 92%.
+        assert_eq!(progress.progress_percent(), 92);
+
+        // Simulate discovery of 50 new files and partial indexing of 25.
+        progress.files_discovered = 1050;
+        progress.files_indexed = 1025;
+        let mid_pct = progress.progress_percent();
+        assert!(
+            mid_pct > 92 && mid_pct < 99,
+            "Mid-reconciliation percent should be between 92 and 99, got {mid_pct}"
+        );
+
+        // After all new files are indexed the percentage should reach 99%.
+        progress.files_indexed = 1050;
+        assert_eq!(progress.progress_percent(), 99);
+    }
+
+    #[test]
+    fn test_reconciling_progress_percent_no_new_files() {
+        // When there are no new files (nothing to reconcile) percentage stays at 92.
+        let progress = IndexingProgress {
+            status: IndexingStatus::Reconciling,
+            files_indexed: 1000,
+            files_discovered: 1000,
+            files_loaded_from_cache: 1000,
+            ..Default::default()
+        };
+        assert_eq!(progress.progress_percent(), 92);
     }
 }
