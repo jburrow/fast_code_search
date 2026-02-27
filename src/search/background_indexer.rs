@@ -23,9 +23,6 @@ use tracing::info;
 /// Channel buffer size for file discovery pipeline.
 const CHANNEL_BUFFER: usize = 5000;
 
-/// Number of files to process in each batch.
-const BATCH_SIZE: usize = 2000;
-
 /// Configuration for the background indexer.
 pub struct BackgroundIndexerConfig {
     /// The indexer configuration from the config file.
@@ -212,6 +209,14 @@ pub fn run(config: BackgroundIndexerConfig) {
         .map(|r| r.stale_files.clone())
         .unwrap_or_default();
 
+    // Count removed entries so the final save is not skipped when files were
+    // deleted from disk but no stale/new files needed re-indexing
+    // (total_indexed == 0 but removed_files_count > 0 means the index changed).
+    let removed_files_count = load_result
+        .as_ref()
+        .map(|r| r.removed_files.len() + r.removed_paths.len())
+        .unwrap_or(0);
+
     // Run the indexing pipeline
     let (total_indexed, batch_num, final_discovered) = run_indexing_pipeline(
         &paths_to_index,
@@ -237,6 +242,7 @@ pub fn run(config: BackgroundIndexerConfig) {
             &index_engine,
             loaded_from_persistence,
             total_indexed,
+            removed_files_count,
         );
     }
 
@@ -469,17 +475,43 @@ fn spawn_discovery_thread(
     discovery_progress_tx: ProgressBroadcaster,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
+        // Pre-compile exclude patterns the same way FileDiscoveryIterator does
+        // so that stale files are subject to the same exclusion rules as newly
+        // discovered files. Without this, a file that was indexed before a
+        // "**/target/**" pattern was added would still be sent for re-indexing
+        // when it becomes stale.
+        let compiled_excludes: Vec<String> = exclude_patterns
+            .iter()
+            .map(|p| p.trim_matches('*').trim_matches('/').to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+
         // First, send stale files that need re-indexing
         for stale_path in stale_files {
-            if stale_path.exists() {
-                if tx.send(stale_path).is_err() {
-                    return; // Receiver dropped
-                }
-                files_discovered.fetch_add(1, Ordering::Relaxed);
+            if !stale_path.exists() {
+                continue;
             }
+            // Apply exclude_patterns before queueing for re-indexing
+            let path_str = stale_path.to_string_lossy();
+            if compiled_excludes
+                .iter()
+                .any(|pattern| path_str.contains(pattern.as_str()))
+            {
+                tracing::debug!(
+                    path = %stale_path.display(),
+                    "Skipping stale file that matches an exclude pattern"
+                );
+                continue;
+            }
+            if tx.send(stale_path).is_err() {
+                return; // Receiver dropped
+            }
+            files_discovered.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Then discover files from paths that need indexing
+        // Then discover files from paths that need indexing.
+        // Pass the original (unstripped) patterns — FileDiscoveryIterator
+        // calls compile_exclude_patterns() internally.
         let discovery_config = FileDiscoveryConfig {
             paths: paths_to_index,
             exclude_patterns,
@@ -524,16 +556,21 @@ fn process_batches(
     indexer_config: &IndexerConfig,
     loaded_from_persistence: bool,
 ) -> (usize, usize) {
-    let mut batch: Vec<PathBuf> = Vec::with_capacity(BATCH_SIZE);
+    let batch_size = indexer_config.batch_size.max(1);
+    let mut batch: Vec<PathBuf> = Vec::with_capacity(batch_size);
     let mut total_indexed = 0usize;
     let mut batch_num = 0usize;
+    // Track the total at the last checkpoint to compute a delta, avoiding the
+    // LCM(batch_size, interval) trap that `is_multiple_of` creates when
+    // total_indexed grows in fixed batch_size steps.
+    let mut last_checkpoint_indexed = 0usize;
 
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(path) => {
                 batch.push(path);
 
-                if batch.len() >= BATCH_SIZE {
+                if batch.len() >= batch_size {
                     let indexed = process_batch(
                         &mut batch,
                         &mut batch_num,
@@ -546,17 +583,14 @@ fn process_batches(
                     );
                     total_indexed += indexed;
 
-                    // Periodic checkpoint save during initial build every N files
-                    if indexer_config.save_after_updates > 0
-                        && total_indexed.is_multiple_of(indexer_config.save_after_updates)
-                    {
-                        save_index_if_needed(indexer_config, index_engine, true, total_indexed);
-                    }
-
-                    // Checkpoint save during initial build every N files
+                    // Checkpoint save during initial build every N files.
+                    // Compare against a running delta so the checkpoint fires at the
+                    // first batch boundary *after* `checkpoint_interval_files` new
+                    // files have accumulated, regardless of common factors between
+                    // batch_size and the configured interval.
                     if indexer_config.checkpoint_interval_files > 0
-                        && total_indexed > 0
-                        && total_indexed.is_multiple_of(indexer_config.checkpoint_interval_files)
+                        && total_indexed - last_checkpoint_indexed
+                            >= indexer_config.checkpoint_interval_files
                     {
                         info!(
                             files_indexed = total_indexed,
@@ -568,7 +602,9 @@ fn process_batches(
                             index_engine,
                             loaded_from_persistence,
                             total_indexed,
+                            0,
                         );
+                        last_checkpoint_indexed = total_indexed;
                     }
                 }
             }
@@ -663,7 +699,10 @@ fn process_batch(
     let pre_indexed: Vec<PreIndexedFile> = partial
         .into_par_iter()
         .filter_map(|p| {
-            tracing::debug!(path = %p.path.display(), "Phase2: extracting symbols");
+            // Clone path before moving `p` into the closure so the error
+            // handler can still log which file triggered the panic.
+            let path_for_log = p.path.clone();
+            tracing::debug!(path = %path_for_log.display(), "Phase2: extracting symbols");
 
             // Catch panics from tree-sitter C FFI on malformed files.
             // from_partial already wraps individual tree-sitter calls, but this
@@ -674,7 +713,10 @@ fn process_batch(
             })) {
                 Ok(result) => Some(result),
                 Err(_) => {
-                    tracing::error!("Phase2 panicked during symbol extraction");
+                    tracing::error!(
+                        path = %path_for_log.display(),
+                        "Phase2 panicked during symbol extraction"
+                    );
                     None
                 }
             }
@@ -798,7 +840,8 @@ pub fn save_on_watcher_update(
     if indexer_config.save_after_updates > 0
         && total_updates.is_multiple_of(indexer_config.save_after_updates)
     {
-        save_index_if_needed(indexer_config, engine, true, total_updates);
+        // Watcher updates increment by 1, so is_multiple_of is exact here.
+        save_index_if_needed(indexer_config, engine, true, total_updates, 0);
     }
 }
 
@@ -808,14 +851,20 @@ fn save_index_if_needed(
     index_engine: &Arc<RwLock<SearchEngine>>,
     loaded_from_persistence: bool,
     total_indexed: usize,
+    removed_files_count: usize,
 ) {
     let Some(ref index_path_str) = indexer_config.index_path else {
         return;
     };
 
-    // Only save if we actually indexed something new
+    // Only save if the index actually changed since it was loaded.
+    // `removed_files_count` covers the case where files were deleted from disk
+    // but no new/stale files were re-indexed — the in-memory index is already
+    // correct (deleted-file entries are absent) but the on-disk copy still has
+    // them, so we must resave to avoid re-processing the same deletions on every
+    // subsequent startup.
     let should_save = if loaded_from_persistence {
-        total_indexed > 0
+        total_indexed > 0 || removed_files_count > 0
     } else {
         true
     };

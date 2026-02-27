@@ -161,6 +161,16 @@ pub struct IndexerConfig {
     /// Disable this if you only work with UTF-8 codebases for slightly faster indexing.
     #[serde(default = "default_true")]
     pub transcode_non_utf8: bool,
+
+    /// Number of files to process per indexing batch (default: 500).
+    ///
+    /// During initial indexing each batch loads all files into memory in
+    /// parallel, so peak RAM scales with `batch_size × average_file_size × ~4`.
+    /// Increase this on machines with abundant RAM to reduce engine lock
+    /// contention; decrease it on memory-constrained machines.
+    /// The v0.6.0 default was 2000 which caused OOM on large codebases.
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
 }
 
 fn default_address() -> String {
@@ -192,6 +202,10 @@ fn default_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
 }
 
+fn default_batch_size() -> usize {
+    500
+}
+
 fn default_true() -> bool {
     true
 }
@@ -220,6 +234,7 @@ impl Default for IndexerConfig {
             checkpoint_interval_files: 0, // Disabled by default
             exclude_files: Vec::new(),
             transcode_non_utf8: true,
+            batch_size: default_batch_size(),
         }
     }
 }

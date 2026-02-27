@@ -25,7 +25,18 @@ pub struct LazyMappedFile {
     pub path: PathBuf,
     /// Lazily initialized memory map
     mmap: OnceLock<Result<Mmap, String>>,
-    /// Fallback: owned bytes read via fs::read when mmap is unavailable
+    /// Fallback: owned bytes read via fs::read when mmap is unavailable.
+    ///
+    /// # Memory note
+    /// `OnceLock` is write-once: once populated this `Vec<u8>` is retained for
+    /// the entire lifetime of the file entry (i.e. the whole server process).
+    /// On Linux, any file that exceeds `vm.max_map_count` falls into this path
+    /// at first search access. With large repos this can mean gigabytes of
+    /// heap memory that the OS cannot reclaim.
+    ///
+    /// TODO: replace with a `Mutex<Option<Vec<u8>>>` + caller-provided buffer
+    /// so that fallback bytes can be evicted after each search round-trip.
+    /// Tracking: https://github.com/jburrow/fast_code_search/issues/XX
     content_fallback: OnceLock<Result<Vec<u8>, String>>,
     /// Cached result of UTF-8 validation
     utf8_valid: OnceLock<bool>,
