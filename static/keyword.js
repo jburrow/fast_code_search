@@ -164,25 +164,11 @@ async function performSearch() {
 
     if (!query) {
         resultsHeader.style.display = 'none';
-        resultsContainer.innerHTML = '<div class="text-center py-12 text-zinc-500"><p>Enter a search query to find code</p></div>';
-        
-        // Reset layout to center
-        const mainContainer = document.getElementById('main-container');
-        if (mainContainer) {
-            mainContainer.classList.add('justify-center', 'min-h-screen');
-            mainContainer.classList.remove('pt-12', 'pb-6');
-        }
+        resultsContainer.innerHTML = '<div class="empty-state"><p>Enter a search query to find code</p></div>';
         return;
     }
 
-    // Transition layout to top
-    const mainContainer = document.getElementById('main-container');
-    if (mainContainer) {
-        mainContainer.classList.remove('justify-center', 'min-h-screen');
-        mainContainer.classList.add('pt-12', 'pb-6');
-    }
-
-    resultsContainer.innerHTML = '<div class="flex justify-center py-12"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div></div>';
+    resultsContainer.innerHTML = '<div class="loading">Searching...</div>';
     resultsHeader.style.display = 'none';
 
     const startTime = performance.now();
@@ -219,7 +205,7 @@ async function performSearch() {
         }
 
         if (data.results.length === 0) {
-            resultsContainer.innerHTML = `<div class="text-center py-12 text-zinc-500"><p>No results found for "${escapeHtml(query)}"</p></div>`;
+            resultsContainer.innerHTML = `<div class="empty-state"><p>No results found for "${escapeHtml(query)}"</p></div>`;
             return;
         }
 
@@ -227,23 +213,23 @@ async function performSearch() {
             const matchType = getMatchTypeLabel(result.match_type);
             const depCount = result.dependency_count || 0;
             const depBadge = depCount > 0 
-                ? `<span class="px-2 py-0.5 bg-zinc-800 text-zinc-300 rounded text-xs cursor-pointer hover:bg-zinc-700 transition-colors" title="${depCount} files depend on this" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
+                ? `<span class="result-badge" title="${depCount} files depend on this" style="cursor:pointer" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
                 : '';
             return `
-                <div class="bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden hover:border-zinc-700 transition-colors shadow-sm">
-                    <div class="flex justify-between items-center px-4 py-3 bg-zinc-900/80 border-b border-zinc-800/80">
-                        <div class="flex items-center gap-2 font-mono text-sm">
-                            <span class="text-indigo-400">${escapeHtml(result.file_path)}</span>
-                            <span class="text-zinc-500">:${result.line_number}</span>
+                <div class="result-item">
+                    <div class="result-header">
+                        <div class="result-info">
+                            <span class="result-path">${escapeHtml(result.file_path)}</span>
+                            <span class="result-line">:${result.line_number}</span>
                         </div>
-                        <div class="flex items-center gap-3 text-xs">
+                        <div class="result-meta">
                             ${depBadge}
-                            <span class="text-zinc-500">Score: ${result.score.toFixed(2)}</span>
-                            <span class="px-2 py-0.5 rounded ${matchType.isSymbol ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-zinc-800 text-zinc-400'}">${matchType.text}</span>
+                            <span class="result-score">Score: ${result.score.toFixed(2)}</span>
+                            <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
                         </div>
                     </div>
-                    <div class="p-4 overflow-x-auto">
-                        <pre class="font-mono text-sm text-zinc-300 m-0 leading-relaxed">${highlightMatches(result.content, query)}</pre>
+                    <div class="result-content">
+                        <pre>${highlightMatches(result.content, query)}</pre>
                     </div>
                 </div>
             `;

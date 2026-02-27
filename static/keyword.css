@@ -1,0 +1,97 @@
+/* ============================================
+   KEYWORD SEARCH - View-specific styles
+   Extends common.css
+   ============================================ */
+
+/* Toggle buttons specific to keyword search */
+.regex-toggle,
+.symbols-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    transition: all 0.2s;
+    font-size: 0.85rem;
+}
+
+.regex-toggle:hover,
+.symbols-toggle:hover {
+    border-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"],
+.symbols-toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.regex-toggle input[type="checkbox"]:checked+span,
+.symbols-toggle input[type="checkbox"]:checked+span {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* Keyword search uses full-width input (no button) */
+.search-box>input#query {
+    width: 100%;
+    padding: 0.6rem 0.85rem;
+    font-size: 1rem;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-box>input#query:focus {
+    border-color: var(--accent);
+}
+
+.search-box>input#query::placeholder {
+    color: var(--text-muted);
+}
+
+/* Ranking info in results header */
+#ranking-info {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding: 0.2rem 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    cursor: help;
+}
+
+#ranking-info:empty {
+    display: none;
+}
+
+/* Ranking mode dropdown */
+.rank-mode-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.rank-mode-label select {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.rank-mode-label select:focus {
+    outline: none;
+    border-color: var(--accent);
+}

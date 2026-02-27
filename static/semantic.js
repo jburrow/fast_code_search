@@ -119,26 +119,9 @@ async function performSearch() {
     const query = queryInput.value.trim();
     const maxResults = parseInt(maxResultsSelect.value);
     
-    if (!query) {
-        resultsContainer.innerHTML = '';
-        
-        // Reset layout to center
-        const mainContainer = document.getElementById('main-container');
-        if (mainContainer) {
-            mainContainer.classList.add('justify-center', 'min-h-screen');
-            mainContainer.classList.remove('pt-12', 'pb-6');
-        }
-        return;
-    }
-
-    // Transition layout to top
-    const mainContainer = document.getElementById('main-container');
-    if (mainContainer) {
-        mainContainer.classList.remove('justify-center', 'min-h-screen');
-        mainContainer.classList.add('pt-12', 'pb-6');
-    }
+    if (!query) return;
     
-    resultsContainer.innerHTML = '<div class="flex justify-center py-12"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div></div>';
+    showLoading('results', `Searching for: "${query}"`);
     const startTime = Date.now();
     
     try {
@@ -163,11 +146,11 @@ async function performSearch() {
 function displayResults(results, query, latency) {
     if (!results || results.length === 0) {
         resultsContainer.innerHTML = `
-            <div class="text-center py-12 text-zinc-500">
-                <div class="text-4xl mb-4">🔍</div>
-                <h3 class="text-xl font-medium text-zinc-300 mb-2">No results found</h3>
+            <div class="no-results">
+                <div class="no-results-icon">🔍</div>
+                <h3>No results found</h3>
                 <p>Try a different query or check if the server has indexed your files.</p>
-                <p class="mt-3 text-sm text-zinc-600">
+                <p style="margin-top: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">
                     Query: "${escapeHtml(query)}" • Latency: ${latency}ms
                 </p>
             </div>
@@ -176,12 +159,7 @@ function displayResults(results, query, latency) {
     }
     
     const resultsHtml = results.map(result => createResultCard(result)).join('');
-    resultsContainer.innerHTML = `
-        <div class="flex justify-between items-center mb-4 text-sm text-zinc-400">
-            <span>Found ${results.length} results</span>
-            <span class="font-mono">${latency}ms</span>
-        </div>
-    ` + resultsHtml;
+    resultsContainer.innerHTML = createResultsSummary(results.length, latency) + resultsHtml;
 }
 
 function createResultCard(result) {
@@ -197,27 +175,25 @@ function createResultCard(result) {
     const codeWithLines = formatCodeWithLineNumbers(result.content, result.start_line);
     
     return `
-        <div class="bg-zinc-900/50 border border-zinc-800/80 rounded-xl overflow-hidden hover:border-zinc-700 transition-colors shadow-sm mb-4">
-            <div class="flex justify-between items-center px-4 py-3 bg-zinc-900/80 border-b border-zinc-800/80">
-                <div class="flex flex-col gap-1">
-                    <div class="flex items-center gap-2 font-mono text-sm">
-                        <span class="text-purple-400">📄 ${escapeHtml(result.file_path)}</span>
-                    </div>
-                    <div class="flex items-center gap-3 text-xs text-zinc-500">
+        <div class="result-item">
+            <div class="result-header">
+                <div class="result-info">
+                    <div class="result-file">📄 ${escapeHtml(result.file_path)}</div>
+                    <div class="result-meta">
                         <span>Lines ${result.start_line}-${result.end_line}</span>
-                        ${result.symbol_name ? `<span>Symbol: <strong class="text-zinc-300">${escapeHtml(result.symbol_name)}</strong></span>` : ''}
-                        <span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">${badgeText}</span>
+                        ${result.symbol_name ? `<span>Symbol: <strong>${escapeHtml(result.symbol_name)}</strong></span>` : ''}
+                        <span class="result-badge">${badgeText}</span>
                     </div>
                 </div>
-                <div class="flex flex-col items-end gap-1">
-                    <div class="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                        <div class="h-full bg-purple-500" style="width: ${scorePercent}%"></div>
+                <div class="result-score">
+                    <div class="score-bar">
+                        <div class="score-fill" style="width: ${scorePercent}%"></div>
                     </div>
-                    <span class="text-xs text-zinc-400 font-mono">${score}%</span>
+                    <span class="score-value">${score}%</span>
                 </div>
             </div>
-            <div class="p-4 overflow-x-auto">
-                <pre class="font-mono text-sm text-zinc-300 m-0 leading-relaxed"><code>${codeWithLines}</code></pre>
+            <div class="result-content">
+                <pre><code>${codeWithLines}</code></pre>
             </div>
         </div>
     `;

@@ -5,130 +5,115 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fast Code Search</title>
-    <link rel="stylesheet" href="/tailwind.css">
+    <link rel="stylesheet" href="/common.css">
+    <link rel="stylesheet" href="/keyword.css">
 </head>
 
-<body class="bg-zinc-950 text-zinc-300 font-sans antialiased">
-    <div id="main-container"
-        class="min-h-screen flex flex-col justify-center items-center transition-all duration-500 ease-in-out p-4">
-        <header class="w-full max-w-4xl flex justify-between items-center mb-8">
-            <div class="flex items-center gap-3">
-                <h1 class="text-2xl font-bold text-zinc-100 tracking-tight">🔍 Fast Code Search</h1>
-                <a href="/docs.html" class="text-zinc-500 hover:text-indigo-400 transition-colors"
-                    title="Documentation">📚</a>
+<body>
+    <div class="container">
+        <header class="header-compact">
+            <div class="header-title">
+                <h1>🔍 Fast Code Search</h1>
+                <a href="/docs.html" class="header-link" title="Documentation">📚</a>
             </div>
 
-            <div id="progress-panel"
-                class="hidden items-center gap-3 bg-zinc-900/50 border border-zinc-800/80 rounded-full px-4 py-1.5">
-                <span id="progress-status"
-                    class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Ready</span>
-                <div class="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                    <div id="progress-bar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%">
-                    </div>
+            <div class="header-progress" id="progress-panel" style="display: none;">
+                <span class="status-badge" id="progress-status">Ready</span>
+                <div class="progress-bar-container">
+                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
                 </div>
-                <span id="progress-percent" class="text-xs text-zinc-400">0%</span>
-                <span id="progress-message" class="text-xs text-zinc-500 truncate max-w-[100px]"></span>
+                <span class="progress-percent" id="progress-percent">0%</span>
+                <span class="progress-message" id="progress-message"></span>
             </div>
 
-            <div id="stats" class="flex gap-4 text-sm">
-                <div class="flex flex-col items-end">
-                    <span id="stat-files" class="font-mono text-zinc-300">-</span>
-                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Files</span>
+            <div class="header-stats" id="stats">
+                <div class="stat">
+                    <span class="stat-value" id="stat-files">-</span>
+                    <span class="stat-label">Files</span>
                 </div>
-                <div class="flex flex-col items-end">
-                    <span id="stat-content" class="font-mono text-zinc-300">-</span>
-                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Content</span>
+                <div class="stat">
+                    <span class="stat-value" id="stat-content">-</span>
+                    <span class="stat-label">Content</span>
                 </div>
-                <div class="flex flex-col items-end">
-                    <span id="stat-size" class="font-mono text-zinc-300">-</span>
-                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Index</span>
+                <div class="stat">
+                    <span class="stat-value" id="stat-size">-</span>
+                    <span class="stat-label">Index</span>
                 </div>
-                <div class="flex flex-col items-end">
-                    <span id="stat-trigrams" class="font-mono text-zinc-300">-</span>
-                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Trigrams</span>
+                <div class="stat">
+                    <span class="stat-value" id="stat-trigrams">-</span>
+                    <span class="stat-label">Trigrams</span>
                 </div>
-                <div class="flex flex-col items-end">
-                    <span id="stat-deps" class="font-mono text-zinc-300">-</span>
-                    <span class="text-xs text-zinc-500 uppercase tracking-wider">Deps</span>
+                <div class="stat">
+                    <span class="stat-value" id="stat-deps">-</span>
+                    <span class="stat-label">Deps</span>
                 </div>
             </div>
         </header>
 
-        <div class="w-full max-w-4xl relative group">
-            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <span class="text-zinc-500 text-xl">🔍</span>
-            </div>
-            <input type="text" id="query" placeholder="Search code... (Press / to focus)" autocomplete="off" autofocus
-                class="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl pl-12 pr-4 py-4 text-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 shadow-2xl transition-all">
+        <div class="search-box">
+            <input type="text" id="query" placeholder="Search code..." autocomplete="off" autofocus>
 
-            <details class="mt-4 group/details">
-                <summary
-                    class="cursor-pointer text-sm text-zinc-500 hover:text-zinc-300 flex items-center gap-2 select-none transition-colors">
-                    <span class="transform group-open/details:rotate-90 transition-transform text-xs">▶</span> Advanced
-                    Options
+            <details class="advanced-options">
+                <summary class="advanced-toggle">
+                    <span class="toggle-icon">▶</span> Advanced Options
                 </summary>
-                <div
-                    class="mt-4 p-5 bg-zinc-900/50 border border-zinc-800/80 rounded-xl shadow-lg grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="space-y-4">
-                        <label class="flex items-center justify-between text-sm">
-                            <span class="text-zinc-400">Max results:</span>
-                            <select id="max-results"
-                                class="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none focus:border-indigo-500">
+                <div class="advanced-content">
+                    <div class="search-options">
+                        <label>
+                            Max results:
+                            <select id="max-results">
                                 <option value="25">25</option>
                                 <option value="50" selected>50</option>
                                 <option value="100">100</option>
                                 <option value="250">250</option>
                             </select>
                         </label>
-                        <label class="flex items-center gap-3 text-sm cursor-pointer">
-                            <input type="checkbox" id="regex-mode"
-                                class="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-zinc-900">
-                            <span class="text-zinc-300">Regex Mode</span>
+                        <label class="regex-toggle">
+                            <input type="checkbox" id="regex-mode">
+                            <span>Regex</span>
                         </label>
-                        <label class="flex items-center gap-3 text-sm cursor-pointer">
-                            <input type="checkbox" id="symbols-mode"
-                                class="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-zinc-900">
-                            <span class="text-zinc-300">Symbols Only</span>
+                        <label class="symbols-toggle">
+                            <input type="checkbox" id="symbols-mode">
+                            <span>Symbols Only</span>
                         </label>
-                        <label class="flex items-center justify-between text-sm">
-                            <span class="text-zinc-400">Ranking:</span>
-                            <select id="rank-mode"
-                                class="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none focus:border-indigo-500">
+                        <label class="rank-mode-label">
+                            Ranking:
+                            <select id="rank-mode">
                                 <option value="auto" selected>Auto</option>
                                 <option value="fast">⚡ Fast</option>
                                 <option value="full">📊 Full</option>
                             </select>
                         </label>
                     </div>
-                    <div class="space-y-4">
-                        <label class="block text-sm">
-                            <span class="block text-zinc-400 mb-1">Include paths:</span>
-                            <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**"
-                                autocomplete="off"
-                                class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500">
-                        </label>
-                        <label class="block text-sm">
-                            <span class="block text-zinc-400 mb-1">Exclude paths:</span>
-                            <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**"
-                                autocomplete="off"
-                                class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500">
-                        </label>
-                        <p class="text-xs text-zinc-500">Use glob patterns separated by semicolons (;)</p>
+                    <div class="filter-options">
+                        <div class="filter-row">
+                            <label>
+                                <span class="filter-label">Include paths:</span>
+                                <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**"
+                                    autocomplete="off">
+                            </label>
+                        </div>
+                        <div class="filter-row">
+                            <label>
+                                <span class="filter-label">Exclude paths:</span>
+                                <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**"
+                                    autocomplete="off">
+                            </label>
+                        </div>
+                        <p class="filter-help">Use glob patterns separated by semicolons (;)</p>
                     </div>
                 </div>
             </details>
         </div>
 
-        <div id="results-header" class="w-full max-w-4xl flex justify-between items-center mt-8 mb-4 hidden">
-            <span id="results-count" class="text-sm font-medium text-zinc-300">0 results</span>
-            <div class="flex items-center gap-4 text-xs text-zinc-500">
-                <span id="ranking-info"></span>
-                <span id="search-time" class="font-mono"></span>
-            </div>
+        <div class="results-header" id="results-header" style="display: none;">
+            <span id="results-count">0 results</span>
+            <span id="ranking-info"></span>
+            <span id="search-time"></span>
         </div>
 
-        <div id="results" class="w-full max-w-4xl space-y-4">
-            <div class="text-center py-12 text-zinc-500">
+        <div class="results" id="results">
+            <div class="empty-state">
                 <p>Enter a search query to find code</p>
             </div>
         </div>
