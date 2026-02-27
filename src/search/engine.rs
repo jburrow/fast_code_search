@@ -1483,7 +1483,7 @@ impl SearchEngine {
         // Search symbols in parallel
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
-            .filter_map(|&doc_id| self.search_symbols_in_document(doc_id, &query_lower))
+            .filter_map(|&doc_id| self.search_symbols_in_document(doc_id, query, &query_lower))
             .flatten()
             .collect();
 
@@ -1496,6 +1496,7 @@ impl SearchEngine {
     fn search_symbols_in_document(
         &self,
         doc_id: u32,
+        original_query: &str,
         query_lower: &str,
     ) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
@@ -1579,7 +1580,7 @@ impl SearchEngine {
             // Calculate score - symbols always get the symbol definition boost
             let score = calculate_score_inline(
                 line,
-                query_lower,
+                original_query,
                 query_lower,
                 true,
                 is_src_lib,
