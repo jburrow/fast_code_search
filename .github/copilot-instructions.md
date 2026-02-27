@@ -100,6 +100,24 @@ Test pattern: Use `setup_test_server()` helper, test both gRPC and HTTP, use `Te
 
 > See [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#testing) for detailed testing guide.
 
+## Code Coverage
+
+Coverage reports are generated automatically on every CI run. Download the `coverage-report` artifact from the GitHub Actions run to view the HTML report.
+
+To generate coverage locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run:
+
+```bash
+# Install (one-time)
+cargo install cargo-llvm-cov
+rustup component add llvm-tools-preview
+
+# Generate and open HTML report
+cargo llvm-cov --all-features --workspace --open
+
+# Generate LCOV file (for IDE integration)
+cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+```
+
 ## Validator Tool
 
 Whitebox testing binary for validating search engines with synthetic corpus generation.
