@@ -24,7 +24,7 @@ use tracing::info;
 const CHANNEL_BUFFER: usize = 5000;
 
 /// Number of files to process in each batch.
-const BATCH_SIZE: usize = 500;
+const BATCH_SIZE: usize = 2000;
 
 /// Configuration for the background indexer.
 pub struct BackgroundIndexerConfig {
@@ -626,20 +626,12 @@ fn process_batch(
     let batch_transcoded: usize = partial_with_flags.iter().filter(|(_, t)| *t).count();
     let partial: Vec<PartialIndexedFile> = partial_with_flags.into_iter().map(|(p, _)| p).collect();
 
-    // Phase 2 (sequential — tree-sitter C parsers are not thread-safe):
-    // Extract symbols and imports one file at a time to prevent concurrent
-    // heap corruption in the C allocator causing SIGABRT.
-    //
-    // We also write the current file path to `fcs_last_processed.txt` before
-    // each call so that after a crash (SIGABRT) the file can be identified
-    // by reading that file and added to `exclude_files` in config.toml.
-    let probe_path = std::path::Path::new("fcs_last_processed.txt");
+    // Phase 2 (parallel — tree-sitter `Parser` is `Send + Sync` in tree-sitter v0.26+,
+    // so independent parser instances can run safely on concurrent rayon threads):
     let pre_indexed: Vec<PreIndexedFile> = partial
-        .into_iter()
+        .into_par_iter()
         .filter_map(|p| {
             tracing::debug!(path = %p.path.display(), "Phase2: extracting symbols");
-            // Best-effort probe write — ignore errors (read-only fs, etc.)
-            let _ = std::fs::write(probe_path, p.path.display().to_string());
 
             // Catch panics from tree-sitter C FFI on malformed files.
             // from_partial already wraps individual tree-sitter calls, but this
@@ -650,11 +642,7 @@ fn process_batch(
             })) {
                 Ok(result) => Some(result),
                 Err(_) => {
-                    tracing::error!(
-                        "Phase2 panicked during symbol extraction — \
-                         check fcs_last_processed.txt and add the file to \
-                         exclude_files in config.toml"
-                    );
+                    tracing::error!("Phase2 panicked during symbol extraction");
                     None
                 }
             }
