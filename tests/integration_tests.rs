@@ -282,8 +282,8 @@ async fn test_grpc_index_request() -> Result<()> {
     let response = client.index(request).await?.into_inner();
 
     assert!(
-        response.files_indexed >= 0,
-        "Expected non-negative files_indexed count"
+        response.files_indexed > 0,
+        "Expected at least one file to be indexed"
     );
     assert!(!response.message.is_empty(), "Expected a status message");
 
@@ -479,14 +479,15 @@ async fn test_search_across_languages() -> Result<()> {
         .map(|r| r["file_path"].as_str().unwrap())
         .collect();
 
-    // Verify we got results from different file types
+    // Verify we got results from at least two different file types
     let has_rs = file_paths.iter().any(|p| p.ends_with(".rs"));
     let has_py = file_paths.iter().any(|p| p.ends_with(".py"));
     let has_js = file_paths.iter().any(|p| p.ends_with(".js"));
+    let matched_types = [has_rs, has_py, has_js].iter().filter(|&&b| b).count();
 
     assert!(
-        has_rs || has_py || has_js,
-        "Expected results from at least one file type, got: {:?}",
+        matched_types >= 2,
+        "Expected results from at least two file types (rs/py/js), got: {:?}",
         file_paths
     );
 
