@@ -1,6 +1,8 @@
 name: Tag Release
 
 on:
+  push:
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       version:
@@ -33,7 +35,21 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Tagging as $VERSION"
 
+      - name: Check if tag already exists
+        id: check_tag
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          if git ls-remote --tags origin "$VERSION" | grep -q "$VERSION"; then
+            echo "EXISTS=true" >> $GITHUB_OUTPUT
+            echo "Tag $VERSION already exists — skipping."
+          else
+            echo "EXISTS=false" >> $GITHUB_OUTPUT
+            echo "Tag $VERSION does not exist — will create."
+          fi
+
       - name: Create and push tag
+        if: steps.check_tag.outputs.EXISTS == 'false'
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
