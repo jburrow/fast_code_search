@@ -3457,4 +3457,58 @@ fn HelloWorld() {
             "Searching for `__` should find dunder-style identifiers"
         );
     }
+
+    /// Compound underscore terms like `badger_farmer` must be found case-insensitively.
+    /// The trigram index includes cross-underscore trigrams (e.g. `er_`, `r_f`, `_fa`),
+    /// so a document containing the term will always be a candidate.
+    #[test]
+    fn test_compound_underscore_term_search() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        fs::write(
+            &file_path,
+            "fn badger_farmer(x: u32) -> u32 { x + 1 }\nfn other_func() {}\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Exact-case search.
+        let results = engine.search("badger_farmer", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "Should find line containing badger_farmer"
+        );
+
+        // Case-insensitive: UPPER_CASE query should match lower-case content.
+        let results = engine.search("BADGER_FARMER", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "UPPER case query should find badger_farmer (case-insensitive)"
+        );
+
+        // Prefix ending with underscore.
+        let results = engine.search("badger_", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "Prefix 'badger_' should find badger_farmer"
+        );
+
+        // Suffix starting with underscore.
+        let results = engine.search("_farmer", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "Suffix '_farmer' should find badger_farmer"
+        );
+
+        // Unrelated term must not match.
+        let results = engine.search("badger_thatcher", 10);
+        assert!(
+            results.is_empty(),
+            "Should NOT find badger_thatcher when it is not in the content"
+        );
+    }
 }
