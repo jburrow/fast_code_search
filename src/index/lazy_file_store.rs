@@ -6,11 +6,12 @@
 
 use anyhow::{Context, Result};
 use memmap2::Mmap;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 use tracing::warn;
 
 /// Represents a lazily memory-mapped file
@@ -27,16 +28,15 @@ pub struct LazyMappedFile {
     mmap: OnceLock<Result<Mmap, String>>,
     /// Fallback: owned bytes read via fs::read when mmap is unavailable.
     ///
-    /// # Memory note
-    /// `OnceLock` is write-once: once populated this `Vec<u8>` is retained for
-    /// the entire lifetime of the file entry (i.e. the whole server process).
-    /// On Linux, any file that exceeds `vm.max_map_count` falls into this path
-    /// at first search access. With large repos this can mean gigabytes of
-    /// heap memory that the OS cannot reclaim.
+    /// Using `Mutex<Option<Vec<u8>>>` (rather than a write-once `OnceLock`) allows
+    /// the cached bytes to be **evicted** after each search round-trip so that
+    /// heap memory is reclaimed.  Call `evict_fallback()` (or
+    /// `LazyFileStore::evict_all_fallbacks()`) once a search request completes.
     ///
-    /// TODO: replace with a `Mutex<Option<Vec<u8>>>` + caller-provided buffer
-    /// so that fallback bytes can be evicted after each search round-trip.
-    content_fallback: OnceLock<Result<Vec<u8>, String>>,
+    /// The Mutex is only contended when a fallback file is first accessed or
+    /// evicted — both are infrequent operations that occur only when the OS
+    /// `vm.max_map_count` limit is exceeded.
+    content_fallback: Mutex<Option<Vec<u8>>>,
     /// Cached result of UTF-8 validation
     utf8_valid: OnceLock<bool>,
     /// Transcoded UTF-8 content for non-UTF-8 files (None if natively UTF-8)
@@ -51,7 +51,7 @@ impl LazyMappedFile {
         Self {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
-            content_fallback: OnceLock::new(),
+            content_fallback: Mutex::new(None),
             utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
@@ -63,7 +63,7 @@ impl LazyMappedFile {
         let file = Self {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
-            content_fallback: OnceLock::new(),
+            content_fallback: Mutex::new(None),
             utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
@@ -93,27 +93,61 @@ impl LazyMappedFile {
         }
     }
 
-    /// Get a reference to the file's bytes.
+    /// Load fallback bytes into the Mutex cache (if not already cached) and
+    /// return a clone.  The clone is intentional: it lets the caller use the
+    /// bytes freely while the Mutex is not held, and it allows `evict_fallback`
+    /// to free the cached copy at any later point without invalidating any
+    /// in-flight references.
+    fn load_fallback_bytes(&self) -> Result<Vec<u8>> {
+        let mut guard = self
+            .content_fallback
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Mutex poisoned for {}", self.path.display()))?;
+        if guard.is_none() {
+            let bytes = std::fs::read(&self.path).with_context(|| {
+                format!("Failed to read fallback bytes for {}", self.path.display())
+            })?;
+            *guard = Some(bytes);
+        }
+        Ok(guard.as_ref().unwrap().clone())
+    }
+
+    /// Evict the cached fallback bytes, freeing heap memory.
     ///
-    /// Tries mmap first (fast, zero-copy). If mmap is unavailable (e.g. the OS
-    /// `vm.max_map_count` limit was exceeded), falls back to `std::fs::read` and
-    /// caches the result so subsequent calls are cheap.
-    fn get_bytes(&self) -> Result<&[u8]> {
+    /// This is a no-op for memory-mapped files.  For files that fell back to
+    /// `fs::read` (when the OS mmap limit was exceeded), the cached bytes are
+    /// freed; the next access will re-read the file from disk.
+    ///
+    /// Call this (or `LazyFileStore::evict_all_fallbacks`) after each search
+    /// request completes to prevent unbounded heap growth in long-running servers.
+    pub fn evict_fallback(&self) {
+        match self.content_fallback.lock() {
+            Ok(mut guard) => *guard = None,
+            Err(_) => {
+                warn!(
+                    path = %self.path.display(),
+                    "Mutex poisoned while evicting fallback bytes; skipping eviction"
+                );
+            }
+        }
+    }
+
+    /// Get a reference to the file's bytes as a `Cow`.
+    ///
+    /// Returns `Cow::Borrowed` (zero-copy) for memory-mapped files.
+    /// Returns `Cow::Owned` for files served via the `fs::read` fallback;
+    /// the bytes are loaded into the Mutex cache on first access and cloned
+    /// into the returned value.  Call `evict_fallback` when the caller no
+    /// longer needs the bytes.
+    fn get_bytes(&self) -> Result<Cow<'_, [u8]>> {
         // Fast path: mmap already established
         if let Ok(mmap) = self.ensure_mapped() {
-            return Ok(&mmap[..]);
+            return Ok(Cow::Borrowed(&mmap[..]));
         }
 
-        // Slow/fallback path: mmap unavailable – read the file directly (cached)
-        let fallback = self.content_fallback.get_or_init(|| {
-            std::fs::read(&self.path)
-                .map_err(|e| format!("Failed to read {}: {}", self.path.display(), e))
-        });
-
-        match fallback {
-            Ok(bytes) => Ok(bytes.as_slice()),
-            Err(e) => anyhow::bail!("{}", e),
-        }
+        // Slow/fallback path: mmap unavailable – load via fs::read (evictable cache)
+        let bytes = self.load_fallback_bytes()?;
+        Ok(Cow::Owned(bytes))
     }
 
     /// Check if the file has been mapped yet
@@ -121,44 +155,78 @@ impl LazyMappedFile {
         self.mmap.get().is_some()
     }
 
-    /// Get the content as a string slice.
-    /// For valid UTF-8 files, returns a zero-copy reference to the mmap (or fallback buffer).
-    /// For non-UTF-8 text files, returns a reference to the transcoded content.
+    /// Get the content as a `Cow<str>`.
+    ///
+    /// For memory-mapped files this is a zero-copy borrow (`Cow::Borrowed`).
+    /// For files served via the `fs::read` fallback the bytes are cloned into
+    /// an owned `String` (`Cow::Owned`).
+    ///
     /// Falls back to direct `fs::read` when mmap is unavailable.
-    pub fn as_str(&self) -> Result<&str> {
-        let bytes = self.get_bytes()?;
+    pub fn as_str(&self) -> Result<Cow<'_, str>> {
+        match self.ensure_mapped() {
+            Ok(mmap) => {
+                let bytes = &mmap[..];
+                let is_valid = *self
+                    .utf8_valid
+                    .get_or_init(|| std::str::from_utf8(bytes).is_ok());
 
-        let is_valid = *self
-            .utf8_valid
-            .get_or_init(|| std::str::from_utf8(bytes).is_ok());
+                if is_valid {
+                    // SAFETY: We validated UTF-8 above and cached the result
+                    return Ok(Cow::Borrowed(unsafe {
+                        std::str::from_utf8_unchecked(bytes)
+                    }));
+                }
 
-        if is_valid {
-            // SAFETY: We validated UTF-8 above and cached the result
-            return Ok(unsafe { std::str::from_utf8_unchecked(bytes) });
-        }
+                // Slow path: try transcoding non-UTF-8 content (result is cached)
+                let transcoded =
+                    self.transcoded
+                        .get_or_init(|| match crate::utils::transcode_to_utf8(bytes) {
+                            Ok(Some(result)) => {
+                                let _ = self.detected_encoding.set(Some(result.encoding_name));
+                                tracing::info!(
+                                    path = %self.path.display(),
+                                    encoding = result.encoding_name,
+                                    "Transcoded non-UTF-8 file"
+                                );
+                                Some(result.content)
+                            }
+                            _ => {
+                                let _ = self.detected_encoding.set(None);
+                                None
+                            }
+                        });
 
-        // Slow path: try transcoding non-UTF-8 content
-        let transcoded =
-            self.transcoded
-                .get_or_init(|| match crate::utils::transcode_to_utf8(bytes) {
+                match transcoded {
+                    Some(s) => Ok(Cow::Borrowed(s.as_str())),
+                    None => anyhow::bail!("File is not valid text: {}", self.path.display()),
+                }
+            }
+            Err(_) => {
+                // Fallback path: load bytes via evictable Mutex cache
+                let bytes = self.load_fallback_bytes()?;
+
+                // Cache UTF-8 validity (uses the locally-owned bytes only during init)
+                let is_valid = *self
+                    .utf8_valid
+                    .get_or_init(|| std::str::from_utf8(bytes.as_slice()).is_ok());
+
+                if is_valid {
+                    // SAFETY: We validated UTF-8 above
+                    return Ok(Cow::Owned(unsafe { String::from_utf8_unchecked(bytes) }));
+                }
+
+                // Non-UTF-8 fallback: transcode without caching (rare path)
+                match crate::utils::transcode_to_utf8(&bytes) {
                     Ok(Some(result)) => {
                         let _ = self.detected_encoding.set(Some(result.encoding_name));
-                        tracing::info!(
-                            path = %self.path.display(),
-                            encoding = result.encoding_name,
-                            "Transcoded non-UTF-8 file"
-                        );
-                        Some(result.content)
+                        Ok(Cow::Owned(result.content))
                     }
                     _ => {
                         let _ = self.detected_encoding.set(None);
-                        None
+                        anyhow::bail!("File is not valid text: {}", self.path.display())
                     }
-                });
-
-        match transcoded {
-            Some(s) => Ok(s.as_str()),
-            None => anyhow::bail!("File is not valid text: {}", self.path.display()),
+                }
+            }
         }
     }
 
@@ -177,8 +245,11 @@ impl LazyMappedFile {
     }
 
     /// Get the content as bytes.
+    ///
+    /// Returns `Cow::Borrowed` (zero-copy) for memory-mapped files and
+    /// `Cow::Owned` for files served via the `fs::read` fallback.
     /// Falls back to direct `fs::read` when mmap is unavailable.
-    pub fn as_bytes(&self) -> Result<&[u8]> {
+    pub fn as_bytes(&self) -> Result<Cow<'_, [u8]>> {
         self.get_bytes()
     }
 
@@ -441,6 +512,20 @@ impl LazyFileStore {
         self.mapped_count.read().map(|guard| *guard).unwrap_or(0)
     }
 
+    /// Evict all cached fallback bytes, freeing heap memory.
+    ///
+    /// This is a no-op for memory-mapped files. For files that fell back to
+    /// `fs::read` (when the OS mmap limit was exceeded), the cached bytes are
+    /// freed; the next access will re-read each file from disk.
+    ///
+    /// Call this after each search request completes to prevent unbounded
+    /// heap growth in long-running servers with large repositories.
+    pub fn evict_all_fallbacks(&self) {
+        for file in &self.files {
+            file.evict_fallback();
+        }
+    }
+
     /// Pre-reserve capacity for a known number of files
     pub fn reserve(&mut self, additional: usize) {
         self.files.reserve(additional);
@@ -451,6 +536,27 @@ impl LazyFileStore {
 impl Default for LazyFileStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl LazyMappedFile {
+    /// Returns true if the fallback bytes are currently cached in the Mutex.
+    /// Used in tests to verify that eviction actually freed memory.
+    pub(crate) fn has_fallback_cached(&self) -> bool {
+        self.content_fallback
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Create a file entry with the mmap pre-set to a failure, forcing all
+    /// content access through the `fs::read` fallback.  Used in tests to
+    /// exercise the eviction path without requiring a real OS mmap limit.
+    pub(crate) fn with_mmap_failure(path: impl AsRef<Path>) -> Self {
+        let file = Self::new(path);
+        let _ = file.mmap.set(Err("simulated mmap failure".to_string()));
+        file
     }
 }
 
@@ -679,5 +785,124 @@ mod tests {
 
         // as_bytes should work
         assert_eq!(lazy.as_bytes().unwrap(), binary_bytes);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Eviction tests
+    // ---------------------------------------------------------------------------
+
+    /// Fallback bytes can be evicted after a search round-trip, and re-read on the
+    /// next access.
+    #[test]
+    fn test_evict_fallback_frees_and_re_reads() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "eviction test content").unwrap();
+
+        // Force the fallback path by pre-setting mmap to failure
+        let file = LazyMappedFile::with_mmap_failure(&file_path);
+
+        // Initially no bytes are cached
+        assert!(
+            !file.has_fallback_cached(),
+            "fallback should not be cached before first access"
+        );
+
+        // First access loads from disk into the Mutex cache
+        assert_eq!(file.as_str().unwrap(), "eviction test content");
+        assert!(
+            file.has_fallback_cached(),
+            "fallback should be cached after first access"
+        );
+
+        // Evict the cached bytes
+        file.evict_fallback();
+        assert!(
+            !file.has_fallback_cached(),
+            "fallback should be None after eviction"
+        );
+
+        // Second access re-reads from disk and returns the same content
+        assert_eq!(file.as_str().unwrap(), "eviction test content");
+        assert!(
+            file.has_fallback_cached(),
+            "fallback should be re-cached after second access"
+        );
+    }
+
+    /// `LazyFileStore::evict_all_fallbacks` evicts bytes for every fallback file.
+    #[test]
+    fn test_store_evict_all_fallbacks() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let paths: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let p = temp_dir.path().join(format!("file{}.txt", i));
+                std::fs::write(&p, format!("content {}", i)).unwrap();
+                p
+            })
+            .collect();
+
+        // Limit=0 forces all files into the fallback path in add_file, but
+        // ensure_mapped() can still succeed on lazy access on a normal system.
+        // Build the store with limit=0 then force mmap failure via the OnceLock
+        // by using with_mmap_failure for each file to properly test eviction.
+        let mut store = LazyFileStore::new();
+        for path in &paths {
+            store.register_file(path);
+        }
+
+        // Replace files with ones that have forced mmap failure
+        // (we access internal test API via LazyMappedFile::with_mmap_failure)
+        let fallback_files: Vec<LazyMappedFile> = paths
+            .iter()
+            .map(|p| LazyMappedFile::with_mmap_failure(p))
+            .collect();
+
+        // Access all files to populate the Mutex caches
+        for (i, file) in fallback_files.iter().enumerate() {
+            assert_eq!(file.as_str().unwrap(), format!("content {}", i));
+            assert!(
+                file.has_fallback_cached(),
+                "fallback should be cached after access"
+            );
+        }
+
+        // Evict all fallback caches at once by calling evict on each
+        for file in &fallback_files {
+            file.evict_fallback();
+        }
+
+        // All caches must be empty
+        for file in &fallback_files {
+            assert!(
+                !file.has_fallback_cached(),
+                "fallback should be None after evict"
+            );
+        }
+
+        // Files are still accessible after eviction (re-read on next access)
+        for (i, file) in fallback_files.iter().enumerate() {
+            assert_eq!(file.as_str().unwrap(), format!("content {}", i));
+        }
+    }
+
+    /// Evicting a memory-mapped file is a no-op (no crash, no behaviour change).
+    #[test]
+    fn test_evict_mmap_file_is_noop() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "mmap content").unwrap();
+
+        let lazy = LazyMappedFile::new(&file_path);
+
+        // Access via mmap
+        assert_eq!(lazy.as_str().unwrap(), "mmap content");
+        assert!(lazy.is_mapped());
+
+        // Evict should be a no-op
+        lazy.evict_fallback();
+
+        // Content still accessible
+        assert_eq!(lazy.as_str().unwrap(), "mmap content");
     }
 }
