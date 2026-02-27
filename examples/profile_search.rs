@@ -29,7 +29,7 @@ fn main() {
             .filter_map(|e| e.ok())
             .filter(|e| {
                 e.file_type().is_file()
-                    && e.path().extension().map_or(false, |ext| {
+                    && e.path().extension().is_some_and(|ext| {
                         matches!(ext.to_str(), Some("rs" | "py" | "js" | "ts" | "tsx"))
                     })
             })

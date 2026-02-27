@@ -3043,7 +3043,7 @@ fn HelloWorld() {
         let medium_line =
             "fn do_thing(arg1: String, arg2: i32, arg3: bool) -> Result<()> { todo!() }";
         let medium_score =
-            calculate_score_inline(&medium_line, "do_thing", "do_thing", false, false, 1.0);
+            calculate_score_inline(medium_line, "do_thing", "do_thing", false, false, 1.0);
 
         // Long line (~200 chars)
         let long_line = format!(
@@ -3192,11 +3192,14 @@ fn HelloWorld() {
     /// Fix #6: FAST_RANKING_TOP_N should be large enough to not miss relevant results.
     #[test]
     fn test_fast_ranking_top_n_is_sufficient() {
-        // Just verify the constant is reasonable
-        assert!(
-            SearchEngine::FAST_RANKING_TOP_N >= 2000,
-            "FAST_RANKING_TOP_N should be at least 2000 to avoid dropping relevant files"
-        );
+        // Just verify the constant is reasonable (constant value is expected here)
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(
+                SearchEngine::FAST_RANKING_TOP_N >= 2000,
+                "FAST_RANKING_TOP_N should be at least 2000 to avoid dropping relevant files"
+            );
+        }
     }
 
     /// Filename-only matches: searching for the filename stem should return

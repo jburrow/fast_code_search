@@ -318,7 +318,7 @@ async fn test_http_search_finds_results() -> Result<()> {
         "Expected query to be echoed back"
     );
     assert!(
-        body["results"].as_array().unwrap().len() > 0,
+        !body["results"].as_array().unwrap().is_empty(),
         "Expected results array to have items"
     );
 
@@ -963,6 +963,138 @@ async fn test_http_diagnostics_with_test_mode() -> Result<()> {
     assert!(
         body["test_summary"].is_object(),
         "Expected test_summary object"
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// Non-UTF-8 Encoding Transcoding Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_index_latin1_file() -> Result<()> {
+    // Create a temp dir with a Latin-1 encoded file
+    let temp_dir = TempDir::new()?;
+
+    // Write "café résumé" in Latin-1 encoding
+    // café: 63 61 66 E9, space: 20, résumé: 72 E9 73 75 6D E9
+    let latin1_bytes: &[u8] = &[
+        0x63, 0x61, 0x66, 0xE9, 0x20, 0x72, 0xE9, 0x73, 0x75, 0x6D, 0xE9,
+    ];
+    let file_path = temp_dir.path().join("latin1_file.txt");
+    std::fs::write(&file_path, latin1_bytes)?;
+
+    // Index the file
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut eng = engine.write().unwrap();
+        eng.index_file(&file_path)?;
+    }
+
+    // Search for content — the transcoded text should be searchable
+    let eng = engine.read().unwrap();
+    let results = eng.search("caf", 10);
+    assert!(
+        !results.is_empty(),
+        "Expected Latin-1 transcoded file to be searchable"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_index_utf16_le_file() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+
+    // Write "Hello World" in UTF-16 LE with BOM
+    let utf16le: &[u8] = &[
+        0xFF, 0xFE, // BOM
+        0x48, 0x00, // H
+        0x65, 0x00, // e
+        0x6C, 0x00, // l
+        0x6C, 0x00, // l
+        0x6F, 0x00, // o
+        0x20, 0x00, // space
+        0x57, 0x00, // W
+        0x6F, 0x00, // o
+        0x72, 0x00, // r
+        0x6C, 0x00, // l
+        0x64, 0x00, // d
+    ];
+    let file_path = temp_dir.path().join("utf16_file.txt");
+    std::fs::write(&file_path, utf16le)?;
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut eng = engine.write().unwrap();
+        eng.index_file(&file_path)?;
+    }
+
+    let eng = engine.read().unwrap();
+    let results = eng.search("Hello World", 10);
+    assert!(
+        !results.is_empty(),
+        "Expected UTF-16 LE transcoded file to be searchable"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_index_shift_jis_file() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+
+    // Encode a longer Japanese text in Shift-JIS for reliable detection
+    let text = "日本語のテストです。これは日本語のテキストです。";
+    let (encoded, _, _) = encoding_rs::SHIFT_JIS.encode(text);
+    let file_path = temp_dir.path().join("shift_jis_file.txt");
+    std::fs::write(&file_path, &*encoded)?;
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut eng = engine.write().unwrap();
+        eng.index_file(&file_path)?;
+    }
+
+    let eng = engine.read().unwrap();
+    let results = eng.search("日本語", 10);
+    assert!(
+        !results.is_empty(),
+        "Expected Shift-JIS transcoded file to be searchable"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_config_disable_transcoding() -> Result<()> {
+    use fast_code_search::search::engine::PartialIndexedFile;
+
+    let temp_dir = TempDir::new()?;
+
+    // Write a Latin-1 file
+    let latin1_bytes: &[u8] = &[0x63, 0x61, 0x66, 0xE9]; // "café"
+    let file_path = temp_dir.path().join("latin1.txt");
+    std::fs::write(&file_path, latin1_bytes)?;
+
+    // With transcoding enabled, should succeed
+    let result_enabled = PartialIndexedFile::process(&file_path, true);
+    assert!(
+        result_enabled.is_some(),
+        "Expected transcoding to succeed when enabled"
+    );
+    let (_, transcoded) = result_enabled.unwrap();
+    assert!(
+        transcoded,
+        "Expected transcoded flag to be true for non-UTF-8 file"
+    );
+
+    // With transcoding disabled, should return None for non-UTF-8 files
+    let result_disabled = PartialIndexedFile::process(&file_path, false);
+    assert!(
+        result_disabled.is_none(),
+        "Expected non-UTF-8 file to be skipped when transcoding disabled"
     );
 
     Ok(())
