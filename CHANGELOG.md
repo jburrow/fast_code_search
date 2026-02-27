@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-02-27
+
+### Fixed
+- **OOM / memory errors during indexing on large codebases (regression since v0.6.0)**: `BATCH_SIZE` was silently raised from 500 to 2000 in v0.6.0 as part of the Phase-2 parallelisation change (#24). During Phase 1, all `BATCH_SIZE` files are read into memory simultaneously, so peak RAM scales as `batch_size × average_file_size × ~4`. On repos with many sizable files (generated code, minified JS, large headers, etc.) this caused 4× higher indexing-time memory consumption and triggered out-of-memory crashes. The default has been restored to **500**. A new `batch_size` key under `[indexer]` lets operators tune the trade-off between throughput and RAM:
+  ```toml
+  [indexer]
+  batch_size = 1000   # raise on high-RAM machines; lower if still OOM
+  ```
+- **`content_fallback` Vec permanently retains file bytes in heap (Linux, search-time; tracked)**: Files that fail mmap (Linux: past `vm.max_map_count`; any OS: individual mmap failure) have their content cached in a `OnceLock<Vec<u8>>` on first search access. Because `OnceLock` is write-once, those bytes are never freed. On large repos where most files exceed the mmap soft-limit, every search that returns such a file permanently pins its content in heap memory; after enough searches the process exhausts RAM. A full fix requires refactoring the `&[u8]` lifetime API in `LazyMappedFile`; a TODO comment has been added at the relevant site and the fix is tracked. The `batch_size` fix above is sufficient for Windows users (where the mmap limit is not enforced).
+
 ## [0.6.3] - 2026-02-27
 
 ### Improved
