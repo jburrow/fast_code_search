@@ -136,13 +136,21 @@ async fn main() -> Result<()> {
 
         tokio::spawn(async move {
             let router = web::create_router(web_engine, web_progress, web_progress_tx);
-            let listener = tokio::net::TcpListener::bind(&web_addr)
-                .await
-                .expect("Failed to bind Web UI server to address");
+            let listener = match tokio::net::TcpListener::bind(&web_addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::error!(
+                        address = %web_addr,
+                        error = %e,
+                        "Failed to bind Web UI server to address"
+                    );
+                    return;
+                }
+            };
             info!(address = %web_addr, "Web UI available at http://{}", web_addr);
-            axum::serve(listener, router)
-                .await
-                .expect("Web UI server failed");
+            if let Err(e) = axum::serve(listener, router).await {
+                tracing::error!(error = %e, "Web UI server stopped unexpectedly");
+            }
         });
     }
 

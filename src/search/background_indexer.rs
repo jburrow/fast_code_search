@@ -486,8 +486,10 @@ fn run_indexing_pipeline(
         loaded_from_persistence,
     );
 
-    // Wait for discovery thread
-    let _ = discovery_handle.join();
+    // Wait for discovery thread; log if it panicked
+    if let Err(e) = discovery_handle.join() {
+        tracing::error!("File discovery thread panicked: {:?}", e);
+    }
 
     let final_discovered = files_discovered.load(Ordering::Relaxed);
 
@@ -724,16 +726,19 @@ fn process_batch(
     // Phase 1 (parallel, pure Rust — no tree-sitter C FFI):
     // Extract file content and trigrams across rayon threads safely.
     // Files listed in `exclude_files` are silently skipped here.
+    //
+    // Pre-normalize the exclude patterns once to avoid repeated string
+    // allocations inside the per-file parallel filter closure.
+    let normalized_exclude_files: Vec<String> =
+        exclude_files.iter().map(|e| e.replace('\\', "/")).collect();
     let partial_with_flags: Vec<(PartialIndexedFile, bool)> = batch
         .par_iter()
         .filter(|path| {
-            if exclude_files.is_empty() {
+            if normalized_exclude_files.is_empty() {
                 return true;
             }
             let path_str = path.to_string_lossy().replace('\\', "/");
-            let excluded = exclude_files
-                .iter()
-                .any(|e| e.replace('\\', "/") == path_str);
+            let excluded = normalized_exclude_files.iter().any(|e| *e == path_str);
             if excluded {
                 tracing::warn!(path = %path.display(), "Skipping excluded file");
             }
@@ -781,9 +786,18 @@ fn process_batch(
 
     // Merge into engine and incrementally resolve imports
     {
-        let mut engine = index_engine
-            .write()
-            .expect("Failed to acquire write lock on search engine");
+        let mut engine = match index_engine.write() {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    files_dropped = batch.len(),
+                    "Failed to acquire write lock on search engine; skipping batch merge"
+                );
+                batch.clear();
+                return 0;
+            }
+        };
         engine.index_batch(pre_indexed);
         engine.resolve_imports_incremental();
     }
@@ -813,9 +827,16 @@ fn finalize_imports(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
 ) {
-    let mut engine = index_engine
-        .write()
-        .expect("Failed to acquire write lock on search engine");
+    let mut engine = match index_engine.write() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "Failed to acquire write lock on search engine; skipping import finalization"
+            );
+            return;
+        }
+    };
 
     let pending_count = engine.pending_imports_count();
 
