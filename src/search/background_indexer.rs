@@ -173,6 +173,12 @@ pub fn run(config: BackgroundIndexerConfig) {
     let total_start = Instant::now();
     info!("Background indexing {} path(s)", indexer_config.paths.len());
 
+    // Propagate enable_symbols setting to the engine so that all code paths
+    // (index_file, rebuild_symbols_and_dependencies, etc.) respect it.
+    if let Ok(mut engine) = index_engine.write() {
+        engine.enable_symbols = indexer_config.enable_symbols;
+    }
+
     // Log active persistence settings so the user knows what to expect
     if let Some(ref p) = indexer_config.index_path {
         info!(
@@ -654,6 +660,7 @@ fn process_batches(
                         index_progress_tx,
                         &indexer_config.exclude_files,
                         indexer_config.transcode_non_utf8,
+                        indexer_config.enable_symbols,
                     );
                     total_indexed += indexed;
 
@@ -704,6 +711,7 @@ fn process_batches(
             index_progress_tx,
             &indexer_config.exclude_files,
             indexer_config.transcode_non_utf8,
+            indexer_config.enable_symbols,
         );
         total_indexed += indexed;
 
@@ -728,6 +736,7 @@ fn process_batch(
     index_progress_tx: &ProgressBroadcaster,
     exclude_files: &[String],
     transcode_non_utf8: bool,
+    enable_symbols: bool,
 ) -> usize {
     *batch_num += 1;
     let batch_start = Instant::now();
@@ -786,7 +795,7 @@ fn process_batch(
             // outer catch_unwind provides defense-in-depth against unexpected
             // panics anywhere in the processing pipeline.
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                PreIndexedFile::from_partial(p)
+                PreIndexedFile::from_partial(p, enable_symbols)
             })) {
                 Ok(result) => Some(result),
                 Err(_) => {
