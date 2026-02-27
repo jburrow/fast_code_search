@@ -34,7 +34,7 @@ pub struct LazyMappedFile {
     /// `LazyFileStore::evict_all_fallbacks()`) once a search request completes.
     ///
     /// The Mutex is only contended when a fallback file is first accessed or
-    /// evicted – both are infrequent operations that occur only when the OS
+    /// evicted — both are infrequent operations that occur only when the OS
     /// `vm.max_map_count` limit is exceeded.
     content_fallback: Mutex<Option<Vec<u8>>>,
     /// Cached result of UTF-8 validation
