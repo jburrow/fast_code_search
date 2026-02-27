@@ -85,7 +85,7 @@ impl PersistedIndex {
         symbols: Vec<Vec<Symbol>>,
         dependency_edges: Vec<(u32, u32)>,
     ) -> Result<Self> {
-        let mut serialized_trigrams = HashMap::new();
+        let mut serialized_trigrams = HashMap::with_capacity(trigram_to_docs.len());
 
         for (trigram, bitmap) in trigram_to_docs {
             let mut buf = Vec::new();

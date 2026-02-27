@@ -137,17 +137,22 @@ impl DependencyIndex {
 
     /// Batch insert multiple import edges. More efficient than repeated add_import calls.
     pub fn add_imports_batch(&mut self, edges: Vec<(u32, u32)>) {
+        // Track only the to_file IDs touched by this batch so we update
+        // import_counts in O(batch) rather than O(N_total).
+        let mut touched_to_files = HashSet::new();
         for (from_file, to_file) in edges {
             self.imports.entry(from_file).or_default().insert(to_file);
             self.imported_by
                 .entry(to_file)
                 .or_default()
                 .insert(from_file);
+            touched_to_files.insert(to_file);
         }
 
-        // Update cached counts in bulk
-        for (&file_id, dependents) in &self.imported_by {
-            self.import_counts.insert(file_id, dependents.len() as u32);
+        // Update cached counts only for files touched by this batch
+        for to_file in touched_to_files {
+            let count = self.imported_by.get(&to_file).map(|s| s.len()).unwrap_or(0);
+            self.import_counts.insert(to_file, count as u32);
         }
     }
 
