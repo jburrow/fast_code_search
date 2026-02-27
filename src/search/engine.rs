@@ -1144,7 +1144,13 @@ impl SearchEngine {
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
         let query_lower = query.to_lowercase();
-        let candidate_docs = self.trigram_index.search(&query_lower);
+        // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
+        // all documents so that short terms like `_` or `__` return results.
+        let candidate_docs = if query_lower.len() >= 3 {
+            self.trigram_index.search(&query_lower)
+        } else {
+            self.trigram_index.all_documents()
+        };
         let total_candidates = candidate_docs.len() as usize;
 
         // Determine effective ranking mode
@@ -1335,7 +1341,13 @@ impl SearchEngine {
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
         let query_lower = query.to_lowercase();
-        let candidate_docs = self.trigram_index.search(&query_lower);
+        // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
+        // all documents so that short terms like `_` or `__` return results.
+        let candidate_docs = if query_lower.len() >= 3 {
+            self.trigram_index.search(&query_lower)
+        } else {
+            self.trigram_index.all_documents()
+        };
 
         // Apply path filter
         let filtered_docs = if path_filter.is_empty() {
@@ -3409,5 +3421,40 @@ fn HelloWorld() {
             ..Default::default()
         };
         assert_eq!(progress.progress_percent(), 92);
+    }
+
+    /// Fix: Short queries (< 3 bytes) should fall back to scanning all documents
+    /// rather than returning empty results from the trigram index.
+    /// This is particularly important for `_` (wildcard variable), `__` (Python dunder prefix),
+    /// and other short but common code search terms.
+    #[test]
+    fn test_short_query_underscore_returns_results() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.py");
+
+        fs::write(
+            &file_path,
+            "class MyClass:\n    def __init__(self):\n        _ = unused_value\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Single `_` — 1 byte, no trigrams can be extracted.
+        // Before the fix this returned 0 results; now it falls back to full scan.
+        let results = engine.search("_", 10);
+        assert!(
+            !results.is_empty(),
+            "Searching for `_` should find lines containing underscore"
+        );
+
+        // `__` — 2 bytes, still no trigrams.
+        let results = engine.search("__", 10);
+        assert!(
+            !results.is_empty(),
+            "Searching for `__` should find dunder-style identifiers"
+        );
     }
 }
