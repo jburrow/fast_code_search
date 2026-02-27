@@ -142,6 +142,7 @@ impl SemanticSearchEngine {
             num_files: unique_files.len(),
             embedding_dim: self.embedding_model.embedding_dim(),
             cache_size: self.query_cache.len(),
+            cache_hit_rate: self.query_cache.hit_rate(),
         }
     }
 
@@ -191,6 +192,8 @@ pub struct EngineStats {
     pub num_files: usize,
     pub embedding_dim: usize,
     pub cache_size: usize,
+    /// Cache hit rate in [0.0, 1.0], or None if no lookups have been made yet.
+    pub cache_hit_rate: Option<f64>,
 }
 
 #[cfg(test)]

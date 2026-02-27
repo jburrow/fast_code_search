@@ -890,6 +890,54 @@ impl SearchEngine {
         self.rebuild_symbols_and_dependencies_with_progress(|_, _| {})
     }
 
+    /// Restore symbol caches and dependency graph directly from persisted data.
+    ///
+    /// `valid_file_indices` are the positions in `persisted.files` that were not stale/removed.
+    /// Files are registered in the file_store in that order, so new file ID `k` corresponds to
+    /// `valid_file_indices[k]` in the persisted data.
+    pub fn restore_symbols_and_deps(
+        &mut self,
+        valid_file_indices: &[usize],
+        persisted: &crate::index::PersistedIndex,
+    ) {
+        let total_new_files = valid_file_indices.len();
+
+        // Allocate symbol cache sized for the newly registered files
+        self.symbol_cache = vec![Vec::new(); total_new_files];
+
+        // Build a mapping: original persisted file index → new file ID
+        let orig_to_new_id: rustc_hash::FxHashMap<u32, u32> = valid_file_indices
+            .iter()
+            .enumerate()
+            .map(|(new_id, &orig_idx)| (orig_idx as u32, new_id as u32))
+            .collect();
+
+        // Register files in dependency_index for future import resolution
+        // and restore per-file symbol caches
+        for (new_id, &orig_idx) in valid_file_indices.iter().enumerate() {
+            let new_id = new_id as u32;
+            if let Some(path) = self.file_store.get_path(new_id) {
+                self.dependency_index.register_file(new_id, path);
+            }
+            if let Some(syms) = persisted.symbols.get(orig_idx) {
+                self.symbol_cache[new_id as usize] = syms.clone();
+            }
+        }
+
+        // Restore dependency edges, remapping original indices to new file IDs
+        // and dropping edges whose endpoints were stale/removed
+        let remapped_edges: Vec<(u32, u32)> = persisted
+            .dependency_edges
+            .iter()
+            .filter_map(|&(from_orig, to_orig)| {
+                let new_from = orig_to_new_id.get(&from_orig)?;
+                let new_to = orig_to_new_id.get(&to_orig)?;
+                Some((*new_from, *new_to))
+            })
+            .collect();
+        self.dependency_index.add_imports_batch(remapped_edges);
+    }
+
     pub fn rebuild_symbols_and_dependencies_with_progress<F>(
         &mut self,
         mut progress_callback: F,
@@ -1816,110 +1864,6 @@ impl SearchEngine {
         }
     }
 
-    #[allow(dead_code)]
-    fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {
-        let file = self.file_store.get(doc_id)?;
-        let content = file.as_str().ok()?;
-
-        let query_lower = query.to_lowercase();
-
-        // Get symbols for this file
-        let symbols = self.symbol_cache.get(doc_id as usize)?;
-
-        // Get dependency count for this file (cached lookup - done once per document)
-        let dependency_count = self.dependency_index.get_import_count(doc_id);
-
-        // Pre-compute dependency boost (done once per document, not per match)
-        let dependency_boost = if dependency_count > 0 {
-            1.0 + (dependency_count as f64).log10() * 0.5
-        } else {
-            1.0
-        };
-
-        // Build a set of symbol definition lines for O(1) lookup instead of O(n) iteration
-        let symbol_def_lines: std::collections::HashSet<usize> = symbols
-            .iter()
-            .filter(|s| s.is_definition)
-            .map(|s| s.line)
-            .collect();
-
-        // Build a map of symbol lines to symbol names for O(1) symbol match check
-        let symbol_names_by_line: std::collections::HashMap<usize, Vec<&str>> = {
-            let mut map: std::collections::HashMap<usize, Vec<&str>> =
-                std::collections::HashMap::new();
-            for s in symbols {
-                map.entry(s.line).or_default().push(&s.name);
-            }
-            map
-        };
-
-        // Single-pass search: collect matches directly
-        // Use a reasonable initial capacity to avoid small reallocations
-        let mut matches = Vec::with_capacity(8);
-        let mut path_info: Option<(String, bool)> = None; // (path, is_src_or_lib)
-
-        // Search in each line using case-insensitive matching without allocation
-        for (line_num, line) in content.lines().enumerate() {
-            if let Some((match_start, match_end)) =
-                find_match_position_case_insensitive(line, &query_lower)
-            {
-                // Lazy initialize path info only when we have at least one match
-                let (path_ref, is_src_lib) = path_info.get_or_insert_with(|| {
-                    let p = file.path.to_string_lossy().into_owned();
-                    let path_bytes = p.as_bytes();
-                    let is_src_lib = contains_bytes(path_bytes, b"/src/")
-                        || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/")
-                        || contains_bytes(path_bytes, b"\\lib\\");
-                    (p, is_src_lib)
-                });
-
-                // Calculate score using pre-computed values
-                let is_symbol_def = symbol_def_lines.contains(&line_num);
-                let score = calculate_score_inline(
-                    line,
-                    query,
-                    &query_lower,
-                    is_symbol_def,
-                    *is_src_lib,
-                    dependency_boost,
-                );
-
-                // Check if this is a symbol match using pre-built map (O(1) lookup + small iteration)
-                let is_symbol = symbol_names_by_line
-                    .get(&line_num)
-                    .map(|names| {
-                        names
-                            .iter()
-                            .any(|name| contains_case_insensitive(name, &query_lower))
-                    })
-                    .unwrap_or(false);
-
-                // Truncate long lines around the match
-                let truncated = truncate_around_match(line, match_start, match_end);
-
-                matches.push(SearchMatch {
-                    file_id: doc_id,
-                    file_path: path_ref.clone(),
-                    line_number: line_num + 1, // 1-based line numbers
-                    content: truncated.content,
-                    match_start: truncated.match_start,
-                    match_end: truncated.match_end,
-                    content_truncated: truncated.was_truncated,
-                    score,
-                    is_symbol,
-                    dependency_count,
-                });
-            }
-        }
-
-        if matches.is_empty() {
-            None
-        } else {
-            Some(matches)
-        }
-    }
-
     pub fn get_stats(&self) -> SearchStats {
         SearchStats {
             num_files: self.file_store.len(),
@@ -2007,12 +1951,22 @@ impl SearchEngine {
             }
         }
 
+        // Collect per-file symbol caches (parallel to files Vec)
+        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = (0..self.file_store.len())
+            .map(|id| self.symbol_cache.get(id).cloned().unwrap_or_default())
+            .collect();
+
+        // Collect resolved dependency edges
+        let dependency_edges = self.dependency_index.get_all_edges();
+
         // Create persisted index with config fingerprint
         let persisted = PersistedIndex::new(
             config.fingerprint(),
             config.paths.clone(),
             files,
             self.trigram_index.get_trigram_map(),
+            symbols,
+            dependency_edges,
         )?;
         persisted.save(path)?;
 
@@ -2090,16 +2044,31 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
+        if !self.file_store.is_empty() {
+            if !persisted.symbols.is_empty() {
+                // Restore symbols and dependency graph directly from persisted data,
+                // remapping original file indices to the new file IDs assigned during load.
+                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                tracing::info!(
+                    files_restored = valid_file_indices.len(),
+                    "Restored symbol and dependency caches from persisted index"
+                );
+            } else {
+                // Fallback: re-extract from file contents (old index format without symbols)
+                let rebuild_stats = self.rebuild_symbols_and_dependencies();
+                tracing::info!(
+                    symbols_rebuilt = rebuild_stats.symbols_extracted,
+                    imports_rebuilt = rebuild_stats.imports_extracted,
+                    files_skipped = rebuild_stats.files_skipped,
+                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
+                );
+            }
+        }
+
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
             .map(|&idx| persisted.files[idx].path.clone())
             .collect();
-
-        let rebuild_stats = if self.file_store.is_empty() {
-            RebuildCacheStats::default()
-        } else {
-            self.rebuild_symbols_and_dependencies()
-        };
 
         tracing::info!(
             path = %path.display(),
@@ -2109,9 +2078,6 @@ impl SearchEngine {
             new_paths = new_paths.len(),
             removed_paths = removed_paths.len(),
             config_compatible = config_compatible,
-            symbols_rebuilt = rebuild_stats.symbols_extracted,
-            imports_rebuilt = rebuild_stats.imports_extracted,
-            files_skipped = rebuild_stats.files_skipped,
             "Index loaded from disk with reconciliation"
         );
 
@@ -2269,24 +2235,41 @@ impl SearchEngine {
                 LoadingPhase::RebuildingSymbols,
                 Some(total_files),
                 Some(0),
-                "Rebuilding symbols and import graph...",
+                "Restoring symbols and import graph...",
             );
 
-            let _stats = self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
+            if !persisted.symbols.is_empty() {
+                // Restore symbols and dependency graph directly from persisted data
+                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
                 progress_callback(
                     LoadingPhase::RebuildingSymbols,
-                    Some(total),
-                    Some(processed),
-                    "Rebuilding symbols and import graph...",
+                    Some(total_files),
+                    Some(total_files),
+                    "Symbol and dependency caches restored from index",
                 );
-            });
+                tracing::info!(
+                    files_restored = valid_file_indices.len(),
+                    "Restored symbol and dependency caches from persisted index"
+                );
+            } else {
+                // Fallback: re-extract from file contents (old index format without symbols)
+                let _stats =
+                    self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
+                        progress_callback(
+                            LoadingPhase::RebuildingSymbols,
+                            Some(total),
+                            Some(processed),
+                            "Rebuilding symbols and import graph...",
+                        );
+                    });
 
-            progress_callback(
-                LoadingPhase::RebuildingSymbols,
-                Some(total_files),
-                Some(total_files),
-                "Symbol and dependency caches rebuilt",
-            );
+                progress_callback(
+                    LoadingPhase::RebuildingSymbols,
+                    Some(total_files),
+                    Some(total_files),
+                    "Symbol and dependency caches rebuilt",
+                );
+            }
         }
 
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
@@ -2366,13 +2349,21 @@ impl SearchEngine {
         self.trigram_index.finalize();
 
         if !self.file_store.is_empty() {
-            let rebuild_stats = self.rebuild_symbols_and_dependencies();
-            tracing::info!(
-                symbols_rebuilt = rebuild_stats.symbols_extracted,
-                imports_rebuilt = rebuild_stats.imports_extracted,
-                files_skipped = rebuild_stats.files_skipped,
-                "Rebuilt symbol and dependency caches after load"
-            );
+            if !persisted.symbols.is_empty() {
+                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                tracing::info!(
+                    files_restored = valid_file_indices.len(),
+                    "Restored symbol and dependency caches from persisted index"
+                );
+            } else {
+                let rebuild_stats = self.rebuild_symbols_and_dependencies();
+                tracing::info!(
+                    symbols_rebuilt = rebuild_stats.symbols_extracted,
+                    imports_rebuilt = rebuild_stats.imports_extracted,
+                    files_skipped = rebuild_stats.files_skipped,
+                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
+                );
+            }
         }
 
         tracing::info!(

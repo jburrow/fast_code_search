@@ -11,6 +11,8 @@ pub struct QueryCache {
     cache: FxHashMap<String, Vec<f32>>,
     order: VecDeque<String>,
     capacity: usize,
+    hits: u64,
+    misses: u64,
 }
 
 impl QueryCache {
@@ -20,17 +22,21 @@ impl QueryCache {
             cache: FxHashMap::default(),
             order: VecDeque::with_capacity(capacity),
             capacity,
+            hits: 0,
+            misses: 0,
         }
     }
 
     /// Get cached embedding for a query
     pub fn get(&mut self, query: &str) -> Option<&Vec<f32>> {
         if self.cache.contains_key(query) {
+            self.hits += 1;
             // Move to end (most recently used)
             self.order.retain(|k| k != query);
             self.order.push_back(query.to_string());
             self.cache.get(query)
         } else {
+            self.misses += 1;
             None
         }
     }
@@ -66,6 +72,19 @@ impl QueryCache {
     pub fn clear(&mut self) {
         self.cache.clear();
         self.order.clear();
+        self.hits = 0;
+        self.misses = 0;
+    }
+
+    /// Get the cache hit rate as a fraction in [0.0, 1.0].
+    /// Returns `None` if no lookups have been performed yet.
+    pub fn hit_rate(&self) -> Option<f64> {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            None
+        } else {
+            Some(self.hits as f64 / total as f64)
+        }
     }
 }
 
@@ -116,5 +135,32 @@ mod tests {
         assert!(cache.get("query1").is_some());
         assert!(cache.get("query2").is_none());
         assert!(cache.get("query3").is_some());
+    }
+
+    #[test]
+    fn test_cache_hit_rate_no_lookups() {
+        let cache = QueryCache::new(3);
+        assert_eq!(cache.hit_rate(), None);
+    }
+
+    #[test]
+    fn test_cache_hit_rate() {
+        let mut cache = QueryCache::new(3);
+
+        cache.insert("query1".to_string(), vec![1.0, 0.0]);
+
+        // One miss
+        let _ = cache.get("missing");
+        assert_eq!(cache.hit_rate(), Some(0.0));
+
+        // One hit
+        let _ = cache.get("query1");
+        assert_eq!(cache.hit_rate(), Some(0.5)); // 1 hit / 2 total
+
+        // Another hit
+        let _ = cache.get("query1");
+        // 2 hits / 3 total ≈ 0.666...
+        let rate = cache.hit_rate().unwrap();
+        assert!((rate - 2.0 / 3.0).abs() < 1e-10);
     }
 }

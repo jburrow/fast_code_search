@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+- **Persist symbol caches and import graph in saved index**: When saving the trigram index to disk, the per-file symbol caches and resolved dependency edges are now also persisted. On the next startup, symbols and imports are restored directly from the index file instead of being re-extracted from file contents, eliminating the `rebuild_symbols_and_dependencies` pass for unchanged files and significantly reducing startup latency for large codebases.
+  - Symbols are only re-extracted for files whose mtime has changed (stale files), which are queued for re-indexing as before.
+  - Persisted indexes from older versions (format < 3) are automatically rebuilt once and saved in the new format.
+  - Index persistence format bumped to version 3.
+
 ## [0.6.4] - 2026-02-27
 
 ### Fixed

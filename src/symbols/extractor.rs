@@ -1,9 +1,10 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tree_sitter::Parser;
 use tree_sitter_language::LanguageFn;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SymbolType {
     Function,
     Class,
@@ -19,7 +20,7 @@ pub enum SymbolType {
     FileName,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
     pub name: String,
     pub symbol_type: SymbolType,
