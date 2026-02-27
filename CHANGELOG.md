@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-27
+
 ### Added
 - **Non-UTF-8 encoding support**: Files in legacy encodings (Latin-1/ISO-8859-1, Windows-1252, Shift-JIS, UTF-16 LE/BE, etc.) are now automatically detected and transcoded to UTF-8 during indexing, making them fully searchable. Zero performance impact on UTF-8 files (fast path via `std::str::from_utf8`).
   - New `transcode_non_utf8` config option under `[indexer]` (default: `true`) to disable transcoding if only UTF-8 codebases are indexed.
@@ -383,7 +385,10 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jburrow/fast_code_search/compare/v0.5.8...v0.6.0
+[0.5.8]: https://github.com/jburrow/fast_code_search/compare/v0.5.7...v0.5.8
+[0.5.7]: https://github.com/jburrow/fast_code_search/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/jburrow/fast_code_search/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/jburrow/fast_code_search/compare/v0.5.3...v0.5.4
