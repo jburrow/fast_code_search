@@ -197,12 +197,49 @@ pub fn run(config: BackgroundIndexerConfig) {
         &index_progress_tx,
     );
 
-    // Determine what needs to be indexed
-    let paths_to_index: Vec<String> = if let Some(ref result) = load_result {
+    // Determine what needs to be indexed.
+    // When restoring from a checkpoint, always scan all configured paths so
+    // that files not yet indexed at the time of the checkpoint (e.g. because
+    // the process was killed mid-build) are picked up.  Files that are already
+    // in the index and unchanged are skipped inside the discovery thread via
+    // the `already_indexed_files` set.
+    let paths_to_index: Vec<String> = if loaded_from_persistence {
+        let mut paths = indexer_config.paths.clone();
+        // Also include any completely new paths that weren't in the old config.
+        if let Some(ref result) = load_result {
+            for p in &result.new_paths {
+                if !paths.contains(p) {
+                    paths.push(p.clone());
+                }
+            }
+        }
+        paths
+    } else if let Some(ref result) = load_result {
         result.new_paths.clone()
     } else {
         indexer_config.paths.clone()
     };
+
+    // Build the skip set: files already validly indexed (unchanged mtime/size).
+    // Only populated when we loaded from a checkpoint so that re-scanning the
+    // configured paths doesn't re-index files that are already up to date.
+    let already_indexed_files: std::collections::HashSet<PathBuf> = if loaded_from_persistence {
+        load_result
+            .as_ref()
+            .map(|r| r.already_indexed_files.iter().cloned().collect())
+            .unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    let already_indexed_files = Arc::new(already_indexed_files);
+
+    if loaded_from_persistence && !already_indexed_files.is_empty() {
+        info!(
+            already_indexed = already_indexed_files.len(),
+            scanning_paths = paths_to_index.len(),
+            "Checkpoint loaded - scanning all paths for unindexed files (skipping already-indexed)"
+        );
+    }
 
     let stale_files: Vec<PathBuf> = load_result
         .as_ref()
@@ -226,6 +263,7 @@ pub fn run(config: BackgroundIndexerConfig) {
         &index_progress,
         &index_progress_tx,
         loaded_from_persistence,
+        already_indexed_files,
     );
 
     // Final import resolution
@@ -393,6 +431,7 @@ fn try_load_persisted_index(
 }
 
 /// Run the main indexing pipeline with file discovery and batch processing.
+#[allow(clippy::too_many_arguments)]
 fn run_indexing_pipeline(
     paths_to_index: &[String],
     stale_files: Vec<PathBuf>,
@@ -401,6 +440,7 @@ fn run_indexing_pipeline(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
     loaded_from_persistence: bool,
+    already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
 ) -> (usize, usize, usize) {
     let (tx, rx) = mpsc::sync_channel::<PathBuf>(CHANNEL_BUFFER);
 
@@ -420,6 +460,7 @@ fn run_indexing_pipeline(
         discovery_done.clone(),
         index_progress.clone(),
         index_progress_tx.clone(),
+        already_indexed_files,
     );
 
     // Update status
@@ -473,6 +514,7 @@ fn spawn_discovery_thread(
     discovery_done: Arc<AtomicBool>,
     discovery_progress: SharedIndexingProgress,
     discovery_progress_tx: ProgressBroadcaster,
+    already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // Pre-compile exclude patterns the same way FileDiscoveryIterator does
@@ -521,6 +563,18 @@ fn spawn_discovery_thread(
         };
 
         for path in FileDiscoveryIterator::new(&discovery_config) {
+            // Skip files already validly indexed from a checkpoint.  We try
+            // both the original path and its canonicalized form to match
+            // however the file_store stored the path.
+            if !already_indexed_files.is_empty() {
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if already_indexed_files.contains(&canonical)
+                    || already_indexed_files.contains(&path)
+                {
+                    continue;
+                }
+            }
+
             if tx.send(path).is_err() {
                 break; // Receiver dropped
             }
