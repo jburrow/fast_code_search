@@ -133,7 +133,7 @@ pub async fn search_handler(
     State(state): State<WebState>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
-    let query = params.q.trim();
+    let query = params.q.trim().to_string();
 
     if query.is_empty() {
         return Ok(Json(SearchResponse {
@@ -148,8 +148,8 @@ pub async fn search_handler(
     }
 
     let max_results = params.max.clamp(1, 1000);
-    let include_patterns = params.include.as_str();
-    let exclude_patterns = params.exclude.as_str();
+    let include_patterns = params.include;
+    let exclude_patterns = params.exclude;
     let is_regex = params.regex;
     let symbols_only = params.symbols;
 
@@ -160,120 +160,138 @@ pub async fn search_handler(
         _ => RankMode::Auto, // Default to auto
     };
 
-    // Start timing the search
-    let start_time = std::time::Instant::now();
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        // Start timing the search
+        let start_time = std::time::Instant::now();
 
-    // Use read lock for concurrent search access
-    let engine = state.engine.read().map_err(|e| {
+        // Acquire read lock in blocking thread pool to avoid stalling tokio workers
+        let engine = engine.read().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            )
+        })?;
+
+        // Choose search method based on flags
+        let (matches, ranking_info) = if symbols_only {
+            // Search only in discovered symbols
+            let m = engine
+                .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid filter pattern: {}", e),
+                    )
+                })?;
+            (m, None)
+        } else if is_regex {
+            // Use regex search with optional path filtering
+            let m = engine
+                .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid regex pattern: {}", e),
+                    )
+                })?;
+            (m, None)
+        } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
+            // Plain text search with ranking
+            let (m, info) = engine.search_ranked(&query, max_results, rank_mode);
+            (m, Some(info))
+        } else {
+            // Plain text search with path filtering and ranking
+            let (m, info) = engine
+                .search_with_filter_ranked(
+                    &query,
+                    &include_patterns,
+                    &exclude_patterns,
+                    max_results,
+                    rank_mode,
+                )
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid filter pattern: {}", e),
+                    )
+                })?;
+            (m, Some(info))
+        };
+
+        let results: Vec<SearchResultJson> = matches
+            .into_iter()
+            .map(|m| SearchResultJson {
+                file_path: m.file_path,
+                content: m.content,
+                line_number: m.line_number,
+                match_start: m.match_start,
+                match_end: m.match_end,
+                content_truncated: m.content_truncated,
+                score: m.score,
+                match_type: if m.is_symbol {
+                    "SYMBOL_DEFINITION"
+                } else {
+                    "TEXT"
+                },
+                dependency_count: m.dependency_count,
+            })
+            .collect();
+
+        let total_results = results.len();
+        let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(Json(SearchResponse {
+            results,
+            query,
+            total_results,
+            elapsed_ms,
+            rank_mode: ranking_info
+                .as_ref()
+                .map(|r| format!("{:?}", r.mode).to_lowercase()),
+            total_candidates: ranking_info.as_ref().map(|r| r.total_candidates),
+            candidates_searched: ranking_info.as_ref().map(|r| r.candidates_searched),
+        }))
+    })
+    .await
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine read lock: {}", e),
+            format!("Task join error: {}", e),
         )
-    })?;
-
-    // Choose search method based on flags
-    // For regex and symbols, we don't have ranking info yet (they use internal fast ranking)
-    let (matches, ranking_info) = if symbols_only {
-        // Search only in discovered symbols
-        let m = engine
-            .search_symbols(query, include_patterns, exclude_patterns, max_results)
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Invalid filter pattern: {}", e),
-                )
-            })?;
-        (m, None)
-    } else if is_regex {
-        // Use regex search with optional path filtering
-        let m = engine
-            .search_regex(query, include_patterns, exclude_patterns, max_results)
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Invalid regex pattern: {}", e),
-                )
-            })?;
-        (m, None)
-    } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-        // Plain text search with ranking
-        let (m, info) = engine.search_ranked(query, max_results, rank_mode);
-        (m, Some(info))
-    } else {
-        // Plain text search with path filtering and ranking
-        let (m, info) = engine
-            .search_with_filter_ranked(
-                query,
-                include_patterns,
-                exclude_patterns,
-                max_results,
-                rank_mode,
-            )
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Invalid filter pattern: {}", e),
-                )
-            })?;
-        (m, Some(info))
-    };
-
-    let results: Vec<SearchResultJson> = matches
-        .into_iter()
-        .map(|m| SearchResultJson {
-            file_path: m.file_path,
-            content: m.content,
-            line_number: m.line_number,
-            match_start: m.match_start,
-            match_end: m.match_end,
-            content_truncated: m.content_truncated,
-            score: m.score,
-            match_type: if m.is_symbol {
-                "SYMBOL_DEFINITION"
-            } else {
-                "TEXT"
-            },
-            dependency_count: m.dependency_count,
-        })
-        .collect();
-
-    let total_results = results.len();
-    let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-
-    Ok(Json(SearchResponse {
-        results,
-        query: query.to_string(),
-        total_results,
-        elapsed_ms,
-        rank_mode: ranking_info
-            .as_ref()
-            .map(|r| format!("{:?}", r.mode).to_lowercase()),
-        total_candidates: ranking_info.as_ref().map(|r| r.total_candidates),
-        candidates_searched: ranking_info.as_ref().map(|r| r.candidates_searched),
-    }))
+    })?
 }
 
 /// Handle stats requests
 pub async fn stats_handler(
     State(state): State<WebState>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
-    // Use read lock for concurrent access
-    let engine = state.engine.read().map_err(|e| {
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        let engine = engine.read().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            )
+        })?;
+
+        let stats = engine.get_stats();
+
+        Ok(Json(StatsResponse {
+            num_files: stats.num_files,
+            total_size: stats.total_size,
+            num_trigrams: stats.num_trigrams,
+            dependency_edges: stats.dependency_edges,
+            total_content_bytes: stats.total_content_bytes,
+        }))
+    })
+    .await
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine read lock: {}", e),
+            format!("Task join error: {}", e),
         )
-    })?;
-
-    let stats = engine.get_stats();
-
-    Ok(Json(StatsResponse {
-        num_files: stats.num_files,
-        total_size: stats.total_size,
-        num_trigrams: stats.num_trigrams,
-        dependency_edges: stats.dependency_edges,
-        total_content_bytes: stats.total_content_bytes,
-    }))
+    })?
 }
 
 /// Handle health check requests
@@ -314,9 +332,9 @@ pub async fn status_handler(
             | IndexingStatus::ResolvingImports
     );
 
-    // Get stats from the engine if available
+    // Get stats from the engine if available (try_read to avoid blocking during indexing)
     let (num_files, total_size, num_trigrams, dependency_edges, total_content_bytes) = {
-        match state.engine.read() {
+        match state.engine.try_read() {
             Ok(engine) => {
                 let stats = engine.get_stats();
                 (
@@ -372,34 +390,43 @@ pub async fn dependents_handler(
     State(state): State<WebState>,
     Query(params): Query<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
-    // Use read lock for concurrent access
-    let engine = state.engine.read().map_err(|e| {
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        let engine = engine.read().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            )
+        })?;
+
+        let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("File not found: {}", params.file),
+            )
+        })?;
+
+        let dependent_ids = engine.get_dependents(file_id);
+        let files: Vec<String> = dependent_ids
+            .iter()
+            .filter_map(|&id| engine.get_file_path(id))
+            .collect();
+
+        let count = files.len();
+
+        Ok(Json(DependencyResponse {
+            file: params.file,
+            files,
+            count,
+        }))
+    })
+    .await
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine read lock: {}", e),
+            format!("Task join error: {}", e),
         )
-    })?;
-
-    let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("File not found: {}", params.file),
-        )
-    })?;
-
-    let dependent_ids = engine.get_dependents(file_id);
-    let files: Vec<String> = dependent_ids
-        .iter()
-        .filter_map(|&id| engine.get_file_path(id))
-        .collect();
-
-    let count = files.len();
-
-    Ok(Json(DependencyResponse {
-        file: params.file,
-        files,
-        count,
-    }))
+    })?
 }
 
 /// Get files that the specified file depends on (imports)
@@ -407,34 +434,43 @@ pub async fn dependencies_handler(
     State(state): State<WebState>,
     Query(params): Query<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
-    // Use read lock for concurrent access
-    let engine = state.engine.read().map_err(|e| {
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        let engine = engine.read().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            )
+        })?;
+
+        let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("File not found: {}", params.file),
+            )
+        })?;
+
+        let dependency_ids = engine.get_dependencies(file_id);
+        let files: Vec<String> = dependency_ids
+            .iter()
+            .filter_map(|&id| engine.get_file_path(id))
+            .collect();
+
+        let count = files.len();
+
+        Ok(Json(DependencyResponse {
+            file: params.file,
+            files,
+            count,
+        }))
+    })
+    .await
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine read lock: {}", e),
+            format!("Task join error: {}", e),
         )
-    })?;
-
-    let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("File not found: {}", params.file),
-        )
-    })?;
-
-    let dependency_ids = engine.get_dependencies(file_id);
-    let files: Vec<String> = dependency_ids
-        .iter()
-        .filter_map(|&id| engine.get_file_path(id))
-        .collect();
-
-    let count = files.len();
-
-    Ok(Json(DependencyResponse {
-        file: params.file,
-        files,
-        count,
-    }))
+    })?
 }
 
 /// WebSocket upgrade handler for progress streaming
@@ -448,7 +484,7 @@ pub async fn ws_progress_handler(
 /// Helper to get stats from engine
 fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
     engine
-        .read()
+        .try_read()
         .ok()
         .map(|e| {
             let stats = e.get_stats();
@@ -587,330 +623,343 @@ pub async fn diagnostics_handler(
     Query(params): Query<DiagnosticsQuery>,
 ) -> Result<Json<KeywordDiagnosticsResponse>, (StatusCode, String)> {
     let sample_count = params.sample_count.clamp(1, 20);
+    let engine = state.engine.clone();
 
-    // Acquire read lock on engine
-    let engine = state.engine.read().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to acquire engine read lock: {}", e),
-        )
-    })?;
+    tokio::task::spawn_blocking(move || {
+        // Acquire read lock on engine (in blocking thread pool)
+        let engine = engine.read().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            )
+        })?;
 
-    // Get basic stats
-    let stats = engine.get_stats();
+        // Get basic stats
+        let stats = engine.get_stats();
 
-    // Build extension breakdown
-    let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
-    let mut all_file_paths: Vec<(u32, String)> = Vec::new();
+        // Build extension breakdown
+        let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
+        let mut all_file_paths: Vec<(u32, String)> = Vec::new();
 
-    for file_id in 0..engine.file_store.len() as u32 {
-        if let Some(mapped_file) = engine.file_store.get(file_id) {
-            let path_str = mapped_file.path.to_string_lossy().to_string();
-            all_file_paths.push((file_id, path_str.clone()));
+        for file_id in 0..engine.file_store.len() as u32 {
+            if let Some(mapped_file) = engine.file_store.get(file_id) {
+                let path_str = mapped_file.path.to_string_lossy().to_string();
+                all_file_paths.push((file_id, path_str.clone()));
 
-            let ext = mapped_file
-                .path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("(none)")
-                .to_lowercase();
+                let ext = mapped_file
+                    .path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)")
+                    .to_lowercase();
 
-            let entry = ext_map.entry(ext).or_insert((0, 0));
-            entry.0 += 1;
-            // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
-            entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
+                let entry = ext_map.entry(ext).or_insert((0, 0));
+                entry.0 += 1;
+                // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
+                entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
+            }
         }
-    }
 
-    // Convert to sorted extension breakdown
-    let mut files_by_extension: Vec<ExtensionBreakdown> = ext_map
-        .into_iter()
-        .map(|(ext, (count, bytes))| ExtensionBreakdown {
-            extension: ext,
-            count,
-            total_bytes: bytes,
-        })
-        .collect();
-    files_by_extension.sort_by(|a, b| b.count.cmp(&a.count));
-    files_by_extension.truncate(20); // Top 20 extensions
+        // Convert to sorted extension breakdown
+        let mut files_by_extension: Vec<ExtensionBreakdown> = ext_map
+            .into_iter()
+            .map(|(ext, (count, bytes))| ExtensionBreakdown {
+                extension: ext,
+                count,
+                total_bytes: bytes,
+            })
+            .collect();
+        files_by_extension.sort_by(|a, b| b.count.cmp(&a.count));
+        files_by_extension.truncate(20); // Top 20 extensions
 
-    // Sample random files for display
-    let mut rng = rand::rng();
-    let sample_count_actual = sample_count.min(all_file_paths.len());
-    let sampled: Vec<&(u32, String)> = all_file_paths
-        .choose_multiple(&mut rng, sample_count_actual)
-        .collect();
-    let sample_files: Vec<String> = sampled.into_iter().map(|(_, p)| p.clone()).collect();
+        // Sample random files for display
+        let mut rng = rand::rng();
+        let sample_count_actual = sample_count.min(all_file_paths.len());
+        let sampled: Vec<&(u32, String)> = all_file_paths
+            .choose_multiple(&mut rng, sample_count_actual)
+            .collect();
+        let sample_files: Vec<String> = sampled.into_iter().map(|(_, p)| p.clone()).collect();
 
-    // Get config summary from progress state if available (we don't have direct config access here)
-    // For now, provide a minimal config summary
-    let config = ConfigSummary {
-        indexed_paths: vec!["(see server configuration)".to_string()],
-        include_extensions: vec![],
-        exclude_patterns: vec![],
-        max_file_size_bytes: 10 * 1024 * 1024, // default
-        index_path: None,
-        watch_enabled: false,
-    };
-
-    // Run self-tests
-    let mut self_tests = Vec::new();
-
-    // Test 1: Random file search - pick a random indexed file and search for part of its filename
-    // (Filenames are indexed as searchable content, so this tests that feature)
-    if !all_file_paths.is_empty() {
-        let test_start = Instant::now();
-        let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
-        let test_file_path = test_file_path.clone(); // Clone to avoid borrow issues
-        let _ = test_file_id; // Suppress unused warning
-
-        // Extract filename stem for search
-        let file_name = std::path::Path::new(&test_file_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("test");
-
-        // Take first 8 chars or full name if shorter
-        let search_term = if file_name.len() > 8 {
-            &file_name[..8]
-        } else {
-            file_name
+        // Get config summary from progress state if available (we don't have direct config access here)
+        // For now, provide a minimal config summary
+        let config = ConfigSummary {
+            indexed_paths: vec!["(see server configuration)".to_string()],
+            include_extensions: vec![],
+            exclude_patterns: vec![],
+            max_file_size_bytes: 10 * 1024 * 1024, // default
+            index_path: None,
+            watch_enabled: false,
         };
 
-        let search_results = engine.search(search_term, 100);
-        let found = search_results.iter().any(|r| {
-            r.file_path.contains(&test_file_path) || test_file_path.contains(&r.file_path)
-        });
+        // Run self-tests
+        let mut self_tests = Vec::new();
 
-        let test = if found {
-            TestResult::passed(
-                "random_file_search",
-                test_start.elapsed(),
-                format!(
-                    "Found file '{}' when searching for '{}'",
-                    test_file_path, search_term
-                ),
-            )
-        } else {
-            TestResult::failed(
-                "random_file_search",
-                test_start.elapsed(),
-                format!(
-                    "Could not find file '{}' when searching for '{}' ({} results returned)",
-                    test_file_path,
-                    search_term,
-                    search_results.len()
-                ),
-            )
-            .with_details(format!(
-                "Searched for '{}', expected to find file at path containing '{}'",
-                search_term, test_file_path
-            ))
-        };
-        self_tests.push(test);
-    }
+        // Test 1: Random file search - pick a random indexed file and search for part of its filename
+        // (Filenames are indexed as searchable content, so this tests that feature)
+        if !all_file_paths.is_empty() {
+            let test_start = Instant::now();
+            let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
+            let test_file_path = test_file_path.clone(); // Clone to avoid borrow issues
+            let _ = test_file_id; // Suppress unused warning
 
-    // Test 2: Content sample search - read a line from a random file and search for it
-    if !all_file_paths.is_empty() {
-        let test_start = Instant::now();
-        let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
-        let test_file_id = *test_file_id;
-        let test_file_path = test_file_path.clone();
+            // Extract filename stem for search
+            let file_name = std::path::Path::new(&test_file_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("test");
 
-        let mut test_result = None;
+            // Take first 8 chars or full name if shorter
+            let search_term = if file_name.len() > 8 {
+                &file_name[..8]
+            } else {
+                file_name
+            };
 
-        if let Some(mapped_file) = engine.file_store.get(test_file_id) {
-            if let Ok(content) = mapped_file.as_str() {
-                // Find a suitable line (non-empty, not too short, avoid problematic patterns)
-                let lines: Vec<&str> = content
-                    .lines()
-                    .filter(|l| {
-                        let trimmed = l.trim();
-                        trimmed.len() > 10
-                            && trimmed.len() < 100
-                            && !trimmed.starts_with("//")
-                            && !trimmed.starts_with('#')
-                            && !trimmed.starts_with("/*")
-                            && !trimmed.starts_with('*')
-                            && !trimmed.contains("...")
-                            && !trimmed.contains("…")
-                            && trimmed.chars().filter(|c| c.is_alphanumeric()).count() >= 8
-                    })
-                    .collect();
+            let search_results = engine.search(search_term, 100);
+            let found = search_results.iter().any(|r| {
+                r.file_path.contains(&test_file_path) || test_file_path.contains(&r.file_path)
+            });
 
-                if let Some(sample_line) = lines.choose(&mut rng) {
-                    // Take a substring to search for (avoid special chars at boundaries)
-                    let search_term = sample_line.trim();
-                    let search_term_slice = if search_term.len() > 30 {
-                        &search_term[..30]
-                    } else {
-                        search_term
-                    };
+            let test = if found {
+                TestResult::passed(
+                    "random_file_search",
+                    test_start.elapsed(),
+                    format!(
+                        "Found file '{}' when searching for '{}'",
+                        test_file_path, search_term
+                    ),
+                )
+            } else {
+                TestResult::failed(
+                    "random_file_search",
+                    test_start.elapsed(),
+                    format!(
+                        "Could not find file '{}' when searching for '{}' ({} results returned)",
+                        test_file_path,
+                        search_term,
+                        search_results.len()
+                    ),
+                )
+                .with_details(format!(
+                    "Searched for '{}', expected to find file at path containing '{}'",
+                    search_term, test_file_path
+                ))
+            };
+            self_tests.push(test);
+        }
 
-                    let search_results = engine.search(search_term_slice, 50);
-                    let found = search_results.iter().any(|r| {
-                        r.file_path.contains(&test_file_path)
-                            || test_file_path.contains(&r.file_path)
-                    });
+        // Test 2: Content sample search - read a line from a random file and search for it
+        if !all_file_paths.is_empty() {
+            let test_start = Instant::now();
+            let (test_file_id, test_file_path) = all_file_paths.choose(&mut rng).unwrap();
+            let test_file_id = *test_file_id;
+            let test_file_path = test_file_path.clone();
 
-                    test_result = Some(if found {
-                        TestResult::passed(
-                            "content_sample_search",
-                            test_start.elapsed(),
-                            format!("Found content from '{}' in search results", test_file_path),
-                        )
-                    } else {
-                        TestResult::failed(
-                            "content_sample_search",
-                            test_start.elapsed(),
-                            format!(
-                                "Content search did not return expected file ({} results)",
-                                search_results.len()
-                            ),
-                        )
-                        .with_details(format!(
-                            "Searched for '{}...' from file '{}'",
-                            &search_term_slice[..search_term_slice.len().min(20)],
-                            test_file_path
-                        ))
-                    });
+            let mut test_result = None;
+
+            if let Some(mapped_file) = engine.file_store.get(test_file_id) {
+                if let Ok(content) = mapped_file.as_str() {
+                    // Find a suitable line (non-empty, not too short, avoid problematic patterns)
+                    let lines: Vec<&str> = content
+                        .lines()
+                        .filter(|l| {
+                            let trimmed = l.trim();
+                            trimmed.len() > 10
+                                && trimmed.len() < 100
+                                && !trimmed.starts_with("//")
+                                && !trimmed.starts_with('#')
+                                && !trimmed.starts_with("/*")
+                                && !trimmed.starts_with('*')
+                                && !trimmed.contains("...")
+                                && !trimmed.contains("…")
+                                && trimmed.chars().filter(|c| c.is_alphanumeric()).count() >= 8
+                        })
+                        .collect();
+
+                    if let Some(sample_line) = lines.choose(&mut rng) {
+                        // Take a substring to search for (avoid special chars at boundaries)
+                        let search_term = sample_line.trim();
+                        let search_term_slice = if search_term.len() > 30 {
+                            &search_term[..30]
+                        } else {
+                            search_term
+                        };
+
+                        let search_results = engine.search(search_term_slice, 50);
+                        let found = search_results.iter().any(|r| {
+                            r.file_path.contains(&test_file_path)
+                                || test_file_path.contains(&r.file_path)
+                        });
+
+                        test_result = Some(if found {
+                            TestResult::passed(
+                                "content_sample_search",
+                                test_start.elapsed(),
+                                format!(
+                                    "Found content from '{}' in search results",
+                                    test_file_path
+                                ),
+                            )
+                        } else {
+                            TestResult::failed(
+                                "content_sample_search",
+                                test_start.elapsed(),
+                                format!(
+                                    "Content search did not return expected file ({} results)",
+                                    search_results.len()
+                                ),
+                            )
+                            .with_details(format!(
+                                "Searched for '{}...' from file '{}'",
+                                &search_term_slice[..search_term_slice.len().min(20)],
+                                test_file_path
+                            ))
+                        });
+                    }
                 }
             }
-        }
 
-        if let Some(tr) = test_result {
-            self_tests.push(tr);
-        } else {
-            self_tests.push(TestResult::passed(
-                "content_sample_search",
-                test_start.elapsed(),
-                "Skipped - no suitable content found for sampling".to_string(),
-            ));
-        }
-    }
-
-    // Test 3: Index integrity - verify file IDs resolve to valid paths
-    {
-        let test_start = Instant::now();
-        let mut valid_count = 0;
-        let mut invalid_count = 0;
-        let check_count = 10.min(engine.file_store.len());
-
-        for file_id in 0..check_count as u32 {
-            if engine.get_file_path(file_id).is_some() {
-                valid_count += 1;
+            if let Some(tr) = test_result {
+                self_tests.push(tr);
             } else {
-                invalid_count += 1;
+                self_tests.push(TestResult::passed(
+                    "content_sample_search",
+                    test_start.elapsed(),
+                    "Skipped - no suitable content found for sampling".to_string(),
+                ));
             }
         }
 
-        let test = if invalid_count == 0 {
-            TestResult::passed(
-                "index_integrity",
-                test_start.elapsed(),
-                format!(
-                    "All {} sampled file IDs resolve to valid paths",
-                    valid_count
+        // Test 3: Index integrity - verify file IDs resolve to valid paths
+        {
+            let test_start = Instant::now();
+            let mut valid_count = 0;
+            let mut invalid_count = 0;
+            let check_count = 10.min(engine.file_store.len());
+
+            for file_id in 0..check_count as u32 {
+                if engine.get_file_path(file_id).is_some() {
+                    valid_count += 1;
+                } else {
+                    invalid_count += 1;
+                }
+            }
+
+            let test = if invalid_count == 0 {
+                TestResult::passed(
+                    "index_integrity",
+                    test_start.elapsed(),
+                    format!(
+                        "All {} sampled file IDs resolve to valid paths",
+                        valid_count
+                    ),
+                )
+            } else {
+                TestResult::failed(
+                    "index_integrity",
+                    test_start.elapsed(),
+                    format!(
+                        "{} of {} file IDs failed to resolve",
+                        invalid_count, check_count
+                    ),
+                )
+            };
+            self_tests.push(test);
+        }
+
+        // Test 4: Trigram index sanity - verify trigram count is reasonable
+        {
+            let test_start = Instant::now();
+            let num_trigrams = stats.num_trigrams;
+            let num_files = stats.num_files;
+
+            // A reasonable heuristic: should have trigrams if we have files
+            let test = if num_files == 0 {
+                TestResult::passed(
+                    "trigram_index",
+                    test_start.elapsed(),
+                    "No files indexed yet".to_string(),
+                )
+            } else if num_trigrams > 0 {
+                TestResult::passed(
+                    "trigram_index",
+                    test_start.elapsed(),
+                    format!(
+                        "Trigram index healthy: {} unique trigrams for {} files",
+                        num_trigrams, num_files
+                    ),
+                )
+            } else {
+                TestResult::failed(
+                    "trigram_index",
+                    test_start.elapsed(),
+                    format!("No trigrams indexed despite having {} files", num_files),
+                )
+            };
+            self_tests.push(test);
+        }
+
+        // Test 5: Regex search functionality
+        {
+            let test_start = Instant::now();
+            // Try a simple regex that should match common patterns
+            let regex_result = engine.search_regex(r"fn\s+\w+", "", "", 10);
+
+            let test = match regex_result {
+                Ok(results) => TestResult::passed(
+                    "regex_search",
+                    test_start.elapsed(),
+                    format!(
+                        "Regex search operational ({} results for 'fn\\s+\\w+')",
+                        results.len()
+                    ),
                 ),
-            )
+                Err(e) => TestResult::failed(
+                    "regex_search",
+                    test_start.elapsed(),
+                    format!("Regex search failed: {}", e),
+                ),
+            };
+            self_tests.push(test);
+        }
+
+        // Calculate overall health status
+        let test_summary = TestSummary::from_results(&self_tests);
+        let status = if test_summary.failed == 0 {
+            HealthStatus::Healthy
+        } else if test_summary.failed <= test_summary.total / 2 {
+            HealthStatus::Degraded
         } else {
-            TestResult::failed(
-                "index_integrity",
-                test_start.elapsed(),
-                format!(
-                    "{} of {} file IDs failed to resolve",
-                    invalid_count, check_count
-                ),
-            )
+            HealthStatus::Unhealthy
         };
-        self_tests.push(test);
-    }
 
-    // Test 4: Trigram index sanity - verify trigram count is reasonable
-    {
-        let test_start = Instant::now();
-        let num_trigrams = stats.num_trigrams;
-        let num_files = stats.num_files;
-
-        // A reasonable heuristic: should have trigrams if we have files
-        let test = if num_files == 0 {
-            TestResult::passed(
-                "trigram_index",
-                test_start.elapsed(),
-                "No files indexed yet".to_string(),
-            )
-        } else if num_trigrams > 0 {
-            TestResult::passed(
-                "trigram_index",
-                test_start.elapsed(),
-                format!(
-                    "Trigram index healthy: {} unique trigrams for {} files",
-                    num_trigrams, num_files
-                ),
-            )
-        } else {
-            TestResult::failed(
-                "trigram_index",
-                test_start.elapsed(),
-                format!("No trigrams indexed despite having {} files", num_files),
-            )
+        let response = KeywordDiagnosticsResponse {
+            status,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime_secs: diagnostics::get_uptime_secs(),
+            uptime_human: diagnostics::format_uptime(diagnostics::get_uptime_secs()),
+            generated_at: diagnostics::get_timestamp(),
+            config,
+            index: KeywordIndexDiagnostics {
+                num_files: stats.num_files,
+                total_size_bytes: stats.total_size,
+                total_size_human: diagnostics::format_bytes(stats.total_size),
+                num_trigrams: stats.num_trigrams,
+                dependency_edges: stats.dependency_edges,
+                files_by_extension,
+                sample_files,
+            },
+            self_tests,
+            test_summary,
         };
-        self_tests.push(test);
-    }
 
-    // Test 5: Regex search functionality
-    {
-        let test_start = Instant::now();
-        // Try a simple regex that should match common patterns
-        let regex_result = engine.search_regex(r"fn\s+\w+", "", "", 10);
-
-        let test = match regex_result {
-            Ok(results) => TestResult::passed(
-                "regex_search",
-                test_start.elapsed(),
-                format!(
-                    "Regex search operational ({} results for 'fn\\s+\\w+')",
-                    results.len()
-                ),
-            ),
-            Err(e) => TestResult::failed(
-                "regex_search",
-                test_start.elapsed(),
-                format!("Regex search failed: {}", e),
-            ),
-        };
-        self_tests.push(test);
-    }
-
-    // Calculate overall health status
-    let test_summary = TestSummary::from_results(&self_tests);
-    let status = if test_summary.failed == 0 {
-        HealthStatus::Healthy
-    } else if test_summary.failed <= test_summary.total / 2 {
-        HealthStatus::Degraded
-    } else {
-        HealthStatus::Unhealthy
-    };
-
-    let response = KeywordDiagnosticsResponse {
-        status,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: diagnostics::get_uptime_secs(),
-        uptime_human: diagnostics::format_uptime(diagnostics::get_uptime_secs()),
-        generated_at: diagnostics::get_timestamp(),
-        config,
-        index: KeywordIndexDiagnostics {
-            num_files: stats.num_files,
-            total_size_bytes: stats.total_size,
-            total_size_human: diagnostics::format_bytes(stats.total_size),
-            num_trigrams: stats.num_trigrams,
-            dependency_edges: stats.dependency_edges,
-            files_by_extension,
-            sample_files,
-        },
-        self_tests,
-        test_summary,
-    };
-
-    Ok(Json(response))
+        Ok(Json(response))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Task join error: {}", e),
+        )
+    })?
 }

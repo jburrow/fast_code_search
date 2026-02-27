@@ -9,7 +9,8 @@
 </head>
 
 <body class="bg-zinc-950 text-zinc-300 font-sans antialiased">
-    <div id="main-container" class="min-h-screen flex flex-col justify-center items-center transition-all duration-500 ease-in-out p-4">
+    <div id="main-container"
+        class="min-h-screen flex flex-col justify-center items-center transition-all duration-500 ease-in-out p-4">
         <header class="w-full max-w-4xl flex justify-between items-center mb-8">
             <div class="flex items-center gap-3">
                 <h1 class="text-2xl font-bold text-zinc-100 tracking-tight">🧠 Semantic Code Search</h1>
@@ -34,10 +35,13 @@
                 </div>
             </div>
 
-            <div id="progress-panel" class="hidden items-center gap-3 bg-zinc-900/50 border border-zinc-800/80 rounded-full px-4 py-1.5">
-                <span id="progress-status" class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Ready</span>
+            <div id="progress-panel"
+                class="hidden items-center gap-3 bg-zinc-900/50 border border-zinc-800/80 rounded-full px-4 py-1.5">
+                <span id="progress-status"
+                    class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Ready</span>
                 <div class="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                    <div id="progress-bar" class="h-full bg-purple-500 transition-all duration-300" style="width: 0%"></div>
+                    <div id="progress-bar" class="h-full bg-purple-500 transition-all duration-300" style="width: 0%">
+                    </div>
                 </div>
                 <span id="progress-percent" class="text-xs text-zinc-400">0%</span>
                 <span id="progress-message" class="text-xs text-zinc-500 truncate max-w-[100px]"></span>
@@ -53,20 +57,24 @@
                     placeholder="Ask in natural language... (e.g., 'authentication logic' or 'error handling')"
                     autocomplete="off" autofocus
                     class="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl pl-12 pr-32 py-4 text-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 shadow-2xl transition-all">
-                <button id="search-btn" class="absolute right-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
+                <button id="search-btn"
+                    class="absolute right-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
                     Search
                 </button>
             </div>
 
             <details class="mt-4 group/details">
-                <summary class="cursor-pointer text-sm text-zinc-500 hover:text-zinc-300 flex items-center gap-2 select-none transition-colors">
-                    <span class="transform group-open/details:rotate-90 transition-transform text-xs">▶</span> Advanced Options
+                <summary
+                    class="cursor-pointer text-sm text-zinc-500 hover:text-zinc-300 flex items-center gap-2 select-none transition-colors">
+                    <span class="transform group-open/details:rotate-90 transition-transform text-xs">▶</span> Advanced
+                    Options
                 </summary>
                 <div class="mt-4 p-5 bg-zinc-900/50 border border-zinc-800/80 rounded-xl shadow-lg space-y-6">
                     <div class="flex items-center gap-4">
                         <label class="flex items-center gap-3 text-sm">
                             <span class="text-zinc-400">Max results:</span>
-                            <select id="max-results" class="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none focus:border-purple-500">
+                            <select id="max-results"
+                                class="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none focus:border-purple-500">
                                 <option value="5">5</option>
                                 <option value="10" selected>10</option>
                                 <option value="25">25</option>
@@ -78,11 +86,21 @@
                     <div>
                         <span class="block text-sm text-zinc-400 mb-3">Try these examples:</span>
                         <div class="flex flex-wrap gap-2">
-                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="authentication and login">authentication and login</button>
-                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="error handling">error handling</button>
-                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="database connection">database connection</button>
-                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="API endpoints">API endpoints</button>
-                            <button class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors" data-query="configuration loading">configuration loading</button>
+                            <button
+                                class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors"
+                                data-query="authentication and login">authentication and login</button>
+                            <button
+                                class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors"
+                                data-query="error handling">error handling</button>
+                            <button
+                                class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors"
+                                data-query="database connection">database connection</button>
+                            <button
+                                class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors"
+                                data-query="API endpoints">API endpoints</button>
+                            <button
+                                class="example-btn px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm text-zinc-300 transition-colors"
+                                data-query="configuration loading">configuration loading</button>
                         </div>
                     </div>
                 </div>
