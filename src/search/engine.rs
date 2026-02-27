@@ -372,12 +372,14 @@ impl PartialIndexedFile {
         }
 
         let raw_bytes = std::fs::read(path).ok()?;
-        let (content, transcoded) = match std::str::from_utf8(&raw_bytes) {
-            Ok(s) => (s.to_string(), false), // UTF-8 fast path
-            Err(_) => {
+        // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
+        let (content, transcoded) = match String::from_utf8(raw_bytes) {
+            Ok(s) => (s, false), // UTF-8 fast path — zero-copy consume
+            Err(e) => {
                 if !transcode_non_utf8 {
                     return None; // Transcoding disabled
                 }
+                let raw_bytes = e.into_bytes(); // Recover the original bytes
                 match crate::utils::transcode_to_utf8(&raw_bytes) {
                     Ok(Some(result)) => {
                         tracing::debug!(
@@ -414,11 +416,14 @@ impl PartialIndexedFile {
             })
             .to_string();
 
-        // Prepend filename stem so filenames are searchable.
-        // Triple newline avoids garbage trigrams at the boundary.
-        let content_with_filename = format!("{}\n\n\n{}", filename_stem, content);
-        let content_lower = content_with_filename.to_lowercase();
-        let trigrams = extract_unique_trigrams(&content_lower);
+        // Extract trigrams from filename stem and content separately to avoid
+        // an intermediate concatenated-string allocation.
+        // Filenames are searchable because stem trigrams are added to the same set.
+        // The old approach prepended the stem with triple newlines to avoid spurious
+        // cross-boundary trigrams; separating extraction is equivalent — no boundary
+        // trigrams are generated at all, which is strictly better.
+        let mut trigrams = extract_unique_trigrams(&filename_stem.to_lowercase());
+        trigrams.extend(extract_unique_trigrams(&content.to_lowercase()));
 
         Some((
             PartialIndexedFile {
@@ -1154,6 +1159,7 @@ impl SearchEngine {
                 &candidate_docs,
                 max_results,
             );
+            self.file_store.evict_all_fallbacks();
             let info = SearchRankingInfo {
                 mode: effective_mode,
                 total_candidates,
@@ -1168,6 +1174,7 @@ impl SearchEngine {
                 &candidate_docs,
                 max_results,
             );
+            self.file_store.evict_all_fallbacks();
             let info = SearchRankingInfo {
                 mode: effective_mode,
                 total_candidates,
@@ -1445,6 +1452,7 @@ impl SearchEngine {
             .collect();
 
         self.sort_and_truncate(&mut matches, max_results);
+        self.file_store.evict_all_fallbacks();
         Ok(matches)
     }
 
@@ -1521,6 +1529,7 @@ impl SearchEngine {
             .collect();
 
         self.sort_and_truncate(&mut matches, max_results);
+        self.file_store.evict_all_fallbacks();
         Ok(matches)
     }
 
