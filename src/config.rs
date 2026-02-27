@@ -216,7 +216,7 @@ impl Default for IndexerConfig {
             index_path: None,
             watch: false,
             save_after_build: true,
-            save_after_updates: 0, // Disabled by default
+            save_after_updates: 0,        // Disabled by default
             checkpoint_interval_files: 0, // Disabled by default
             exclude_files: Vec::new(),
             transcode_non_utf8: true,

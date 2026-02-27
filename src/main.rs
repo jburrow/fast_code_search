@@ -3,8 +3,9 @@ use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    create_progress_broadcaster, run_background_indexer, BackgroundIndexerConfig, FileChange,
-    FileWatcher, IndexingProgress, ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
+    create_progress_broadcaster, run_background_indexer, save_on_watcher_update,
+    BackgroundIndexerConfig, FileChange, FileWatcher, IndexingProgress, ProgressBroadcaster,
+    SharedIndexingProgress, WatcherConfig,
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
@@ -177,6 +178,7 @@ async fn main() -> Result<()> {
             .map(std::path::PathBuf::from)
             .collect();
         let watch_exclude = config.indexer.exclude_patterns.clone();
+        let watch_indexer_config = config.indexer.clone();
         info!("Starting file watcher for incremental indexing");
 
         std::thread::spawn(move || {
@@ -188,30 +190,51 @@ async fn main() -> Result<()> {
             match FileWatcher::new(watcher_config) {
                 Ok(watcher) => {
                     info!("File watcher started");
+                    let mut watcher_updates_total: usize = 0;
                     loop {
                         match watcher.recv_timeout(std::time::Duration::from_secs(1)) {
                             Some(FileChange::Modified(path)) => {
                                 tracing::debug!(path = %path.display(), "File modified, updating index");
+                                let mut update_ok = false;
                                 if let Ok(mut engine) = watch_engine.write() {
-                                    if let Err(e) = engine.update_file(&path) {
-                                        tracing::warn!(
+                                    match engine.update_file(&path) {
+                                        Ok(()) => update_ok = true,
+                                        Err(e) => tracing::warn!(
                                             path = %path.display(),
                                             error = %e,
                                             "Failed to update file in index"
-                                        );
+                                        ),
                                     }
+                                }
+                                if update_ok {
+                                    watcher_updates_total += 1;
+                                    save_on_watcher_update(
+                                        &watch_indexer_config,
+                                        &watch_engine,
+                                        watcher_updates_total,
+                                    );
                                 }
                             }
                             Some(FileChange::Renamed { from: _, to }) => {
                                 tracing::debug!(path = %to.display(), "File renamed, indexing new path");
+                                let mut update_ok = false;
                                 if let Ok(mut engine) = watch_engine.write() {
-                                    if let Err(e) = engine.update_file(&to) {
-                                        tracing::warn!(
+                                    match engine.update_file(&to) {
+                                        Ok(()) => update_ok = true,
+                                        Err(e) => tracing::warn!(
                                             path = %to.display(),
                                             error = %e,
                                             "Failed to index renamed file"
-                                        );
+                                        ),
                                     }
+                                }
+                                if update_ok {
+                                    watcher_updates_total += 1;
+                                    save_on_watcher_update(
+                                        &watch_indexer_config,
+                                        &watch_engine,
+                                        watcher_updates_total,
+                                    );
                                 }
                             }
                             Some(FileChange::Deleted(path)) => {
@@ -228,6 +251,14 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to start file watcher");
+                    tracing::warn!(
+                        "File watching is disabled — the server will not detect file changes \
+                        automatically. For large codebases (600k+ files) the default OS inotify \
+                        limit is often too low. Fix on Linux: \
+                        sudo sysctl -w fs.inotify.max_user_watches=524288 \
+                        (add to /etc/sysctl.conf to persist). \
+                        To silence this warning, set `watch = false` in your config."
+                    );
                 }
             }
         });

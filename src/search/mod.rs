@@ -5,7 +5,9 @@ pub mod path_filter;
 pub mod regex_search;
 pub mod watcher;
 
-pub use background_indexer::{run as run_background_indexer, BackgroundIndexerConfig};
+pub use background_indexer::{
+    run as run_background_indexer, save_on_watcher_update, BackgroundIndexerConfig,
+};
 pub use engine::{
     create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase,
     PartialIndexedFile, PreIndexedFile, ProgressBroadcaster, RankMode, SearchEngine, SearchMatch,

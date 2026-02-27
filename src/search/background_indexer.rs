@@ -546,7 +546,7 @@ fn process_batches(
                     );
                     total_indexed += indexed;
 
-                    // Periodic save after N updates if configured (watcher mode)
+                    // Periodic checkpoint save during initial build every N files
                     if indexer_config.save_after_updates > 0
                         && total_indexed.is_multiple_of(indexer_config.save_after_updates)
                     {
@@ -786,6 +786,20 @@ fn log_completion_stats(
         process_memory = %format_bytes(process_memory),
         "Background indexing completed"
     );
+}
+
+/// Called by the file-watcher loop after each successful file update.
+/// Saves the index to disk when the `save_after_updates` threshold is reached.
+pub fn save_on_watcher_update(
+    indexer_config: &IndexerConfig,
+    engine: &Arc<RwLock<SearchEngine>>,
+    total_updates: usize,
+) {
+    if indexer_config.save_after_updates > 0
+        && total_updates.is_multiple_of(indexer_config.save_after_updates)
+    {
+        save_index_if_needed(indexer_config, engine, true, total_updates);
+    }
 }
 
 /// Save the index to disk if configured and appropriate.

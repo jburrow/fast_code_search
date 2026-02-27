@@ -99,14 +99,50 @@ impl FileWatcher {
             },
         )?;
 
-        // Watch all configured paths
+        // Watch all configured paths; per-path failures are non-fatal so that a single
+        // over-limit directory does not prevent watching the remaining paths.
+        let mut watched = 0usize;
+        let mut watch_errors = 0usize;
         for path in &config.paths {
             if path.exists() {
-                info!(path = %path.display(), "Watching directory for changes");
-                debouncer.watch(path, RecursiveMode::Recursive)?;
+                match debouncer.watch(path, RecursiveMode::Recursive) {
+                    Ok(()) => {
+                        info!(path = %path.display(), "Watching directory for changes");
+                        watched += 1;
+                    }
+                    Err(e) => {
+                        warn!(
+                            path = %path.display(),
+                            error = %e,
+                            "Failed to watch path (skipping)"
+                        );
+                        watch_errors += 1;
+                    }
+                }
             } else {
                 warn!(path = %path.display(), "Watch path does not exist, skipping");
             }
+        }
+
+        if watched == 0 && watch_errors > 0 {
+            anyhow::bail!(
+                "OS file watch limit reached for all {} configured path(s). \
+                On Linux, increase the limit with: \
+                sudo sysctl -w fs.inotify.max_user_watches=524288 \
+                (add to /etc/sysctl.conf to persist across reboots). \
+                Alternatively, set `watch = false` in your config to disable file watching.",
+                watch_errors
+            );
+        }
+
+        if watch_errors > 0 {
+            warn!(
+                watched = watched,
+                failed = watch_errors,
+                "Some watch paths failed due to OS watch limit; \
+                incremental indexing may miss changes in those directories. \
+                On Linux: sudo sysctl -w fs.inotify.max_user_watches=524288"
+            );
         }
 
         Ok(Self {

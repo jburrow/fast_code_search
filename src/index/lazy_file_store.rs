@@ -596,7 +596,9 @@ mod tests {
         // Limit = 2: first 2 files get an mmap, the rest fall back to direct read
         let mut store = LazyFileStore::with_limit(Some(2));
         for path in &paths {
-            store.add_file(path).expect("add_file must succeed past mmap limit");
+            store
+                .add_file(path)
+                .expect("add_file must succeed past mmap limit");
         }
 
         // All 5 files must be registered
@@ -627,7 +629,9 @@ mod tests {
         // Every file (including those beyond the mmap limit) must be readable
         for i in 0..4u32 {
             let file = store.get(i).expect("file must be retrievable by id");
-            let content = file.as_str().expect("content must be readable via fallback");
+            let content = file
+                .as_str()
+                .expect("content must be readable via fallback");
             assert_eq!(content, format!("hello from file {}", i));
         }
     }
