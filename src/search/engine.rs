@@ -2093,6 +2093,11 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
+        let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
+            .iter()
+            .map(|&idx| persisted.files[idx].path.clone())
+            .collect();
+
         let rebuild_stats = if self.file_store.is_empty() {
             RebuildCacheStats::default()
         } else {
@@ -2119,6 +2124,7 @@ impl SearchEngine {
             new_paths,
             removed_paths,
             config_compatible,
+            already_indexed_files,
         })
     }
 
@@ -2286,6 +2292,11 @@ impl SearchEngine {
             );
         }
 
+        let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
+            .iter()
+            .map(|&idx| persisted.files[idx].path.clone())
+            .collect();
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -2303,6 +2314,7 @@ impl SearchEngine {
             new_paths,
             removed_paths,
             config_compatible,
+            already_indexed_files,
         })
     }
 
@@ -2430,6 +2442,10 @@ pub struct LoadIndexResult {
     pub removed_paths: Vec<String>,
     /// Whether the config fingerprint matches (false = config changed)
     pub config_compatible: bool,
+    /// Files already validly indexed (unchanged since last index build).
+    /// Used to skip re-indexing when scanning for unindexed files after a
+    /// partial/checkpoint load.
+    pub already_indexed_files: Vec<std::path::PathBuf>,
 }
 
 /// Status of the indexing process
