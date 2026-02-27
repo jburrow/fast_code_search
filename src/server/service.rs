@@ -220,11 +220,15 @@ impl CodeSearch for CodeSearchService {
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
 
-        // Use read lock for concurrent search access
-        let engine = self
-            .engine
-            .read()
-            .map_err(|e| Status::internal(format!("Lock error: {}", e)))?;
+        // Use try_read to avoid blocking a tokio worker thread when a write lock is
+        // held during indexing.  Blocking here would cause tasks to pile up and
+        // exhaust the thread pool, leading to OOM under concurrent load.
+        let engine = self.engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => {
+                Status::unavailable("Index is currently being updated, please retry shortly")
+            }
+            std::sync::TryLockError::Poisoned(e) => Status::internal(format!("Lock error: {}", e)),
+        })?;
 
         // Choose search method based on flags
         let matches = if symbols_only {
@@ -246,6 +250,11 @@ impl CodeSearch for CodeSearchService {
                 .search_with_filter(&query, &include_patterns, &exclude_patterns, max_results)
                 .map_err(|e| Status::invalid_argument(format!("Invalid filter pattern: {}", e)))?
         };
+
+        // Evict fallback file bytes cached when the OS mmap limit was exceeded.
+        // Without this, heap usage grows unboundedly across search requests on
+        // large codebases where mmap is unavailable for some files.
+        engine.evict_file_fallbacks();
         drop(engine); // Release lock before streaming
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
