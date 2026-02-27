@@ -176,6 +176,17 @@ pub fn run(config: BackgroundIndexerConfig) {
     let total_start = Instant::now();
     info!("Background indexing {} path(s)", indexer_config.paths.len());
 
+    // Log active persistence settings so the user knows what to expect
+    if let Some(ref p) = indexer_config.index_path {
+        info!(
+            index_path = %p,
+            save_after_build = indexer_config.save_after_build,
+            save_after_updates = indexer_config.save_after_updates,
+            checkpoint_interval_files = indexer_config.checkpoint_interval_files,
+            "Index persistence enabled"
+        );
+    }
+
     // Initialize progress
     broadcast_progress(&index_progress, &index_progress_tx, |p| {
         *p = IndexingProgress::start()

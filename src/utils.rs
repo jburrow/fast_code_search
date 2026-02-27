@@ -637,7 +637,8 @@ impl SystemLimits {
                     return Some(format!(
                         "\n⚠️  WARNING: vm.max_map_count is {} (very low!)\n\
                         \n\
-                        This will cause 'cannot allocate memory' errors when indexing large codebases.\n\
+                        When the mmap limit is hit, files will still be indexed but served via \
+                        direct read instead of mmap (slower). For full performance, increase the limit.\n\
                         \n\
                         === SOLUTIONS (choose one) ===\n\
                         \n\
@@ -651,8 +652,7 @@ impl SystemLimits {
                            max_file_size = 2097152  # 2MB to further reduce memory\n\
                            exclude_patterns = [\"node_modules\", \"target\", \".git\", \"build\"]\n\
                         \n\
-                        Low memory mode trades some search performance for the ability to index\n\
-                        larger codebases without hitting system limits.\n",
+                        Low memory mode reduces mmap usage so fewer files hit the fallback path.\n",
                         max_map
                     ));
                 }

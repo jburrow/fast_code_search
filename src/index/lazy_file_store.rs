@@ -9,6 +9,7 @@ use memmap2::Mmap;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 use tracing::warn;
 
@@ -209,6 +210,8 @@ pub struct LazyFileStore {
     total_content_bytes: RwLock<u64>,
     /// Safe mmap limit (85% of system max, None on non-Linux)
     mmap_safe_limit: Option<usize>,
+    /// Guard so the mmap-limit warning is only emitted once
+    mmap_limit_warned: AtomicBool,
 }
 
 impl LazyFileStore {
@@ -220,7 +223,7 @@ impl LazyFileStore {
             tracing::info!(
                 max_map_count = ?limits.max_map_count,
                 safe_limit = limit,
-                "Mmap limit detected (85% of max), will stop indexing if reached"
+                "Mmap limit detected (85% of max), will switch to direct read fallback if reached (search still works, retrieval is slower)"
             );
         }
 
@@ -230,6 +233,7 @@ impl LazyFileStore {
             mapped_count: RwLock::new(0),
             total_content_bytes: RwLock::new(0),
             mmap_safe_limit,
+            mmap_limit_warned: AtomicBool::new(false),
         }
     }
 
@@ -239,9 +243,8 @@ impl LazyFileStore {
             let current = self.mapped_count.read().map(|c| *c).unwrap_or(0);
             if current >= limit {
                 anyhow::bail!(
-                    "Reached mmap limit ({}/{}). Cannot index more files.\n\n\
-                    Your system's vm.max_map_count is too low for this many files.\n\
-                    See error details or run with increased limit.",
+                    "Reached mmap limit ({}/{}). Remaining files will be indexed \
+                    without mmap (direct read fallback active — retrieval is slower).",
                     current,
                     limit
                 );
@@ -309,11 +312,19 @@ impl LazyFileStore {
         // If the mmap limit has been reached, register the path without mapping.
         // Content will be read via fs::read() fallback when search results are retrieved.
         if let Err(limit_err) = self.check_mmap_limit() {
-            tracing::warn!(
-                path = %path.display(),
-                "Mmap limit reached; registering without mmap (direct read fallback active): {}",
-                limit_err
-            );
+            // Warn only once — every subsequent file would produce the same message.
+            if self
+                .mmap_limit_warned
+                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                tracing::warn!(
+                    "{}  Further files will be indexed without mmap and served via \
+                    direct read (search still works, retrieval is slower). \
+                    Increase vm.max_map_count to restore full performance.",
+                    limit_err
+                );
+            }
             let id = self.files.len() as u32;
             self.path_to_id.insert(canonical, id);
             self.files.push(LazyMappedFile::new(path));
@@ -444,6 +455,7 @@ impl LazyFileStore {
             mapped_count: RwLock::new(0),
             total_content_bytes: RwLock::new(0),
             mmap_safe_limit,
+            mmap_limit_warned: AtomicBool::new(false),
         }
     }
 }

@@ -176,7 +176,10 @@ class SearchReadinessManager {
     isStatusReady(status) {
         // Ready states: idle (fully ready) or completed
         // Also ready during reconciling since we have a loaded index
-        const readyStates = ['idle', 'completed', 'reconciling', 'resolving_imports'];
+        // Also allow searching during indexing/discovering — the write lock is
+        // only briefly held per batch, so searches will succeed between batches.
+        // loading_index is excluded as it holds the write lock for the full duration.
+        const readyStates = ['idle', 'completed', 'reconciling', 'resolving_imports', 'indexing', 'discovering'];
         return readyStates.includes(status);
     }
     
