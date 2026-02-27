@@ -336,6 +336,12 @@ impl Config {
 # Address to bind the gRPC server to
 address = "0.0.0.0:50051"
 
+# Address to bind the HTTP/Web UI server to
+web_address = "0.0.0.0:8080"
+
+# Enable the web UI and REST API (default: true)
+enable_web_ui = true
+
 [indexer]
 # Paths to index on startup
 # Add your project directories here
@@ -361,8 +367,18 @@ exclude_patterns = [
     "**/.venv/**",
 ]
 
+# Exact file paths to permanently exclude from indexing.
+# Useful for files that cause crashes or are too large/noisy to be useful.
+# After a crash, check fcs_last_processed.txt to identify the offending file.
+# exclude_files = ["/repo/src/generated/huge_file.rs"]
+
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
+
+# Enable encoding detection for non-UTF-8 text files (default: true)
+# When enabled, files in Latin-1, Shift-JIS, UTF-16 etc. are transcoded to UTF-8.
+# Disable for UTF-8-only codebases for slightly faster indexing.
+transcode_non_utf8 = true
 
 # Path to persistent index storage (optional)
 # If set, the index will be saved to disk and loaded on restart for faster startup
@@ -371,16 +387,21 @@ max_file_size = 10485760
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
-# save_after_build = true
+save_after_build = true
 
 # Save index after N file updates via watcher (default: 0 = disabled)
-# When enabled with a non-zero value, the index is periodically saved after this many files are updated
-# Useful for long-running servers to persist incremental changes
-# save_after_updates = 0
+# When enabled, the index is periodically saved after this many watcher-triggered updates.
+# Useful for long-running servers to persist incremental changes.
+save_after_updates = 0
+
+# Checkpoint every N files during the initial index build (default: 0 = disabled)
+# If the process is killed mid-build, the next run resumes from the checkpoint.
+# Recommended for very large repos: 20000. Has no effect if index_path is not set.
+checkpoint_interval_files = 0
 
 # Enable file watcher for incremental indexing (default: false)
 # When enabled, changes to indexed files are detected and re-indexed automatically
-# watch = false
+watch = false
 
 [telemetry]
 # Enable OpenTelemetry trace export (default: false)
