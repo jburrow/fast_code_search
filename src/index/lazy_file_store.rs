@@ -10,8 +10,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use tracing::warn;
 
 /// Represents a lazily memory-mapped file
@@ -291,9 +291,9 @@ pub struct LazyFileStore {
     /// Map from path to file ID (for deduplication)
     path_to_id: HashMap<PathBuf, u32>,
     /// Statistics: number of files that have been mapped
-    mapped_count: RwLock<usize>,
+    mapped_count: AtomicUsize,
     /// Statistics: total bytes of content indexed (accumulated as files are added)
-    total_content_bytes: RwLock<u64>,
+    total_content_bytes: AtomicU64,
     /// Safe mmap limit (85% of system max, None on non-Linux)
     mmap_safe_limit: Option<usize>,
     /// Guard so the mmap-limit warning is only emitted once
@@ -316,8 +316,8 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
-            mapped_count: RwLock::new(0),
-            total_content_bytes: RwLock::new(0),
+            mapped_count: AtomicUsize::new(0),
+            total_content_bytes: AtomicU64::new(0),
             mmap_safe_limit,
             mmap_limit_warned: AtomicBool::new(false),
         }
@@ -326,7 +326,7 @@ impl LazyFileStore {
     /// Check if we are approaching the mmap limit
     fn check_mmap_limit(&self) -> Result<()> {
         if let Some(limit) = self.mmap_safe_limit {
-            let current = self.mapped_count.read().map(|c| *c).unwrap_or(0);
+            let current = self.mapped_count.load(Ordering::Relaxed);
             if current >= limit {
                 anyhow::bail!(
                     "Reached mmap limit ({}/{}). Remaining files will be indexed \
@@ -416,9 +416,8 @@ impl LazyFileStore {
             self.files.push(LazyMappedFile::new(path));
             // Estimate content bytes from file metadata so stats stay accurate
             if let Ok(meta) = std::fs::metadata(path) {
-                if let Ok(mut bytes) = self.total_content_bytes.write() {
-                    *bytes += meta.len();
-                }
+                self.total_content_bytes
+                    .fetch_add(meta.len(), Ordering::Relaxed);
             }
             return Ok(id);
         }
@@ -438,33 +437,16 @@ impl LazyFileStore {
         self.files.push(LazyMappedFile::with_mmap(path, mmap));
 
         // Update mapped count and content bytes
-        if let Ok(mut count) = self.mapped_count.write() {
-            *count += 1;
-        }
-        if let Ok(mut bytes) = self.total_content_bytes.write() {
-            *bytes += content_size;
-        }
+        self.mapped_count.fetch_add(1, Ordering::Relaxed);
+        self.total_content_bytes
+            .fetch_add(content_size, Ordering::Relaxed);
 
         Ok(id)
     }
 
-    /// Get a file by ID, triggering lazy mapping if needed
+    /// Get a file by ID
     pub fn get(&self, id: u32) -> Option<&LazyMappedFile> {
-        let file = self.files.get(id as usize)?;
-
-        // Track if we're about to map a new file
-        let was_mapped = file.is_mapped();
-
-        // Access triggers mapping (we don't call ensure_mapped here,
-        // the caller will do that when they call as_str() or as_bytes())
-
-        if !was_mapped && file.is_mapped() {
-            if let Ok(mut count) = self.mapped_count.write() {
-                *count += 1;
-            }
-        }
-
-        Some(file)
+        self.files.get(id as usize)
     }
 
     /// Get the total number of registered files
@@ -489,17 +471,12 @@ impl LazyFileStore {
     /// Get total content bytes that have been indexed
     /// This tracks the actual text content size, not just memory-mapped size
     pub fn total_content_bytes(&self) -> u64 {
-        self.total_content_bytes
-            .read()
-            .map(|guard| *guard)
-            .unwrap_or(0)
+        self.total_content_bytes.load(Ordering::Relaxed)
     }
 
     /// Add to the total content bytes counter (used when loading from persistence)
     pub fn add_content_bytes(&self, bytes: u64) {
-        if let Ok(mut total) = self.total_content_bytes.write() {
-            *total += bytes;
-        }
+        self.total_content_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Get a file path by ID (always available, no I/O needed)
@@ -514,7 +491,7 @@ impl LazyFileStore {
 
     /// Get the number of files that have been actually mapped
     pub fn mapped_count(&self) -> usize {
-        self.mapped_count.read().map(|guard| *guard).unwrap_or(0)
+        self.mapped_count.load(Ordering::Relaxed)
     }
 
     /// Evict all cached fallback bytes, freeing heap memory.
@@ -573,8 +550,8 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
-            mapped_count: RwLock::new(0),
-            total_content_bytes: RwLock::new(0),
+            mapped_count: AtomicUsize::new(0),
+            total_content_bytes: AtomicU64::new(0),
             mmap_safe_limit,
             mmap_limit_warned: AtomicBool::new(false),
         }

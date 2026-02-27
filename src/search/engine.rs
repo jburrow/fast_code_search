@@ -1741,12 +1741,24 @@ impl SearchEngine {
             1.0
         };
 
-        // Use a simple Vec for symbol definition lines - faster than HashSet for small N
+        // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
+        // Most files have <100 symbols, linear scan is faster than hash overhead
         let symbol_def_lines: Vec<usize> = symbols
             .iter()
             .filter(|s| s.is_definition)
             .map(|s| s.line)
             .collect();
+
+        // For files with many definition symbols, promote to a HashSet for O(1) lookups.
+        // Linear Vec::contains is O(n); with >32 defs across thousands of lines this
+        // becomes the hot path.  The HashSet build cost (~32 inserts) is paid back
+        // immediately on the first line scan.
+        let use_hashset = symbol_def_lines.len() > 32;
+        let symbol_def_set: FxHashSet<usize> = if use_hashset {
+            symbol_def_lines.iter().copied().collect()
+        } else {
+            FxHashSet::default()
+        };
 
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
@@ -1776,7 +1788,11 @@ impl SearchEngine {
                 });
 
                 // Calculate score using pre-computed values
-                let is_symbol_def = symbol_def_lines.contains(&line_num);
+                let is_symbol_def = if use_hashset {
+                    symbol_def_set.contains(&line_num)
+                } else {
+                    symbol_def_lines.contains(&line_num)
+                };
                 let score = calculate_score_regex_inline(
                     line,
                     regex,
@@ -1887,6 +1903,17 @@ impl SearchEngine {
             .map(|s| s.line)
             .collect();
 
+        // For files with many definition symbols, promote to a HashSet for O(1) lookups.
+        // Linear Vec::contains is O(n); with >32 defs across thousands of lines this
+        // becomes the hot path.  The HashSet build cost (~32 inserts) is paid back
+        // immediately on the first line scan.
+        let use_hashset = symbol_def_lines.len() > 32;
+        let symbol_def_set: FxHashSet<usize> = if use_hashset {
+            symbol_def_lines.iter().copied().collect()
+        } else {
+            FxHashSet::default()
+        };
+
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
 
@@ -1917,8 +1944,11 @@ impl SearchEngine {
                 });
 
                 // Calculate score using pre-computed values
-                // Linear scan for is_symbol_def - faster than HashSet for typical file sizes
-                let is_symbol_def = symbol_def_lines.contains(&line_num);
+                let is_symbol_def = if use_hashset {
+                    symbol_def_set.contains(&line_num)
+                } else {
+                    symbol_def_lines.contains(&line_num)
+                };
                 let score = calculate_score_inline(
                     line,
                     original_query,
