@@ -1276,12 +1276,12 @@ async fn setup_super_test_server() -> Result<TestContext> {
     std::fs::create_dir_all(root.join("tests"))?;
 
     // Write corpus files
-    std::fs::write(root.join("src/auth.rs"),       CORPUS_AUTH_RS)?;
-    std::fs::write(root.join("src/database.rs"),   CORPUS_DATABASE_RS)?;
-    std::fs::write(root.join("src/main.rs"),        CORPUS_MAIN_RS)?;
-    std::fs::write(root.join("lib/utils.py"),       CORPUS_UTILS_PY)?;
-    std::fs::write(root.join("lib/models.py"),      CORPUS_MODELS_PY)?;
-    std::fs::write(root.join("frontend/app.js"),    CORPUS_APP_JS)?;
+    std::fs::write(root.join("src/auth.rs"), CORPUS_AUTH_RS)?;
+    std::fs::write(root.join("src/database.rs"), CORPUS_DATABASE_RS)?;
+    std::fs::write(root.join("src/main.rs"), CORPUS_MAIN_RS)?;
+    std::fs::write(root.join("lib/utils.py"), CORPUS_UTILS_PY)?;
+    std::fs::write(root.join("lib/models.py"), CORPUS_MODELS_PY)?;
+    std::fs::write(root.join("frontend/app.js"), CORPUS_APP_JS)?;
     std::fs::write(root.join("tests/auth_test.rs"), CORPUS_AUTH_TEST_RS)?;
 
     // Index every file
@@ -1372,10 +1372,7 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         let num_files = body["num_files"].as_u64().unwrap();
-        assert!(
-            num_files >= 7,
-            "Expected ≥7 indexed files, got {num_files}"
-        );
+        assert!(num_files >= 7, "Expected ≥7 indexed files, got {num_files}");
         assert!(
             body["num_trigrams"].as_u64().unwrap() > 0,
             "stats.num_trigrams must be > 0"
@@ -1391,7 +1388,10 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         assert!(body["status"].as_str().is_some(), "status.status missing");
-        assert!(body.get("is_indexing").is_some(), "status.is_indexing missing");
+        assert!(
+            body.get("is_indexing").is_some(),
+            "status.is_indexing missing"
+        );
     }
 
     // ── 4. Diagnostics (basic) ───────────────────────────────────────────────
@@ -1422,7 +1422,10 @@ async fn test_super_integration() -> Result<()> {
             body["self_tests"].as_array().is_some(),
             "diagnostics self_tests array missing"
         );
-        assert!(body["test_summary"].is_object(), "diagnostics test_summary missing");
+        assert!(
+            body["test_summary"].is_object(),
+            "diagnostics test_summary missing"
+        );
     }
 
     // ── 6. CANARY search: token appears in every file ────────────────────────
@@ -1527,9 +1530,15 @@ async fn test_super_integration() -> Result<()> {
         while let Some(r) = stream_sym.message().await? {
             results.push(r);
         }
-        assert!(!results.is_empty(), "gRPC symbols search for 'DatabasePool' must hit");
+        assert!(
+            !results.is_empty(),
+            "gRPC symbols search for 'DatabasePool' must hit"
+        );
         for r in &results {
-            assert_eq!(r.match_type, 1, "gRPC symbols result must be match_type 1 (SYMBOL_DEFINITION)");
+            assert_eq!(
+                r.match_type, 1,
+                "gRPC symbols result must be match_type 1 (SYMBOL_DEFINITION)"
+            );
         }
     }
 
@@ -1592,7 +1601,10 @@ async fn test_super_integration() -> Result<()> {
         while let Some(r) = stream_regex.message().await? {
             results.push(r);
         }
-        assert!(!results.is_empty(), "gRPC regex 'class \\w+' must find py/js classes");
+        assert!(
+            !results.is_empty(),
+            "gRPC regex 'class \\w+' must find py/js classes"
+        );
         let has_py = results.iter().any(|r| r.file_path.ends_with(".py"));
         let has_js = results.iter().any(|r| r.file_path.ends_with(".js"));
         assert!(has_py, "Regex class search must include Python files");
@@ -1622,7 +1634,10 @@ async fn test_super_integration() -> Result<()> {
         }
         // Should have found exactly 3 Rust files (auth.rs, database.rs, main.rs, auth_test.rs = 4)
         let count = body["total_results"].as_u64().unwrap();
-        assert_eq!(count, 4, "include=*.rs must match exactly 4 Rust files, got {count}");
+        assert_eq!(
+            count, 4,
+            "include=*.rs must match exactly 4 Rust files, got {count}"
+        );
     }
 
     // ── 14. HTTP exclude filter: omit test files ─────────────────────────────
@@ -1667,7 +1682,8 @@ async fn test_super_integration() -> Result<()> {
             results.push(r);
         }
         assert_eq!(
-            results.len(), 2,
+            results.len(),
+            2,
             "gRPC include=*.py must return exactly 2 Python files, got {}",
             results.len()
         );
@@ -1697,7 +1713,8 @@ async fn test_super_integration() -> Result<()> {
             results.push(r);
         }
         assert_eq!(
-            results.len(), 6,
+            results.len(),
+            6,
             "gRPC exclude=*.js must return 6 results (7 - app.js), got {}",
             results.len()
         );
@@ -1720,10 +1737,7 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         let returned = body["results"].as_array().unwrap().len();
-        assert!(
-            returned <= 3,
-            "max=3 must cap results at 3, got {returned}"
-        );
+        assert!(returned <= 3, "max=3 must cap results at 3, got {returned}");
     }
 
     // ── 18. gRPC max-results capping ─────────────────────────────────────────
@@ -1797,7 +1811,10 @@ async fn test_super_integration() -> Result<()> {
         while let Some(r) = stream_empty.message().await? {
             results.push(r);
         }
-        assert!(results.is_empty(), "gRPC empty query must return no results");
+        assert!(
+            results.is_empty(),
+            "gRPC empty query must return no results"
+        );
     }
 
     // ── 22. gRPC index RPC ────────────────────────────────────────────────────
@@ -1811,7 +1828,10 @@ async fn test_super_integration() -> Result<()> {
             response.files_indexed > 0,
             "gRPC IndexRequest must report >0 files indexed"
         );
-        assert!(!response.message.is_empty(), "gRPC IndexResponse must have a message");
+        assert!(
+            !response.message.is_empty(),
+            "gRPC IndexResponse must have a message"
+        );
     }
 
     // ── 23. Line-number accuracy ──────────────────────────────────────────────
@@ -1827,7 +1847,10 @@ async fn test_super_integration() -> Result<()> {
         let results = body["results"].as_array().unwrap();
         assert!(!results.is_empty(), "Must find 'pub struct AuthManager'");
         let line = results[0]["line_number"].as_u64().unwrap();
-        assert!(line > 0, "Line numbers must be 1-based and positive, got {line}");
+        assert!(
+            line > 0,
+            "Line numbers must be 1-based and positive, got {line}"
+        );
         // Line 4 in the source (comment, blank, blank, struct)
         assert_eq!(line, 4, "AuthManager struct must be on line 4, got {line}");
     }
@@ -1848,10 +1871,7 @@ async fn test_super_integration() -> Result<()> {
             content.contains("execute_sql_transaction"),
             "Result content must contain the matched term, got: {content}"
         );
-        assert!(
-            !content.is_empty(),
-            "Result content must not be empty"
-        );
+        assert!(!content.is_empty(), "Result content must not be empty");
     }
 
     // ── 25. Dependencies endpoint ─────────────────────────────────────────────
@@ -1864,8 +1884,14 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         assert!(body["file"].as_str().is_some(), "dependencies.file missing");
-        assert!(body["files"].as_array().is_some(), "dependencies.files missing");
-        assert!(body["count"].as_u64().is_some(), "dependencies.count missing");
+        assert!(
+            body["files"].as_array().is_some(),
+            "dependencies.files missing"
+        );
+        assert!(
+            body["count"].as_u64().is_some(),
+            "dependencies.count missing"
+        );
     }
 
     // ── 26. Dependents endpoint ───────────────────────────────────────────────
@@ -1878,7 +1904,10 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         assert!(body["file"].as_str().is_some(), "dependents.file missing");
-        assert!(body["files"].as_array().is_some(), "dependents.files missing");
+        assert!(
+            body["files"].as_array().is_some(),
+            "dependents.files missing"
+        );
         assert!(body["count"].as_u64().is_some(), "dependents.count missing");
     }
 
@@ -1893,10 +1922,20 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         let results = body["results"].as_array().unwrap();
-        let has_py = results.iter().any(|r| r["file_path"].as_str().unwrap().ends_with(".py"));
-        let has_js = results.iter().any(|r| r["file_path"].as_str().unwrap().ends_with(".js"));
-        assert!(has_py, "Cross-language 'class' search must return Python results");
-        assert!(has_js, "Cross-language 'class' search must return JS results");
+        let has_py = results
+            .iter()
+            .any(|r| r["file_path"].as_str().unwrap().ends_with(".py"));
+        let has_js = results
+            .iter()
+            .any(|r| r["file_path"].as_str().unwrap().ends_with(".js"));
+        assert!(
+            has_py,
+            "Cross-language 'class' search must return Python results"
+        );
+        assert!(
+            has_js,
+            "Cross-language 'class' search must return JS results"
+        );
     }
 
     // ── 28. Symbol scoring boost: symbol definitions outrank plain text ───────
@@ -1910,10 +1949,7 @@ async fn test_super_integration() -> Result<()> {
             .json()
             .await?;
         let results = body["results"].as_array().unwrap();
-        assert!(
-            !results.is_empty(),
-            "Must find results for 'AuthManager'"
-        );
+        assert!(!results.is_empty(), "Must find results for 'AuthManager'");
         // The top result should have a higher score than any non-symbol result
         let top_score = results[0]["score"].as_f64().unwrap();
         assert!(top_score > 0.0, "Top result score must be positive");
