@@ -318,7 +318,7 @@ async fn test_http_search_finds_results() -> Result<()> {
         "Expected query to be echoed back"
     );
     assert!(
-        body["results"].as_array().unwrap().len() > 0,
+        !body["results"].as_array().unwrap().is_empty(),
         "Expected results array to have items"
     );
 
