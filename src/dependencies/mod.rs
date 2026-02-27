@@ -182,6 +182,14 @@ impl DependencyIndex {
         self.imported_by.len()
     }
 
+    /// Get all import edges as (from_file_id, to_file_id) pairs
+    pub fn get_all_edges(&self) -> Vec<(u32, u32)> {
+        self.imports
+            .iter()
+            .flat_map(|(&from, targets)| targets.iter().map(move |&to| (from, to)))
+            .collect()
+    }
+
     /// Clear all dependency information
     pub fn clear(&mut self) {
         self.imports.clear();

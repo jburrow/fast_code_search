@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::trigram::Trigram;
+use crate::symbols::extractor::Symbol;
 use crate::utils::normalize_path_for_comparison;
 
 /// Serializable representation of the trigram index
@@ -62,11 +63,18 @@ pub struct PersistedIndex {
     pub files: Vec<PersistedFileMetadata>,
     /// Trigram index data
     pub trigram_index: PersistedTrigramIndex,
+    /// Per-file symbol caches (parallel to `files`, indexed by position)
+    #[serde(default)]
+    pub symbols: Vec<Vec<Symbol>>,
+    /// Resolved dependency edges as (from_file_idx, to_file_idx) pairs
+    /// where indices are positions in the `files` Vec
+    #[serde(default)]
+    pub dependency_edges: Vec<(u32, u32)>,
 }
 
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
-    pub const CURRENT_VERSION: u32 = 2;
+    pub const CURRENT_VERSION: u32 = 3;
 
     /// Create a new persisted index from the current state
     pub fn new(
@@ -74,6 +82,8 @@ impl PersistedIndex {
         indexed_paths: Vec<String>,
         files: Vec<PersistedFileMetadata>,
         trigram_to_docs: &FxHashMap<Trigram, RoaringBitmap>,
+        symbols: Vec<Vec<Symbol>>,
+        dependency_edges: Vec<(u32, u32)>,
     ) -> Result<Self> {
         let mut serialized_trigrams = HashMap::new();
 
@@ -91,6 +101,8 @@ impl PersistedIndex {
             trigram_index: PersistedTrigramIndex {
                 trigram_to_docs: serialized_trigrams,
             },
+            symbols,
+            dependency_edges,
         })
     }
 
@@ -325,6 +337,8 @@ mod tests {
             vec!["/test".to_string()],
             files,
             &trigram_to_docs,
+            Vec::new(),
+            Vec::new(),
         )
         .expect("Failed to create persisted index");
 
