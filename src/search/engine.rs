@@ -879,6 +879,15 @@ impl SearchEngine {
         self.trigram_index.shrink_to_fit();
     }
 
+    /// Evict all cached fallback bytes held by the file store.
+    ///
+    /// When the OS mmap limit is exceeded, accessed files are read into heap via
+    /// `fs::read` and cached.  Calling this after each search request reclaims that
+    /// heap memory so it does not accumulate across requests.
+    pub fn evict_file_fallbacks(&self) {
+        self.file_store.evict_all_fallbacks();
+    }
+
     /// Finalize the index after all files have been indexed.
     /// This pre-computes caches for optimal query performance.
     /// Call this after indexing is complete and before serving queries.

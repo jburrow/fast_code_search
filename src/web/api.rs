@@ -224,6 +224,11 @@ pub async fn search_handler(
             (m, Some(info))
         };
 
+        // Evict fallback file bytes cached when the OS mmap limit was exceeded.
+        // Without this, heap usage grows unboundedly across search requests on
+        // large codebases where mmap is unavailable for some files.
+        engine.evict_file_fallbacks();
+
         let results: Vec<SearchResultJson> = matches
             .into_iter()
             .map(|m| SearchResultJson {
