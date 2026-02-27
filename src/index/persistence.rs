@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::trigram::Trigram;
+use crate::symbols::extractor::Symbol;
 use crate::utils::normalize_path_for_comparison;
 
 /// Serializable representation of the trigram index
@@ -62,10 +63,11 @@ pub struct PersistedIndex {
     pub files: Vec<PersistedFileMetadata>,
     /// Trigram index data
     pub trigram_index: PersistedTrigramIndex,
-    /// Symbol cache: file_id -> symbols (v3+)
+    /// Per-file symbol caches (parallel to `files`, indexed by position)
     #[serde(default)]
-    pub symbols: Vec<Vec<crate::symbols::Symbol>>,
-    /// Dependency edges: (from_file_id, to_file_id) pairs (v3+)
+    pub symbols: Vec<Vec<Symbol>>,
+    /// Resolved dependency edges as (from_file_idx, to_file_idx) pairs
+    /// where indices are positions in the `files` Vec
     #[serde(default)]
     pub dependency_edges: Vec<(u32, u32)>,
 }
@@ -80,7 +82,7 @@ impl PersistedIndex {
         indexed_paths: Vec<String>,
         files: Vec<PersistedFileMetadata>,
         trigram_to_docs: &FxHashMap<Trigram, RoaringBitmap>,
-        symbols: Vec<Vec<crate::symbols::Symbol>>,
+        symbols: Vec<Vec<Symbol>>,
         dependency_edges: Vec<(u32, u32)>,
     ) -> Result<Self> {
         let mut serialized_trigrams = HashMap::new();
@@ -294,24 +296,13 @@ pub fn batch_check_files(
                 }
             }
 
-            // Single metadata call per file to reduce I/O during load
-            match std::fs::metadata(&file_meta.path) {
-                Ok(metadata) => {
-                    let current_mtime = metadata
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let current_size = metadata.len();
-
-                    if current_mtime != file_meta.mtime || current_size != file_meta.size {
-                        (idx, FileStatus::Stale)
-                    } else {
-                        (idx, FileStatus::Valid)
-                    }
-                }
-                Err(_) => (idx, FileStatus::Removed),
+            // Check if file exists and is stale
+            if !file_meta.path.exists() {
+                (idx, FileStatus::Removed)
+            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
+                (idx, FileStatus::Stale)
+            } else {
+                (idx, FileStatus::Valid)
             }
         })
         .collect()
@@ -341,17 +332,13 @@ mod tests {
             source_base_path: Some("/test".to_string()),
         }];
 
-        // Empty symbols and dependency edges for test
-        let symbols = vec![Vec::new()];
-        let dependency_edges = Vec::new();
-
         let persisted = PersistedIndex::new(
             "test_fingerprint".to_string(),
             vec!["/test".to_string()],
             files,
             &trigram_to_docs,
-            symbols,
-            dependency_edges,
+            Vec::new(),
+            Vec::new(),
         )
         .expect("Failed to create persisted index");
 

@@ -30,7 +30,7 @@ pub struct Symbol {
 }
 
 /// Represents an import statement found in source code
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ImportStatement {
     /// The raw import path/module name as written in source
     pub path: String,
@@ -41,7 +41,7 @@ pub struct ImportStatement {
 }
 
 /// Type of import statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ImportType {
     /// Rust: `use crate::foo`, `use super::bar`, `mod foo`
     Rust,
@@ -493,8 +493,10 @@ impl SymbolExtractor {
 
         match self.extension.as_str() {
             "rs" => Self::extract_rust_imports(&root_node, source, &mut imports),
-            "py" => Self::extract_python_imports(&root_node, source, &mut imports),
-            "js" | "jsx" | "ts" | "tsx" => {
+            // Include stub files (.pyi) and Windows-specific (.pyw) as Python
+            "py" | "pyi" | "pyw" => Self::extract_python_imports(&root_node, source, &mut imports),
+            // Include ESM/CJS variants and TypeScript module variants
+            "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" => {
                 Self::extract_js_imports(&root_node, source, &mut imports)
             }
             _ => {}
@@ -502,6 +504,45 @@ impl SymbolExtractor {
 
         imports.sort_by_key(|i| i.line);
         Ok(imports)
+    }
+
+    /// Extract both symbols and imports in a single parse pass.
+    ///
+    /// Equivalent to calling `extract` and `extract_imports` separately, but
+    /// only parses the source file once, making it roughly 2× faster when both
+    /// are needed.
+    pub fn extract_all(&self, source: &str) -> Result<(Vec<Symbol>, Vec<ImportStatement>)> {
+        let language = match self.language {
+            Some(lang) => lang,
+            None => return Ok((Vec::new(), Vec::new())),
+        };
+
+        let mut parser = Parser::new();
+        parser.set_language(&language.into())?;
+
+        let tree = match parser.parse(source, None) {
+            Some(tree) => tree,
+            None => return Ok((Vec::new(), Vec::new())),
+        };
+
+        let root_node = tree.root_node();
+
+        let mut symbols = Vec::new();
+        Self::extract_functions(&root_node, source, &mut symbols);
+        symbols.sort_by_key(|s| s.line);
+
+        let mut imports = Vec::new();
+        match self.extension.as_str() {
+            "rs" => Self::extract_rust_imports(&root_node, source, &mut imports),
+            "py" | "pyi" | "pyw" => Self::extract_python_imports(&root_node, source, &mut imports),
+            "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" => {
+                Self::extract_js_imports(&root_node, source, &mut imports)
+            }
+            _ => {}
+        }
+        imports.sort_by_key(|i| i.line);
+
+        Ok((symbols, imports))
     }
 
     /// Extract Rust use statements and mod declarations
@@ -1306,5 +1347,48 @@ void regular_function() {
                 .any(|s| s.name == "regular_function" && s.symbol_type == SymbolType::Function),
             "Should find regular_function"
         );
+    }
+
+    #[test]
+    fn test_extract_all_matches_individual_methods() {
+        let source = r#"
+use std::collections::HashMap;
+use crate::utils::helper;
+
+fn process(data: &str) -> Vec<String> {
+    vec![]
+}
+
+struct Config {
+    debug: bool,
+}
+"#;
+        let path = Path::new("test.rs");
+        let extractor = SymbolExtractor::new(path);
+
+        let symbols_only = extractor.extract(source).unwrap();
+        let imports_only = extractor.extract_imports(source).unwrap();
+        let (all_symbols, all_imports) = extractor.extract_all(source).unwrap();
+
+        // extract_all must return the same symbols and imports as calling each separately
+        assert_eq!(
+            symbols_only.len(),
+            all_symbols.len(),
+            "extract_all symbol count should match extract"
+        );
+        assert_eq!(
+            imports_only.len(),
+            all_imports.len(),
+            "extract_all import count should match extract_imports"
+        );
+        for (a, b) in symbols_only.iter().zip(all_symbols.iter()) {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.symbol_type, b.symbol_type);
+            assert_eq!(a.line, b.line);
+        }
+        for (a, b) in imports_only.iter().zip(all_imports.iter()) {
+            assert_eq!(a.path, b.path);
+            assert_eq!(a.line, b.line);
+        }
     }
 }

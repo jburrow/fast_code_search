@@ -137,6 +137,40 @@ pub struct IndexerConfig {
     /// When enabled, the index is periodically saved after this many files are updated
     #[serde(default)]
     pub save_after_updates: usize,
+
+    /// Save a checkpoint to disk every N files during the initial index build (0 = disabled).
+    /// If interrupted before completion, the next run will resume from the checkpoint,
+    /// re-indexing only the files that were not yet committed. Recommended value for
+    /// very large repos: 20000. Has no effect if `index_path` is not set.
+    #[serde(default)]
+    pub checkpoint_interval_files: usize,
+
+    /// Exact file paths to permanently exclude from indexing.
+    /// Use this to skip files that cause crashes or other issues.
+    /// After a crash, check `fcs_last_processed.txt` in the working directory
+    /// to identify the offending file, then add its absolute path here.
+    ///
+    /// Example:
+    ///   exclude_files = ["/repo/src/generated/huge_file.rs"]
+    #[serde(default)]
+    pub exclude_files: Vec<String>,
+
+    /// Enable encoding detection for non-UTF-8 text files (default: true).
+    /// When enabled, files in encodings like Latin-1, Shift-JIS, UTF-16 etc.
+    /// are automatically transcoded to UTF-8 for indexing.
+    /// Disable this if you only work with UTF-8 codebases for slightly faster indexing.
+    #[serde(default = "default_true")]
+    pub transcode_non_utf8: bool,
+
+    /// Number of files to process per indexing batch (default: 500).
+    ///
+    /// During initial indexing each batch loads all files into memory in
+    /// parallel, so peak RAM scales with `batch_size × average_file_size × ~4`.
+    /// Increase this on machines with abundant RAM to reduce engine lock
+    /// contention; decrease it on memory-constrained machines.
+    /// The v0.6.0 default was 2000 which caused OOM on large codebases.
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
 }
 
 fn default_address() -> String {
@@ -168,6 +202,10 @@ fn default_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
 }
 
+fn default_batch_size() -> usize {
+    500
+}
+
 fn default_true() -> bool {
     true
 }
@@ -192,7 +230,11 @@ impl Default for IndexerConfig {
             index_path: None,
             watch: false,
             save_after_build: true,
-            save_after_updates: 0, // Disabled by default
+            save_after_updates: 0,        // Disabled by default
+            checkpoint_interval_files: 0, // Disabled by default
+            exclude_files: Vec::new(),
+            transcode_non_utf8: true,
+            batch_size: default_batch_size(),
         }
     }
 }
@@ -217,14 +259,30 @@ impl IndexerConfig {
         let mut sorted_excludes = self.exclude_patterns.to_vec();
         sorted_excludes.sort();
 
+        // Sort excluded files
+        let mut sorted_excluded_files = self.exclude_files.to_vec();
+        sorted_excluded_files.sort();
+
         // Create a deterministic string representation
         let config_str = format!(
-            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}",
-            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size
+            "paths:{:?}|exts:{:?}|excludes:{:?}|max_size:{}|exclude_files:{:?}|transcode_non_utf8:{}",
+            sorted_paths, sorted_exts, sorted_excludes, self.max_file_size, sorted_excluded_files, self.transcode_non_utf8
         );
 
         // Generate MD5 hash
         format!("{:x}", md5::compute(config_str.as_bytes()))
+    }
+
+    /// Check if a file path is explicitly excluded via `exclude_files`.
+    pub fn is_file_excluded(&self, path: &std::path::Path) -> bool {
+        if self.exclude_files.is_empty() {
+            return false;
+        }
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        self.exclude_files.iter().any(|excluded| {
+            let excluded_normalized = excluded.replace('\\', "/");
+            path_str == excluded_normalized
+        })
     }
 
     /// Check if a path is within the configured index paths
@@ -293,6 +351,12 @@ impl Config {
 # Address to bind the gRPC server to
 address = "0.0.0.0:50051"
 
+# Address to bind the HTTP/Web UI server to
+web_address = "0.0.0.0:8080"
+
+# Enable the web UI and REST API (default: true)
+enable_web_ui = true
+
 [indexer]
 # Paths to index on startup
 # Add your project directories here
@@ -318,22 +382,18 @@ exclude_patterns = [
     "**/.venv/**",
 ]
 
+# Exact file paths to permanently exclude from indexing.
+# Useful for files that cause crashes or are too large/noisy to be useful.
+# After a crash, check fcs_last_processed.txt to identify the offending file.
+# exclude_files = ["/repo/src/generated/huge_file.rs"]
+
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
 
-[telemetry]
-# Enable OpenTelemetry trace export (default: true)
-# Set to false to disable OTLP export (console logging is always active)
-# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=false
-enabled = true
-
-# OTLP gRPC exporter endpoint (default: http://localhost:4317)
-# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
-otlp_endpoint = "http://localhost:4317"
-
-# Service name reported to the collector
-# Env override: OTEL_SERVICE_NAME
-service_name = "fast_code_search"
+# Enable encoding detection for non-UTF-8 text files (default: true)
+# When enabled, files in Latin-1, Shift-JIS, UTF-16 etc. are transcoded to UTF-8.
+# Disable for UTF-8-only codebases for slightly faster indexing.
+transcode_non_utf8 = true
 
 # Path to persistent index storage (optional)
 # If set, the index will be saved to disk and loaded on restart for faster startup
@@ -342,16 +402,35 @@ service_name = "fast_code_search"
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
-# save_after_build = true
+save_after_build = true
 
 # Save index after N file updates via watcher (default: 0 = disabled)
-# When enabled with a non-zero value, the index is periodically saved after this many files are updated
-# Useful for long-running servers to persist incremental changes
-# save_after_updates = 0
+# When enabled, the index is periodically saved after this many watcher-triggered updates.
+# Useful for long-running servers to persist incremental changes.
+save_after_updates = 0
+
+# Checkpoint every N files during the initial index build (default: 0 = disabled)
+# If the process is killed mid-build, the next run resumes from the checkpoint.
+# Recommended for very large repos: 20000. Has no effect if index_path is not set.
+checkpoint_interval_files = 0
 
 # Enable file watcher for incremental indexing (default: false)
 # When enabled, changes to indexed files are detected and re-indexed automatically
-# watch = false
+watch = false
+
+[telemetry]
+# Enable OpenTelemetry trace export (default: false)
+# Set to true to enable OTLP export (console logging is always active)
+# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=true
+enabled = false
+
+# OTLP gRPC exporter endpoint (default: http://localhost:4317)
+# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
+otlp_endpoint = "http://localhost:4317"
+
+# Service name reported to the collector
+# Env override: OTEL_SERVICE_NAME
+service_name = "fast_code_search"
 "#
         .to_string()
     }

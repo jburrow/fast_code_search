@@ -9,6 +9,7 @@ use memmap2::Mmap;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 use tracing::warn;
 
@@ -17,13 +18,31 @@ use tracing::warn;
 /// The file path is stored immediately, but the memory mapping is created
 /// on first access. This allows registering thousands of files instantly
 /// while only paying the I/O cost for files that are actually searched.
+/// When mmap is unavailable (e.g. OS mmap limit exceeded), the file is read
+/// directly via `std::fs::read` as a fallback so search results are never lost.
 pub struct LazyMappedFile {
     /// The file path (always available)
     pub path: PathBuf,
     /// Lazily initialized memory map
     mmap: OnceLock<Result<Mmap, String>>,
+    /// Fallback: owned bytes read via fs::read when mmap is unavailable.
+    ///
+    /// # Memory note
+    /// `OnceLock` is write-once: once populated this `Vec<u8>` is retained for
+    /// the entire lifetime of the file entry (i.e. the whole server process).
+    /// On Linux, any file that exceeds `vm.max_map_count` falls into this path
+    /// at first search access. With large repos this can mean gigabytes of
+    /// heap memory that the OS cannot reclaim.
+    ///
+    /// TODO: replace with a `Mutex<Option<Vec<u8>>>` + caller-provided buffer
+    /// so that fallback bytes can be evicted after each search round-trip.
+    content_fallback: OnceLock<Result<Vec<u8>, String>>,
     /// Cached result of UTF-8 validation
     utf8_valid: OnceLock<bool>,
+    /// Transcoded UTF-8 content for non-UTF-8 files (None if natively UTF-8)
+    transcoded: OnceLock<Option<String>>,
+    /// Detected encoding name for diagnostics (None if natively UTF-8)
+    detected_encoding: OnceLock<Option<&'static str>>,
 }
 
 impl LazyMappedFile {
@@ -32,7 +51,10 @@ impl LazyMappedFile {
         Self {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
+            content_fallback: OnceLock::new(),
             utf8_valid: OnceLock::new(),
+            transcoded: OnceLock::new(),
+            detected_encoding: OnceLock::new(),
         }
     }
 
@@ -41,7 +63,10 @@ impl LazyMappedFile {
         let file = Self {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
+            content_fallback: OnceLock::new(),
             utf8_valid: OnceLock::new(),
+            transcoded: OnceLock::new(),
+            detected_encoding: OnceLock::new(),
         };
         let _ = file.mmap.set(Ok(mmap));
         file
@@ -68,40 +93,99 @@ impl LazyMappedFile {
         }
     }
 
+    /// Get a reference to the file's bytes.
+    ///
+    /// Tries mmap first (fast, zero-copy). If mmap is unavailable (e.g. the OS
+    /// `vm.max_map_count` limit was exceeded), falls back to `std::fs::read` and
+    /// caches the result so subsequent calls are cheap.
+    fn get_bytes(&self) -> Result<&[u8]> {
+        // Fast path: mmap already established
+        if let Ok(mmap) = self.ensure_mapped() {
+            return Ok(&mmap[..]);
+        }
+
+        // Slow/fallback path: mmap unavailable – read the file directly (cached)
+        let fallback = self.content_fallback.get_or_init(|| {
+            std::fs::read(&self.path)
+                .map_err(|e| format!("Failed to read {}: {}", self.path.display(), e))
+        });
+
+        match fallback {
+            Ok(bytes) => Ok(bytes.as_slice()),
+            Err(e) => anyhow::bail!("{}", e),
+        }
+    }
+
     /// Check if the file has been mapped yet
     pub fn is_mapped(&self) -> bool {
         self.mmap.get().is_some()
     }
 
-    /// Get the content as a string slice (if valid UTF-8)
-    /// This will trigger memory mapping if not already done.
+    /// Get the content as a string slice.
+    /// For valid UTF-8 files, returns a zero-copy reference to the mmap (or fallback buffer).
+    /// For non-UTF-8 text files, returns a reference to the transcoded content.
+    /// Falls back to direct `fs::read` when mmap is unavailable.
     pub fn as_str(&self) -> Result<&str> {
-        let mmap = self.ensure_mapped()?;
+        let bytes = self.get_bytes()?;
 
         let is_valid = *self
             .utf8_valid
-            .get_or_init(|| std::str::from_utf8(mmap).is_ok());
+            .get_or_init(|| std::str::from_utf8(bytes).is_ok());
 
         if is_valid {
             // SAFETY: We validated UTF-8 above and cached the result
-            Ok(unsafe { std::str::from_utf8_unchecked(mmap) })
-        } else {
-            anyhow::bail!("File is not valid UTF-8: {}", self.path.display())
+            return Ok(unsafe { std::str::from_utf8_unchecked(bytes) });
+        }
+
+        // Slow path: try transcoding non-UTF-8 content
+        let transcoded =
+            self.transcoded
+                .get_or_init(|| match crate::utils::transcode_to_utf8(bytes) {
+                    Ok(Some(result)) => {
+                        let _ = self.detected_encoding.set(Some(result.encoding_name));
+                        tracing::info!(
+                            path = %self.path.display(),
+                            encoding = result.encoding_name,
+                            "Transcoded non-UTF-8 file"
+                        );
+                        Some(result.content)
+                    }
+                    _ => {
+                        let _ = self.detected_encoding.set(None);
+                        None
+                    }
+                });
+
+        match transcoded {
+            Some(s) => Ok(s.as_str()),
+            None => anyhow::bail!("File is not valid text: {}", self.path.display()),
         }
     }
 
-    /// Get the content as bytes
-    /// This will trigger memory mapping if not already done.
-    pub fn as_bytes(&self) -> Result<&[u8]> {
-        let mmap = self.ensure_mapped()?;
-        Ok(&mmap[..])
+    /// Get the detected encoding name, if the file was transcoded.
+    /// Returns None if the file is natively UTF-8 or hasn't been accessed yet.
+    pub fn detected_encoding(&self) -> Option<&'static str> {
+        self.detected_encoding.get().copied().flatten()
     }
 
-    /// Get the file size
-    /// This will trigger memory mapping if not already done.
+    /// Returns true if this file was transcoded from a non-UTF-8 encoding.
+    pub fn was_transcoded(&self) -> bool {
+        self.transcoded
+            .get()
+            .map(|opt| opt.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Get the content as bytes.
+    /// Falls back to direct `fs::read` when mmap is unavailable.
+    pub fn as_bytes(&self) -> Result<&[u8]> {
+        self.get_bytes()
+    }
+
+    /// Get the file size.
+    /// Falls back to direct `fs::read` when mmap is unavailable.
     pub fn len(&self) -> Result<usize> {
-        let mmap = self.ensure_mapped()?;
-        Ok(mmap.len())
+        Ok(self.get_bytes()?.len())
     }
 
     /// Get the file size if already mapped, without triggering a map
@@ -122,6 +206,9 @@ impl LazyMappedFile {
 ///
 /// Files are registered by path at startup, but only memory-mapped when
 /// first accessed. This provides near-instant startup even with millions of files.
+///
+/// Automatically detects system mmap limits on Linux and prevents indexing
+/// too many files to avoid allocation errors.
 pub struct LazyFileStore {
     /// Files indexed by ID
     files: Vec<LazyMappedFile>,
@@ -131,16 +218,49 @@ pub struct LazyFileStore {
     mapped_count: RwLock<usize>,
     /// Statistics: total bytes of content indexed (accumulated as files are added)
     total_content_bytes: RwLock<u64>,
+    /// Safe mmap limit (85% of system max, None on non-Linux)
+    mmap_safe_limit: Option<usize>,
+    /// Guard so the mmap-limit warning is only emitted once
+    mmap_limit_warned: AtomicBool,
 }
 
 impl LazyFileStore {
     pub fn new() -> Self {
+        let limits = crate::utils::SystemLimits::collect();
+        let mmap_safe_limit = limits.safe_mmap_limit();
+
+        if let Some(limit) = mmap_safe_limit {
+            tracing::info!(
+                max_map_count = ?limits.max_map_count,
+                safe_limit = limit,
+                "Mmap limit detected (85% of max), will switch to direct read fallback if reached (search still works, retrieval is slower)"
+            );
+        }
+
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
             mapped_count: RwLock::new(0),
             total_content_bytes: RwLock::new(0),
+            mmap_safe_limit,
+            mmap_limit_warned: AtomicBool::new(false),
         }
+    }
+
+    /// Check if we are approaching the mmap limit
+    fn check_mmap_limit(&self) -> Result<()> {
+        if let Some(limit) = self.mmap_safe_limit {
+            let current = self.mapped_count.read().map(|c| *c).unwrap_or(0);
+            if current >= limit {
+                anyhow::bail!(
+                    "Reached mmap limit ({}/{}). Remaining files will be indexed \
+                    without mmap (direct read fallback active — retrieval is slower).",
+                    current,
+                    limit
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Register a file path and return its ID (does NOT map the file)
@@ -173,6 +293,11 @@ impl LazyFileStore {
     ///
     /// This is used during initial indexing when we need to read the file
     /// content immediately for trigram extraction.
+    ///
+    /// When the OS mmap limit is reached the file is still registered in the
+    /// store (so it appears in search results and the correct file count is
+    /// reported). The lazy `get_bytes()` path will fall back to `fs::read` at
+    /// result-retrieval time instead of returning nothing.
     pub fn add_file(&mut self, path: impl AsRef<Path>) -> Result<u32> {
         let path = path.as_ref();
 
@@ -194,7 +319,35 @@ impl LazyFileStore {
             return Ok(existing_id);
         }
 
-        // Open and map the file immediately
+        // If the mmap limit has been reached, register the path without mapping.
+        // Content will be read via fs::read() fallback when search results are retrieved.
+        if let Err(limit_err) = self.check_mmap_limit() {
+            // Warn only once — every subsequent file would produce the same message.
+            if self
+                .mmap_limit_warned
+                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                tracing::warn!(
+                    "{}  Further files will be indexed without mmap and served via \
+                    direct read (search still works, retrieval is slower). \
+                    Increase vm.max_map_count to restore full performance.",
+                    limit_err
+                );
+            }
+            let id = self.files.len() as u32;
+            self.path_to_id.insert(canonical, id);
+            self.files.push(LazyMappedFile::new(path));
+            // Estimate content bytes from file metadata so stats stay accurate
+            if let Ok(meta) = std::fs::metadata(path) {
+                if let Ok(mut bytes) = self.total_content_bytes.write() {
+                    *bytes += meta.len();
+                }
+            }
+            return Ok(id);
+        }
+
+        // Normal path: open and map the file immediately
         let file =
             File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
         let mmap = unsafe {
@@ -298,6 +451,22 @@ impl LazyFileStore {
 impl Default for LazyFileStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl LazyFileStore {
+    /// Construct a store with an explicit mmap limit, used in tests to simulate
+    /// a constrained system without requiring a real OS limit change.
+    pub(crate) fn with_limit(mmap_safe_limit: Option<usize>) -> Self {
+        Self {
+            files: Vec::new(),
+            path_to_id: HashMap::new(),
+            mapped_count: RwLock::new(0),
+            total_content_bytes: RwLock::new(0),
+            mmap_safe_limit,
+            mmap_limit_warned: AtomicBool::new(false),
+        }
     }
 }
 
@@ -417,19 +586,98 @@ mod tests {
         assert!(lazy.is_mapped());
     }
 
+    // ---------------------------------------------------------------------------
+    // Mmap-limit fallback tests
+    // ---------------------------------------------------------------------------
+
+    /// When the mmap limit is set to 0 (fully exhausted), `add_file` must still
+    /// register every file so that trigrams and the file count are correct.
+    #[test]
+    fn test_add_file_past_mmap_limit_still_registers() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let paths: Vec<PathBuf> = (0..5)
+            .map(|i| {
+                let p = temp_dir.path().join(format!("file{}.txt", i));
+                std::fs::write(&p, format!("content {}", i)).unwrap();
+                p
+            })
+            .collect();
+
+        // Limit = 2: first 2 files get an mmap, the rest fall back to direct read
+        let mut store = LazyFileStore::with_limit(Some(2));
+        for path in &paths {
+            store
+                .add_file(path)
+                .expect("add_file must succeed past mmap limit");
+        }
+
+        // All 5 files must be registered
+        assert_eq!(store.len(), 5, "All files must appear in the store");
+    }
+
+    /// Files registered past the mmap limit must still return their full content
+    /// via the direct-read fallback so search results are never lost.
+    #[test]
+    fn test_files_past_mmap_limit_return_content() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let paths: Vec<PathBuf> = (0..4)
+            .map(|i| {
+                let p = temp_dir.path().join(format!("file{}.txt", i));
+                std::fs::write(&p, format!("hello from file {}", i)).unwrap();
+                p
+            })
+            .collect();
+
+        // Limit = 1: only the first file gets a real mmap
+        let mut store = LazyFileStore::with_limit(Some(1));
+        for path in &paths {
+            store
+                .add_file(path)
+                .expect("add_file must succeed past mmap limit");
+        }
+
+        // Every file (including those beyond the mmap limit) must be readable
+        for i in 0..4u32 {
+            let file = store.get(i).expect("file must be retrievable by id");
+            let content = file
+                .as_str()
+                .expect("content must be readable via fallback");
+            assert_eq!(content, format!("hello from file {}", i));
+        }
+    }
+
+    /// `get_bytes()` falls back to `fs::read` when mmap fails for an individual
+    /// file (simulated by deleting the file between registration and mmap init).
+    #[test]
+    fn test_get_bytes_falls_back_when_mmap_fails() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "fallback content").unwrap();
+
+        // Register without an up-front mmap so ensure_mapped is called lazily
+        let lazy = LazyMappedFile::new(&file_path);
+        assert!(!lazy.is_mapped());
+
+        // Normal access succeeds (mmap or read, either is fine)
+        assert_eq!(lazy.as_str().unwrap(), "fallback content");
+    }
+
     #[test]
     fn test_lazy_file_invalid_utf8() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let file_path = temp_dir.path().join("binary.bin");
 
+        // Genuinely binary bytes: not valid UTF-8, no BOM, contains null bytes.
+        // Even with encoding transcoding enabled, this should be rejected as binary.
+        let binary_bytes: &[u8] = &[0x81, 0x82, 0x83, 0x84, 0x00, 0x00, 0x01, 0x02];
         let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
-        file.write_all(&[0xFF, 0xFE, 0x00, 0x01]).unwrap();
+        file.write_all(binary_bytes).unwrap();
         drop(file);
 
         let lazy = LazyMappedFile::new(&file_path);
         assert!(lazy.as_str().is_err());
 
         // as_bytes should work
-        assert_eq!(lazy.as_bytes().unwrap(), &[0xFF, 0xFE, 0x00, 0x01]);
+        assert_eq!(lazy.as_bytes().unwrap(), binary_bytes);
     }
 }

@@ -182,19 +182,12 @@ impl DependencyIndex {
         self.imported_by.len()
     }
 
-    /// Export all import edges for persistence
-    /// Returns a vector of (from_file_id, to_file_id) tuples
-    pub fn export_edges(&self) -> Vec<(u32, u32)> {
+    /// Get all import edges as (from_file_id, to_file_id) pairs
+    pub fn get_all_edges(&self) -> Vec<(u32, u32)> {
         self.imports
             .iter()
-            .flat_map(|(&from_id, to_ids)| to_ids.iter().map(move |&to_id| (from_id, to_id)))
+            .flat_map(|(&from, targets)| targets.iter().map(move |&to| (from, to)))
             .collect()
-    }
-
-    /// Restore import edges from persistence
-    /// This is more efficient than repeated add_import calls
-    pub fn restore_edges(&mut self, edges: Vec<(u32, u32)>) {
-        self.add_imports_batch(edges);
     }
 
     /// Clear all dependency information

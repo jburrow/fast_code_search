@@ -1,6 +1,6 @@
 [package]
 name = "fast_code_search"
-version = "0.4.0"
+version = "0.6.4"
 edition = "2021"
 authors = ["James Burrow"]
 description = "High-performance, in-memory code search service with trigram indexing and symbol awareness"
@@ -21,6 +21,8 @@ path = "src/lib.rs"
 [dependencies]
 memmap2 = "0.9"
 memchr = "2.7"
+encoding_rs = "0.8"
+chardetng = "0.1"
 roaring = { version = "0.11", features = ["serde"] }
 rustc-hash = "2.1"
 tree-sitter = "0.26"
@@ -78,7 +80,7 @@ mime_guess = "2"
 md5 = "0.8"
 notify-debouncer-full = "0.7"
 ndarray = "0.15"                                                                # For vector operations in semantic search
-hnsw_rs = "0.3"                                                                     # HNSW for approximate nearest neighbor search
+hnsw_rs = "0.3"                                                                 # HNSW for approximate nearest neighbor search
 fs2 = "0.4"
 chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
 rand = "0.9"                                                                    # For random file sampling in self-tests

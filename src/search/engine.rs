@@ -343,38 +343,65 @@ struct ImportResolutionResult {
     resolved_edges: Vec<(u32, u32)>,
 }
 
-/// Pre-processed file data ready to be merged into the engine.
-/// This is computed in parallel and then merged with a lock.
-pub struct PreIndexedFile {
-    /// Path to the file
+/// Intermediate result from phase 1 (parallel, pure-Rust, no FFI).
+/// Holds file content and trigrams. Tree-sitter is NOT called here.
+pub struct PartialIndexedFile {
     pub path: PathBuf,
-    /// File content (owned for thread safety)
-    pub content: String,
-    /// Unique trigrams extracted from the content
     pub trigrams: FxHashSet<Trigram>,
-    /// Extracted symbols
-    pub symbols: Vec<Symbol>,
-    /// Extracted import paths
-    pub imports: Vec<String>,
+    pub filename_stem: String,
+    /// Raw file content kept for phase 2 symbol extraction
+    pub content: String,
 }
 
-impl PreIndexedFile {
-    /// Maximum file size to process (10MB) - larger files are skipped to avoid memory issues
+impl PartialIndexedFile {
+    /// Maximum file size to process (10MB) - larger files are skipped
     const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-    /// Process a file in parallel - does all CPU-heavy work without needing engine access
-    /// Uses catch_unwind to handle tree-sitter stack overflows gracefully
-    pub fn process(path: &Path) -> Option<Self> {
-        // Check file size first - skip very large files
+    /// Phase 1: pure-Rust work only — safe to run in parallel across rayon threads.
+    /// Does NOT call tree-sitter (C FFI) to avoid concurrent heap corruption.
+    ///
+    /// When `transcode_non_utf8` is true, files in non-UTF-8 encodings (Latin-1,
+    /// Shift-JIS, UTF-16, etc.) are automatically transcoded. When false, only
+    /// UTF-8 files are accepted.
+    /// Returns `Some((file, transcoded))` where `transcoded` is `true` when
+    /// the file was converted from a non-UTF-8 encoding via `transcode_to_utf8`.
+    pub fn process(path: &Path, transcode_non_utf8: bool) -> Option<(Self, bool)> {
         let metadata = std::fs::metadata(path).ok()?;
         if metadata.len() > Self::MAX_FILE_SIZE {
             return None;
         }
 
-        // Read file content
-        let content = std::fs::read_to_string(path).ok()?;
+        let raw_bytes = std::fs::read(path).ok()?;
+        let (content, transcoded) = match std::str::from_utf8(&raw_bytes) {
+            Ok(s) => (s.to_string(), false), // UTF-8 fast path
+            Err(_) => {
+                if !transcode_non_utf8 {
+                    return None; // Transcoding disabled
+                }
+                match crate::utils::transcode_to_utf8(&raw_bytes) {
+                    Ok(Some(result)) => {
+                        tracing::debug!(
+                            path = %path.display(),
+                            encoding = result.encoding_name,
+                            "Transcoded non-UTF-8 file for indexing"
+                        );
+                        (result.content, true)
+                    }
+                    _ => return None, // Binary or unrecognizable
+                }
+            }
+        };
 
-        // Extract filename stem for indexing (enables searching by filename)
+        // Safety check: skip files that could crash tree-sitter or produce garbage trigrams
+        if let Some(reason) = crate::utils::content_safety_check(&content) {
+            tracing::debug!(
+                path = %path.display(),
+                reason = reason,
+                "Skipping unsafe file during indexing"
+            );
+            return None;
+        }
+
         let filename_stem = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -387,31 +414,67 @@ impl PreIndexedFile {
             })
             .to_string();
 
-        // Extract trigrams from lowercase content for case-insensitive search
-        // Prepend filename so it's also searchable
-        // Note: We lowercase during indexing so queries can be lowercased at search time
-        // Use triple newlines to avoid creating garbage trigrams at the filename/content boundary
+        // Prepend filename stem so filenames are searchable.
+        // Triple newline avoids garbage trigrams at the boundary.
         let content_with_filename = format!("{}\n\n\n{}", filename_stem, content);
         let content_lower = content_with_filename.to_lowercase();
         let trigrams = extract_unique_trigrams(&content_lower);
 
-        // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
-        let extractor = SymbolExtractor::new(path);
-        let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            extractor.extract(&content).unwrap_or_default()
-        }))
-        .unwrap_or_else(|_| {
-            warn!(
-                "Symbol extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
-                path.display()
-            );
-            Vec::new()
-        });
+        Some((
+            PartialIndexedFile {
+                path: path.to_path_buf(),
+                trigrams,
+                filename_stem,
+                content,
+            },
+            transcoded,
+        ))
+    }
+}
+
+/// Pre-processed file data ready to be merged into the engine.
+/// Built from a PartialIndexedFile by adding symbols/imports (tree-sitter).
+pub struct PreIndexedFile {
+    /// Path to the file
+    pub path: PathBuf,
+    /// Unique trigrams extracted from the content
+    pub trigrams: FxHashSet<Trigram>,
+    /// Extracted symbols
+    pub symbols: Vec<Symbol>,
+    /// Extracted import paths
+    pub imports: Vec<String>,
+}
+
+impl PreIndexedFile {
+    /// Phase 2: run tree-sitter symbol/import extraction on an already-processed partial.
+    ///
+    /// Uses `extract_all` to parse the source a single time for both symbols and imports.
+    /// Safe to call from multiple rayon threads simultaneously — tree-sitter `Parser` is
+    /// `Send + Sync` in tree-sitter v0.26+, and each call creates an independent `Parser`
+    /// instance with no shared mutable state.
+    pub fn from_partial(partial: PartialIndexedFile) -> Self {
+        let extractor = SymbolExtractor::new(&partial.path);
+
+        // Extract symbols and imports in a single parse with panic protection.
+        // tree-sitter can stack overflow on deeply nested or malformed files.
+        let (mut symbols, imports) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                extractor
+                    .extract_all(&partial.content)
+                    .unwrap_or_default()
+            }))
+            .unwrap_or_else(|_| {
+                warn!(
+                    "Symbol/import extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
+                    partial.path.display()
+                );
+                (Vec::new(), Vec::new())
+            });
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
-        if !filename_stem.is_empty() {
+        if !partial.filename_stem.is_empty() {
             symbols.push(Symbol {
-                name: filename_stem.clone(),
+                name: partial.filename_stem.clone(),
                 symbol_type: SymbolType::FileName,
                 line: 0,
                 column: 0,
@@ -419,23 +482,12 @@ impl PreIndexedFile {
             });
         }
 
-        // Extract imports with panic protection
-        let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            extractor
-                .extract_imports(&content)
-                .ok()
-                .map(|imports| imports.into_iter().map(|i| i.path).collect())
-                .unwrap_or_default()
-        }))
-        .unwrap_or_default();
-
-        Some(PreIndexedFile {
-            path: path.to_path_buf(),
-            content,
-            trigrams,
+        PreIndexedFile {
+            path: partial.path,
+            trigrams: partial.trigrams,
             symbols,
-            imports,
-        })
+            imports: imports.into_iter().map(|i| i.path).collect(),
+        }
     }
 }
 
@@ -589,6 +641,16 @@ impl SearchEngine {
             .get(file_id)
             .and_then(|f| f.as_str().ok())
             .unwrap_or("");
+
+        // Safety check: skip files that could crash tree-sitter or produce garbage
+        if let Some(reason) = crate::utils::content_safety_check(content) {
+            tracing::warn!(
+                path = %path.display(),
+                reason = reason,
+                "Skipping unsafe file during indexing"
+            );
+            return Ok(());
+        }
 
         // Extract filename stem for indexing (enables searching by filename)
         let filename_stem = path
@@ -831,12 +893,60 @@ impl SearchEngine {
         self.rebuild_symbols_and_dependencies_with_progress(|_, _| {})
     }
 
+    /// Restore symbol caches and dependency graph directly from persisted data.
+    ///
+    /// `valid_file_indices` are the positions in `persisted.files` that were not stale/removed.
+    /// Files are registered in the file_store in that order, so new file ID `k` corresponds to
+    /// `valid_file_indices[k]` in the persisted data.
+    pub fn restore_symbols_and_deps(
+        &mut self,
+        valid_file_indices: &[usize],
+        persisted: &crate::index::PersistedIndex,
+    ) {
+        let total_new_files = valid_file_indices.len();
+
+        // Allocate symbol cache sized for the newly registered files
+        self.symbol_cache = vec![Vec::new(); total_new_files];
+
+        // Build a mapping: original persisted file index → new file ID
+        let orig_to_new_id: rustc_hash::FxHashMap<u32, u32> = valid_file_indices
+            .iter()
+            .enumerate()
+            .map(|(new_id, &orig_idx)| (orig_idx as u32, new_id as u32))
+            .collect();
+
+        // Register files in dependency_index for future import resolution
+        // and restore per-file symbol caches
+        for (new_id, &orig_idx) in valid_file_indices.iter().enumerate() {
+            let new_id = new_id as u32;
+            if let Some(path) = self.file_store.get_path(new_id) {
+                self.dependency_index.register_file(new_id, path);
+            }
+            if let Some(syms) = persisted.symbols.get(orig_idx) {
+                self.symbol_cache[new_id as usize] = syms.clone();
+            }
+        }
+
+        // Restore dependency edges, remapping original indices to new file IDs
+        // and dropping edges whose endpoints were stale/removed
+        let remapped_edges: Vec<(u32, u32)> = persisted
+            .dependency_edges
+            .iter()
+            .filter_map(|&(from_orig, to_orig)| {
+                let new_from = orig_to_new_id.get(&from_orig)?;
+                let new_to = orig_to_new_id.get(&to_orig)?;
+                Some((*new_from, *new_to))
+            })
+            .collect();
+        self.dependency_index.add_imports_batch(remapped_edges);
+    }
+
     pub fn rebuild_symbols_and_dependencies_with_progress<F>(
         &mut self,
-        progress_callback: F,
+        mut progress_callback: F,
     ) -> RebuildCacheStats
     where
-        F: Fn(usize, usize) + Sync,
+        F: FnMut(usize, usize),
     {
         let total_files = self.file_store.len();
         if total_files == 0 {
@@ -857,9 +967,6 @@ impl SearchEngine {
 
         let file_store = &self.file_store;
 
-        const PROGRESS_UPDATE_EVERY: usize = 1000;
-        let progress = std::sync::atomic::AtomicUsize::new(0);
-
         progress_callback(0, total_files);
 
         let entries: Vec<RebuildEntry> = (0..total_files as u32)
@@ -874,27 +981,36 @@ impl SearchEngine {
                 if let Some(file) = file_store.get(file_id) {
                     if let Ok(content) = file.as_str() {
                         had_content = true;
-                        let extractor = SymbolExtractor::new(&path);
 
-                        symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            extractor.extract(content).unwrap_or_default()
-                        }))
-                        .unwrap_or_else(|_| {
-                            warn!(
-                                "Symbol extraction panicked for file '{}'. Continuing without symbols.",
-                                path.display()
+                        // Skip files that are unsafe for tree-sitter parsing
+                        if let Some(reason) = crate::utils::content_safety_check(content) {
+                            tracing::debug!(
+                                path = %path.display(),
+                                reason = reason,
+                                "Skipping unsafe file during symbol rebuild"
                             );
-                            Vec::new()
-                        });
+                            // Fall through — filename symbol is still added below
+                        } else {
+                            let extractor = SymbolExtractor::new(&path);
 
-                        imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            extractor
-                                .extract_imports(content)
-                                .ok()
-                                .map(|imports| imports.into_iter().map(|i| i.path).collect())
-                                .unwrap_or_default()
-                        }))
-                        .unwrap_or_default();
+                            let (extracted_symbols, extracted_imports) =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    extractor.extract_all(content).unwrap_or_default()
+                                }))
+                                .unwrap_or_else(|_| {
+                                    warn!(
+                                        "Symbol/import extraction panicked for file '{}'. Continuing without symbols.",
+                                        path.display()
+                                    );
+                                    (Vec::new(), Vec::new())
+                                });
+
+                            symbols = extracted_symbols;
+                            imports = extracted_imports
+                                .into_iter()
+                                .map(|i| i.path)
+                                .collect();
+                        }
                     }
                 }
 
@@ -919,19 +1035,11 @@ impl SearchEngine {
                     had_content,
                 })
             })
-            .inspect(|_| {
-                let processed = progress
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                    + 1;
-                if processed.is_multiple_of(PROGRESS_UPDATE_EVERY) || processed == total_files {
-                    progress_callback(processed, total_files);
-                }
-            })
             .collect();
 
         let mut stats = RebuildCacheStats {
             files_processed: entries.len(),
-            ..Default::default()
+            ..RebuildCacheStats::default()
         };
 
         for entry in entries {
@@ -1759,110 +1867,6 @@ impl SearchEngine {
         }
     }
 
-    #[allow(dead_code)]
-    fn search_in_document(&self, doc_id: u32, query: &str) -> Option<Vec<SearchMatch>> {
-        let file = self.file_store.get(doc_id)?;
-        let content = file.as_str().ok()?;
-
-        let query_lower = query.to_lowercase();
-
-        // Get symbols for this file
-        let symbols = self.symbol_cache.get(doc_id as usize)?;
-
-        // Get dependency count for this file (cached lookup - done once per document)
-        let dependency_count = self.dependency_index.get_import_count(doc_id);
-
-        // Pre-compute dependency boost (done once per document, not per match)
-        let dependency_boost = if dependency_count > 0 {
-            1.0 + (dependency_count as f64).log10() * 0.5
-        } else {
-            1.0
-        };
-
-        // Build a set of symbol definition lines for O(1) lookup instead of O(n) iteration
-        let symbol_def_lines: std::collections::HashSet<usize> = symbols
-            .iter()
-            .filter(|s| s.is_definition)
-            .map(|s| s.line)
-            .collect();
-
-        // Build a map of symbol lines to symbol names for O(1) symbol match check
-        let symbol_names_by_line: std::collections::HashMap<usize, Vec<&str>> = {
-            let mut map: std::collections::HashMap<usize, Vec<&str>> =
-                std::collections::HashMap::new();
-            for s in symbols {
-                map.entry(s.line).or_default().push(&s.name);
-            }
-            map
-        };
-
-        // Single-pass search: collect matches directly
-        // Use a reasonable initial capacity to avoid small reallocations
-        let mut matches = Vec::with_capacity(8);
-        let mut path_info: Option<(String, bool)> = None; // (path, is_src_or_lib)
-
-        // Search in each line using case-insensitive matching without allocation
-        for (line_num, line) in content.lines().enumerate() {
-            if let Some((match_start, match_end)) =
-                find_match_position_case_insensitive(line, &query_lower)
-            {
-                // Lazy initialize path info only when we have at least one match
-                let (path_ref, is_src_lib) = path_info.get_or_insert_with(|| {
-                    let p = file.path.to_string_lossy().into_owned();
-                    let path_bytes = p.as_bytes();
-                    let is_src_lib = contains_bytes(path_bytes, b"/src/")
-                        || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/")
-                        || contains_bytes(path_bytes, b"\\lib\\");
-                    (p, is_src_lib)
-                });
-
-                // Calculate score using pre-computed values
-                let is_symbol_def = symbol_def_lines.contains(&line_num);
-                let score = calculate_score_inline(
-                    line,
-                    query,
-                    &query_lower,
-                    is_symbol_def,
-                    *is_src_lib,
-                    dependency_boost,
-                );
-
-                // Check if this is a symbol match using pre-built map (O(1) lookup + small iteration)
-                let is_symbol = symbol_names_by_line
-                    .get(&line_num)
-                    .map(|names| {
-                        names
-                            .iter()
-                            .any(|name| contains_case_insensitive(name, &query_lower))
-                    })
-                    .unwrap_or(false);
-
-                // Truncate long lines around the match
-                let truncated = truncate_around_match(line, match_start, match_end);
-
-                matches.push(SearchMatch {
-                    file_id: doc_id,
-                    file_path: path_ref.clone(),
-                    line_number: line_num + 1, // 1-based line numbers
-                    content: truncated.content,
-                    match_start: truncated.match_start,
-                    match_end: truncated.match_end,
-                    content_truncated: truncated.was_truncated,
-                    score,
-                    is_symbol,
-                    dependency_count,
-                });
-            }
-        }
-
-        if matches.is_empty() {
-            None
-        } else {
-            Some(matches)
-        }
-    }
-
     pub fn get_stats(&self) -> SearchStats {
         SearchStats {
             num_files: self.file_store.len(),
@@ -1950,9 +1954,13 @@ impl SearchEngine {
             }
         }
 
-        // Collect symbols and dependency edges
-        let symbols = self.symbol_cache.clone();
-        let dependency_edges = self.dependency_index.export_edges();
+        // Collect per-file symbol caches (parallel to files Vec)
+        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = (0..self.file_store.len())
+            .map(|id| self.symbol_cache.get(id).cloned().unwrap_or_default())
+            .collect();
+
+        // Collect resolved dependency edges
+        let dependency_edges = self.dependency_index.get_all_edges();
 
         // Create persisted index with config fingerprint
         let persisted = PersistedIndex::new(
@@ -1969,10 +1977,8 @@ impl SearchEngine {
             path = %path.display(),
             files = self.file_store.len(),
             trigrams = self.trigram_index.num_trigrams(),
-            symbols = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
-            dependency_edges = self.dependency_index.total_edges(),
             config_fingerprint = %config.fingerprint(),
-            "Index saved to disk with symbols and dependencies"
+            "Index saved to disk"
         );
 
         Ok(())
@@ -2041,41 +2047,31 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
-        // Restore symbols and dependencies from persisted data, or rebuild if not available
-        let rebuild_stats = if self.file_store.is_empty() {
-            RebuildCacheStats::default()
-        } else if !persisted.symbols.is_empty() {
-            // Restore from persisted data (v3+)
-            self.symbol_cache = persisted.symbols;
-
-            // Ensure symbol_cache is properly sized for all files
-            let total_files = self.file_store.len();
-            while self.symbol_cache.len() < total_files {
-                self.symbol_cache.push(Vec::new());
+        if !self.file_store.is_empty() {
+            if !persisted.symbols.is_empty() {
+                // Restore symbols and dependency graph directly from persisted data,
+                // remapping original file indices to the new file IDs assigned during load.
+                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                tracing::info!(
+                    files_restored = valid_file_indices.len(),
+                    "Restored symbol and dependency caches from persisted index"
+                );
+            } else {
+                // Fallback: re-extract from file contents (old index format without symbols)
+                let rebuild_stats = self.rebuild_symbols_and_dependencies();
+                tracing::info!(
+                    symbols_rebuilt = rebuild_stats.symbols_extracted,
+                    imports_rebuilt = rebuild_stats.imports_extracted,
+                    files_skipped = rebuild_stats.files_skipped,
+                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
+                );
             }
+        }
 
-            // Re-register all files for dependency resolution
-            for file_id in 0..total_files as u32 {
-                if let Some(path) = self.file_store.get_path(file_id) {
-                    self.dependency_index.register_file(file_id, path);
-                }
-            }
-
-            // Restore dependency edges
-            self.dependency_index
-                .restore_edges(persisted.dependency_edges);
-
-            tracing::info!(
-                symbols_restored = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
-                dependency_edges = self.dependency_index.total_edges(),
-                "Restored symbols and dependencies from persisted index"
-            );
-
-            RebuildCacheStats::default()
-        } else {
-            // Fallback: rebuild if no persisted data (v2 or older)
-            self.rebuild_symbols_and_dependencies()
-        };
+        let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
+            .iter()
+            .map(|&idx| persisted.files[idx].path.clone())
+            .collect();
 
         tracing::info!(
             path = %path.display(),
@@ -2085,9 +2081,6 @@ impl SearchEngine {
             new_paths = new_paths.len(),
             removed_paths = removed_paths.len(),
             config_compatible = config_compatible,
-            symbols_rebuilt = rebuild_stats.symbols_extracted,
-            imports_rebuilt = rebuild_stats.imports_extracted,
-            files_skipped = rebuild_stats.files_skipped,
             "Index loaded from disk with reconciliation"
         );
 
@@ -2097,6 +2090,7 @@ impl SearchEngine {
             new_paths,
             removed_paths,
             config_compatible,
+            already_indexed_files,
         })
     }
 
@@ -2112,10 +2106,10 @@ impl SearchEngine {
         &mut self,
         path: &std::path::Path,
         config: &crate::config::IndexerConfig,
-        progress_callback: F,
+        mut progress_callback: F,
     ) -> anyhow::Result<LoadIndexResult>
     where
-        F: Fn(LoadingPhase, Option<usize>, Option<usize>, &str) + Sync,
+        F: FnMut(LoadingPhase, Option<usize>, Option<usize>, &str),
     {
         use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
@@ -2238,74 +2232,53 @@ impl SearchEngine {
             self.trigram_index.finalize();
         }
 
-        // Phase 6: Restore symbols and dependencies from persisted data
-        if !self.file_store.is_empty() && !persisted.symbols.is_empty() {
-            let total_files = self.file_store.len();
-
-            progress_callback(
-                LoadingPhase::RebuildingSymbols,
-                Some(total_files),
-                Some(0),
-                "Restoring symbols and dependency graph...",
-            );
-
-            // Restore symbol cache
-            self.symbol_cache = persisted.symbols;
-
-            // Ensure symbol_cache is properly sized for all files
-            while self.symbol_cache.len() < total_files {
-                self.symbol_cache.push(Vec::new());
-            }
-
-            // Re-register all files for dependency resolution
-            for file_id in 0..total_files as u32 {
-                if let Some(path) = self.file_store.get_path(file_id) {
-                    self.dependency_index.register_file(file_id, path);
-                }
-            }
-
-            // Restore dependency edges
-            self.dependency_index
-                .restore_edges(persisted.dependency_edges);
-
-            progress_callback(
-                LoadingPhase::RebuildingSymbols,
-                Some(total_files),
-                Some(total_files),
-                "Symbols and dependencies restored from index",
-            );
-
-            tracing::info!(
-                symbols_restored = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
-                dependency_edges = self.dependency_index.total_edges(),
-                "Restored symbols and dependencies from persisted index"
-            );
-        } else if !self.file_store.is_empty() {
-            // Fallback: rebuild if no persisted data (v2 or older index)
+        if !self.file_store.is_empty() {
             let total_files = self.file_store.len();
             progress_callback(
                 LoadingPhase::RebuildingSymbols,
                 Some(total_files),
                 Some(0),
-                "Rebuilding symbols and import graph (legacy index)...",
+                "Restoring symbols and import graph...",
             );
 
-            let _stats = self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
+            if !persisted.symbols.is_empty() {
+                // Restore symbols and dependency graph directly from persisted data
+                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
                 progress_callback(
                     LoadingPhase::RebuildingSymbols,
-                    Some(total),
-                    Some(processed),
-                    "Rebuilding symbols and import graph...",
+                    Some(total_files),
+                    Some(total_files),
+                    "Symbol and dependency caches restored from index",
                 );
-            });
+                tracing::info!(
+                    files_restored = valid_file_indices.len(),
+                    "Restored symbol and dependency caches from persisted index"
+                );
+            } else {
+                // Fallback: re-extract from file contents (old index format without symbols)
+                let _stats =
+                    self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
+                        progress_callback(
+                            LoadingPhase::RebuildingSymbols,
+                            Some(total),
+                            Some(processed),
+                            "Rebuilding symbols and import graph...",
+                        );
+                    });
 
-            progress_callback(
-                LoadingPhase::RebuildingSymbols,
-                Some(total_files),
-                Some(total_files),
-                "Symbol and dependency caches rebuilt",
-            );
+                progress_callback(
+                    LoadingPhase::RebuildingSymbols,
+                    Some(total_files),
+                    Some(total_files),
+                    "Symbol and dependency caches rebuilt",
+                );
+            }
         }
+
+        let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
+            .iter()
+            .map(|&idx| persisted.files[idx].path.clone())
+            .collect();
 
         tracing::info!(
             path = %path.display(),
@@ -2324,6 +2297,7 @@ impl SearchEngine {
             new_paths,
             removed_paths,
             config_compatible,
+            already_indexed_files,
         })
     }
 
@@ -2377,42 +2351,20 @@ impl SearchEngine {
 
         self.trigram_index.finalize();
 
-        // Restore symbols and dependencies from persisted data, or rebuild if not available
         if !self.file_store.is_empty() {
             if !persisted.symbols.is_empty() {
-                // Restore from persisted data (v3+)
-                self.symbol_cache = persisted.symbols;
-
-                // Ensure symbol_cache is properly sized for all files
-                let total_files = self.file_store.len();
-                while self.symbol_cache.len() < total_files {
-                    self.symbol_cache.push(Vec::new());
-                }
-
-                // Re-register all files for dependency resolution
-                for file_id in 0..total_files as u32 {
-                    if let Some(path) = self.file_store.get_path(file_id) {
-                        self.dependency_index.register_file(file_id, path);
-                    }
-                }
-
-                // Restore dependency edges
-                self.dependency_index
-                    .restore_edges(persisted.dependency_edges);
-
+                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
                 tracing::info!(
-                    symbols_restored = self.symbol_cache.iter().map(|s| s.len()).sum::<usize>(),
-                    dependency_edges = self.dependency_index.total_edges(),
-                    "Restored symbols and dependencies from persisted index"
+                    files_restored = valid_file_indices.len(),
+                    "Restored symbol and dependency caches from persisted index"
                 );
             } else {
-                // Fallback: rebuild if no persisted data (v2 or older)
                 let rebuild_stats = self.rebuild_symbols_and_dependencies();
                 tracing::info!(
                     symbols_rebuilt = rebuild_stats.symbols_extracted,
                     imports_rebuilt = rebuild_stats.imports_extracted,
                     files_skipped = rebuild_stats.files_skipped,
-                    "Rebuilt symbol and dependency caches after load"
+                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
                 );
             }
         }
@@ -2481,6 +2433,10 @@ pub struct LoadIndexResult {
     pub removed_paths: Vec<String>,
     /// Whether the config fingerprint matches (false = config changed)
     pub config_compatible: bool,
+    /// Files already validly indexed (unchanged since last index build).
+    /// Used to skip re-indexing when scanning for unindexed files after a
+    /// partial/checkpoint load.
+    pub already_indexed_files: Vec<std::path::PathBuf>,
 }
 
 /// Status of the indexing process
@@ -2534,6 +2490,8 @@ pub struct IndexingProgress {
     pub files_discovered: usize,
     /// Number of files indexed so far
     pub files_indexed: usize,
+    /// Number of files transcoded from non-UTF-8 encodings
+    pub files_transcoded: usize,
     /// Current batch number (1-based)
     pub current_batch: usize,
     /// Total number of batches to process
@@ -2568,6 +2526,7 @@ impl Default for IndexingProgress {
             status: IndexingStatus::Idle,
             files_discovered: 0,
             files_indexed: 0,
+            files_transcoded: 0,
             current_batch: 0,
             total_batches: 0,
             current_path: None,
