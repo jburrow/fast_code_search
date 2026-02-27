@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-02-27
+
+### Fixed
+- **`content_fallback` bytes permanently retained in heap (regression since v0.6.2)**: Files whose mmap failed fell back to a `OnceLock<Vec<u8>>` cache, which is write-once — once populated, the bytes could never be freed. Replaced with `Mutex<Option<Vec<u8>>>` so the cached bytes are evictable. Resolves the memory-growth issue tracked in v0.6.4 for Linux deployments approaching the mmap limit.
+
 ### Improved
 - **Persist symbol caches and import graph in saved index**: When saving the trigram index to disk, the per-file symbol caches and resolved dependency edges are now also persisted. On the next startup, symbols and imports are restored directly from the index file instead of being re-extracted from file contents, eliminating the `rebuild_symbols_and_dependencies` pass for unchanged files and significantly reducing startup latency for large codebases.
   - Symbols are only re-extracted for files whose mtime has changed (stale files), which are queued for re-indexing as before.
