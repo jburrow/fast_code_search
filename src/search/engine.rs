@@ -447,22 +447,29 @@ pub struct PreIndexedFile {
 
 impl PreIndexedFile {
     /// Phase 2: run tree-sitter symbol/import extraction on an already-processed partial.
-    /// Must be called **sequentially** (not inside par_iter) because tree-sitter C parsers
-    /// are not safe to use concurrently from multiple threads.
+    ///
+    /// Uses `extract_all` to parse the source a single time for both symbols and imports.
+    /// Safe to call from multiple rayon threads simultaneously — tree-sitter `Parser` is
+    /// `Send + Sync` in tree-sitter v0.26+, and each call creates an independent `Parser`
+    /// instance with no shared mutable state.
     pub fn from_partial(partial: PartialIndexedFile) -> Self {
         let extractor = SymbolExtractor::new(&partial.path);
 
-        // Extract symbols with panic protection (tree-sitter can stack overflow on complex files)
-        let mut symbols = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            extractor.extract(&partial.content).unwrap_or_default()
-        }))
-        .unwrap_or_else(|_| {
-            warn!(
-                "Symbol extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
-                partial.path.display()
-            );
-            Vec::new()
-        });
+        // Extract symbols and imports in a single parse with panic protection.
+        // tree-sitter can stack overflow on deeply nested or malformed files.
+        let (mut symbols, imports) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                extractor
+                    .extract_all(&partial.content)
+                    .unwrap_or_default()
+            }))
+            .unwrap_or_else(|_| {
+                warn!(
+                    "Symbol/import extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
+                    partial.path.display()
+                );
+                (Vec::new(), Vec::new())
+            });
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
         if !partial.filename_stem.is_empty() {
@@ -475,21 +482,11 @@ impl PreIndexedFile {
             });
         }
 
-        // Extract imports with panic protection
-        let imports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            extractor
-                .extract_imports(&partial.content)
-                .ok()
-                .map(|imports| imports.into_iter().map(|i| i.path).collect())
-                .unwrap_or_default()
-        }))
-        .unwrap_or_default();
-
         PreIndexedFile {
             path: partial.path,
             trigrams: partial.trigrams,
             symbols,
-            imports,
+            imports: imports.into_iter().map(|i| i.path).collect(),
         }
     }
 }
@@ -948,29 +945,23 @@ impl SearchEngine {
                         } else {
                             let extractor = SymbolExtractor::new(&path);
 
-                            symbols =
+                            let (extracted_symbols, extracted_imports) =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    extractor.extract(content).unwrap_or_default()
+                                    extractor.extract_all(content).unwrap_or_default()
                                 }))
                                 .unwrap_or_else(|_| {
                                     warn!(
-                                    "Symbol extraction panicked for file '{}'. Continuing without symbols.",
-                                    path.display()
-                                );
-                                    Vec::new()
+                                        "Symbol/import extraction panicked for file '{}'. Continuing without symbols.",
+                                        path.display()
+                                    );
+                                    (Vec::new(), Vec::new())
                                 });
 
-                            imports =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    extractor
-                                        .extract_imports(content)
-                                        .ok()
-                                        .map(|imports| {
-                                            imports.into_iter().map(|i| i.path).collect()
-                                        })
-                                        .unwrap_or_default()
-                                }))
-                                .unwrap_or_default();
+                            symbols = extracted_symbols;
+                            imports = extracted_imports
+                                .into_iter()
+                                .map(|i| i.path)
+                                .collect();
                         }
                     }
                 }
