@@ -171,6 +171,14 @@ pub struct IndexerConfig {
     /// The v0.6.0 default was 2000 which caused OOM on large codebases.
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
+
+    /// Enable tree-sitter symbol extraction (default: true).
+    /// When enabled, function/class/struct definitions are parsed from source files
+    /// and used to boost search relevance scores for symbol matches.
+    /// Disable this to reduce memory usage and indexing time at the cost of
+    /// reduced search relevance for symbol-based queries.
+    #[serde(default = "default_true")]
+    pub enable_symbols: bool,
 }
 
 fn default_address() -> String {
@@ -235,6 +243,7 @@ impl Default for IndexerConfig {
             exclude_files: Vec::new(),
             transcode_non_utf8: true,
             batch_size: default_batch_size(),
+            enable_symbols: true,
         }
     }
 }
@@ -417,6 +426,12 @@ checkpoint_interval_files = 0
 # Enable file watcher for incremental indexing (default: false)
 # When enabled, changes to indexed files are detected and re-indexed automatically
 watch = false
+
+# Enable tree-sitter symbol extraction (default: true)
+# When enabled, function/class/struct definitions are parsed from source files
+# and used to boost search relevance for symbol matches.
+# Disable to reduce memory usage and indexing time at the cost of reduced relevance.
+enable_symbols = true
 
 [telemetry]
 # Enable OpenTelemetry trace export (default: false)

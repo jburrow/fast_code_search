@@ -457,12 +457,19 @@ impl PreIndexedFile {
     /// Safe to call from multiple rayon threads simultaneously — tree-sitter `Parser` is
     /// `Send + Sync` in tree-sitter v0.26+, and each call creates an independent `Parser`
     /// instance with no shared mutable state.
-    pub fn from_partial(partial: PartialIndexedFile) -> Self {
-        let extractor = SymbolExtractor::new(&partial.path);
+    ///
+    /// # Parameters
+    ///
+    /// - `partial`: The partially-processed file from phase 1 (content + trigrams).
+    /// - `enable_symbols`: When `false`, tree-sitter symbol/import extraction is skipped
+    ///   entirely to reduce CPU and memory usage. The filename symbol is always added
+    ///   regardless, since it is used for path-based search scoring without tree-sitter.
+    pub fn from_partial(partial: PartialIndexedFile, enable_symbols: bool) -> Self {
+        let (mut symbols, imports) = if enable_symbols {
+            let extractor = SymbolExtractor::new(&partial.path);
 
-        // Extract symbols and imports in a single parse with panic protection.
-        // tree-sitter can stack overflow on deeply nested or malformed files.
-        let (mut symbols, imports) =
+            // Extract symbols and imports in a single parse with panic protection.
+            // tree-sitter can stack overflow on deeply nested or malformed files.
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 extractor
                     .extract_all(&partial.content)
@@ -474,7 +481,10 @@ impl PreIndexedFile {
                     partial.path.display()
                 );
                 (Vec::new(), Vec::new())
-            });
+            })
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
         if !partial.filename_stem.is_empty() {
@@ -618,6 +628,8 @@ pub struct SearchEngine {
     file_metadata: Vec<FileMetadata>,
     /// Pending imports to resolve after all files are indexed
     pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
+    /// Whether tree-sitter symbol extraction is enabled (default: true)
+    pub enable_symbols: bool,
 }
 
 impl SearchEngine {
@@ -629,6 +641,7 @@ impl SearchEngine {
             symbol_cache: Vec::new(),
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
+            enable_symbols: true,
         }
     }
 
@@ -674,9 +687,21 @@ impl SearchEngine {
         let content_lower = content_with_filename.to_lowercase();
         self.trigram_index.add_document(file_id, &content_lower);
 
-        // Extract symbols
-        let extractor = SymbolExtractor::new(path);
-        let mut symbols = extractor.extract(content).unwrap_or_default();
+        // Extract symbols (only when symbol extraction is enabled)
+        let mut symbols = Vec::new();
+        if self.enable_symbols {
+            let extractor = SymbolExtractor::new(path);
+            symbols = extractor.extract(content).unwrap_or_default();
+
+            // Extract imports and store for later resolution
+            if let Ok(imports) = extractor.extract_imports(content) {
+                if !imports.is_empty() {
+                    let import_paths: Vec<String> = imports.into_iter().map(|i| i.path).collect();
+                    self.pending_imports
+                        .push((file_id, path.to_path_buf(), import_paths));
+                }
+            }
+        }
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
         if !filename_stem.is_empty() {
@@ -687,15 +712,6 @@ impl SearchEngine {
                 column: 0,
                 is_definition: true,
             });
-        }
-
-        // Extract imports and store for later resolution
-        if let Ok(imports) = extractor.extract_imports(content) {
-            if !imports.is_empty() {
-                let import_paths: Vec<String> = imports.into_iter().map(|i| i.path).collect();
-                self.pending_imports
-                    .push((file_id, path.to_path_buf(), import_paths));
-            }
         }
 
         // Ensure symbol_cache is large enough
@@ -1010,6 +1026,7 @@ impl SearchEngine {
         }
 
         let file_store = &self.file_store;
+        let enable_symbols = self.enable_symbols;
 
         progress_callback(0, total_files);
 
@@ -1026,34 +1043,37 @@ impl SearchEngine {
                     if let Ok(content) = file.as_str() {
                         had_content = true;
 
-                        // Skip files that are unsafe for tree-sitter parsing
-                        if let Some(reason) = crate::utils::content_safety_check(&content) {
-                            tracing::debug!(
-                                path = %path.display(),
-                                reason = reason,
-                                "Skipping unsafe file during symbol rebuild"
-                            );
-                            // Fall through — filename symbol is still added below
-                        } else {
-                            let extractor = SymbolExtractor::new(&path);
+                        // Skip tree-sitter extraction when symbols are disabled
+                        if enable_symbols {
+                            // Skip files that are unsafe for tree-sitter parsing
+                            if let Some(reason) = crate::utils::content_safety_check(&content) {
+                                tracing::debug!(
+                                    path = %path.display(),
+                                    reason = reason,
+                                    "Skipping unsafe file during symbol rebuild"
+                                );
+                                // Fall through — filename symbol is still added below
+                            } else {
+                                let extractor = SymbolExtractor::new(&path);
 
-                            let (extracted_symbols, extracted_imports) =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    extractor.extract_all(&content).unwrap_or_default()
-                                }))
-                                .unwrap_or_else(|_| {
-                                    warn!(
-                                        "Symbol/import extraction panicked for file '{}'. Continuing without symbols.",
-                                        path.display()
-                                    );
-                                    (Vec::new(), Vec::new())
-                                });
+                                let (extracted_symbols, extracted_imports) =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        extractor.extract_all(&content).unwrap_or_default()
+                                    }))
+                                    .unwrap_or_else(|_| {
+                                        warn!(
+                                            "Symbol/import extraction panicked for file '{}'. Continuing without symbols.",
+                                            path.display()
+                                        );
+                                        (Vec::new(), Vec::new())
+                                    });
 
-                            symbols = extracted_symbols;
-                            imports = extracted_imports
-                                .into_iter()
-                                .map(|i| i.path)
-                                .collect();
+                                symbols = extracted_symbols;
+                                imports = extracted_imports
+                                    .into_iter()
+                                    .map(|i| i.path)
+                                    .collect();
+                            }
                         }
                     }
                 }

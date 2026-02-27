@@ -1101,6 +1101,52 @@ async fn test_config_disable_transcoding() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_config_disable_symbols() -> Result<()> {
+    use fast_code_search::search::{PartialIndexedFile, PreIndexedFile};
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new()?;
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(
+        &file_path,
+        "pub fn my_function() { println!(\"hello\"); }\n",
+    )?;
+
+    // With symbols enabled (default), FileName symbol + parsed symbols should be present
+    let (partial_enabled, _) = PartialIndexedFile::process(&file_path, false).unwrap();
+    let pre_enabled = PreIndexedFile::from_partial(partial_enabled, true);
+    // At minimum the FileName symbol is always added
+    assert!(
+        !pre_enabled.symbols.is_empty(),
+        "Expected symbols to be extracted when enable_symbols=true"
+    );
+
+    // With symbols disabled, only the FileName symbol should be present (no tree-sitter extraction)
+    let (partial_disabled, _) = PartialIndexedFile::process(&file_path, false).unwrap();
+    let pre_disabled = PreIndexedFile::from_partial(partial_disabled, false);
+    // FileName symbol is always added even when symbols are disabled
+    assert_eq!(
+        pre_disabled.symbols.len(),
+        1,
+        "Expected only the FileName symbol when enable_symbols=false"
+    );
+    // No imports resolved when symbols are disabled
+    assert!(
+        pre_disabled.imports.is_empty(),
+        "Expected no imports when enable_symbols=false"
+    );
+
+    // Verify that SearchEngine.enable_symbols defaults to true
+    let engine = fast_code_search::search::SearchEngine::new();
+    assert!(
+        engine.enable_symbols,
+        "SearchEngine should have enable_symbols=true by default"
+    );
+
+    Ok(())
+}
+
 // =============================================================================
 // Super Integration Test
 //
