@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Non-UTF-8 encoding support**: Files in legacy encodings (Latin-1/ISO-8859-1, Windows-1252, Shift-JIS, UTF-16 LE/BE, etc.) are now automatically detected and transcoded to UTF-8 during indexing, making them fully searchable. Zero performance impact on UTF-8 files (fast path via `std::str::from_utf8`).
+  - New `transcode_non_utf8` config option under `[indexer]` (default: `true`) to disable transcoding if only UTF-8 codebases are indexed.
+  - Transcoding uses `chardetng` (Mozilla's Firefox charset detector) + `encoding_rs` for accurate, battle-tested detection.
+  - `files_transcoded` counter exposed in `/api/status`, `/api/diagnostics`, and gRPC `IndexResponse` for visibility.
+  - Transcoded files emit an `INFO`-level log entry with the detected encoding name.
+- **Filename-only matches now returned**: Searching for a filename that does not appear in the file's content previously returned zero results (the file was shortlisted by the trigram index but then silently dropped). All three search paths now synthesize a `SearchMatch` at line 0 when the query matches the filename stem but no content lines match.
+
+### Fixed
+- **Regex trigram lookup not lowercased (P0 — Correctness)**: `search_regex()` passed raw literal text (e.g. `"MyClass"`) to the trigram index which stores only lowercased content. Uppercase literals ≥3 chars returned zero trigram hits, causing missed results or a full scan fallback. The literal is now lowercased before the trigram lookup.
+- **Exact-match score boost used case-insensitive comparison (P0 — Correctness)**: `calculate_score_inline()` applied the 2× exact-match boost using the already-lowercased query, so every match received the boost regardless of case. The boost now uses the original (un-lowered) query for a true case-sensitive comparison.
+- **C++ template declarations produced duplicate symbols (P1 — Correctness)**: The `template_declaration` tree-sitter handler both pushed template children onto the stack and fell through to the generic push, causing inner nodes to be visited twice and symbols to appear twice in results.
+- **Symbol search scanned all documents (P1 — Performance)**: `search_symbols()` called `trigram_index.all_documents()` regardless of query length, checking every indexed file. For queries ≥3 characters the trigram index is now used to narrow candidates first.
+- **Line length penalty was too harsh (P1 — Quality)**: The previous `1.0 / (1.0 + len * 0.01)` factor dropped to 0.50 at 100 chars and 0.09 at 1000 chars, severely penalizing function signatures and long lines. Replaced with a gentler logarithmic curve `(1.0 / (1.0 + (len / 100.0).ln_1p())).max(0.3)`.
+- **`FAST_RANKING_TOP_N` too low (P2 — Quality)**: Raised from 500 to 2000. The previous limit could cause relevant files with low base scores to be missed in large codebases.
+- **Empty search results allocated unnecessary `Vec` (P2 — Performance)**: `search_in_document_scored()`, `search_in_document()`, and `search_in_document_regex()` returned `Some(Vec::new())` on no match. They now return `None`, eliminating spurious allocations.
+- **Trigram bleed at filename/content boundary (P2 — Correctness)**: `format!("{}\n{}", filename_stem, content)` generated spurious trigrams spanning the boundary (e.g. the last chars of the filename joined with the first chars of the content). The separator is now three newlines (`"\n\n\n"`) so no meaningful trigram crosses the boundary.
+- **Redundant trigram deduplication (P3 — Code quality)**: `TrigramIndex::search()` ran a three-step dedup (extract → `FxHashSet` filter → collect). Replaced with a single call to `extract_unique_trigrams()`.
+- **Per-query filename stem allocation (P2 — Performance)**: `filename_matches_query()` re-computed `file_stem().to_lowercase()` on every file for every query. A pre-computed `lowercase_stem: String` field is now stored in `FileMetadata` at index time.
+- **`FileName` symbol search returned wrong content**: `search_symbols_in_document()` fetched line 0 of the file content for `FileName` symbols, returning the first line of the file instead of the file path. It now uses the file path as the match content.
+
 ## [0.5.8] - 2026-02-26
 
 ### Fixed
