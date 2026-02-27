@@ -165,12 +165,17 @@ pub async fn search_handler(
         // Start timing the search
         let start_time = std::time::Instant::now();
 
-        // Acquire read lock in blocking thread pool to avoid stalling tokio workers
-        let engine = engine.read().map_err(|e| {
-            (
+        // Use try_read to avoid blocking when a write lock is held during indexing.
+        // Blocking here would cause threads to pile up and exhaust the thread pool.
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to acquire engine read lock: {}", e),
-            )
+            ),
         })?;
 
         // Choose search method based on flags
@@ -268,11 +273,15 @@ pub async fn stats_handler(
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || {
-        let engine = engine.read().map_err(|e| {
-            (
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to acquire engine read lock: {}", e),
-            )
+            ),
         })?;
 
         let stats = engine.get_stats();
@@ -392,11 +401,15 @@ pub async fn dependents_handler(
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || {
-        let engine = engine.read().map_err(|e| {
-            (
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to acquire engine read lock: {}", e),
-            )
+            ),
         })?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
@@ -436,11 +449,15 @@ pub async fn dependencies_handler(
 ) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || {
-        let engine = engine.read().map_err(|e| {
-            (
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to acquire engine read lock: {}", e),
-            )
+            ),
         })?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
@@ -626,12 +643,16 @@ pub async fn diagnostics_handler(
     let engine = state.engine.clone();
 
     tokio::task::spawn_blocking(move || {
-        // Acquire read lock on engine (in blocking thread pool)
-        let engine = engine.read().map_err(|e| {
-            (
+        // Use try_read to avoid blocking when a write lock is held during indexing.
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to acquire engine read lock: {}", e),
-            )
+            ),
         })?;
 
         // Get basic stats
