@@ -636,11 +636,8 @@ impl SearchEngine {
         self.dependency_index.register_file(file_id, path);
 
         // Get the content
-        let content = self
-            .file_store
-            .get(file_id)
-            .and_then(|f| f.as_str().ok())
-            .unwrap_or("");
+        let content_cow = self.file_store.get(file_id).and_then(|f| f.as_str().ok());
+        let content: &str = content_cow.as_deref().unwrap_or("");
 
         // Safety check: skip files that could crash tree-sitter or produce garbage
         if let Some(reason) = crate::utils::content_safety_check(content) {
@@ -935,7 +932,7 @@ impl SearchEngine {
                         had_content = true;
 
                         // Skip files that are unsafe for tree-sitter parsing
-                        if let Some(reason) = crate::utils::content_safety_check(content) {
+                        if let Some(reason) = crate::utils::content_safety_check(&content) {
                             tracing::debug!(
                                 path = %path.display(),
                                 reason = reason,
@@ -947,7 +944,7 @@ impl SearchEngine {
 
                             let (extracted_symbols, extracted_imports) =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    extractor.extract_all(content).unwrap_or_default()
+                                    extractor.extract_all(&content).unwrap_or_default()
                                 }))
                                 .unwrap_or_else(|_| {
                                     warn!(
