@@ -415,6 +415,7 @@ fn try_load_persisted_index(
 
             broadcast_progress(index_progress, index_progress_tx, |p| {
                 p.files_indexed = files_loaded;
+                p.files_loaded_from_cache = files_loaded;
                 p.loading_phase = LoadingPhase::None;
                 p.loading_total_files = None;
                 p.loading_files_processed = None;
@@ -444,8 +445,23 @@ fn run_indexing_pipeline(
 ) -> (usize, usize, usize) {
     let (tx, rx) = mpsc::sync_channel::<PathBuf>(CHANNEL_BUFFER);
 
+    // When reconciling after a cache load, seed the discovery counter with the
+    // number of files already in the index so that `files_discovered` in the
+    // progress struct always reflects the *total* file count (cached + new).
+    // This prevents `files_indexed > files_discovered` in the UI, which looks
+    // broken, and also lets `progress_percent` compute a meaningful percentage
+    // for the reconciliation phase.
+    let discovery_offset = if loaded_from_persistence {
+        index_progress
+            .read()
+            .map(|p| p.files_loaded_from_cache)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
     // Shared counters for progress tracking
-    let files_discovered = Arc::new(AtomicUsize::new(0));
+    let files_discovered = Arc::new(AtomicUsize::new(discovery_offset));
     let discovery_done = Arc::new(AtomicBool::new(false));
 
     // Spawn file discovery thread
@@ -463,10 +479,12 @@ fn run_indexing_pipeline(
         already_indexed_files,
     );
 
-    // Update status
+    // Update status and pre-seed files_discovered to match the atomic offset so
+    // the initial broadcast is consistent before the discovery thread fires.
     broadcast_progress(index_progress, index_progress_tx, |p| {
         if loaded_from_persistence {
             p.status = IndexingStatus::Reconciling;
+            p.files_discovered = discovery_offset;
             p.message = String::from("Reconciling index with filesystem...");
         } else {
             p.status = IndexingStatus::Indexing;

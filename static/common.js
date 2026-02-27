@@ -200,8 +200,10 @@ class SearchReadinessManager {
             case 'indexing':
                 const pct = statusObj.progress_percent || 0;
                 return message || `Indexing files (${pct}%)...`;
-            case 'reconciling':
-                return 'Updating index...';
+            case 'reconciling': {
+                const pct = statusObj.progress_percent || 0;
+                return message || `Updating index (${pct}%)...`;
+            }
             case 'resolving_imports':
                 return 'Resolving imports...';
             default:
