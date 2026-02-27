@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-02-27
+
+### Added
+- **Checkpoint saves during initial indexing**: New `checkpoint_interval_files` config option under `[indexer]` (default: `0` = disabled). When set (e.g. `20000`), the index is written to `index_path` every N files during the initial build. If the process is killed before completion, the next run loads the checkpoint and re-indexes only the missing files — no compute is lost. Has no effect if `index_path` is not configured.
+
 ## [0.6.0] - 2026-02-27
 
 ### Added

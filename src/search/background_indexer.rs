@@ -425,6 +425,7 @@ fn run_indexing_pipeline(
         index_progress,
         index_progress_tx,
         indexer_config,
+        loaded_from_persistence,
     );
 
     // Wait for discovery thread
@@ -501,6 +502,7 @@ fn spawn_discovery_thread(
 }
 
 /// Process files in batches from the discovery channel.
+#[allow(clippy::too_many_arguments)]
 fn process_batches(
     rx: mpsc::Receiver<PathBuf>,
     files_discovered: &Arc<AtomicUsize>,
@@ -509,6 +511,7 @@ fn process_batches(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
     indexer_config: &IndexerConfig,
+    loaded_from_persistence: bool,
 ) -> (usize, usize) {
     let mut batch: Vec<PathBuf> = Vec::with_capacity(BATCH_SIZE);
     let mut total_indexed = 0usize;
@@ -532,11 +535,29 @@ fn process_batches(
                     );
                     total_indexed += indexed;
 
-                    // Periodic save after N updates if configured
+                    // Periodic save after N updates if configured (watcher mode)
                     if indexer_config.save_after_updates > 0
                         && total_indexed.is_multiple_of(indexer_config.save_after_updates)
                     {
                         save_index_if_needed(indexer_config, index_engine, true, total_indexed);
+                    }
+
+                    // Checkpoint save during initial build every N files
+                    if indexer_config.checkpoint_interval_files > 0
+                        && total_indexed > 0
+                        && total_indexed.is_multiple_of(indexer_config.checkpoint_interval_files)
+                    {
+                        info!(
+                            files_indexed = total_indexed,
+                            interval = indexer_config.checkpoint_interval_files,
+                            "Checkpoint: saving index mid-build"
+                        );
+                        save_index_if_needed(
+                            indexer_config,
+                            index_engine,
+                            loaded_from_persistence,
+                            total_indexed,
+                        );
                     }
                 }
             }

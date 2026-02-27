@@ -348,6 +348,8 @@ max_file_size = 10485760       # Skip files larger than 10MB
 index_path = "/var/lib/fast_code_search/index"
 save_after_build = true        # Save after initial indexing
 save_after_updates = 0         # Save after N file updates (0 = disabled)
+checkpoint_interval_files = 0  # Checkpoint every N files during initial build (0 = disabled)
+                               # Recommended: 20000 for very large repos (crash recovery)
 
 # File watcher (optional)
 watch = true                   # Monitor filesystem for changes

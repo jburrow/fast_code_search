@@ -138,6 +138,13 @@ pub struct IndexerConfig {
     #[serde(default)]
     pub save_after_updates: usize,
 
+    /// Save a checkpoint to disk every N files during the initial index build (0 = disabled).
+    /// If interrupted before completion, the next run will resume from the checkpoint,
+    /// re-indexing only the files that were not yet committed. Recommended value for
+    /// very large repos: 20000. Has no effect if `index_path` is not set.
+    #[serde(default)]
+    pub checkpoint_interval_files: usize,
+
     /// Exact file paths to permanently exclude from indexing.
     /// Use this to skip files that cause crashes or other issues.
     /// After a crash, check `fcs_last_processed.txt` in the working directory
@@ -210,6 +217,7 @@ impl Default for IndexerConfig {
             watch: false,
             save_after_build: true,
             save_after_updates: 0, // Disabled by default
+            checkpoint_interval_files: 0, // Disabled by default
             exclude_files: Vec::new(),
             transcode_non_utf8: true,
         }
