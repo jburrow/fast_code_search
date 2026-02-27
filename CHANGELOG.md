@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-02-27
+
+### Fixed
+- **Files beyond the OS mmap limit were silently dropped from search results (P0 — Correctness)**: When the Linux `vm.max_map_count` safe limit (85% of system max, typically 55,700 on default kernels) was exceeded during indexing, `add_file()` bailed out and the remaining files were neither registered in the store nor added to the trigram index. On large codebases (e.g. 629k files) only the first ~55,700 files were searchable. Files are now always registered. For files that cannot be memory-mapped (limit exhausted), content is read via `std::fs::read()` at result-retrieval time and the result is cached, so there is no repeated I/O cost.
+- **File count in UI showed mmap-capped number instead of true indexed count**: Because the above fix ensures all files are registered, `file_store.len()` — which drives the FILES counter in the web UI and `/api/status` — now reflects the true number of indexed files rather than the OS mmap limit.
+
 ## [0.6.1] - 2026-02-27
 
 ### Added
