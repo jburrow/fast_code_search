@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Code coverage reports in CI**: A new `coverage` job runs on every push and pull request using `cargo-llvm-cov`. The HTML coverage report is uploaded as a `coverage-report` GitHub Actions artifact and LCOV data is uploaded to Codecov. See the [Code Coverage](#code-coverage) section in the copilot instructions for how to generate reports locally.
+
 ### Fixed
 - **Website becomes unresponsive during index building**: API handlers (`search`, `stats`, `dependents`, `dependencies`, `diagnostics`) previously called `engine.read()` which blocks until any pending write lock (held during batch merges) is released. Under concurrent load, this caused blocking threads to pile up and exhaust the Tokio thread pool, leading to memory pressure and system unresponsiveness. All handlers now use `engine.try_read()` and immediately return `503 Service Unavailable` with the message _"Index is currently being updated, please try again shortly"_ when the write lock is held. The `status` endpoint was already safe and is unchanged.
 
