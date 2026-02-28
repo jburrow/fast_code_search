@@ -85,6 +85,21 @@
           "type": "boolean",
           "default": false,
           "description": "Search only in symbol definitions (functions, classes)."
+        },
+        "fastCodeSearch.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download (if needed) and start the fast_code_search server when VSCode opens a workspace. Disable this if you prefer to manage the server process yourself."
+        },
+        "fastCodeSearch.serverVersion": {
+          "type": "string",
+          "default": "latest",
+          "description": "Version of the fast_code_search server binary to download. Use 'latest' to always fetch the newest release, or pin to a specific tag such as 'v0.2.0'."
+        },
+        "fastCodeSearch.serverBinaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to an existing fast_code_search_server binary. When set, the extension uses this binary instead of downloading one automatically."
         }
       }
     },
@@ -96,6 +111,22 @@
       {
         "command": "fastCodeSearch.showServerStatus",
         "title": "Fast Code Search: Show Server Status"
+      },
+      {
+        "command": "fastCodeSearch.downloadServer",
+        "title": "Fast Code Search: Download Server Binary"
+      },
+      {
+        "command": "fastCodeSearch.startServer",
+        "title": "Fast Code Search: Start Server"
+      },
+      {
+        "command": "fastCodeSearch.stopServer",
+        "title": "Fast Code Search: Stop Server"
+      },
+      {
+        "command": "fastCodeSearch.restartServer",
+        "title": "Fast Code Search: Restart Server"
       }
     ]
   },

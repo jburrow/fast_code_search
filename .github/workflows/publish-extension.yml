@@ -1,0 +1,75 @@
+name: Publish VS Code Extension
+
+# Triggered when a release tag is pushed (same pattern as the binary release workflow).
+# Also available as a manual trigger for emergency re-publishes.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.2.0)'
+        required: true
+
+jobs:
+  publish:
+    name: Package and publish extension
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: vscode-extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: vscode-extension
+        run: npm ci
+
+      - name: Type-check
+        working-directory: vscode-extension
+        run: npm run compile
+
+      - name: Lint
+        working-directory: vscode-extension
+        run: npm run lint
+
+      - name: Build extension bundle
+        working-directory: vscode-extension
+        run: npm run build
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Package extension (.vsix)
+        working-directory: vscode-extension
+        run: npx vsce package --out fast-code-search-${{ steps.version.outputs.VERSION }}.vsix
+
+      - name: Upload .vsix as release asset
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        with:
+          files: vscode-extension/fast-code-search-${{ steps.version.outputs.VERSION }}.vsix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to VS Code Marketplace
+        working-directory: vscode-extension
+        if: env.VSCE_PAT != ''
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --pat "$VSCE_PAT"
