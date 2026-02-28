@@ -2,10 +2,10 @@
  * Extension entry point for Fast Code Search.
  *
  * Registers:
- *   - TextSearchProvider  (native VSCode search integration)
- *   - Status bar item      (shows current mode: Keyword | Semantic)
+ *   - TextSearchProvider    (keyword search — native VSCode search integration)
+ *   - AITextSearchProvider  (semantic search — shows in "AI Results" section)
+ *   - Status bar item        (shows current mode: Keyword | Semantic)
  *   - Commands
- *       fastCodeSearch.toggleSemanticMode  – switch between keyword / semantic
  *       fastCodeSearch.toggleSymbolsOnly   – restrict search to symbols
  *       fastCodeSearch.showServerStatus    – display server health in output channel
  */
@@ -14,6 +14,7 @@ import * as vscode from "vscode";
 import { KeywordSearchClient } from "./api/keywordClient.js";
 import { SemanticSearchClient } from "./api/semanticClient.js";
 import { FastCodeSearchProvider } from "./providers/textSearchProvider.js";
+import { SemanticSearchProvider } from "./providers/semanticSearchProvider.js";
 
 // ---------------------------------------------------------------------------
 // Extension lifecycle
@@ -37,10 +38,18 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Register the TextSearchProvider for the "file" scheme so that VSCode's
-  // built-in search UI delegates to our server.
-  const provider = new FastCodeSearchProvider(keywordClient, semanticClient);
+  // built-in search UI delegates to our keyword server.
+  const provider = new FastCodeSearchProvider(keywordClient);
   context.subscriptions.push(
     vscode.workspace.registerTextSearchProvider("file", provider)
+  );
+
+  // Register the AITextSearchProvider for the "file" scheme so that VSCode
+  // shows semantic results in the dedicated "AI Results" section of the
+  // Search panel when the semantic server is enabled.
+  const semanticProvider = new SemanticSearchProvider(semanticClient);
+  context.subscriptions.push(
+    vscode.workspace.registerAITextSearchProvider("file", semanticProvider)
   );
 
   // Re-initialise clients when settings change
@@ -70,8 +79,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.StatusBarAlignment.Right,
     100
   );
-  statusBar.command = "fastCodeSearch.toggleSemanticMode";
-  statusBar.tooltip = "Fast Code Search – click to toggle search mode";
+  statusBar.command = "fastCodeSearch.toggleSymbolsOnly";
+  statusBar.tooltip = "Fast Code Search – click to toggle symbols-only mode";
   updateStatusBar(statusBar);
   statusBar.show();
   context.subscriptions.push(statusBar);
@@ -79,30 +88,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // -------------------------------------------------------------------------
   // Commands
   // -------------------------------------------------------------------------
-
-  // Toggle keyword ↔ semantic
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "fastCodeSearch.toggleSemanticMode",
-      async () => {
-        const current = vscode.workspace
-          .getConfiguration("fastCodeSearch")
-          .get("preferSemanticSearch", false);
-        await vscode.workspace
-          .getConfiguration("fastCodeSearch")
-          .update(
-            "preferSemanticSearch",
-            !current,
-            vscode.ConfigurationTarget.Global
-          );
-        updateStatusBar(statusBar);
-        const mode = !current ? "semantic" : "keyword";
-        vscode.window.showInformationMessage(
-          `Fast Code Search: switched to ${mode} mode.`
-        );
-      }
-    )
-  );
 
   // Toggle symbols-only
   context.subscriptions.push(
@@ -208,10 +193,7 @@ export function deactivate(): void {
 /** Refresh the status-bar label to reflect the current mode settings. */
 function updateStatusBar(item: vscode.StatusBarItem): void {
   const cfg = vscode.workspace.getConfiguration("fastCodeSearch");
-  const semantic: boolean = cfg.get("preferSemanticSearch", false);
   const symbols: boolean = cfg.get("symbolsOnly", false);
-
-  const modeLabel = semantic ? "$(telescope) Semantic" : "$(search) Keyword";
   const symSuffix = symbols ? " [symbols]" : "";
-  item.text = `${modeLabel}${symSuffix}`;
+  item.text = `$(search) Fast Code Search${symSuffix}`;
 }

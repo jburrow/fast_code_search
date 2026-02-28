@@ -115,6 +115,31 @@ declare module "vscode" {
     ): ProviderResult<TextSearchComplete>;
   }
 
+  /**
+   * A provider for AI-powered (semantic) text search results.
+   *
+   * **Note:** This is a proposed API — enable with `"aiTextSearchProvider"` in
+   * `enabledApiProposals`.
+   */
+  export interface AITextSearchProvider {
+    /**
+     * Provide AI-powered search results that match the given natural-language query.
+     *
+     * Results appear in a dedicated "AI Results" section of the Search panel.
+     *
+     * @param query  The raw search query string entered by the user.
+     * @param options  Options for this search (include/exclude globs, etc.).
+     * @param progress  A progress callback that must be invoked for each result.
+     * @param token  A cancellation token.
+     */
+    provideAITextSearchResults(
+      query: string,
+      options: TextSearchOptions,
+      progress: Progress<TextSearchResult>,
+      token: CancellationToken
+    ): ProviderResult<TextSearchComplete>;
+  }
+
   export namespace workspace {
     /**
      * Register a text search provider.
@@ -128,6 +153,23 @@ declare module "vscode" {
     export function registerTextSearchProvider(
       scheme: string,
       provider: TextSearchProvider
+    ): Disposable;
+
+    /**
+     * Register an AI text search provider.
+     *
+     * Results are displayed in a dedicated "AI Results" section of the Search panel.
+     *
+     * **Note:** This is a proposed API — enable with `"aiTextSearchProvider"` in
+     * `enabledApiProposals`.
+     *
+     * @param scheme  The URI scheme to search within (e.g. `"file"`).
+     * @param provider  The AI search provider.
+     * @returns A {@link Disposable} that unregisters this provider when being disposed.
+     */
+    export function registerAITextSearchProvider(
+      scheme: string,
+      provider: AITextSearchProvider
     ): Disposable;
   }
 }

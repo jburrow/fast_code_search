@@ -9,8 +9,7 @@ A VSCode extension that integrates the [fast_code_search](https://github.com/jbu
 | Feature | Description |
 |---------|-------------|
 | **Keyword Search** | Trigram-indexed, near-instant full-text search across millions of files |
-| **Semantic Search** | Natural-language code search powered by ML embeddings (optional) |
-| **Mode Toggle** | Switch between keyword and semantic search with one command |
+| **Semantic Search** | Natural-language code search powered by ML embeddings — results appear in the dedicated **"AI Results"** section of the Search panel (requires semantic server) |
 | **Symbols-Only Mode** | Restrict results to function / class definitions |
 | **Server Status** | Inspect server health and index statistics from the output channel |
 
@@ -58,13 +57,14 @@ code --install-extension fast-code-search-0.1.0.vsix
 2. Open a workspace folder in VSCode.
 3. Use **Ctrl+Shift+F** (or the Search sidebar) to search – results are served by the fast_code_search server.
 
-### Toggle Search Mode
+### Search Modes
 
 | Action | Keyboard Shortcut | Command |
 |--------|-------------------|---------|
-| Toggle keyword / semantic mode | `Ctrl+Alt+S` (`Cmd+Alt+S` on macOS) | `Fast Code Search: Toggle Semantic Search Mode` |
 | Toggle symbols-only mode | – | `Fast Code Search: Toggle Symbols-Only Mode` |
 | Show server status | – | `Fast Code Search: Show Server Status` |
+
+Keyword search results appear in the standard search panel. When the semantic server is enabled (`fastCodeSearch.semanticServer.enabled: true`), semantic results appear automatically in the **"AI Results"** section of the same panel — no mode-switching needed.
 
 ---
 
@@ -76,10 +76,9 @@ All settings are available in **File → Preferences → Settings** under **"Fas
 |---------|---------|-------------|
 | `fastCodeSearch.keywordServer.host` | `localhost` | Keyword server hostname |
 | `fastCodeSearch.keywordServer.port` | `8080` | Keyword server port |
-| `fastCodeSearch.semanticServer.enabled` | `false` | Enable semantic server |
+| `fastCodeSearch.semanticServer.enabled` | `false` | Enable semantic server (AI Results) |
 | `fastCodeSearch.semanticServer.host` | `localhost` | Semantic server hostname |
 | `fastCodeSearch.semanticServer.port` | `8081` | Semantic server port |
-| `fastCodeSearch.preferSemanticSearch` | `false` | Use semantic search by default |
 | `fastCodeSearch.maxResults` | `100` | Maximum results per search |
 | `fastCodeSearch.symbolsOnly` | `false` | Search only in symbol definitions |
 
@@ -102,15 +101,21 @@ All settings are available in **File → Preferences → Settings** under **"Fas
 ```
 VSCode Search UI
       │
-      ▼
-FastCodeSearchProvider (TextSearchProvider)
+      ├─► FastCodeSearchProvider (TextSearchProvider)
+      │         └─► KeywordSearchClient  →  GET http://localhost:8080/api/search
       │
-      ├─► KeywordSearchClient  →  GET http://localhost:8080/api/search
-      │
-      └─► SemanticSearchClient →  GET http://localhost:8081/api/search
+      └─► SemanticSearchProvider (AITextSearchProvider)   ← "AI Results" section
+                └─► SemanticSearchClient →  GET http://localhost:8081/api/search
 ```
 
-The extension registers a `TextSearchProvider` for the `file:` URI scheme, which makes VSCode route all workspace searches through the fast_code_search servers instead of its built-in ripgrep-based search.
+The extension registers two providers for the `file:` URI scheme:
+
+- **`FastCodeSearchProvider`** implements `TextSearchProvider` and routes all
+  standard workspace searches to the keyword (trigram-indexed) server.
+- **`SemanticSearchProvider`** implements `AITextSearchProvider` and routes searches
+  to the semantic (ML-embedding) server. Its results appear in the dedicated
+  **"AI Results"** section of VSCode's Search panel whenever
+  `fastCodeSearch.semanticServer.enabled` is `true`.
 
 ---
 
