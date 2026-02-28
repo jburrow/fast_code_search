@@ -53,15 +53,29 @@ jobs:
             bench_output.txt
             validator_output.json
 
+      - name: Restore benchmark data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ./cache
+          key: benchmark-data-${{ github.run_id }}
+          restore-keys: |
+            benchmark-data-
+
       - name: Store benchmark results for trend tracking
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: fast_code_search Benchmarks
           tool: cargo
           output-file-path: bench_output.txt
+          external-data-json-path: ./cache/benchmark-data.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
           comment-on-alert: true
           alert-threshold: '200%'
           fail-on-alert: false
-          skip-fetch-gh-pages: true
+
+      - name: Save benchmark data cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ./cache
+          key: benchmark-data-${{ github.run_id }}
