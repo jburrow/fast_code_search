@@ -476,19 +476,30 @@ See [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_READ
 
 ## Benchmarks
 
-Benchmarks run on synthetic corpus using Criterion. Run locally with `cargo bench`.
+Benchmarks run on a synthetic corpus using Criterion and are tracked automatically on every push to `main`. View results in the [Benchmarks CI workflow](../../actions/workflows/benchmark.yml) — download the `benchmark-results` artifact for the raw numbers. Historical trends are stored in the `gh-pages` branch under `benchmarks/`.
+
+Run locally with:
+
+```bash
+cargo bench                            # All benchmarks (search + persistence)
+cargo bench --bench search_benchmark   # Search benchmarks only
+cargo bench --bench persistence_benchmark  # Persistence benchmarks only
+```
+
+Representative timings on a synthetic corpus (from CI):
 
 | Benchmark | Corpus Size | Time | Throughput |
 |-----------|-------------|------|------------|
-| text_search/common_query | 100 files | 1.4 ms | 7.0 Melem/s |
-| text_search/common_query | 500 files | 8.5 ms | 5.9 Melem/s |
-| text_search/common_query | 1000 files | 22 ms | 4.5 Melem/s |
-| text_search/rare_query | 500 files | 0.3 ms | - |
-| text_search/no_match | 500 files | 0.1 ms | - |
-| regex_search/simple_literal | 500 files | 9 ms | - |
-| regex_search/no_literal | 500 files | 45 ms | - |
+| text_search/common_query | 50 files | ~0.6 ms | — |
+| text_search/common_query | 100 files | ~1.4 ms | ~7.0 Melem/s |
+| text_search/common_query | 200 files | ~3.5 ms | ~5.7 Melem/s |
+| text_search/rare_query | 100 files | ~0.3 ms | — |
+| text_search/no_match | 100 files | ~0.1 ms | — |
+| regex_search/simple_literal | 100 files | ~9 ms | — |
+| regex_search/no_literal | 100 files | ~45 ms | — |
+| indexing/index_files | 100 files | ~25 ms | — |
 
-*Last updated: v0.2.2*
+*Timings are automatically tracked in CI. See [Benchmarks workflow](../../actions/workflows/benchmark.yml) for the latest results.*
 
 ### Comparison with Traditional Search Tools
 
