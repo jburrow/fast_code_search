@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-02-28
+
 ### Added
 - **Automated performance benchmarks in CI**: A new `benchmark` workflow runs on every push to `main`. It executes `cargo bench` for both `search_benchmark` and `persistence_benchmark` suites using the Criterion bencher output format, runs the validator binary in JSON mode for functional performance validation, and uploads results as a `benchmark-results` artifact. Historical trends are tracked in the `gh-pages` branch via `benchmark-action/github-action-benchmark`, with automatic alerts on >200% regressions.
 - **Registered `persistence_benchmark` in `Cargo.toml`**: The `benches/persistence_benchmark.rs` suite (save/load index, trigram deserialization, file staleness checks) was already present but not declared as a `[[bench]]` target. It is now runnable via `cargo bench --bench persistence_benchmark`.
@@ -445,7 +447,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.7...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.6.8...HEAD
+[0.6.8]: https://github.com/jburrow/fast_code_search/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/jburrow/fast_code_search/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/jburrow/fast_code_search/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/jburrow/fast_code_search/compare/v0.6.4...v0.6.5
