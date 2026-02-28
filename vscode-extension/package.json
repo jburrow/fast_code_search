@@ -31,7 +31,8 @@
     "onStartupFinished"
   ],
   "enabledApiProposals": [
-    "textSearchProvider"
+    "textSearchProvider",
+    "aiTextSearchProvider"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -70,7 +71,8 @@
         "fastCodeSearch.preferSemanticSearch": {
           "type": "boolean",
           "default": false,
-          "description": "Use semantic search instead of keyword search by default."
+          "description": "Deprecated: semantic search is now always available via the AITextSearchProvider when the semantic server is enabled.",
+          "deprecationMessage": "No longer used. Semantic search results are always shown in the 'AI Results' section of the Search panel when fastCodeSearch.semanticServer.enabled is true."
         },
         "fastCodeSearch.maxResults": {
           "type": "number",
@@ -88,23 +90,12 @@
     },
     "commands": [
       {
-        "command": "fastCodeSearch.toggleSemanticMode",
-        "title": "Fast Code Search: Toggle Semantic Search Mode"
-      },
-      {
         "command": "fastCodeSearch.toggleSymbolsOnly",
         "title": "Fast Code Search: Toggle Symbols-Only Mode"
       },
       {
         "command": "fastCodeSearch.showServerStatus",
         "title": "Fast Code Search: Show Server Status"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "fastCodeSearch.toggleSemanticMode",
-        "key": "ctrl+alt+s",
-        "mac": "cmd+alt+s"
       }
     ]
   },

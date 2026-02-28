@@ -1,19 +1,17 @@
 /**
- * TextSearchProvider implementation for fast_code_search.
+ * TextSearchProvider implementation for fast_code_search keyword search.
  *
- * Routes searches to either the keyword server (trigram-based) or the
- * semantic server (embedding-based) depending on the active mode.
+ * Delegates all searches to the keyword server (trigram-based).
+ * Semantic search is handled separately by {@link SemanticSearchProvider}
+ * which implements the {@link vscode.AITextSearchProvider} interface.
  */
 
 import * as vscode from "vscode";
 import { KeywordSearchClient } from "../api/keywordClient.js";
-import { SemanticSearchClient } from "../api/semanticClient.js";
+import { isAbortError } from "../utils/errors.js";
 
 export class FastCodeSearchProvider implements vscode.TextSearchProvider {
-  constructor(
-    private readonly keywordClient: KeywordSearchClient,
-    private readonly semanticClient: SemanticSearchClient
-  ) {}
+  constructor(private readonly keywordClient: KeywordSearchClient) {}
 
   async provideTextSearchResults(
     query: vscode.TextSearchQuery,
@@ -22,11 +20,6 @@ export class FastCodeSearchProvider implements vscode.TextSearchProvider {
     token: vscode.CancellationToken
   ): Promise<vscode.TextSearchComplete> {
     const cfg = vscode.workspace.getConfiguration("fastCodeSearch");
-    const preferSemantic: boolean = cfg.get("preferSemanticSearch", false);
-    const semanticEnabled: boolean = cfg.get(
-      "semanticServer.enabled",
-      false
-    );
     const maxResults: number = cfg.get(
       "maxResults",
       options.maxResults ?? 100
@@ -36,38 +29,22 @@ export class FastCodeSearchProvider implements vscode.TextSearchProvider {
     const abortController = new AbortController();
     token.onCancellationRequested(() => abortController.abort());
 
-    const useSemantic = preferSemantic && semanticEnabled;
-
     try {
-      if (useSemantic) {
-        await this.runSemanticSearch(
-          query,
-          options,
-          progress,
-          abortController.signal,
-          maxResults
-        );
-      } else {
-        await this.runKeywordSearch(
-          query,
-          options,
-          progress,
-          abortController.signal,
-          maxResults,
-          symbolsOnly
-        );
-      }
+      await this.runKeywordSearch(
+        query,
+        options,
+        progress,
+        abortController.signal,
+        maxResults,
+        symbolsOnly
+      );
     } catch (err: unknown) {
       if (isAbortError(err)) {
         // Search cancelled – not an error
         return { limitHit: false };
       }
-      const mode = useSemantic ? "semantic" : "keyword";
-      const msg =
-        err instanceof Error ? err.message : String(err);
-      vscode.window.showErrorMessage(
-        `Fast Code Search (${mode}): ${msg}`
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      vscode.window.showErrorMessage(`Fast Code Search (keyword): ${msg}`);
       return { limitHit: false };
     }
 
@@ -121,50 +98,4 @@ export class FastCodeSearchProvider implements vscode.TextSearchProvider {
       });
     }
   }
-
-  private async runSemanticSearch(
-    query: vscode.TextSearchQuery,
-    _options: vscode.TextSearchOptions,
-    progress: vscode.Progress<vscode.TextSearchResult>,
-    signal: AbortSignal,
-    maxResults: number
-  ): Promise<void> {
-    const response = await this.semanticClient.search(
-      { q: query.pattern, max: maxResults },
-      signal
-    );
-
-    for (const result of response.results) {
-      if (signal.aborted) {
-        break;
-      }
-
-      // Semantic results span multiple lines (1-based → 0-based)
-      const startLine = Math.max(0, result.start_line - 1);
-      const endLine = Math.max(startLine, result.end_line - 1);
-      const previewText = result.content;
-
-      progress.report({
-        uri: vscode.Uri.file(result.file_path),
-        ranges: new vscode.Range(
-          startLine,
-          0,
-          endLine,
-          Number.MAX_SAFE_INTEGER
-        ),
-        preview: {
-          text: previewText,
-          matches: new vscode.Range(0, 0, 0, previewText.length),
-        },
-      });
-    }
-  }
-}
-
-/** Returns true when an error represents a fetch/AbortController cancellation. */
-function isAbortError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    (err.name === "AbortError" || err.message.includes("abort"))
-  );
 }
