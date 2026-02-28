@@ -691,13 +691,12 @@ impl SearchEngine {
                 ""
             });
 
-        // Index the lowercase content with trigrams for case-insensitive search
-        // Prepend filename so it's also searchable
-        // Note: We lowercase during indexing so queries can be lowercased at search time
-        // Use triple newlines to avoid creating garbage trigrams at the filename/content boundary
-        let content_with_filename = format!("{}\n\n\n{}", filename_stem, content);
-        let content_lower = content_with_filename.to_lowercase();
-        self.trigram_index.add_document(file_id, &content_lower);
+        // Index trigrams for case-insensitive search.
+        // Extract from the filename stem and content separately to avoid creating a
+        // large intermediate concatenated string and any spurious cross-boundary trigrams.
+        let mut trigrams = extract_unique_trigrams(&filename_stem.to_lowercase());
+        trigrams.extend(extract_unique_trigrams(&content.to_lowercase()));
+        self.trigram_index.add_document_trigrams(file_id, trigrams);
 
         // Extract symbols (only when symbol extraction is enabled)
         let mut symbols = Vec::new();
