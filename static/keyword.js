@@ -226,6 +226,9 @@ async function performSearch() {
                             ${depBadge}
                             <span class="result-score">Score: ${result.score.toFixed(2)}</span>
                             <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
+                            <button class="view-file-btn" title="View full file"
+                                data-file-path="${escapeHtml(result.file_path)}"
+                                data-line-number="${result.line_number}">📄 View</button>
                         </div>
                     </div>
                     <div class="result-content">
@@ -234,6 +237,13 @@ async function performSearch() {
                 </div>
             `;
         }).join('');
+
+        // Attach View button click handlers via event delegation on results container
+        resultsContainer.querySelectorAll('.view-file-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                showFileModal(btn.dataset.filePath, parseInt(btn.dataset.lineNumber, 10));
+            });
+        });
 
     } catch (error) {
         console.error('Search error:', error);
@@ -295,6 +305,119 @@ function closeModal() {
     const modal = document.getElementById('dep-modal');
     if (modal) modal.remove();
     document.removeEventListener('keydown', handleModalEscape);
+}
+
+// ============================================
+// FILE VIEWER MODAL
+// ============================================
+
+function renderFileLine(line, lineNum, highlightLine, query) {
+    const isHighlighted = lineNum === highlightLine;
+    const cls = isHighlighted ? 'file-line file-line-highlight' : 'file-line';
+    const content = highlightMatches(line, query);
+    return `<div class="${cls}" id="file-line-${lineNum}">` +
+        `<span class="file-line-num">${lineNum}</span>` +
+        `<span class="file-line-content">${content}</span>` +
+        `</div>`;
+}
+
+// Stored so the overlay click listener can be removed on close
+let _fileModalOverlayListener = null;
+
+async function showFileModal(filePath, highlightLine) {
+    // Clean up any existing file modal and its listeners
+    const existingModal = document.getElementById('file-modal');
+    if (existingModal) {
+        if (_fileModalOverlayListener) existingModal.removeEventListener('click', _fileModalOverlayListener);
+        existingModal.remove();
+    }
+    document.removeEventListener('keydown', handleFileModalEscape);
+
+    // Create modal scaffold immediately (with loading state)
+    const modal = document.createElement('div');
+    modal.id = 'file-modal';
+    modal.className = 'file-modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'file-modal-dialog';
+
+    const header = document.createElement('div');
+    header.className = 'file-modal-header';
+
+    const pathSpan = document.createElement('span');
+    pathSpan.className = 'file-modal-path';
+    pathSpan.textContent = filePath;
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'file-modal-close';
+    closeBtn.title = 'Close (Esc)';
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', closeFileModal);
+
+    header.appendChild(pathSpan);
+    header.appendChild(closeBtn);
+
+    const body = document.createElement('div');
+    body.className = 'file-modal-body';
+    body.id = 'file-modal-body';
+    body.innerHTML = '<div class="loading">Loading file…</div>';
+
+    dialog.appendChild(header);
+    dialog.appendChild(body);
+    modal.appendChild(dialog);
+
+    _fileModalOverlayListener = (e) => { if (e.target === modal) closeFileModal(); };
+    modal.addEventListener('click', _fileModalOverlayListener);
+    document.addEventListener('keydown', handleFileModalEscape);
+    document.body.appendChild(modal);
+
+    try {
+        const response = await fetch(`${API_BASE}/api/file?file=${encodeURIComponent(filePath)}`);
+        if (!response.ok) {
+            const text = await response.text();
+            const statusMessages = { 404: 'File not found', 403: 'Access denied', 503: 'Server busy' };
+            throw new Error(statusMessages[response.status] || text || response.statusText);
+        }
+        const data = await response.json();
+        const query = queryInput.value.trim();
+
+        const linesHtml = data.content.split('\n')
+            .map((line, idx) => renderFileLine(line, idx + 1, highlightLine, query))
+            .join('');
+
+        const modalBody = document.getElementById('file-modal-body');
+        if (modalBody) {
+            modalBody.innerHTML =
+                `<div class="file-meta">${data.line_count.toLocaleString()} lines · ${formatBytes(data.size_bytes)}</div>` +
+                `<div class="file-code">${linesHtml}</div>`;
+            // Scroll the highlighted line into view
+            const targetLine = modalBody.querySelector(`#file-line-${highlightLine}`);
+            if (targetLine) {
+                targetLine.scrollIntoView({ block: 'center' });
+            }
+        }
+    } catch (error) {
+        const modalBody = document.getElementById('file-modal-body');
+        if (modalBody) {
+            modalBody.innerHTML = `<div class="error-message"><strong>Error:</strong> ${escapeHtml(error.message)}</div>`;
+        }
+    }
+}
+
+function handleFileModalEscape(e) {
+    if (e.key === 'Escape') closeFileModal();
+}
+
+function closeFileModal() {
+    const modal = document.getElementById('file-modal');
+    if (modal) {
+        if (_fileModalOverlayListener) {
+            modal.removeEventListener('click', _fileModalOverlayListener);
+            _fileModalOverlayListener = null;
+        }
+        modal.remove();
+    }
+    document.removeEventListener('keydown', handleFileModalEscape);
 }
 
 // ============================================

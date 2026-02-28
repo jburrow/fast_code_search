@@ -723,6 +723,178 @@ input.search-disabled::placeholder {
 }
 
 /* ============================================
+   FILE VIEWER MODAL
+   ============================================ */
+
+/* "View" button on result items */
+.view-file-btn {
+    padding: 0.15rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.view-file-btn:hover {
+    background: var(--accent);
+    color: var(--bg-primary);
+    border-color: var(--accent);
+}
+
+/* Modal overlay */
+.file-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+}
+
+/* Modal dialog */
+.file-modal-dialog {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    width: 90vw;
+    max-width: 1100px;
+    height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+}
+
+/* Modal header bar */
+.file-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    gap: 0.75rem;
+    flex-shrink: 0;
+}
+
+.file-modal-path {
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.85rem;
+    color: var(--accent);
+    word-break: break-all;
+    flex: 1;
+    min-width: 0;
+}
+
+.file-modal-close {
+    background: none;
+    border: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.file-modal-close:hover {
+    background: var(--error);
+    color: var(--bg-primary);
+}
+
+/* Scrollable body */
+.file-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+    padding: 0;
+    background: var(--code-bg);
+}
+
+/* File stats line */
+.file-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding: 0.35rem 0.75rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* Code block */
+.file-code {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    padding: 0.5rem 0;
+}
+
+/* Individual line */
+.file-line {
+    display: flex;
+    align-items: baseline;
+    padding: 0 0.75rem;
+    min-height: 1.5em;
+}
+
+.file-line:hover {
+    background: var(--bg-secondary);
+}
+
+/* Highlighted match line */
+.file-line-highlight {
+    background: rgba(249, 226, 175, 0.12);
+    border-left: 3px solid var(--match-highlight);
+    padding-left: calc(0.75rem - 3px);
+}
+
+.file-line-highlight:hover {
+    background: rgba(249, 226, 175, 0.2);
+}
+
+/* Line number gutter */
+.file-line-num {
+    display: inline-block;
+    min-width: 3.5rem;
+    text-align: right;
+    color: var(--text-muted);
+    user-select: none;
+    padding-right: 1.25rem;
+    flex-shrink: 0;
+    font-size: 0.75rem;
+}
+
+/* Line content */
+.file-line-content {
+    flex: 1;
+    white-space: pre;
+    color: var(--text-primary);
+}
+
+@media (max-width: 768px) {
+    .file-modal-dialog {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+    }
+
+    .file-modal-overlay {
+        padding: 0;
+    }
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 @media (max-width: 768px) {
