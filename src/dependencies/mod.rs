@@ -4,7 +4,8 @@
 //! ranking of search results. Files that are imported by many other files
 //! receive a ranking boost.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Tracks import/dependency relationships between files in the index.
@@ -15,11 +16,11 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Default)]
 pub struct DependencyIndex {
     /// Map from file_id to the set of file_ids it imports
-    imports: HashMap<u32, HashSet<u32>>,
+    imports: FxHashMap<u32, FxHashSet<u32>>,
     /// Reverse index: file_id -> files that import it
-    imported_by: HashMap<u32, HashSet<u32>>,
+    imported_by: FxHashMap<u32, FxHashSet<u32>>,
     /// Cached import counts for fast scoring lookups
-    import_counts: HashMap<u32, u32>,
+    import_counts: FxHashMap<u32, u32>,
     /// Map from normalized path to file_id for import resolution
     path_to_id: HashMap<PathBuf, u32>,
     /// Inverted index: filename -> list of full paths (for fast non-relative import lookup)
@@ -139,7 +140,7 @@ impl DependencyIndex {
     pub fn add_imports_batch(&mut self, edges: Vec<(u32, u32)>) {
         // Track only the to_file IDs touched by this batch so we update
         // import_counts in O(batch) rather than O(N_total).
-        let mut touched_to_files = HashSet::new();
+        let mut touched_to_files = FxHashSet::default();
         for (from_file, to_file) in edges {
             self.imports.entry(from_file).or_default().insert(to_file);
             self.imported_by

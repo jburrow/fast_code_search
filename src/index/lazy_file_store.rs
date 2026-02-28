@@ -484,6 +484,33 @@ impl LazyFileStore {
         self.files.get(id as usize).map(|f| f.path.as_path())
     }
 
+    /// Find a file ID by exact path match (O(1)).
+    pub fn find_by_exact_path(&self, path: &Path) -> Option<u32> {
+        self.path_to_id.get(path).copied()
+    }
+
+    /// Find a file ID whose stored path ends with the given suffix (O(n)).
+    ///
+    /// This supports partial path lookups such as `"src/main.rs"` matching
+    /// `/home/user/project/src/main.rs`.  Suffix matching is used instead of
+    /// substring matching to avoid false positives: for example, looking for
+    /// `"bar.rs"` will NOT match `"bar_extra.rs"`.
+    ///
+    /// Returns the ID of the first file whose path ends with `suffix`, or
+    /// `None` if no file matches.
+    pub fn find_by_path_suffix(&self, suffix: &str) -> Option<u32> {
+        // Normalize to forward slashes so callers can use either separator.
+        let normalized = suffix.replace('\\', "/");
+        self.files.iter().enumerate().find_map(|(id, f)| {
+            let file_path = f.path.to_string_lossy().replace('\\', "/");
+            if file_path.ends_with(normalized.as_str()) {
+                Some(id as u32)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Get all file paths (no I/O needed)
     pub fn get_all_paths(&self) -> Vec<PathBuf> {
         self.files.iter().map(|f| f.path.clone()).collect()

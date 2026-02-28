@@ -7,7 +7,7 @@ use anyhow::Result;
 use memchr::memmem;
 use rayon::prelude::*;
 use regex::Regex;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
@@ -1772,6 +1772,17 @@ impl SearchEngine {
             FxHashSet::default()
         };
 
+        // Pre-compute a per-line symbol-name map for O(1) `is_symbol` lookup.
+        // Without this, checking whether a matching line contains a symbol whose
+        // name matches the regex requires an O(n_symbols) scan for every match.
+        let symbol_names_by_line: FxHashMap<usize, Vec<&str>> = symbols
+            .iter()
+            .filter(|s| s.symbol_type != crate::symbols::SymbolType::FileName)
+            .fold(FxHashMap::default(), |mut map, s| {
+                map.entry(s.line).or_default().push(s.name.as_str());
+                map
+            });
+
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
 
@@ -1813,11 +1824,11 @@ impl SearchEngine {
                     dependency_boost,
                 );
 
-                // Check if this is a symbol match - simple linear scan
-                let is_symbol = symbols
-                    .iter()
-                    .filter(|s| s.line == line_num)
-                    .any(|s| regex.is_match(&s.name));
+                // Check if this is a symbol match using the pre-computed per-line map (O(1) lookup)
+                let is_symbol = symbol_names_by_line
+                    .get(&line_num)
+                    .map(|names| names.iter().any(|name| regex.is_match(name)))
+                    .unwrap_or(false);
 
                 // Truncate long lines around the match
                 let truncated = truncate_around_match(line, m.start(), m.end());
@@ -1926,6 +1937,21 @@ impl SearchEngine {
             FxHashSet::default()
         };
 
+        // Pre-compute a per-line symbol-name map for O(1) `is_symbol` lookup.
+        // Without this, checking whether a matching line contains a symbol whose
+        // name contains the query requires an O(n_symbols) scan for every match —
+        // expensive when a common term appears on many lines in a file with many
+        // symbols.  Building the map costs O(n_symbols) once and then each
+        // per-match check is O(k) where k is the (usually 0 or 1) symbols on
+        // that particular line.
+        let symbol_names_by_line: FxHashMap<usize, Vec<&str>> = symbols
+            .iter()
+            .filter(|s| s.symbol_type != crate::symbols::SymbolType::FileName)
+            .fold(FxHashMap::default(), |mut map, s| {
+                map.entry(s.line).or_default().push(s.name.as_str());
+                map
+            });
+
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
 
@@ -1970,11 +1996,15 @@ impl SearchEngine {
                     dependency_boost,
                 );
 
-                // Check if this is a symbol match - simple linear scan over symbols on this line
-                let is_symbol = symbols
-                    .iter()
-                    .filter(|s| s.line == line_num)
-                    .any(|s| contains_case_insensitive(&s.name, query_lower));
+                // Check if this is a symbol match using the pre-computed per-line map (O(1) lookup)
+                let is_symbol = symbol_names_by_line
+                    .get(&line_num)
+                    .map(|names| {
+                        names
+                            .iter()
+                            .any(|name| contains_case_insensitive(name, query_lower))
+                    })
+                    .unwrap_or(false);
 
                 // Truncate long lines around the match
                 let truncated = truncate_around_match(line, match_start, match_end);
@@ -2058,17 +2088,22 @@ impl SearchEngine {
             .map(|f| f.path.to_string_lossy().to_string())
     }
 
-    /// Find file ID by path
+    /// Find file ID by path.
+    ///
+    /// Tries an exact match first (O(1)), then falls back to suffix matching
+    /// (O(n)) so that partial paths like `"src/main.rs"` resolve correctly.
+    /// Suffix matching uses `ends_with` to avoid false positives from substring
+    /// matches (e.g. looking for `"bar.rs"` will NOT match `"bar_extra.rs"`).
     pub fn find_file_id(&self, path: &str) -> Option<u32> {
-        for id in 0..self.file_store.len() as u32 {
-            if let Some(file) = self.file_store.get(id) {
-                let file_path = file.path.to_string_lossy();
-                if file_path.contains(path) || path.contains(&*file_path) {
-                    return Some(id);
-                }
-            }
+        // 1. Exact path match (O(1))
+        if let Some(id) = self
+            .file_store
+            .find_by_exact_path(std::path::Path::new(path))
+        {
+            return Some(id);
         }
-        None
+        // 2. Suffix / partial-path match (O(n))
+        self.file_store.find_by_path_suffix(path)
     }
 
     /// Save the index to a file for persistence
