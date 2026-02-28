@@ -1,0 +1,129 @@
+{
+  "name": "fast-code-search",
+  "displayName": "Fast Code Search",
+  "description": "High-performance code search powered by fast_code_search server (trigram indexing + optional semantic search)",
+  "version": "0.1.0",
+  "publisher": "fast-code-search",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jburrow/fast_code_search"
+  },
+  "bugs": {
+    "url": "https://github.com/jburrow/fast_code_search/issues"
+  },
+  "homepage": "https://github.com/jburrow/fast_code_search#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "search",
+    "code search",
+    "fast",
+    "trigram",
+    "semantic"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "enabledApiProposals": [
+    "textSearchProvider"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Fast Code Search",
+      "properties": {
+        "fastCodeSearch.keywordServer.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Hostname of the fast_code_search keyword server."
+        },
+        "fastCodeSearch.keywordServer.port": {
+          "type": "number",
+          "default": 8080,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port of the fast_code_search keyword server."
+        },
+        "fastCodeSearch.semanticServer.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable semantic search via the semantic server."
+        },
+        "fastCodeSearch.semanticServer.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Hostname of the fast_code_search semantic server."
+        },
+        "fastCodeSearch.semanticServer.port": {
+          "type": "number",
+          "default": 8081,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port of the fast_code_search semantic server."
+        },
+        "fastCodeSearch.preferSemanticSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use semantic search instead of keyword search by default."
+        },
+        "fastCodeSearch.maxResults": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Maximum number of search results to return."
+        },
+        "fastCodeSearch.symbolsOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Search only in symbol definitions (functions, classes)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "fastCodeSearch.toggleSemanticMode",
+        "title": "Fast Code Search: Toggle Semantic Search Mode"
+      },
+      {
+        "command": "fastCodeSearch.toggleSymbolsOnly",
+        "title": "Fast Code Search: Toggle Symbols-Only Mode"
+      },
+      {
+        "command": "fastCodeSearch.showServerStatus",
+        "title": "Fast Code Search: Show Server Status"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "fastCodeSearch.toggleSemanticMode",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "build:dev": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+    "compile": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "esbuild": "^0.20.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0"
+  }
+}
