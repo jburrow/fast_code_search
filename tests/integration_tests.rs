@@ -121,7 +121,7 @@ async fn setup_test_server() -> Result<TestContext> {
     // Start HTTP server on random port
     let http_listener = TcpListener::bind("127.0.0.1:0").await?;
     let http_addr = http_listener.local_addr()?;
-    let router = create_router(engine, progress, progress_tx);
+    let router = create_router(engine, progress, progress_tx, None);
 
     tokio::spawn(async move {
         axum::serve(http_listener, router)
@@ -1364,7 +1364,7 @@ async fn setup_super_test_server() -> Result<TestContext> {
     // HTTP server
     let http_listener = TcpListener::bind("127.0.0.1:0").await?;
     let http_addr = http_listener.local_addr()?;
-    let router = create_router(engine, progress, progress_tx);
+    let router = create_router(engine, progress, progress_tx, None);
     tokio::spawn(async move {
         axum::serve(http_listener, router)
             .await

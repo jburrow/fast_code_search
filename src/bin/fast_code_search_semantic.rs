@@ -45,6 +45,12 @@ struct Args {
     /// Generate template config and exit
     #[arg(long, value_name = "FILE")]
     init: Option<PathBuf>,
+
+    /// Serve static UI files from this directory instead of the embedded assets.
+    /// Useful during development: UI changes are visible without recompiling.
+    /// Example: --static-dir static
+    #[arg(long, value_name = "DIR")]
+    static_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -313,6 +319,19 @@ async fn main() -> Result<()> {
         let web_progress = Arc::clone(&shared_progress);
         let web_progress_tx = progress_tx.clone();
 
+        // CLI flag takes precedence over config file value
+        let static_dir = args.static_dir.clone().or_else(|| {
+            config
+                .server
+                .static_dir
+                .as_ref()
+                .map(std::path::PathBuf::from)
+        });
+
+        if let Some(ref dir) = static_dir {
+            info!(dir = %dir.display(), "Serving static UI files from disk (development mode)");
+        }
+
         info!(web_address = %web_addr, "Starting Web UI server");
 
         tokio::spawn(async move {
@@ -320,6 +339,7 @@ async fn main() -> Result<()> {
                 engine: web_engine,
                 progress: web_progress,
                 progress_tx: web_progress_tx,
+                static_dir,
             };
             let router = semantic_web::create_router(state);
             let listener = tokio::net::TcpListener::bind(&web_addr)

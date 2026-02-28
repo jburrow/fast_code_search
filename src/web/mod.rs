@@ -5,11 +5,13 @@ mod api;
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
 use axum::{
     body::Body,
+    extract::State,
     http::{header, Response, StatusCode},
     routing::get,
     Router,
 };
 use rust_embed::RustEmbed;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -27,6 +29,9 @@ pub struct WebState {
     pub engine: AppState,
     pub progress: SharedIndexingProgress,
     pub progress_tx: ProgressBroadcaster,
+    /// When set, static files are served from this directory on disk instead of
+    /// the embedded assets.  Intended for development use only.
+    pub static_dir: Option<PathBuf>,
 }
 
 /// Create the web router with all routes
@@ -34,6 +39,7 @@ pub fn create_router(
     engine: AppState,
     progress: SharedIndexingProgress,
     progress_tx: ProgressBroadcaster,
+    static_dir: Option<PathBuf>,
 ) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -44,6 +50,7 @@ pub fn create_router(
         engine,
         progress,
         progress_tx,
+        static_dir,
     };
 
     Router::new()
@@ -66,18 +73,59 @@ pub fn create_router(
 }
 
 /// Serve index.html
-async fn index_handler() -> Response<Body> {
-    serve_static_file("index.html")
+async fn index_handler(State(state): State<WebState>) -> Response<Body> {
+    serve_static_file("index.html", state.static_dir.as_deref())
 }
 
-/// Serve static files from embedded assets
-async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> Response<Body> {
-    serve_static_file(&path)
+/// Serve static files from embedded assets or from disk
+async fn static_handler(
+    State(state): State<WebState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response<Body> {
+    serve_static_file(&path, state.static_dir.as_deref())
 }
 
-fn serve_static_file(path: &str) -> Response<Body> {
+fn serve_static_file(path: &str, static_dir: Option<&std::path::Path>) -> Response<Body> {
     // Remove leading slash if present
     let path = path.trim_start_matches('/');
+
+    // If a static directory is configured, serve directly from disk so that
+    // UI changes are picked up without recompiling the server.
+    if let Some(dir) = static_dir {
+        // Reject paths with directory traversal components before hitting the
+        // filesystem.  This is intentionally conservative: legitimate static
+        // asset paths never contain "..".
+        if path.contains("..") {
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::from("Forbidden"))
+                .unwrap();
+        }
+
+        let file_path = dir.join(path);
+        match std::fs::read(&file_path) {
+            Ok(data) => {
+                let mime = mime_guess::from_path(path).first_or_octet_stream();
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, mime.as_ref())
+                    .header(header::CACHE_CONTROL, "no-cache")
+                    .body(Body::from(data))
+                    .unwrap();
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %file_path.display(),
+                    error = %e,
+                    "Failed to read static file from disk"
+                );
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("Not Found"))
+                    .unwrap();
+            }
+        }
+    }
 
     match StaticAssets::get(path) {
         Some(content) => {

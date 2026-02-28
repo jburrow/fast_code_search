@@ -100,6 +100,17 @@ pub struct ServerConfig {
     /// Enable the web UI and REST API
     #[serde(default = "default_enable_web_ui")]
     pub enable_web_ui: bool,
+
+    /// Serve static UI files from this directory instead of the embedded assets.
+    ///
+    /// When set, the web server reads HTML/CSS/JS files directly from disk on
+    /// every request so that UI changes are visible without recompiling the
+    /// server.  Leave unset (the default) for production deployments where the
+    /// embedded assets should be used.
+    ///
+    /// Example: `static_dir = "static"`
+    #[serde(default)]
+    pub static_dir: Option<String>,
 }
 
 /// Indexer-related configuration
@@ -224,6 +235,7 @@ impl Default for ServerConfig {
             address: default_address(),
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
+            static_dir: None,
         }
     }
 }
@@ -365,6 +377,12 @@ web_address = "0.0.0.0:8080"
 
 # Enable the web UI and REST API (default: true)
 enable_web_ui = true
+
+# Serve static UI files from a directory on disk instead of embedded assets.
+# When set, the web server reads HTML/CSS/JS files from this path on every
+# request so that UI edits are visible without recompiling the server.
+# Useful during development; leave commented out for production.
+# static_dir = "static"
 
 [indexer]
 # Paths to index on startup
