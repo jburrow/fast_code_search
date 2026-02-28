@@ -714,6 +714,19 @@ fn progress_to_status(
     }
 }
 
+/// Truncate a string to at most `max_bytes` bytes, ensuring the cut point falls
+/// on a UTF-8 character boundary to avoid panics with multi-byte characters.
+fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Handle diagnostics requests with self-tests
 pub async fn diagnostics_handler(
     State(state): State<WebState>,
@@ -809,12 +822,8 @@ pub async fn diagnostics_handler(
                 .and_then(|s| s.to_str())
                 .unwrap_or("test");
 
-            // Take first 8 chars or full name if shorter
-            let search_term = if file_name.len() > 8 {
-                &file_name[..8]
-            } else {
-                file_name
-            };
+            // Take first 8 bytes or full name if shorter, respecting UTF-8 boundaries
+            let search_term = safe_truncate(file_name, 8);
 
             let search_results = engine.search(search_term, 100);
             let found = search_results.iter().any(|r| {
@@ -878,13 +887,9 @@ pub async fn diagnostics_handler(
                         .collect();
 
                     if let Some(sample_line) = lines.choose(&mut rng) {
-                        // Take a substring to search for (avoid special chars at boundaries)
+                        // Take a substring to search for, respecting UTF-8 boundaries
                         let search_term = sample_line.trim();
-                        let search_term_slice = if search_term.len() > 30 {
-                            &search_term[..30]
-                        } else {
-                            search_term
-                        };
+                        let search_term_slice = safe_truncate(search_term, 30);
 
                         let search_results = engine.search(search_term_slice, 50);
                         let found = search_results.iter().any(|r| {
@@ -912,7 +917,7 @@ pub async fn diagnostics_handler(
                             )
                             .with_details(format!(
                                 "Searched for '{}...' from file '{}'",
-                                &search_term_slice[..search_term_slice.len().min(20)],
+                                safe_truncate(search_term_slice, 20),
                                 test_file_path
                             ))
                         });

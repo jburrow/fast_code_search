@@ -237,22 +237,9 @@ impl TestSummary {
     }
 }
 
-/// Format bytes as human-readable string
-pub fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} bytes", bytes)
-    }
-}
+/// Format bytes as human-readable string.
+/// Re-exported from `crate::utils::format_bytes` to avoid duplication.
+pub use crate::utils::format_bytes;
 
 // ============================================================================
 // Semantic Search Diagnostics
@@ -334,7 +321,7 @@ pub fn get_timestamp() -> String {
     // Format as ISO 8601
     let secs = now.as_secs();
     let datetime = chrono::DateTime::from_timestamp(secs as i64, 0)
-        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
     datetime.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 

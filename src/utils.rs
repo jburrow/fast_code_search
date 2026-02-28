@@ -124,7 +124,7 @@ pub fn get_binary_extensions() -> HashSet<&'static str> {
 pub fn has_binary_extension(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
         let ext = ext.to_string_lossy().to_lowercase();
-        get_binary_extensions().contains(ext.as_str())
+        BINARY_EXTENSIONS.contains(&ext.as_str())
     } else {
         false
     }
@@ -344,6 +344,7 @@ mod tests {
 
     #[test]
     fn test_format_bytes() {
+        assert_eq!(format_bytes(0), "0 bytes");
         assert_eq!(format_bytes(500), "500 bytes");
         assert_eq!(format_bytes(1024), "1.00 KB");
         assert_eq!(format_bytes(1536), "1.50 KB");
