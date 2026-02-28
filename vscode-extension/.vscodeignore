@@ -1,7 +1,9 @@
-dist
 out
 node_modules
 .vscode-test
 *.vsix
 *.js.map
 .eslintrc.js
+src
+tsconfig.json
+.eslintrc.json

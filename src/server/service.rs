@@ -213,12 +213,18 @@ impl CodeSearch for CodeSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
-        let query = req.query;
+        let query = req.query.trim().to_string();
         let max_results = req.max_results.clamp(1, 1000) as usize;
         let include_patterns = req.include_paths.join(";");
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
+
+        // Return empty stream immediately for empty queries, consistent with REST API.
+        if query.is_empty() {
+            let (_, rx) = tokio::sync::mpsc::channel::<Result<SearchResult, Status>>(1);
+            return Ok(Response::new(ReceiverStream::new(rx)));
+        }
 
         // Use try_read to avoid blocking a tokio worker thread when a write lock is
         // held during indexing.  Blocking here would cause tasks to pile up and

@@ -61,7 +61,7 @@ jobs:
 
       - name: Upload .vsix as release asset
         uses: softprops/action-gh-release@v2
-        if: github.event_name == 'push'
+        if: success() && github.event_name == 'push'
         with:
           files: vscode-extension/fast-code-search-${{ steps.version.outputs.VERSION }}.vsix
         env:
