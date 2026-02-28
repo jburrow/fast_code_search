@@ -1,0 +1,66 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+            ${{ runner.os }}-cargo-
+
+      - name: Run search benchmarks
+        run: cargo bench --bench search_benchmark -- --output-format bencher | tee bench_output.txt
+
+      - name: Run persistence benchmarks
+        run: cargo bench --bench persistence_benchmark -- --output-format bencher | tee -a bench_output.txt
+
+      - name: Run validator (functional performance test)
+        run: cargo run --release --bin fast_code_search_validator -- --json --corpus-size 200 | tee validator_output.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            bench_output.txt
+            validator_output.json
+
+      - name: Store benchmark results for trend tracking
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: fast_code_search Benchmarks
+          tool: cargo
+          output-file-path: bench_output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          comment-on-alert: true
+          alert-threshold: '200%'
+          fail-on-alert: false

@@ -120,6 +120,10 @@ dhat = "0.3"
 name = "search_benchmark"
 harness = false
 
+[[bench]]
+name = "persistence_benchmark"
+harness = false
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 
