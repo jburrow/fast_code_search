@@ -495,6 +495,81 @@ pub async fn dependencies_handler(
     })?
 }
 
+/// Query parameters for file content endpoint
+#[derive(Debug, Deserialize)]
+pub struct FileQuery {
+    /// File path to retrieve
+    file: String,
+}
+
+/// File content response
+#[derive(Debug, Serialize)]
+pub struct FileResponse {
+    pub file: String,
+    pub content: String,
+    pub size_bytes: usize,
+    pub line_count: usize,
+}
+
+/// Return the full content of a file by path
+pub async fn file_handler(
+    State(state): State<WebState>,
+    Query(params): Query<FileQuery>,
+) -> Result<Json<FileResponse>, (StatusCode, String)> {
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            ),
+        })?;
+
+        let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("File not found: {}", params.file),
+            )
+        })?;
+
+        let mapped = engine.file_store.get(file_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("File not found in store: {}", params.file),
+            )
+        })?;
+
+        let content = mapped.as_str().map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("File is not valid UTF-8: {}", e),
+            )
+        })?;
+
+        let size_bytes = content.len();
+        let line_count = content.lines().count();
+        let file_path = mapped.path.to_string_lossy().to_string();
+
+        Ok(Json(FileResponse {
+            file: file_path,
+            content: content.to_string(),
+            size_bytes,
+            line_count,
+        }))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Task join error: {}", e),
+        )
+    })?
+}
+
 /// WebSocket upgrade handler for progress streaming
 pub async fn ws_progress_handler(
     State(state): State<WebState>,
