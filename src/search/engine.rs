@@ -113,9 +113,20 @@ fn truncate_around_match(line: &str, match_start: usize, match_end: usize) -> Tr
     let safe_end = find_char_boundary_ceil(line, window_end);
 
     // Build truncated string with ellipsis indicators
-    let mut result = String::with_capacity(safe_end - safe_start + 2);
+    // "…" (U+2026) is 3 bytes in UTF-8; pre-allocate enough space for both ellipses.
+    const ELLIPSIS_BYTE_LEN: usize = '…'.len_utf8(); // 3
     let prefix_truncated = safe_start > 0;
     let suffix_truncated = safe_end < line.len();
+    let extra_bytes = if prefix_truncated {
+        ELLIPSIS_BYTE_LEN
+    } else {
+        0
+    } + if suffix_truncated {
+        ELLIPSIS_BYTE_LEN
+    } else {
+        0
+    };
+    let mut result = String::with_capacity(safe_end - safe_start + extra_bytes);
 
     if prefix_truncated {
         result.push('…');
@@ -125,15 +136,16 @@ fn truncate_around_match(line: &str, match_start: usize, match_end: usize) -> Tr
         result.push('…');
     }
 
-    // Adjust match positions relative to the new string
+    // Adjust match positions relative to the new string.
+    // "…" is 3 bytes in UTF-8, so the prefix shifts byte offsets by ELLIPSIS_BYTE_LEN.
     let offset = safe_start;
     let new_match_start = if prefix_truncated {
-        match_start - offset + 1 // +1 for the ellipsis
+        match_start - offset + ELLIPSIS_BYTE_LEN
     } else {
         match_start - offset
     };
     let new_match_end = if prefix_truncated {
-        match_end - offset + 1
+        match_end - offset + ELLIPSIS_BYTE_LEN
     } else {
         match_end - offset
     };
@@ -3647,6 +3659,100 @@ fn HelloWorld() {
         assert!(
             results.is_empty(),
             "Should NOT find badger_thatcher when it is not in the content"
+        );
+    }
+
+    /// `truncate_around_match` match positions: no truncation case.
+    /// When the line is short enough, positions should be returned unchanged.
+    #[test]
+    fn test_truncate_around_match_no_truncation() {
+        let line = "hello world"; // shorter than MAX_CONTENT_LENGTH
+        let result = truncate_around_match(line, 6, 11); // "world"
+        assert!(!result.was_truncated);
+        assert_eq!(result.match_start, 6);
+        assert_eq!(result.match_end, 11);
+        assert_eq!(
+            &result.content[result.match_start..result.match_end],
+            "world"
+        );
+    }
+
+    /// `truncate_around_match` match positions: prefix-only truncation.
+    /// The prefix "…" is 3 bytes (UTF-8 U+2026), so match positions must be
+    /// shifted by 3, not 1.
+    #[test]
+    fn test_truncate_around_match_prefix_ellipsis_is_3_bytes() {
+        // Build a line long enough to trigger truncation (> MAX_CONTENT_LENGTH = 500).
+        // The match is placed far enough from the start that the window will cut
+        // the prefix (match_start > MATCH_CONTEXT_CHARS = 200).
+        let prefix = "x".repeat(300); // 300 bytes before the match
+        let needle = "TARGET";
+        let suffix = "y".repeat(300); // 300 bytes after the match → total > 500
+        let line = format!("{prefix}{needle}{suffix}");
+
+        let match_start = 300; // byte offset of "TARGET" in `line`
+        let match_end = 306; // "TARGET".len() == 6
+
+        assert!(line.len() > 500, "line must exceed MAX_CONTENT_LENGTH");
+        assert!(
+            match_start > 200,
+            "match must be far enough right to trigger prefix truncation"
+        );
+
+        let result = truncate_around_match(&line, match_start, match_end);
+
+        assert!(result.was_truncated, "Long line should be truncated");
+
+        // The returned content should start with "…" (3 bytes) when prefix is cut.
+        assert!(
+            result.content.starts_with('…'),
+            "Truncated content with cut prefix should start with '…'"
+        );
+
+        // The byte slice at [match_start..match_end] in the truncated content
+        // must equal the original needle.
+        let truncated_slice = &result.content[result.match_start..result.match_end];
+        assert_eq!(
+            truncated_slice, needle,
+            "match_start/match_end must point to the needle in the truncated content; \
+             got '{truncated_slice}' (expected '{needle}'). \
+             This catches the off-by-2 bug where +1 was used instead of +3 for the 3-byte '…'."
+        );
+    }
+
+    /// `truncate_around_match` match positions: suffix-only truncation.
+    /// No prefix ellipsis, so positions should only be shifted by the safe_start offset.
+    #[test]
+    fn test_truncate_around_match_suffix_only_no_shift() {
+        // Match near the beginning — prefix won't be cut, but suffix will.
+        // Total line > 500 bytes (MAX_CONTENT_LENGTH).
+        let needle = "TARGET";
+        let suffix = "z".repeat(600); // 600 bytes after → total > 500
+        let line = format!("{needle}{suffix}");
+
+        assert!(line.len() > 500, "line must exceed MAX_CONTENT_LENGTH");
+
+        let match_start = 0;
+        let match_end = needle.len();
+
+        let result = truncate_around_match(&line, match_start, match_end);
+
+        assert!(result.was_truncated, "Long line should be truncated");
+
+        // No prefix ellipsis
+        assert!(
+            !result.content.starts_with('…'),
+            "No prefix cut means content should not start with '…'"
+        );
+        assert!(
+            result.content.ends_with('…'),
+            "Suffix cut means content should end with '…'"
+        );
+
+        let truncated_slice = &result.content[result.match_start..result.match_end];
+        assert_eq!(
+            truncated_slice, needle,
+            "match_start/match_end must point to the needle even with suffix-only truncation"
         );
     }
 }
