@@ -1169,7 +1169,13 @@ impl SearchEngine {
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
         let query_lower = query.to_lowercase();
-        let candidate_docs = self.trigram_index.search(&query_lower);
+        // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
+        // all documents so that short terms like `_` or `__` return results.
+        let candidate_docs = if query_lower.len() >= 3 {
+            self.trigram_index.search(&query_lower)
+        } else {
+            self.trigram_index.all_documents()
+        };
         let total_candidates = candidate_docs.len() as usize;
 
         // Determine effective ranking mode
@@ -1378,7 +1384,13 @@ impl SearchEngine {
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
         let query_lower = query.to_lowercase();
-        let candidate_docs = self.trigram_index.search(&query_lower);
+        // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
+        // all documents so that short terms like `_` or `__` return results.
+        let candidate_docs = if query_lower.len() >= 3 {
+            self.trigram_index.search(&query_lower)
+        } else {
+            self.trigram_index.all_documents()
+        };
 
         // Apply path filter
         let filtered_docs = if path_filter.is_empty() {
@@ -3482,5 +3494,94 @@ fn HelloWorld() {
             ..Default::default()
         };
         assert_eq!(progress.progress_percent(), 92);
+    }
+
+    /// Fix: Short queries (< 3 bytes) should fall back to scanning all documents
+    /// rather than returning empty results from the trigram index.
+    /// This is particularly important for `_` (wildcard variable), `__` (Python dunder prefix),
+    /// and other short but common code search terms.
+    #[test]
+    fn test_short_query_underscore_returns_results() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.py");
+
+        fs::write(
+            &file_path,
+            "class MyClass:\n    def __init__(self):\n        _ = unused_value\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Single `_` — 1 byte, no trigrams can be extracted.
+        // Before the fix this returned 0 results; now it falls back to full scan.
+        let results = engine.search("_", 10);
+        assert!(
+            !results.is_empty(),
+            "Searching for `_` should find lines containing underscore"
+        );
+
+        // `__` — 2 bytes, still no trigrams.
+        let results = engine.search("__", 10);
+        assert!(
+            !results.is_empty(),
+            "Searching for `__` should find dunder-style identifiers"
+        );
+    }
+
+    /// Compound underscore terms like `badger_farmer` must be found case-insensitively.
+    /// The trigram index includes cross-underscore trigrams (e.g. `er_`, `r_f`, `_fa`),
+    /// so a document containing the term will always be a candidate.
+    #[test]
+    fn test_compound_underscore_term_search() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        fs::write(
+            &file_path,
+            "fn badger_farmer(x: u32) -> u32 { x + 1 }\nfn other_func() {}\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        // Exact-case search.
+        let results = engine.search("badger_farmer", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "Should find line containing badger_farmer"
+        );
+
+        // Case-insensitive: UPPER_CASE query should match lower-case content.
+        let results = engine.search("BADGER_FARMER", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "UPPER case query should find badger_farmer (case-insensitive)"
+        );
+
+        // Prefix ending with underscore.
+        let results = engine.search("badger_", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "Prefix 'badger_' should find badger_farmer"
+        );
+
+        // Suffix starting with underscore.
+        let results = engine.search("_farmer", 10);
+        assert!(
+            results.iter().any(|r| r.content.contains("badger_farmer")),
+            "Suffix '_farmer' should find badger_farmer"
+        );
+
+        // Unrelated term must not match.
+        let results = engine.search("badger_thatcher", 10);
+        assert!(
+            results.is_empty(),
+            "Should NOT find badger_thatcher when it is not in the content"
+        );
     }
 }
