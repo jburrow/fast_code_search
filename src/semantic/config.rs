@@ -101,6 +101,17 @@ pub struct SemanticServerConfig {
     /// Enable the web UI and REST API
     #[serde(default = "default_enable_web_ui")]
     pub enable_web_ui: bool,
+
+    /// Serve static UI files from this directory instead of the embedded assets.
+    ///
+    /// When set, the web server reads HTML/CSS/JS files directly from disk on
+    /// every request so that UI changes are visible without recompiling the
+    /// server.  Leave unset (the default) for production deployments where the
+    /// embedded assets should be used.
+    ///
+    /// Example: `static_dir = "static"`
+    #[serde(default)]
+    pub static_dir: Option<String>,
 }
 
 /// Indexer-related configuration
@@ -214,6 +225,7 @@ impl Default for SemanticServerConfig {
             address: default_grpc_address(),
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
+            static_dir: None,
         }
     }
 }

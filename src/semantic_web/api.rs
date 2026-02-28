@@ -59,6 +59,9 @@ pub struct WebState {
     pub engine: EngineState,
     pub progress: SharedSemanticProgress,
     pub progress_tx: SemanticProgressBroadcaster,
+    /// When set, static files are served from this directory on disk instead of
+    /// the embedded assets.  Intended for development use only.
+    pub static_dir: Option<std::path::PathBuf>,
 }
 
 /// Search query parameters
