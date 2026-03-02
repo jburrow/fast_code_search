@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>fast_code_search — High-performance in-memory code search</title>
+  <meta name="description" content="Trigram-indexed, symbol-aware code search for 10GB+ codebases. Sub-millisecond search via gRPC and REST APIs." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ─── NAV ─── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-logo" href="#">⚡ fast_code_search</a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#tests">Tests</a></li>
+      <li><a href="#benchmarks">Benchmarks</a></li>
+      <li><a href="#coverage">Coverage</a></li>
+      <li><a href="#changelog">Changelog</a></li>
+      <li><a href="#getting-started">Get Started</a></li>
+      <li>
+        <a class="nav-github" href="https://github.com/jburrow/fast_code_search" target="_blank" rel="noopener">
+          <svg height="20" viewBox="0 0 16 16" width="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+      <li>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Toggle light/dark mode">
+          <span class="theme-icon">🌙</span>
+        </button>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ─── HERO ─── -->
+<header class="hero">
+  <div class="container">
+    <div class="hero-badge">v<span id="version">0.6.9</span></div>
+    <h1 class="hero-title">⚡ fast_code_search</h1>
+    <p class="hero-subtitle">
+      High-performance, in-memory code search for <strong>10 GB+ codebases</strong>.<br />
+      Trigram indexing · Tree-sitter symbol awareness · Sub-millisecond search · gRPC + REST APIs
+    </p>
+    <div class="badge-row">
+      <a href="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml" target="_blank" rel="noopener">
+        <img src="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml/badge.svg" alt="CI Status" />
+      </a>
+      <a href="https://codecov.io/gh/jburrow/fast_code_search" target="_blank" rel="noopener">
+        <img src="https://codecov.io/gh/jburrow/fast_code_search/branch/main/graph/badge.svg" alt="Coverage" />
+      </a>
+      <a href="https://crates.io/crates/fast_code_search" target="_blank" rel="noopener">
+        <img src="https://img.shields.io/crates/v/fast_code_search.svg?logo=rust" alt="Crates.io" />
+      </a>
+      <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License MIT" />
+      <img src="https://img.shields.io/badge/rust-stable-orange.svg?logo=rust" alt="Rust stable" />
+    </div>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#getting-started">Get Started</a>
+      <a class="btn btn-secondary" href="https://github.com/jburrow/fast_code_search/releases" target="_blank" rel="noopener">Releases</a>
+    </div>
+  </div>
+</header>
+
+<!-- ─── ENGINES ─── -->
+<section class="section" id="features">
+  <div class="container">
+    <h2 class="section-title">Two Search Engines, One Platform</h2>
+    <p class="section-subtitle">Choose the right tool for the query — or use both together</p>
+    <div class="engine-grid">
+      <div class="engine-card engine-keyword">
+        <div class="engine-icon">🔍</div>
+        <h3>Keyword Search</h3>
+        <div class="engine-meta">Port 8080 / gRPC 50051</div>
+        <p>Trigram-indexed, AST-aware search. Zero cold-start. Best for exact code patterns, function calls, and variable names.</p>
+        <ul class="engine-features">
+          <li>Roaring bitmap trigram index</li>
+          <li>Tree-sitter symbol extraction (12+ languages)</li>
+          <li>PageRank-style import graph scoring</li>
+          <li>Regex with trigram acceleration</li>
+          <li>Parallel search via rayon</li>
+          <li>File watcher &amp; incremental indexing</li>
+          <li>Index persistence (disk save/load)</li>
+          <li>Symbols-only search mode</li>
+        </ul>
+        <p class="engine-example"><code>fn main</code> · <code>class.*Handler</code> · <code>import useState</code></p>
+      </div>
+      <div class="engine-card engine-semantic">
+        <div class="engine-icon">🧠</div>
+        <h3>Semantic Search</h3>
+        <div class="engine-meta">Port 8081 / gRPC 50052 · optional</div>
+        <p>Understands code <em>meaning</em>. Best for natural language queries that don't map to exact token matches.</p>
+        <ul class="engine-features">
+          <li>TF-IDF (fast, zero dependencies)</li>
+          <li>CodeBERT / UniXcoder ML embeddings</li>
+          <li>HNSW vector index for similarity search</li>
+          <li>Code-aware chunking (functions, classes)</li>
+          <li>ONNX Runtime inference</li>
+          <li>Model SHA-256 integrity checks</li>
+        </ul>
+        <p class="engine-example"><code>"retry with exponential backoff"</code> · <code>"validate user input"</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FEATURE GRID ─── -->
+<section class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">Why fast_code_search?</h2>
+    <p class="section-subtitle">Unlike CLI tools or disk-based indexes, it runs as an always-on, in-memory server</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🚀</div>
+        <h4>Sub-millisecond</h4>
+        <p>Index always hot in RAM — no disk I/O on queries. Memory access is 100–1000× faster than SSD.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <h4>10 GB+ Codebases</h4>
+        <p>Memory-mapped files via <code>memmap2</code>. Handles 600k+ files without loading everything into RAM.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚙️</div>
+        <h4>Symbol Awareness</h4>
+        <p>Tree-sitter parses Rust, Python, JS/TS, Go, C/C++, Java, C#, Ruby, PHP, Bash and more.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📡</div>
+        <h4>Dual API</h4>
+        <p>gRPC streaming (tonic) for IDE plugins. REST/JSON (axum) for scripts and web UIs.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📈</div>
+        <h4>Smart Scoring</h4>
+        <p>Symbol defs (3×), exact match (2×), src/lib dirs (1.5×), PageRank import boost.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔄</div>
+        <h4>Live Indexing</h4>
+        <p>File watcher tracks filesystem changes. Incremental re-indexing keeps the index fresh.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💾</div>
+        <h4>Index Persistence</h4>
+        <p>Save the full index (v3 format with symbols &amp; deps) to disk. Checkpoints during large builds.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🌐</div>
+        <h4>Embedded Web UI</h4>
+        <p>Browser-based search on port 8080. Static assets compiled into the binary — zero deployment friction.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── TEST RESULTS ─── -->
+<section class="section" id="tests">
+  <div class="container">
+    <h2 class="section-title">Test Results</h2>
+    <p class="section-subtitle">Tested on every push and pull request across Linux, Windows, and macOS</p>
+    <div class="status-grid">
+      <a class="status-card" href="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml" target="_blank" rel="noopener">
+        <img src="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI badge" class="status-badge-img" />
+        <div class="status-label">Build &amp; Test</div>
+        <div class="status-sublabel">Ubuntu · Windows · macOS</div>
+      </a>
+      <a class="status-card" href="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml" target="_blank" rel="noopener">
+        <img src="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml/badge.svg?branch=main&event=push" alt="Lint badge" class="status-badge-img" />
+        <div class="status-label">Lint &amp; Format</div>
+        <div class="status-sublabel">clippy · rustfmt</div>
+      </a>
+      <a class="status-card" href="https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml" target="_blank" rel="noopener">
+        <img src="https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml/badge.svg?branch=main" alt="Benchmark badge" class="status-badge-img" />
+        <div class="status-label">Benchmarks</div>
+        <div class="status-sublabel">Criterion · Validator</div>
+      </a>
+    </div>
+    <div class="matrix-table-wrap">
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th>Suite</th>
+            <th>ubuntu-latest</th>
+            <th>windows-latest</th>
+            <th>macos-latest</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>cargo build</code></td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-pass">✅</td>
+          </tr>
+          <tr>
+            <td><code>cargo test</code></td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-pass">✅</td>
+          </tr>
+          <tr>
+            <td><code>cargo clippy</code></td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-na">—</td>
+            <td class="cell-na">—</td>
+          </tr>
+          <tr>
+            <td><code>cargo fmt</code></td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-na">—</td>
+            <td class="cell-na">—</td>
+          </tr>
+          <tr>
+            <td><code>cargo llvm-cov</code></td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-na">—</td>
+            <td class="cell-na">—</td>
+          </tr>
+          <tr>
+            <td><code>validator --json</code></td>
+            <td class="cell-pass">✅</td>
+            <td class="cell-na">—</td>
+            <td class="cell-na">—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note">
+      Status is updated on every push to <code>main</code>.
+      <a href="https://github.com/jburrow/fast_code_search/actions" target="_blank" rel="noopener">View full run history →</a>
+    </p>
+  </div>
+</section>
+
+<!-- ─── BENCHMARKS ─── -->
+<section class="section section-alt" id="benchmarks">
+  <div class="container">
+    <h2 class="section-title">Performance Benchmarks</h2>
+    <p class="section-subtitle">Criterion benchmarks tracked over time — historical trend data powered by <a href="https://github.com/benchmark-action/github-action-benchmark" target="_blank" rel="noopener">github-action-benchmark</a></p>
+
+    <div class="bench-stats">
+      <div class="bench-stat">
+        <div class="bench-stat-value">&lt; 1 ms</div>
+        <div class="bench-stat-label">Typical search latency</div>
+      </div>
+      <div class="bench-stat">
+        <div class="bench-stat-value">10 GB+</div>
+        <div class="bench-stat-label">Max codebase size</div>
+      </div>
+      <div class="bench-stat">
+        <div class="bench-stat-value">600k+</div>
+        <div class="bench-stat-label">Files indexed</div>
+      </div>
+      <div class="bench-stat">
+        <div class="bench-stat-value">12+</div>
+        <div class="bench-stat-label">Languages supported</div>
+      </div>
+    </div>
+
+    <div class="bench-suites">
+      <div class="bench-suite-card">
+        <h4>search_benchmark</h4>
+        <p>Text search, regex search, filtered search across synthetic and real corpora. Measures throughput and latency percentiles.</p>
+      </div>
+      <div class="bench-suite-card">
+        <h4>persistence_benchmark</h4>
+        <p>Save/load index, trigram deserialization, file staleness checks. Validates startup time at scale.</p>
+      </div>
+      <div class="bench-suite-card">
+        <h4>Validator (functional)</h4>
+        <p>200-file synthetic corpus. Verifies index completeness, line number accuracy, symbol extraction, path filtering, and query correctness.</p>
+      </div>
+    </div>
+
+    <div class="bench-chart-wrap">
+      <iframe
+        id="benchChart"
+        src="dev/bench/index.html"
+        title="Benchmark trend charts"
+        class="bench-iframe"
+        loading="lazy"
+      ></iframe>
+      <div class="bench-fallback" id="benchFallback" style="display:none">
+        <p>📊 Benchmark charts are generated automatically on every push to <code>main</code>.</p>
+        <a class="btn btn-secondary" href="dev/bench/index.html">Open benchmark dashboard →</a>
+      </div>
+    </div>
+    <p class="table-note">
+      <a href="dev/bench/index.html" target="_blank" rel="noopener">Open full benchmark dashboard in new tab →</a>
+      &nbsp;|&nbsp;
+      <a href="https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml" target="_blank" rel="noopener">Latest benchmark run →</a>
+    </p>
+  </div>
+</section>
+
+<!-- ─── COVERAGE ─── -->
+<section class="section" id="coverage">
+  <div class="container">
+    <h2 class="section-title">Code Coverage</h2>
+    <p class="section-subtitle">Generated via <code>cargo-llvm-cov</code> on every CI run</p>
+    <div class="coverage-grid">
+      <div class="coverage-card">
+        <a href="https://codecov.io/gh/jburrow/fast_code_search" target="_blank" rel="noopener">
+          <img src="https://codecov.io/gh/jburrow/fast_code_search/graphs/sunburst.svg?token=PLACEHOLDER" alt="Coverage sunburst" class="coverage-sunburst" />
+        </a>
+        <div class="coverage-badge-wrap">
+          <a href="https://codecov.io/gh/jburrow/fast_code_search" target="_blank" rel="noopener">
+            <img src="https://codecov.io/gh/jburrow/fast_code_search/branch/main/graph/badge.svg" alt="Codecov" />
+          </a>
+        </div>
+        <p>View detailed coverage on <a href="https://codecov.io/gh/jburrow/fast_code_search" target="_blank" rel="noopener">Codecov →</a></p>
+      </div>
+      <div class="coverage-info">
+        <h4>How to generate locally</h4>
+        <pre class="code-block"><code># Install (one-time)
+cargo install cargo-llvm-cov
+rustup component add llvm-tools-preview
+
+# Generate HTML report and open it
+cargo llvm-cov --all-features --workspace --open
+
+# Generate LCOV for IDE integration
+cargo llvm-cov --all-features --workspace \
+  --lcov --output-path lcov.info</code></pre>
+        <p class="coverage-note">
+          HTML reports are also available as a <code>coverage-report</code> artifact on each
+          <a href="https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml" target="_blank" rel="noopener">CI run</a>.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── CHANGELOG ─── -->
+<section class="section section-alt" id="changelog">
+  <div class="container">
+    <h2 class="section-title">Recent Releases</h2>
+    <p class="section-subtitle"><a href="https://github.com/jburrow/fast_code_search/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Full CHANGELOG →</a></p>
+    <div class="changelog-list" id="changelogList">
+      <!-- Injected by pages workflow; fallback entries below -->
+      <div class="release-entry">
+        <div class="release-header">
+          <span class="release-version">v0.6.9</span>
+          <span class="release-date">2026-02-28</span>
+          <a class="release-link" href="https://github.com/jburrow/fast_code_search/releases/tag/v0.6.9" target="_blank" rel="noopener">Release notes →</a>
+        </div>
+        <p>Version bump and release.</p>
+      </div>
+      <div class="release-entry">
+        <div class="release-header">
+          <span class="release-version">v0.6.8</span>
+          <span class="release-date">2026-02-28</span>
+          <a class="release-link" href="https://github.com/jburrow/fast_code_search/releases/tag/v0.6.8" target="_blank" rel="noopener">Release notes →</a>
+        </div>
+        <p>Automated performance benchmarks in CI with historical trend tracking. Registered <code>persistence_benchmark</code> in Cargo.toml.</p>
+      </div>
+      <div class="release-entry">
+        <div class="release-header">
+          <span class="release-version">v0.6.7</span>
+          <span class="release-date">2026-02-27</span>
+          <a class="release-link" href="https://github.com/jburrow/fast_code_search/releases/tag/v0.6.7" target="_blank" rel="noopener">Release notes →</a>
+        </div>
+        <p>Code coverage via <code>cargo-llvm-cov</code>. Fixed API handlers blocking under concurrent load (503 instead of deadlock).</p>
+      </div>
+      <div class="release-entry">
+        <div class="release-header">
+          <span class="release-version">v0.6.6</span>
+          <span class="release-date">2026-02-27</span>
+          <a class="release-link" href="https://github.com/jburrow/fast_code_search/releases/tag/v0.6.6" target="_blank" rel="noopener">Release notes →</a>
+        </div>
+        <p>Fixed OOM during large-codebase indexing: <code>compact_memory()</code>, <code>finalize()</code> shrink-to-fit, <code>TrigramIndex::finalize()</code>.</p>
+      </div>
+      <div class="release-entry">
+        <div class="release-header">
+          <span class="release-version">v0.6.5</span>
+          <span class="release-date">2026-02-27</span>
+          <a class="release-link" href="https://github.com/jburrow/fast_code_search/releases/tag/v0.6.5" target="_blank" rel="noopener">Release notes →</a>
+        </div>
+        <p>Fixed <code>content_fallback</code> bytes permanently retained in heap. Persist symbol caches and import graph in saved index (format v3).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── GETTING STARTED ─── -->
+<section class="section" id="getting-started">
+  <div class="container">
+    <h2 class="section-title">Getting Started</h2>
+    <div class="gs-steps">
+
+      <div class="gs-step">
+        <div class="gs-step-num">1</div>
+        <div class="gs-step-body">
+          <h4>Install from source</h4>
+          <pre class="code-block"><code>git clone https://github.com/jburrow/fast_code_search.git
+cd fast_code_search
+cargo build --release</code></pre>
+        </div>
+      </div>
+
+      <div class="gs-step">
+        <div class="gs-step-num">2</div>
+        <div class="gs-step-body">
+          <h4>Configure</h4>
+          <pre class="code-block"><code># Generate a default config file
+./target/release/fast_code_search_server --init config.toml
+
+# Edit to point at your codebase
+# [indexer]
+# paths = ["/path/to/your/repo"]</code></pre>
+        </div>
+      </div>
+
+      <div class="gs-step">
+        <div class="gs-step-num">3</div>
+        <div class="gs-step-body">
+          <h4>Run</h4>
+          <pre class="code-block"><code>./target/release/fast_code_search_server --config config.toml
+
+# Web UI available at http://localhost:8080
+# gRPC available at localhost:50051</code></pre>
+        </div>
+      </div>
+
+      <div class="gs-step">
+        <div class="gs-step-num">4</div>
+        <div class="gs-step-body">
+          <h4>Search</h4>
+          <pre class="code-block"><code># REST API
+curl "http://localhost:8080/api/search?q=fn+main&max=10"
+
+# Symbols only
+curl "http://localhost:8080/api/search?q=SearchEngine&symbols=true"
+
+# Regex
+curl "http://localhost:8080/api/search?q=async+fn.*Handler&regex=true"</code></pre>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="gs-links">
+      <a class="btn btn-primary" href="https://github.com/jburrow/fast_code_search" target="_blank" rel="noopener">📦 View on GitHub</a>
+      <a class="btn btn-secondary" href="https://github.com/jburrow/fast_code_search/releases" target="_blank" rel="noopener">📥 Releases</a>
+      <a class="btn btn-secondary" href="https://github.com/jburrow/fast_code_search/blob/main/README.md" target="_blank" rel="noopener">📖 Full Docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FOOTER ─── -->
+<footer class="footer">
+  <div class="container">
+    <p>
+      <strong>fast_code_search</strong> v<span id="footerVersion">0.6.9</span> · MIT License ·
+      Built with Rust 🦀 ·
+      <a href="https://github.com/jburrow/fast_code_search" target="_blank" rel="noopener">GitHub</a>
+    </p>
+    <p class="footer-sub">Site built with GitHub Actions · <a href="https://github.com/jburrow/fast_code_search/tree/main/docs/site" target="_blank" rel="noopener">Source</a></p>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,104 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Deploy GitHub Pages site
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so we can read tags
+
+      # ── Extract project version from Cargo.toml ────────────────────────
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      # ── Prepare the site directory ─────────────────────────────────────
+      - name: Prepare site
+        run: |
+          cp -r docs/site site-output
+
+      # ── Inject version.json ────────────────────────────────────────────
+      - name: Write version.json
+        run: |
+          cat > site-output/version.json <<EOF
+          {
+            "version": "${{ steps.version.outputs.VERSION }}",
+            "built_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "commit": "${{ github.sha }}"
+          }
+          EOF
+
+      # ── Extract recent changelog entries and inject as JSON ────────────
+      - name: Extract changelog
+        run: |
+          python3 - <<'PYEOF'
+          import re, json, pathlib
+
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+
+          # Find all release sections (skip [Unreleased])
+          pattern = re.compile(
+              r'## \[(\d+\.\d+\.\d+)\]\s*-\s*(\d{4}-\d{2}-\d{2})(.*?)(?=\n## \[|\Z)',
+              re.DOTALL
+          )
+
+          releases = []
+          for m in pattern.finditer(text):
+              version, date, body = m.group(1), m.group(2), m.group(3).strip()
+              # Grab first paragraph of body as summary (up to 300 chars)
+              lines = [l.strip() for l in body.splitlines() if l.strip()]
+              summary_lines = []
+              for l in lines:
+                  if l.startswith('#'):
+                      break
+                  summary_lines.append(l.lstrip('-* '))
+                  if len(' '.join(summary_lines)) > 300:
+                      break
+              summary = ' '.join(summary_lines)
+              if len(summary) > 300:
+                  summary = summary[:297] + '...'
+              releases.append({
+                  "version": version,
+                  "date": date,
+                  "summary": summary,
+                  "url": f"https://github.com/jburrow/fast_code_search/releases/tag/v{version}"
+              })
+              if len(releases) >= 8:
+                  break
+
+          pathlib.Path("site-output/changelog.json").write_text(
+              json.dumps({"releases": releases}, indent=2), encoding="utf-8"
+          )
+          print(f"Wrote {len(releases)} releases to changelog.json")
+          PYEOF
+
+      # ── Deploy to gh-pages ─────────────────────────────────────────────
+      # clean-exclude preserves dev/bench/ (benchmark trend data) on every deploy
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: site-output
+          target-folder: /            # deploy to root of gh-pages
+          clean: true
+          clean-exclude: |
+            dev/
+          commit-message: "docs: deploy gh-pages site for ${{ steps.version.outputs.VERSION }} @ ${{ github.sha }}"

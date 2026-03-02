@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **GitHub Pages site** (`docs/site/`): A static project site deployed to `gh-pages` on every push to `main` via a new `pages.yml` workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from `dev/bench/` pushed by `github-action-benchmark`), Codecov coverage badge, dynamically-rendered changelog (from `changelog.json` generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses `clean-exclude: dev/` to preserve benchmark data, and both `pages.yml` and `benchmark.yml` share a `gh-pages-deploy` concurrency group to prevent simultaneous pushes.
+
 ## [0.6.9] - 2026-02-28
 
 ### Changed

@@ -24,6 +24,8 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 | `src/semantic_server/service.rs` | Semantic gRPC server (port 50052) |
 | `src/semantic_web/api.rs` | Semantic REST API (port 8081) |
 | `proto/search.proto` | gRPC service definitions |
+| `docs/site/` | GitHub Pages static site (HTML/CSS/JS, deployed by `pages.yml`) |
+| `docs/site/index.html` | Main site page (features, CI status, benchmarks, coverage, changelog) |
 | `tests/integration_tests.rs` | End-to-end integration tests |
 | `static/` | Embedded web UI files |
 
