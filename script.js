@@ -40,32 +40,32 @@
 })();
 
 // ── Benchmark iframe fallback ─────────────────────────────────────────────
-// If the benchmark page hasn't been generated yet (fresh gh-pages), show
-// a friendly message instead of a broken iframe.
+// Probe the benchmark page with fetch() before loading the iframe.
+// GitHub Pages serves a real HTTP 404 for missing files, so fetch() detects
+// it reliably — unlike the load/error events which fire even for 404 HTML.
 (function () {
   const iframe = document.getElementById('benchChart');
   const fallback = document.getElementById('benchFallback');
   if (!iframe || !fallback) return;
 
-  // On error (404 for the src URL) show fallback
-  iframe.addEventListener('error', () => {
-    iframe.style.display = 'none';
-    fallback.style.display = 'block';
-  });
+  const src = iframe.getAttribute('src');
 
-  // Also listen for load; if the page returned is empty/404 HTML, hide iframe
-  iframe.addEventListener('load', () => {
-    try {
-      // Same-origin only — will throw for cross-origin files
-      const doc = iframe.contentDocument || iframe.contentWindow.document;
-      if (!doc || doc.title.includes('404') || doc.body.textContent.trim() === '') {
-        iframe.style.display = 'none';
-        fallback.style.display = 'block';
+  // Start hidden; only shown if the probe succeeds
+  iframe.style.display = 'none';
+
+  fetch(src, { method: 'HEAD', cache: 'no-store' })
+    .then(r => {
+      if (r.ok) {
+        iframe.style.display = 'block';
+        fallback.style.display = 'none';
+      } else {
+        throw new Error('not found');
       }
-    } catch (_) {
-      // Cross-origin: assume it loaded fine
-    }
-  });
+    })
+    .catch(() => {
+      iframe.style.display = 'none';
+      fallback.style.display = 'block';
+    });
 })();
 
 // ── Dynamic changelog from changelog.json ────────────────────────────────
