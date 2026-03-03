@@ -100,5 +100,5 @@ jobs:
           target-folder: /            # deploy to root of gh-pages
           clean: true
           clean-exclude: |
-            dev/
+            dev/**
           commit-message: "docs: deploy gh-pages site for ${{ steps.version.outputs.VERSION }} @ ${{ github.sha }}"
