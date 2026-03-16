@@ -1,0 +1,60 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ── Rust binaries ────────────────────────────────────────────────────────
+    {
+      "name": "Rust: Keyword Server",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/fast_code_search_server",
+      "args": ["--index", "${workspaceFolder}", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo: build (debug)",
+      "env": {
+        "RUST_LOG": "info"
+      }
+    },
+    {
+      "name": "Rust: Semantic Server",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/fast_code_search_semantic",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo: build (debug)",
+      "env": {
+        "RUST_LOG": "info",
+        "ORT_DYLIB_PATH": "${workspaceFolder}/onnxruntime/onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll"
+      }
+    },
+    {
+      "name": "Rust: Validator",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/fast_code_search_validator",
+      "args": ["--corpus-size", "100", "--seed", "42"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo: build (debug)"
+    },
+    // ── VS Code Extension ────────────────────────────────────────────────────
+    {
+      "name": "VS Code Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/vscode-extension",
+        "--enable-proposed-api=fast-code-search.fast-code-search"
+      ],
+      "outFiles": ["${workspaceFolder}/vscode-extension/dist/**/*.js"],
+      "preLaunchTask": "npm: build:dev",
+      "cwd": "${workspaceFolder}/vscode-extension"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Both Servers",
+      "configurations": ["Rust: Keyword Server", "Rust: Semantic Server"],
+      "stopAll": true
+    }
+  ]
+}
