@@ -123,7 +123,12 @@ pub async fn search_handler(
     let start = Instant::now();
 
     let results = {
-        let mut engine = state.engine.write().unwrap();
+        let mut engine = state.engine.write().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine write lock: {}", e),
+            )
+        })?;
         engine
             .search(&params.q, params.max)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -170,7 +175,12 @@ pub async fn stats_handler(
     State(state): State<WebState>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
     let stats = {
-        let engine = state.engine.read().unwrap();
+        let engine = state.engine.read().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            )
+        })?;
         engine.get_stats()
     };
 
