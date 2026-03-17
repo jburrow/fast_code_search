@@ -109,6 +109,12 @@ async function loadStats() {
 // SEARCH
 // ============================================
 
+// URL state field descriptors for semantic search
+const URL_FIELDS = [
+    { param: 'q',   getter: () => queryInput.value.trim(),   setter: (v) => { queryInput.value = v; },   defaultValue: '' },
+    { param: 'max', getter: () => maxResultsSelect.value,    setter: (v) => { maxResultsSelect.value = v; }, defaultValue: '10' },
+];
+
 async function performSearch() {
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
@@ -120,6 +126,8 @@ async function performSearch() {
     const maxResults = parseInt(maxResultsSelect.value);
     
     if (!query) return;
+
+    syncUrlFromState(URL_FIELDS);
     
     showLoading('results', `Searching for: "${query}"`);
     const startTime = Date.now();
@@ -226,6 +234,12 @@ searchReadiness.storeDefaultPlaceholder();
 
 // Start with search disabled until we know the status
 searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
+
+// Restore state from URL on page load; auto-expand Advanced Options for non-default values
+loadStateFromUrl(URL_FIELDS, () => {
+    const advancedDetails = document.querySelector('.advanced-options');
+    if (advancedDetails) advancedDetails.open = true;
+});
 
 loadStats();
 progressWS.start();

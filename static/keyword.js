@@ -147,6 +147,21 @@ function getMatchTypeLabel(matchType) {
     }
 }
 
+// URL state field descriptors for keyword search
+const URL_FIELDS = [
+    { param: 'q',       getter: () => queryInput.value.trim(),                      setter: (v) => { queryInput.value = v; },                                         defaultValue: '' },
+    { param: 'max',     getter: () => maxResultsSelect.value,                        setter: (v) => { maxResultsSelect.value = v; },                                   defaultValue: '50' },
+    { param: 'include', getter: () => includeFilterInput?.value.trim() || '',        setter: (v) => { if (includeFilterInput) includeFilterInput.value = v; },         defaultValue: '' },
+    { param: 'exclude', getter: () => excludeFilterInput?.value.trim() || '',        setter: (v) => { if (excludeFilterInput) excludeFilterInput.value = v; },         defaultValue: '' },
+    // Boolean fields use 'true' / '' (empty string) convention: empty string is the
+    // "off" default and is never written to the URL; 'true' appears as ?regex=true.
+    // An unrecognised value such as ?regex=false leaves the checkbox unchecked, which is
+    // intentionally correct behaviour.
+    { param: 'regex',   getter: () => regexModeCheckbox?.checked ? 'true' : '',      setter: (v) => { if (regexModeCheckbox) regexModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
+    { param: 'symbols', getter: () => symbolsModeCheckbox?.checked ? 'true' : '',    setter: (v) => { if (symbolsModeCheckbox) symbolsModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
+    { param: 'rank',    getter: () => rankModeSelect?.value || 'auto',               setter: (v) => { if (rankModeSelect) rankModeSelect.value = v; },                 defaultValue: 'auto' },
+];
+
 async function performSearch() {
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
@@ -167,6 +182,8 @@ async function performSearch() {
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter a search query to find code</p></div>';
         return;
     }
+
+    syncUrlFromState(URL_FIELDS);
 
     resultsContainer.innerHTML = '<div class="loading">Searching...</div>';
     resultsHeader.style.display = 'none';
@@ -453,6 +470,12 @@ searchReadiness.storeDefaultPlaceholder();
 
 // Start with search disabled until we know the status
 searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
+
+// Restore state from URL on page load; auto-expand Advanced Options for non-default values
+loadStateFromUrl(URL_FIELDS, () => {
+    const advancedDetails = document.querySelector('.advanced-options');
+    if (advancedDetails) advancedDetails.open = true;
+});
 
 fetchStats();
 progressWS.start();
