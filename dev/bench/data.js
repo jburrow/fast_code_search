@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773683707761,
+  "lastUpdate": 1773739341296,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -1469,6 +1469,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 1327498,
             "range": "± 81887",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "Copilot",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b5cc1fefb58d289124b935af71ee03b84d189c33",
+          "message": "Fix: semantic web API handlers panic on poisoned RwLock (#85)\n\n* Initial plan\n\n* Fix: handle RwLock poisoning gracefully in semantic_web API handlers\n\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>\n\n---------\n\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>",
+          "timestamp": "2026-03-17T09:11:52Z",
+          "tree_id": "6922bfd02e03d4fa59058dffe0bd57b89004d9b0",
+          "url": "https://github.com/jburrow/fast_code_search/commit/b5cc1fefb58d289124b935af71ee03b84d189c33"
+        },
+        "date": 1773739340835,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 288478,
+            "range": "± 11960",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 22250,
+            "range": "± 433",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 480,
+            "range": "± 12",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 509428,
+            "range": "± 24686",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 22629,
+            "range": "± 456",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 587,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 926548,
+            "range": "± 22438",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 23196,
+            "range": "± 281",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 960,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 349095,
+            "range": "± 21066",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 596304,
+            "range": "± 22443",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 506816,
+            "range": "± 21850",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 819094,
+            "range": "± 10294",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 511113,
+            "range": "± 20474",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 347086,
+            "range": "± 3578",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 515207,
+            "range": "± 19587",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 689751,
+            "range": "± 7050",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 502781,
+            "range": "± 22850",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 511629,
+            "range": "± 22859",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 252536,
+            "range": "± 18224",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 503950,
+            "range": "± 23532",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 503570,
+            "range": "± 33970",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 531794,
+            "range": "± 41590",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 328470,
+            "range": "± 10806",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 282016,
+            "range": "± 16720",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 3699,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 17954462,
+            "range": "± 79618",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 35592635,
+            "range": "± 145126",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 70509661,
+            "range": "± 310542",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 31094474,
+            "range": "± 99668",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 31944315,
+            "range": "± 89243",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 61396418,
+            "range": "± 291943",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 63898773,
+            "range": "± 169808",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 891516,
+            "range": "± 13665",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3386494,
+            "range": "± 30519",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6434506,
+            "range": "± 130129",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 2002810,
+            "range": "± 13131",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 8107484,
+            "range": "± 85165",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 16173195,
+            "range": "± 147960",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 196296,
+            "range": "± 3999",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 312221,
+            "range": "± 11378",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 468147,
+            "range": "± 11117",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 148538,
+            "range": "± 2665",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 671914,
+            "range": "± 10173",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1332335,
+            "range": "± 24219",
             "unit": "ns/iter"
           }
         ]
