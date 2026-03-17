@@ -478,6 +478,76 @@ class StatusPoller {
     }
 }
 
+// ============================================
+// URL STATE HELPERS
+// ============================================
+
+/**
+ * Load search state from URL query parameters into form fields.
+ *
+ * @param {Array<{param: string, setter: Function, defaultValue?: *}>} fields
+ *   Each field descriptor:
+ *     - param: URL parameter name
+ *     - setter: function(value: string) that applies the value to the UI
+ *     - defaultValue: (optional) default value; used to determine whether a field is
+ *       non-default for auto-expand logic
+ * @param {Function} [onNonDefault] - called once if any non-default value was loaded
+ *   (e.g., to expand an "Advanced Options" panel)
+ * @returns {boolean} true if at least one non-default value was loaded from the URL
+ */
+function loadStateFromUrl(fields, onNonDefault) {
+    const params = new URLSearchParams(window.location.search);
+    let hasNonDefault = false;
+
+    fields.forEach(({ param, setter, defaultValue }) => {
+        if (params.has(param)) {
+            const value = params.get(param);
+            setter(value);
+            // A value is "non-default" when no defaultValue was specified, or when the
+            // URL value differs from the default (e.g. '50' vs '10').  An explicit empty
+            // string in the URL (?q=) still matches defaultValue='' and is therefore
+            // treated as default, so it never triggers the onNonDefault callback.
+            if (defaultValue === undefined || String(value) !== String(defaultValue)) {
+                hasNonDefault = true;
+            }
+        }
+    });
+
+    if (hasNonDefault && typeof onNonDefault === 'function') {
+        onNonDefault();
+    }
+
+    return hasNonDefault;
+}
+
+/**
+ * Sync current form state to the URL query string via history.replaceState.
+ * Parameters whose current value equals their default are omitted to keep URLs short.
+ *
+ * @param {Array<{param: string, getter: Function, defaultValue?: *}>} fields
+ *   Each field descriptor:
+ *     - param: URL parameter name
+ *     - getter: function() that returns the current value as a string
+ *     - defaultValue: (optional) default value; omitted from URL when the current value matches
+ */
+function syncUrlFromState(fields) {
+    const params = new URLSearchParams();
+
+    fields.forEach(({ param, getter, defaultValue }) => {
+        const value = getter();
+        // Skip empty values unconditionally — we never write empty strings to the URL.
+        // Also skip when the value equals the declared default to keep URLs short.
+        if (value !== undefined && value !== null && value !== '' &&
+                (defaultValue === undefined || String(value) !== String(defaultValue))) {
+            params.set(param, String(value));
+        }
+    });
+
+    const search = params.toString();
+    const url = search ? `${window.location.pathname}?${search}` : window.location.pathname;
+    history.replaceState(null, '', url);
+}
+
 // Export for module usage (if needed in future)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -496,6 +566,8 @@ if (typeof module !== 'undefined' && module.exports) {
         highlightMatches,
         ProgressWebSocket,
         StatusPoller,
-        SearchReadinessManager
+        SearchReadinessManager,
+        loadStateFromUrl,
+        syncUrlFromState
     };
 }
