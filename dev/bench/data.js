@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773739341296,
+  "lastUpdate": 1773741080186,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -1763,6 +1763,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 1332335,
             "range": "± 24219",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "Copilot",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15bd6632f6849f21ab5cdb54dbc3355e72cb1d7a",
+          "message": "Fix path handling: canonical storage, root-relative display, proper glob exclusions (#91)\n\n* Initial plan\n\n* fix: path handling is broken on Windows and inconsistent throughout the stack\n\n- lazy_file_store.rs: Store canonical path in LazyMappedFile.path, not the\n  original non-canonical path. This fixes the strip_prefix mismatch on Windows\n  where canonicalize() adds a UNC prefix.\n\n- engine.rs: Add root_paths field, add_root_path() and make_display_path()\n  methods. make_display_path() strips the canonical root prefix and normalises\n  slashes to forward slashes. All search result file_path fields and\n  get_file_path() now return root-relative display paths.\n\n- engine.rs: Path filter calls use filter_documents_by_display() with\n  root-relative paths so patterns like src/**/*.rs match correctly against\n  display paths.\n\n- path_filter.rs: Add filter_documents_by_display() method that accepts a\n  string-returning closure for pre-computed display paths.\n\n- background_indexer.rs: Call add_root_path() for every configured path at\n  indexer startup so that root-relative display paths are available immediately.\n\n- web/api.rs (file_handler): Use make_display_path() to return root-relative\n  path in FileResponse, consistent with search results.\n\n- file_discovery.rs: Replace substring contains() exclusion check with proper\n  PathFilter glob matching for consistent semantics between discovery-time and\n  search-time exclusions.\n\n- static/index.html: Update filter labels to 'Search only in (glob):' /\n  'Skip paths (glob):' with improved help text clarifying root-relative matching.\n\n- static/keyword.js: Add title attribute to .result-path element so the full\n  path appears on hover.\n\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>\n\n---------\n\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>",
+          "timestamp": "2026-03-17T09:40:30Z",
+          "tree_id": "941e545bb7fa80d93cd427b4ea041010bda222db",
+          "url": "https://github.com/jburrow/fast_code_search/commit/15bd6632f6849f21ab5cdb54dbc3355e72cb1d7a"
+        },
+        "date": 1773741079266,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 309325,
+            "range": "± 11940",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 23048,
+            "range": "± 239",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 512,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 528750,
+            "range": "± 26930",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 23155,
+            "range": "± 339",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 675,
+            "range": "± 18",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 998056,
+            "range": "± 21662",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 24034,
+            "range": "± 200",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 1018,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 360988,
+            "range": "± 20936",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 615189,
+            "range": "± 49246",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 522917,
+            "range": "± 20174",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 838818,
+            "range": "± 5953",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 521083,
+            "range": "± 15988",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 355560,
+            "range": "± 2292",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 548719,
+            "range": "± 11407",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 715607,
+            "range": "± 15780",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 525993,
+            "range": "± 12017",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 537741,
+            "range": "± 19407",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 271522,
+            "range": "± 18834",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 514295,
+            "range": "± 31235",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 510430,
+            "range": "± 21552",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 517028,
+            "range": "± 29955",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 348559,
+            "range": "± 24157",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 295431,
+            "range": "± 10984",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 3999,
+            "range": "± 32",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 18390133,
+            "range": "± 332869",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 36424089,
+            "range": "± 151711",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 72247806,
+            "range": "± 288289",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 31628400,
+            "range": "± 84520",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 32544621,
+            "range": "± 119613",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 62731452,
+            "range": "± 364625",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 65494532,
+            "range": "± 406883",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 910745,
+            "range": "± 58531",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3501025,
+            "range": "± 60762",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6709765,
+            "range": "± 124853",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1955268,
+            "range": "± 21753",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 7961855,
+            "range": "± 115720",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 16342363,
+            "range": "± 199679",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 198105,
+            "range": "± 3439",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 313708,
+            "range": "± 12652",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 473034,
+            "range": "± 11945",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 148887,
+            "range": "± 3637",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 673666,
+            "range": "± 12939",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1326830,
+            "range": "± 45614",
             "unit": "ns/iter"
           }
         ]
