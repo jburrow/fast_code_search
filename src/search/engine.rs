@@ -1444,7 +1444,9 @@ impl SearchEngine {
             candidate_docs
         } else {
             path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store.get(doc_id).map(|f| self.make_display_path(&f.path))
+                self.file_store
+                    .get(doc_id)
+                    .map(|f| self.make_display_path(&f.path))
             })
         };
 
@@ -1548,7 +1550,9 @@ impl SearchEngine {
             candidate_docs
         } else {
             path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store.get(doc_id).map(|f| self.make_display_path(&f.path))
+                self.file_store
+                    .get(doc_id)
+                    .map(|f| self.make_display_path(&f.path))
             })
         };
 
@@ -1627,7 +1631,9 @@ impl SearchEngine {
             candidate_docs
         } else {
             path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store.get(doc_id).map(|f| self.make_display_path(&f.path))
+                self.file_store
+                    .get(doc_id)
+                    .map(|f| self.make_display_path(&f.path))
             })
         };
 
