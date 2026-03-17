@@ -330,6 +330,8 @@ async fn main() -> Result<()> {
 
         if let Some(ref dir) = static_dir {
             info!(dir = %dir.display(), "Serving static UI files from disk (development mode)");
+        } else {
+            info!("Serving static UI files from compiled binary");
         }
 
         info!(web_address = %web_addr, "Starting Web UI server");

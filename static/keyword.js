@@ -36,6 +36,63 @@ const progressMessage = document.getElementById('progress-message');
 let searchTimeout = null;
 const DEBOUNCE_MS = 300;
 
+// ============================================
+// URL STATE
+// ============================================
+
+/**
+ * Populate form fields from URL query parameters.
+ * Auto-opens Advanced Options if any non-default option is present.
+ */
+function loadStateFromUrl() {
+    const params = new URLSearchParams(location.search);
+
+    if (params.has('q')) queryInput.value = params.get('q');
+    if (params.has('max') && maxResultsSelect) maxResultsSelect.value = params.get('max');
+    if (includeFilterInput && params.has('include')) includeFilterInput.value = params.get('include');
+    if (excludeFilterInput && params.has('exclude')) excludeFilterInput.value = params.get('exclude');
+    if (regexModeCheckbox && params.get('regex') === 'true') regexModeCheckbox.checked = true;
+    if (symbolsModeCheckbox && params.get('symbols') === 'true') symbolsModeCheckbox.checked = true;
+    if (rankModeSelect && params.has('rank')) rankModeSelect.value = params.get('rank');
+
+    // Auto-expand Advanced Options if any non-default values were loaded
+    const hasAdvanced = params.has('include') || params.has('exclude') ||
+        params.has('regex') || params.has('symbols') || params.has('rank') || params.has('max');
+    if (hasAdvanced) {
+        const details = document.querySelector('.advanced-options');
+        if (details) details.open = true;
+    }
+}
+
+/**
+ * Write current form state into the URL (replaces history entry, no navigation).
+ * Omits default values to keep URLs short.
+ */
+function syncUrlFromState() {
+    const query = queryInput.value.trim();
+    const params = new URLSearchParams();
+
+    if (query) params.set('q', query);
+
+    const max = maxResultsSelect?.value;
+    if (max && max !== '50') params.set('max', max);
+
+    const include = includeFilterInput?.value.trim() || '';
+    if (include) params.set('include', include);
+
+    const exclude = excludeFilterInput?.value.trim() || '';
+    if (exclude) params.set('exclude', exclude);
+
+    if (regexModeCheckbox?.checked) params.set('regex', 'true');
+    if (symbolsModeCheckbox?.checked) params.set('symbols', 'true');
+
+    const rank = rankModeSelect?.value || 'auto';
+    if (rank !== 'auto') params.set('rank', rank);
+
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+}
+
 // Search readiness manager (disables search until index is ready)
 const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
@@ -131,6 +188,219 @@ function updateProgressUI(status) {
 }
 
 // ============================================
+// SYNTAX HIGHLIGHTING HELPERS
+// ============================================
+
+/**
+ * Map a file path's extension to a highlight.js language name.
+ * Falls back to 'plaintext' when unknown.
+ */
+function hljsLangForPath(filePath) {
+    const ext = (filePath.split('.').pop() || '').toLowerCase();
+    const MAP = {
+        rs: 'rust', py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+        ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+        go: 'go', rb: 'ruby', java: 'java', cs: 'csharp', cpp: 'cpp', cc: 'cpp',
+        cxx: 'cpp', c: 'c', h: 'c', hpp: 'cpp', php: 'php', sh: 'bash',
+        bash: 'bash', zsh: 'bash', toml: 'toml', yaml: 'yaml', yml: 'yaml',
+        json: 'json', xml: 'xml', html: 'xml', css: 'css', scss: 'scss',
+        md: 'markdown', sql: 'sql', kt: 'kotlin', swift: 'swift', r: 'r',
+        lua: 'lua', pl: 'perl', pm: 'perl', hs: 'haskell', ex: 'elixir',
+        exs: 'elixir', erl: 'erlang', scala: 'scala', dart: 'dart',
+        proto: 'protobuf', dockerfile: 'dockerfile', makefile: 'makefile',
+    };
+    return MAP[ext] || 'plaintext';
+}
+
+/**
+ * Highlight a `<pre>` element using highlight.js.
+ * @param {HTMLElement} el - the <pre> element
+ * @param {string} filePath - used to pick the language
+ */
+function applyHljs(el, filePath) {
+    if (typeof hljs === 'undefined') return;
+    const lang = hljsLangForPath(filePath);
+    el.className = `language-${lang}`;
+    hljs.highlightElement(el);
+}
+
+/**
+ * Walk the DOM inside `el` and wrap occurrences of `query` text in
+ * <mark class="highlight"> without breaking existing HTML structure.
+ * Operates on text nodes only so it is safe after hljs has run.
+ */
+function applyQueryHighlight(el, query) {
+    if (!query) return;
+    const flags = 'gi';
+    let re;
+    try {
+        re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+    } catch (_) { return; }
+
+    const walk = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.textContent;
+            if (!re.test(text)) return;
+            re.lastIndex = 0;
+            const frag = document.createDocumentFragment();
+            let last = 0, m;
+            while ((m = re.exec(text)) !== null) {
+                if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+                const mark = document.createElement('mark');
+                mark.className = 'highlight';
+                mark.textContent = m[0];
+                frag.appendChild(mark);
+                last = m.index + m[0].length;
+            }
+            if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+            node.parentNode.replaceChild(frag, node);
+        } else if (node.nodeType === Node.ELEMENT_NODE && node.nodeName !== 'MARK') {
+            // Clone children list as it may be mutated during traversal
+            Array.from(node.childNodes).forEach(walk);
+        }
+    };
+    walk(el);
+    re.lastIndex = 0;
+}
+
+// ============================================
+// CONTEXT TOOLTIP
+// ============================================
+
+let _ctxTooltip = null;
+let _ctxHideTimer = null;
+let _ctxFetchController = null;
+
+function getOrCreateTooltip() {
+    if (!_ctxTooltip) {
+        _ctxTooltip = document.createElement('div');
+        _ctxTooltip.id = 'ctx-tooltip';
+        _ctxTooltip.className = 'ctx-tooltip';
+        // Keep tooltip visible when mouse moves into it
+        _ctxTooltip.addEventListener('mouseenter', () => clearTimeout(_ctxHideTimer));
+        _ctxTooltip.addEventListener('mouseleave', hideContextTooltip);
+        document.body.appendChild(_ctxTooltip);
+    }
+    return _ctxTooltip;
+}
+
+function hideContextTooltip() {
+    _ctxHideTimer = setTimeout(() => {
+        if (_ctxTooltip) {
+            _ctxTooltip.style.display = 'none';
+        }
+    }, 150);
+}
+
+async function showContextTooltip(resultItem, filePath, lineNumber) {
+    clearTimeout(_ctxHideTimer);
+    if (_ctxFetchController) _ctxFetchController.abort();
+    _ctxFetchController = new AbortController();
+
+    const tooltip = getOrCreateTooltip();
+    tooltip.innerHTML = '<div class="ctx-loading">Loading context…</div>';
+    positionTooltip(tooltip, resultItem);
+    tooltip.style.display = 'block';
+
+    try {
+        const resp = await fetch(
+            `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=8`,
+            { signal: _ctxFetchController.signal }
+        );
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+
+        const lang = hljsLangForPath(filePath);
+        const linesHtml = data.lines.map((line, i) => {
+            const num = data.start_line + i;
+            const isMatch = num === data.match_line;
+            const escaped = escapeHtml(line);
+            return `<div class="ctx-line${isMatch ? ' ctx-line-match' : ''}">`
+                 + `<span class="ctx-line-num">${num}</span>`
+                 + `<span class="ctx-line-code">${escaped}</span>`
+                 + `</div>`;
+        }).join('');
+
+        tooltip.innerHTML =
+            `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>` +
+            `<pre class="ctx-code language-${lang}">${data.lines.map(l => escapeHtml(l)).join('\n')}</pre>`;
+
+        if (typeof hljs !== 'undefined') {
+            const pre = tooltip.querySelector('pre');
+            if (pre) hljs.highlightElement(pre);
+        }
+
+        // Re-overlay line highlights on top of hljs output by wrapping matched line
+        overlayMatchLine(tooltip, data.start_line, data.match_line);
+
+        positionTooltip(tooltip, resultItem);
+    } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (_ctxTooltip) _ctxTooltip.style.display = 'none';
+    }
+}
+
+/**
+ * After hljs runs on the pre block, wrap the matched line number's text with
+ * a highlight overlay using absolute line tracking.
+ */
+function overlayMatchLine(tooltip, startLine, matchLine) {
+    const pre = tooltip.querySelector('pre.ctx-code');
+    if (!pre) return;
+    const raw = pre.innerHTML;
+    // Split by newlines and wrap the target line
+    const lineIndex = matchLine - startLine; // 0-based
+    const parts = raw.split('\n');
+    if (lineIndex >= 0 && lineIndex < parts.length) {
+        parts[lineIndex] = `<span class="ctx-match-line">${parts[lineIndex]}</span>`;
+    }
+    const lineNums = parts.map((part, i) => {
+        const num = startLine + i;
+        const isMatch = num === matchLine;
+        return `<span class="ctx-gutter${isMatch ? ' ctx-gutter-match' : ''}">${num}</span>${part}`;
+    }).join('\n');
+    pre.innerHTML = lineNums;
+}
+
+function positionTooltip(tooltip, anchor) {
+    const gap = 10;
+    const rect = anchor.getBoundingClientRect(); // viewport-relative (works with position:fixed)
+    const viewW = window.innerWidth;
+    const viewH = window.innerHeight;
+
+    const spaceLeft = rect.left - gap * 2;
+    const spaceRight = viewW - rect.right - gap * 2;
+    // Max width that can ever fit on screen regardless of side
+    const maxFit = viewW - gap * 2;
+
+    let width, left;
+    if (spaceLeft >= spaceRight || spaceLeft >= 220) {
+        // Place LEFT of the button
+        width = Math.min(Math.max(220, spaceLeft), 960, maxFit);
+        left = rect.left - width - gap;
+    } else {
+        // More space on the right — place RIGHT of the button
+        width = Math.min(Math.max(220, spaceRight), 960, maxFit);
+        left = rect.right + gap;
+    }
+
+    // Clamp so the right edge never escapes the viewport
+    left = Math.max(gap, Math.min(left, viewW - width - gap));
+
+    // Override CSS min-width so it doesn't re-expand beyond what fits
+    tooltip.style.minWidth = '0';
+    tooltip.style.width = `${width}px`;
+    tooltip.style.left = `${left}px`;
+
+    // Vertically centre on the button, clamped to viewport
+    const ttH = tooltip.offsetHeight || 520;
+    let top = rect.top + (rect.height / 2) - (ttH / 2);
+    if (top + ttH > viewH - gap) top = viewH - ttH - gap;
+    if (top < gap) top = gap;
+    tooltip.style.top = `${top}px`;
+}
+
+// ============================================
 // SEARCH
 // ============================================
 
@@ -176,6 +446,9 @@ async function performSearch() {
     const isRegex = regexModeCheckbox?.checked || false;
     const symbolsOnly = symbolsModeCheckbox?.checked || false;
     const rankMode = rankModeSelect?.value || 'auto';
+
+    // Keep URL in sync so searches can be shared as links
+    syncUrlFromState();
 
     if (!query) {
         resultsHeader.style.display = 'none';
@@ -232,8 +505,9 @@ async function performSearch() {
             const depBadge = depCount > 0 
                 ? `<span class="result-badge" title="${depCount} files depend on this" style="cursor:pointer" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
                 : '';
+            const lang = hljsLangForPath(result.file_path);
             return `
-                <div class="result-item">
+                <div class="result-item" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${result.line_number}">
                     <div class="result-header">
                         <div class="result-info">
                             <span class="result-path" title="${escapeHtml(result.file_path)}">${escapeHtml(result.file_path)}</span>
@@ -243,23 +517,34 @@ async function performSearch() {
                             ${depBadge}
                             <span class="result-score">Score: ${result.score.toFixed(2)}</span>
                             <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
-                            <button class="view-file-btn" title="View full file"
+                            <button class="view-file-btn"
                                 data-file-path="${escapeHtml(result.file_path)}"
                                 data-line-number="${result.line_number}">📄 View</button>
                         </div>
                     </div>
                     <div class="result-content">
-                        <pre>${highlightMatches(result.content, query)}</pre>
+                        <pre class="result-code language-${lang}" data-query="${escapeHtml(query)}">${escapeHtml(result.content)}</pre>
                     </div>
                 </div>
             `;
         }).join('');
 
-        // Attach View button click handlers via event delegation on results container
+        // Apply syntax highlighting then re-apply query-term highlight on each result
+        resultsContainer.querySelectorAll('pre.result-code').forEach(pre => {
+            if (typeof hljs !== 'undefined') {
+                hljs.highlightElement(pre);
+            }
+            const q = pre.dataset.query;
+            if (q) applyQueryHighlight(pre, q);
+        });
+
+        // Attach View button click handler and context tooltip
         resultsContainer.querySelectorAll('.view-file-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                showFileModal(btn.dataset.filePath, parseInt(btn.dataset.lineNumber, 10));
-            });
+            const filePath = btn.dataset.filePath;
+            const lineNumber = parseInt(btn.dataset.lineNumber, 10);
+            btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
+            btn.addEventListener('mouseenter', () => showContextTooltip(btn, filePath, lineNumber));
+            btn.addEventListener('mouseleave', hideContextTooltip);
         });
 
     } catch (error) {
@@ -328,13 +613,12 @@ function closeModal() {
 // FILE VIEWER MODAL
 // ============================================
 
-function renderFileLine(line, lineNum, highlightLine, query) {
+function renderFileLine(line, lineNum, highlightLine) {
     const isHighlighted = lineNum === highlightLine;
     const cls = isHighlighted ? 'file-line file-line-highlight' : 'file-line';
-    const content = highlightMatches(line, query);
     return `<div class="${cls}" id="file-line-${lineNum}">` +
         `<span class="file-line-num">${lineNum}</span>` +
-        `<span class="file-line-content">${content}</span>` +
+        `<span class="file-line-content">${escapeHtml(line)}</span>` +
         `</div>`;
 }
 
@@ -399,14 +683,28 @@ async function showFileModal(filePath, highlightLine) {
         const query = queryInput.value.trim();
 
         const linesHtml = data.content.split('\n')
-            .map((line, idx) => renderFileLine(line, idx + 1, highlightLine, query))
+            .map((line, idx) => renderFileLine(line, idx + 1, highlightLine))
             .join('');
 
         const modalBody = document.getElementById('file-modal-body');
         if (modalBody) {
+            const lang = hljsLangForPath(filePath);
             modalBody.innerHTML =
                 `<div class="file-meta">${data.line_count.toLocaleString()} lines · ${formatBytes(data.size_bytes)}</div>` +
-                `<div class="file-code">${linesHtml}</div>`;
+                `<div class="file-code" data-lang="${lang}">${linesHtml}</div>`;
+
+            // Apply hljs to each line content span individually
+            if (typeof hljs !== 'undefined') {
+                modalBody.querySelectorAll('.file-line-content').forEach(span => {
+                    // Wrap in a code element for hljs, then unwrap
+                    const code = document.createElement('code');
+                    code.className = `language-${lang}`;
+                    code.textContent = span.textContent;
+                    hljs.highlightElement(code);
+                    span.innerHTML = code.innerHTML;
+                });
+            }
+
             // Scroll the highlighted line into view
             const targetLine = modalBody.querySelector(`#file-line-${highlightLine}`);
             if (targetLine) {
@@ -467,6 +765,9 @@ if (excludeFilterInput) {
 
 // Store original placeholder before readiness manager may change it
 searchReadiness.storeDefaultPlaceholder();
+
+// Restore any state encoded in the URL (shared link or browser back navigation)
+loadStateFromUrl();
 
 // Start with search disabled until we know the status
 searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });

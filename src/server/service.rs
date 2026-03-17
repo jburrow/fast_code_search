@@ -78,6 +78,9 @@ impl CodeSearchService {
                 }
             };
 
+            // Register as root so results are returned relative to this path
+            engine.add_root_path(path);
+
             for entry in WalkDir::new(path)
                 .follow_links(true)
                 .into_iter()
@@ -226,42 +229,54 @@ impl CodeSearch for CodeSearchService {
             return Ok(Response::new(ReceiverStream::new(rx)));
         }
 
-        // Use try_read to avoid blocking a tokio worker thread when a write lock is
-        // held during indexing.  Blocking here would cause tasks to pile up and
-        // exhaust the thread pool, leading to OOM under concurrent load.
-        let engine = self.engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => {
-                Status::unavailable("Index is currently being updated, please retry shortly")
-            }
-            std::sync::TryLockError::Poisoned(e) => Status::internal(format!("Lock error: {}", e)),
-        })?;
+        // Move CPU-intensive search work onto a blocking thread so tokio worker
+        // threads are not starved under concurrent load.  The RwLockReadGuard is
+        // not Send, so we clone the Arc and acquire the lock inside the closure.
+        let engine_arc = std::sync::Arc::clone(&self.engine);
+        let matches = tokio::task::spawn_blocking(move || {
+            // Use try_read to avoid blocking when a write lock is held during indexing.
+            let engine = engine_arc.try_read().map_err(|e| match e {
+                std::sync::TryLockError::WouldBlock => {
+                    Status::unavailable("Index is currently being updated, please retry shortly")
+                }
+                std::sync::TryLockError::Poisoned(e) => {
+                    Status::internal(format!("Lock error: {}", e))
+                }
+            })?;
 
-        // Choose search method based on flags
-        let matches = if symbols_only {
-            // Search only in discovered symbols
-            engine
-                .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
-                .map_err(|e| Status::invalid_argument(format!("Invalid filter pattern: {}", e)))?
-        } else if is_regex {
-            // Use regex search with optional path filtering
-            engine
-                .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
-                .map_err(|e| Status::invalid_argument(format!("Invalid regex pattern: {}", e)))?
-        } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-            // Plain text search without filtering
-            engine.search(&query, max_results)
-        } else {
-            // Plain text search with path filtering
-            engine
-                .search_with_filter(&query, &include_patterns, &exclude_patterns, max_results)
-                .map_err(|e| Status::invalid_argument(format!("Invalid filter pattern: {}", e)))?
-        };
+            // Choose search method based on flags
+            let matches = if symbols_only {
+                // Search only in discovered symbols
+                engine
+                    .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
+                    })?
+            } else if is_regex {
+                // Use regex search with optional path filtering
+                engine
+                    .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("Invalid regex pattern: {}", e))
+                    })?
+            } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
+                // Plain text search without filtering
+                engine.search(&query, max_results)
+            } else {
+                // Plain text search with path filtering
+                engine
+                    .search_with_filter(&query, &include_patterns, &exclude_patterns, max_results)
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
+                    })?
+            };
 
-        // Evict fallback file bytes cached when the OS mmap limit was exceeded.
-        // Without this, heap usage grows unboundedly across search requests on
-        // large codebases where mmap is unavailable for some files.
-        engine.evict_file_fallbacks();
-        drop(engine); // Release lock before streaming
+            // Evict fallback file bytes cached when the OS mmap limit was exceeded.
+            engine.evict_file_fallbacks();
+            Ok::<_, Status>(matches)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("Search task panicked: {}", e)))??;
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
 
@@ -302,51 +317,65 @@ impl CodeSearch for CodeSearchService {
         let req = request.into_inner();
         info!(paths = ?req.paths, "Received index request");
         let start = Instant::now();
-        // Use write lock for indexing operations
-        let mut engine = self
-            .engine
-            .write()
-            .map_err(|e| Status::internal(format!("Lock error: {}", e)))?;
 
-        let mut files_indexed = 0;
-        let mut total_size = 0u64;
+        // Move the blocking write-lock acquisition and directory walk onto a
+        // dedicated blocking thread.  Calling .write() (which may block
+        // indefinitely while the background indexer holds the write lock) or
+        // running WalkDir inside an async fn starves the tokio worker pool.
+        let engine_arc = std::sync::Arc::clone(&self.engine);
+        let (files_indexed, total_size, stats) = tokio::task::spawn_blocking(move || {
+            let mut engine = engine_arc
+                .write()
+                .map_err(|e| Status::internal(format!("Lock error: {}", e)))?;
 
-        for path in req.paths {
-            // Walk the directory and index all files
-            for entry in WalkDir::new(&path)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if entry.file_type().is_file() {
-                    // Skip binary files and common non-text extensions
-                    if let Some(ext) = entry.path().extension() {
-                        let ext = ext.to_string_lossy().to_lowercase();
-                        if matches!(
-                            ext.as_str(),
-                            "exe" | "so" | "dylib" | "dll" | "bin" | "o" | "a"
-                        ) {
-                            continue;
-                        }
-                    }
+            let mut files_indexed = 0i32;
+            let mut total_size = 0u64;
 
-                    match engine.index_file(entry.path()) {
-                        Ok(_) => {
-                            files_indexed += 1;
-                            if let Ok(metadata) = entry.metadata() {
-                                total_size += metadata.len();
+            // Register each requested path as an index root so that search
+            // results are returned relative to the indexed directory.
+            for path in &req.paths {
+                engine.add_root_path(std::path::Path::new(path));
+            }
+
+            for path in &req.paths {
+                // Walk the directory and index all files
+                for entry in WalkDir::new(path)
+                    .follow_links(true)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                {
+                    if entry.file_type().is_file() {
+                        // Skip binary files and common non-text extensions
+                        if let Some(ext) = entry.path().extension() {
+                            let ext = ext.to_string_lossy().to_lowercase();
+                            if matches!(
+                                ext.as_str(),
+                                "exe" | "so" | "dylib" | "dll" | "bin" | "o" | "a"
+                            ) {
+                                continue;
                             }
                         }
-                        Err(e) => {
-                            eprintln!("Failed to index {}: {}", entry.path().display(), e);
+
+                        match engine.index_file(entry.path()) {
+                            Ok(_) => {
+                                files_indexed += 1;
+                                if let Ok(metadata) = entry.metadata() {
+                                    total_size += metadata.len();
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to index {}: {}", entry.path().display(), e);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        let stats = engine.get_stats();
-        drop(engine);
+            let stats = engine.get_stats();
+            Ok::<_, Status>((files_indexed, total_size, stats))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("Index task panicked: {}", e)))??;
 
         let duration = start.elapsed();
         info!(

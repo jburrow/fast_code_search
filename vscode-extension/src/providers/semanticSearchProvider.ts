@@ -10,6 +10,22 @@ import * as vscode from "vscode";
 import { SemanticSearchClient } from "../api/semanticClient.js";
 import { isAbortError } from "../utils/errors.js";
 
+/**
+ * Convert a server-returned file path into a VS Code URI.
+ * The server returns root-relative paths (e.g. `src/main.rs`); absolute paths
+ * are passed through unchanged.
+ */
+function resolveFileUri(filePath: string): vscode.Uri {
+  if (filePath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(filePath)) {
+    return vscode.Uri.file(filePath);
+  }
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.length > 0) {
+    return vscode.Uri.joinPath(folders[0].uri, filePath);
+  }
+  return vscode.Uri.file(filePath);
+}
+
 export class SemanticSearchProvider implements vscode.AITextSearchProvider {
   constructor(private readonly semanticClient: SemanticSearchClient) {}
 
@@ -51,7 +67,7 @@ export class SemanticSearchProvider implements vscode.AITextSearchProvider {
         const previewText = result.content;
 
         progress.report({
-          uri: vscode.Uri.file(result.file_path),
+          uri: resolveFileUri(result.file_path),
           ranges: new vscode.Range(
             startLine,
             0,

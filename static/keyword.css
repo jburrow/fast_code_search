@@ -95,3 +95,140 @@
     outline: none;
     border-color: var(--accent);
 }
+
+/* ============================================
+   RESULT SYNTAX HIGHLIGHTING
+   ============================================ */
+
+/*
+ * Neutralise the hardcoded background colour that every hljs theme injects.
+ * We want our own --code-bg variable to govern the background so the code
+ * block blends correctly in both light and dark modes.
+ */
+.result-content pre.result-code,
+.result-content pre.result-code.hljs {
+    background: var(--code-bg) !important;
+    color: inherit;         /* let hljs span colours take over          */
+    margin: 0;
+    padding: 0.55rem 0.75rem;
+    border-radius: 0 0 6px 6px;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Subtle separator between header and code */
+.result-content {
+    border-top: 1px solid var(--border);
+}
+
+/*
+ * In light mode the default text colour of the page is dark, so hljs tokens
+ * that don't get a colour inherit correctly.  In dark mode same applies.
+ * Force only the base text colour to match the current theme.
+ */
+@media (prefers-color-scheme: light) {
+    .result-content pre.result-code .hljs-name,
+    .result-content pre.result-code {
+        color: #24292e;  /* github light base text */
+    }
+}
+@media (prefers-color-scheme: dark) {
+    .result-content pre.result-code .hljs-name,
+    .result-content pre.result-code {
+        color: #e6edf3;  /* github dark base text */
+    }
+}
+
+/* Query-match highlight rendered inside hljs-coloured spans */
+.result-content mark.highlight {
+    background: var(--match-highlight);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+    font-style: inherit;
+    font-weight: bold;
+}
+
+/* ============================================
+   CONTEXT TOOLTIP
+   ============================================ */
+
+.ctx-tooltip {
+    position: fixed;
+    z-index: 2000;
+    display: none;
+    max-width: 960px;
+    min-width: 220px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    overflow: hidden;
+    max-height: 560px;
+    font-family: monospace;
+    font-size: 0.78rem;
+}
+
+.ctx-header {
+    padding: 0.35rem 0.75rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ctx-loading {
+    padding: 0.75rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* The highlighted code block inside the tooltip */
+.ctx-code.hljs,
+.ctx-code {
+    margin: 0;
+    padding: 0.5rem 0;
+    background: var(--code-bg) !important;
+    overflow-x: auto;
+    max-height: 520px;
+    line-height: 1.55;
+    font-size: 0.78rem;
+    border-radius: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+@media (prefers-color-scheme: light) {
+    .ctx-code { color: #24292e; }
+}
+@media (prefers-color-scheme: dark) {
+    .ctx-code { color: #e6edf3; }
+}
+
+/* Gutter line numbers injected by overlayMatchLine */
+.ctx-gutter {
+    display: inline-block;
+    width: 3rem;
+    padding-right: 0.75rem;
+    text-align: right;
+    color: var(--text-muted);
+    user-select: none;
+    border-right: 2px solid transparent;
+}
+
+.ctx-gutter-match {
+    color: var(--accent);
+    border-right-color: var(--accent);
+}
+
+/* Highlighted matched line inside the context tooltip */
+.ctx-match-line {
+    display: inline;
+    background: color-mix(in srgb, var(--match-highlight) 22%, transparent);
+}

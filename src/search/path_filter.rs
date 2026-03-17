@@ -14,7 +14,7 @@ use std::path::PathBuf;
 /// - Include patterns: Files must match at least one pattern (if any specified)
 /// - Exclude patterns: Files must not match any pattern
 ///
-/// Patterns are matched against stored path strings (typically absolute paths).
+/// Patterns are matched against display paths (root-relative, forward-slash normalized).
 #[derive(Debug, Default)]
 pub struct PathFilter {
     /// Include patterns - file must match at least one (if non-empty)
@@ -24,6 +24,21 @@ pub struct PathFilter {
 }
 
 impl PathFilter {
+    /// Normalize a glob pattern for robust cross-platform matching:
+    /// - Convert backslashes to forward slashes.
+    /// - Prepend `**/` to relative patterns (those not starting with `/` or `**/`)
+    ///   so they match at any depth in both relative and absolute paths.
+    fn normalize_pattern(pattern: &str) -> String {
+        let p = pattern.replace('\\', "/");
+        if p.starts_with('/') || p.starts_with("**/") || p.contains(':') {
+            // Already absolute-style or catch-all: leave as-is (just normalized slashes)
+            p
+        } else {
+            // Relative pattern like `src/**/*.rs` — make it match at any path depth
+            format!("**/{}", p)
+        }
+    }
+
     /// Create a new path filter from include and exclude patterns.
     ///
     /// Patterns should be glob patterns like:
@@ -38,7 +53,8 @@ impl PathFilter {
         } else {
             let mut builder = GlobSetBuilder::new();
             for pattern in include_patterns {
-                let glob = Glob::new(pattern)
+                let normalized = Self::normalize_pattern(pattern);
+                let glob = Glob::new(&normalized)
                     .with_context(|| format!("Invalid include glob pattern: {}", pattern))?;
                 builder.add(glob);
             }
@@ -50,7 +66,8 @@ impl PathFilter {
         } else {
             let mut builder = GlobSetBuilder::new();
             for pattern in exclude_patterns {
-                let glob = Glob::new(pattern)
+                let normalized = Self::normalize_pattern(pattern);
+                let glob = Glob::new(&normalized)
                     .with_context(|| format!("Invalid exclude glob pattern: {}", pattern))?;
                 builder.add(glob);
             }
@@ -86,7 +103,17 @@ impl PathFilter {
     /// Returns true if:
     /// - The path matches at least one include pattern (or no include patterns specified)
     /// - AND the path does not match any exclude pattern
+    ///
+    /// Path separators are normalized to `/` before matching.
     pub fn matches(&self, path: &str) -> bool {
+        // Normalize backslashes to forward slashes for cross-platform matching
+        let normalized: std::borrow::Cow<str> = if path.contains('\\') {
+            std::borrow::Cow::Owned(path.replace('\\', "/"))
+        } else {
+            std::borrow::Cow::Borrowed(path)
+        };
+        let path = normalized.as_ref();
+
         // Check include patterns
         let included = match &self.include {
             Some(set) => set.is_match(path),
@@ -115,15 +142,15 @@ impl PathFilter {
     ///
     /// This is optimized for use after trigram pre-filtering:
     /// - Takes a bitmap of candidate document IDs
-    /// - Uses a callback to look up paths (avoids cloning entire path array)
+    /// - Uses a callback to look up display paths (root-relative, forward-slash normalized)
     /// - Returns a new bitmap with only matching documents
-    pub fn filter_documents_with<'a, F>(
+    pub fn filter_documents_with<F>(
         &self,
         candidates: &RoaringBitmap,
         get_path: F,
     ) -> RoaringBitmap
     where
-        F: Fn(u32) -> Option<&'a std::path::Path>,
+        F: Fn(u32) -> Option<String>,
     {
         // If no filters, return candidates unchanged
         if self.is_empty() {
@@ -132,9 +159,7 @@ impl PathFilter {
 
         let mut result = RoaringBitmap::new();
         for doc_id in candidates.iter() {
-            if let Some(path) = get_path(doc_id) {
-                // Convert to string for matching
-                let path_str = path.to_string_lossy();
+            if let Some(path_str) = get_path(doc_id) {
                 if self.matches(&path_str) {
                     result.insert(doc_id);
                 }

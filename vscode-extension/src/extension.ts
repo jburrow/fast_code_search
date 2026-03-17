@@ -48,18 +48,32 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Register the TextSearchProvider for the "file" scheme so that VSCode's
   // built-in search UI delegates to our keyword server.
+  // Guard against VS Code builds where this proposed API is not yet available.
   const provider = new FastCodeSearchProvider(keywordClient);
-  context.subscriptions.push(
-    vscode.workspace.registerTextSearchProvider("file", provider)
-  );
+  if (typeof (vscode.workspace as any).registerTextSearchProvider === "function") {
+    context.subscriptions.push(
+      (vscode.workspace as any).registerTextSearchProvider("file", provider)
+    );
+  } else {
+    outputChannel.appendLine(
+      "Warning: vscode.workspace.registerTextSearchProvider is not available in this VS Code build."
+    );
+  }
 
   // Register the AITextSearchProvider for the "file" scheme so that VSCode
   // shows semantic results in the dedicated "AI Results" section of the
   // Search panel when the semantic server is enabled.
+  // Guard against VS Code builds where this proposed API is not yet available.
   const semanticProvider = new SemanticSearchProvider(semanticClient);
-  context.subscriptions.push(
-    vscode.workspace.registerAITextSearchProvider("file", semanticProvider)
-  );
+  if (typeof (vscode.workspace as any).registerAITextSearchProvider === "function") {
+    context.subscriptions.push(
+      (vscode.workspace as any).registerAITextSearchProvider("file", semanticProvider)
+    );
+  } else {
+    outputChannel.appendLine(
+      "Warning: vscode.workspace.registerAITextSearchProvider is not available in this VS Code build."
+    );
+  }
 
   // Re-initialise clients when settings change
   context.subscriptions.push(

@@ -320,11 +320,18 @@ pub async fn health_handler() -> Json<HealthResponse> {
 pub async fn status_handler(
     State(state): State<WebState>,
 ) -> Result<Json<StatusResponse>, (StatusCode, String)> {
-    let progress = state.progress.read().map_err(|e| {
-        (
+    // Use try_read so we never block a tokio worker thread on a std::sync::RwLock.
+    // The progress lock is written by the background indexer; if it is momentarily
+    // held we return 503 rather than stalling the async executor.
+    let progress = state.progress.try_read().map_err(|e| match e {
+        std::sync::TryLockError::WouldBlock => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Index progress is being updated, please retry shortly".to_string(),
+        ),
+        std::sync::TryLockError::Poisoned(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to acquire progress read lock: {}", e),
-        )
+        ),
     })?;
 
     let status_str = match progress.status {
@@ -570,6 +577,100 @@ pub async fn file_handler(
     })?
 }
 
+/// Query parameters for context (lines around a hit) endpoint
+#[derive(Debug, Deserialize)]
+pub struct ContextQuery {
+    /// File path
+    file: String,
+    /// 1-based line number of the match
+    line: usize,
+    /// Number of lines of context to return before and after (default 5)
+    #[serde(default = "default_context_lines")]
+    context: usize,
+}
+
+fn default_context_lines() -> usize {
+    5
+}
+
+/// Context response: a window of lines around the matched line
+#[derive(Debug, Serialize)]
+pub struct ContextResponse {
+    pub file: String,
+    pub start_line: usize,
+    pub lines: Vec<String>,
+    pub match_line: usize,
+}
+
+/// Return a window of lines around a matched line for the hover tooltip
+pub async fn context_handler(
+    State(state): State<WebState>,
+    Query(params): Query<ContextQuery>,
+) -> Result<Json<ContextResponse>, (StatusCode, String)> {
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        let engine = engine.try_read().map_err(|e| match e {
+            std::sync::TryLockError::WouldBlock => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Index is currently being updated, please try again shortly".to_string(),
+            ),
+            std::sync::TryLockError::Poisoned(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to acquire engine read lock: {}", e),
+            ),
+        })?;
+
+        let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("File not found: {}", params.file),
+            )
+        })?;
+
+        let mapped = engine.file_store.get(file_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("File not found in store: {}", params.file),
+            )
+        })?;
+
+        let content = mapped.as_str().map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("File is not valid UTF-8: {}", e),
+            )
+        })?;
+
+        let all_lines: Vec<&str> = content.lines().collect();
+        let total = all_lines.len();
+
+        // line is 1-based; clamp to valid range
+        let match_idx = params.line.saturating_sub(1).min(total.saturating_sub(1));
+        let start_idx = match_idx.saturating_sub(params.context);
+        let end_idx = (match_idx + params.context + 1).min(total);
+
+        let lines: Vec<String> = all_lines[start_idx..end_idx]
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        let start_line = start_idx + 1; // 1-based
+
+        Ok(Json(ContextResponse {
+            file: mapped.path.to_string_lossy().to_string(),
+            start_line,
+            lines,
+            match_line: params.line,
+        }))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Task join error: {}", e),
+        )
+    })?
+}
+
 /// WebSocket upgrade handler for progress streaming
 pub async fn ws_progress_handler(
     State(state): State<WebState>,
@@ -606,10 +707,11 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     // Clone engine for use in spawned task
     let engine = state.engine.clone();
 
-    // Send initial progress state immediately (clone before await to avoid holding lock)
+    // Send initial progress state immediately (clone before await to avoid holding lock).
+    // Use try_read to avoid blocking the async executor on a std::sync::RwLock.
     let initial_json = {
         let stats = get_stats_from_engine(&state.engine);
-        state.progress.read().ok().and_then(|progress| {
+        state.progress.try_read().ok().and_then(|progress| {
             let status_response = progress_to_status(&progress, stats);
             serde_json::to_string(&status_response).ok()
         })

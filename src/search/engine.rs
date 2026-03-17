@@ -1443,10 +1443,8 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_by_display(&candidate_docs, |doc_id| {
-                self.file_store
-                    .get_path(doc_id)
-                    .map(|p| self.make_display_path(p))
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
+                self.file_store.get(doc_id).map(|f| self.make_display_path(&f.path))
             })
         };
 
@@ -1549,10 +1547,8 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_by_display(&candidate_docs, |doc_id| {
-                self.file_store
-                    .get_path(doc_id)
-                    .map(|p| self.make_display_path(p))
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
+                self.file_store.get(doc_id).map(|f| self.make_display_path(&f.path))
             })
         };
 
@@ -1630,10 +1626,8 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter.filter_documents_by_display(&candidate_docs, |doc_id| {
-                self.file_store
-                    .get_path(doc_id)
-                    .map(|p| self.make_display_path(p))
+            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
+                self.file_store.get(doc_id).map(|f| self.make_display_path(&f.path))
             })
         };
 
@@ -1759,7 +1753,7 @@ impl SearchEngine {
                 };
 
             // Calculate score - symbols always get the symbol definition boost
-            let score = calculate_score_inline(
+            let base_score = calculate_score_inline(
                 line,
                 original_query,
                 query_lower,
@@ -1767,6 +1761,16 @@ impl SearchEngine {
                 is_src_lib,
                 dependency_boost,
             );
+
+            // Boost exact symbol name matches over partial/subset matches.
+            // An exact match (symbol.name == query, case-insensitive) scores 2x higher
+            // than a partial match (e.g. query "calc" matching symbol "calculate").
+            let name_lower = symbol.name.to_lowercase();
+            let score = if name_lower == query_lower {
+                base_score * 2.0
+            } else {
+                base_score
+            };
 
             // Truncate long lines around the match
             let truncated = truncate_around_match(line, match_start, match_end);
@@ -2547,6 +2551,12 @@ impl SearchEngine {
             "Index loaded from disk with reconciliation"
         );
 
+        // Register configured paths as root paths for display-path computation
+        for path_str in &config.paths {
+            let p = std::path::Path::new(path_str);
+            self.add_root_path(p);
+        }
+
         Ok(LoadIndexResult {
             stale_files,
             removed_files,
@@ -3234,6 +3244,50 @@ fn HelloWorld() {
         assert!(
             !results_mixed.is_empty(),
             "mixed case query should find symbol"
+        );
+    }
+
+    #[test]
+    fn test_symbol_exact_match_scores_higher_than_partial() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+
+        // Two symbols: one is an exact match for "calc", one is a superset "calculate"
+        fs::write(
+            &file_path,
+            r#"
+fn calc(x: f64) -> f64 { x }
+
+fn calculate(x: f64, y: f64) -> f64 { x + y }
+"#,
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let results = engine.search_symbols("calc", "", "", 10).unwrap();
+        assert!(
+            results.len() >= 2,
+            "Expected at least two symbol matches (calc and calculate)"
+        );
+
+        let calc_score = results
+            .iter()
+            .find(|r| r.content.contains("fn calc("))
+            .map(|r| r.score)
+            .expect("Expected to find 'calc' symbol");
+
+        let calculate_score = results
+            .iter()
+            .find(|r| r.content.contains("fn calculate("))
+            .map(|r| r.score)
+            .expect("Expected to find 'calculate' symbol");
+
+        assert!(
+            calc_score > calculate_score,
+            "Exact match 'calc' (score={calc_score}) should score higher than partial match 'calculate' (score={calculate_score})"
         );
     }
 

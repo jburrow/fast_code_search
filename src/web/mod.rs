@@ -63,6 +63,7 @@ pub fn create_router(
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
         .route("/api/file", get(api::file_handler))
+        .route("/api/context", get(api::context_handler))
         // WebSocket for progress streaming
         .route("/ws/progress", get(api::ws_progress_handler))
         // Static files

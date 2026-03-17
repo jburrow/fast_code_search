@@ -728,6 +728,7 @@ input.search-disabled::placeholder {
 
 /* "View" button on result items */
 .view-file-btn {
+    position: relative;
     padding: 0.15rem 0.5rem;
     font-size: 0.72rem;
     font-weight: 600;
@@ -738,6 +739,36 @@ input.search-disabled::placeholder {
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
+}
+
+/* Custom tooltip anchored to the button's right edge so it never
+   overflows off the right side of the viewport. */
+.view-file-btn::after {
+    content: attr(data-file-path);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: normal;
+    white-space: normal;
+    word-break: break-all;
+    min-width: 240px;
+    max-width: 480px;
+    text-align: left;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 100;
+    box-shadow: 0 2px 6px var(--shadow);
+}
+
+.view-file-btn:hover::after {
+    opacity: 1;
 }
 
 .view-file-btn:hover {
@@ -815,7 +846,7 @@ input.search-disabled::placeholder {
 .file-modal-body {
     flex: 1;
     overflow-y: auto;
-    overflow-x: auto;
+    overflow-x: hidden;
     padding: 0;
     background: var(--code-bg);
 }
@@ -843,7 +874,7 @@ input.search-disabled::placeholder {
 /* Individual line */
 .file-line {
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     padding: 0 0.75rem;
     min-height: 1.5em;
 }
@@ -878,7 +909,8 @@ input.search-disabled::placeholder {
 /* Line content */
 .file-line-content {
     flex: 1;
-    white-space: pre;
+    white-space: pre-wrap;
+    word-break: break-all;
     color: var(--text-primary);
 }
 
@@ -914,8 +946,7 @@ input.search-disabled::placeholder {
     }
 
     .header-stats {
-        margin-left: 0;
-        justify-content: center;
+        display: none;
     }
 
     .header-progress {

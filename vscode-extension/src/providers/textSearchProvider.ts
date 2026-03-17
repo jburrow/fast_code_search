@@ -10,6 +10,27 @@ import * as vscode from "vscode";
 import { KeywordSearchClient } from "../api/keywordClient.js";
 import { isAbortError } from "../utils/errors.js";
 
+/**
+ * Convert a file path returned by the server into a VS Code URI.
+ *
+ * The server now returns root-relative paths (e.g. `src/main.rs`) with
+ * forward-slash separators. When the path is relative, we join it with
+ * each workspace folder until we find one that could contain the file
+ * (simple heuristic: first match wins, which is correct for single-root
+ * workspaces and works well for multi-root ones too).
+ */
+function resolveFileUri(filePath: string): vscode.Uri {
+  // Absolute paths (Unix `/...` or Windows `C:\...`) are used as-is.
+  if (filePath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(filePath)) {
+    return vscode.Uri.file(filePath);
+  }
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.length > 0) {
+    return vscode.Uri.joinPath(folders[0].uri, filePath);
+  }
+  return vscode.Uri.file(filePath);
+}
+
 export class FastCodeSearchProvider implements vscode.TextSearchProvider {
   constructor(private readonly keywordClient: KeywordSearchClient) {}
 
@@ -89,7 +110,7 @@ export class FastCodeSearchProvider implements vscode.TextSearchProvider {
       const matchEnd = result.match_end ?? result.content.length;
 
       progress.report({
-        uri: vscode.Uri.file(result.file_path),
+        uri: resolveFileUri(result.file_path),
         ranges: new vscode.Range(lineIndex, matchStart, lineIndex, matchEnd),
         preview: {
           text: result.content,
