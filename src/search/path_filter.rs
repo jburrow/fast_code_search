@@ -143,6 +143,36 @@ impl PathFilter {
         result
     }
 
+    /// Filter a set of document IDs based on pre-computed display path strings.
+    ///
+    /// Patterns are matched against root-relative display paths (e.g.
+    /// `src/main.rs`) produced by `SearchEngine::make_display_path`.  Use this
+    /// variant instead of `filter_documents_with` when the caller already
+    /// converts stored paths to display form.
+    pub fn filter_documents_by_display<F>(
+        &self,
+        candidates: &RoaringBitmap,
+        get_display_path: F,
+    ) -> RoaringBitmap
+    where
+        F: Fn(u32) -> Option<String>,
+    {
+        // If no filters, return candidates unchanged
+        if self.is_empty() {
+            return candidates.clone();
+        }
+
+        let mut result = RoaringBitmap::new();
+        for doc_id in candidates.iter() {
+            if let Some(path) = get_display_path(doc_id) {
+                if self.matches(&path) {
+                    result.insert(doc_id);
+                }
+            }
+        }
+        result
+    }
+
     /// Filter a set of document IDs based on their paths.
     ///
     /// This is optimized for use after trigram pre-filtering:

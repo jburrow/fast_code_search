@@ -88,19 +88,19 @@
                     <div class="filter-options">
                         <div class="filter-row">
                             <label>
-                                <span class="filter-label">Include paths:</span>
+                                <span class="filter-label">Search only in (glob):</span>
                                 <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**"
                                     autocomplete="off">
                             </label>
                         </div>
                         <div class="filter-row">
                             <label>
-                                <span class="filter-label">Exclude paths:</span>
+                                <span class="filter-label">Skip paths (glob):</span>
                                 <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**"
                                     autocomplete="off">
                             </label>
                         </div>
-                        <p class="filter-help">Use glob patterns separated by semicolons (;)</p>
+                        <p class="filter-help">Glob patterns (separated by <code>;</code>) matched against root-relative paths. Use <code>**</code> for recursive directories, e.g. <code>src/**/*.rs</code> or <code>**/test/**</code></p>
                     </div>
                 </div>
             </details>

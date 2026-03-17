@@ -412,8 +412,8 @@ impl LazyFileStore {
                 );
             }
             let id = self.files.len() as u32;
-            self.path_to_id.insert(canonical, id);
-            self.files.push(LazyMappedFile::new(path));
+            self.path_to_id.insert(canonical.clone(), id);
+            self.files.push(LazyMappedFile::new(&canonical));
             // Estimate content bytes from file metadata so stats stay accurate
             if let Ok(meta) = std::fs::metadata(path) {
                 self.total_content_bytes
@@ -433,8 +433,8 @@ impl LazyFileStore {
         let content_size = mmap.len() as u64;
 
         let id = self.files.len() as u32;
-        self.path_to_id.insert(canonical, id);
-        self.files.push(LazyMappedFile::with_mmap(path, mmap));
+        self.path_to_id.insert(canonical.clone(), id);
+        self.files.push(LazyMappedFile::with_mmap(&canonical, mmap));
 
         // Update mapped count and content bytes
         self.mapped_count.fetch_add(1, Ordering::Relaxed);

@@ -236,7 +236,7 @@ async function performSearch() {
                 <div class="result-item">
                     <div class="result-header">
                         <div class="result-info">
-                            <span class="result-path">${escapeHtml(result.file_path)}</span>
+                            <span class="result-path" title="${escapeHtml(result.file_path)}">${escapeHtml(result.file_path)}</span>
                             <span class="result-line">:${result.line_number}</span>
                         </div>
                         <div class="result-meta">
