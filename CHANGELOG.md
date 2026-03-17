@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-17
+
+### Fixed
+- Fix path handling: canonical storage, root-relative display, and proper glob exclusions (#91).
+- Fix semantic web API handlers panicking on a poisoned `RwLock` (#85).
+- Preserve `dev/bench/` across GitHub Pages deployments (#83).
+
+### Added
+- URL state encoding for semantic search UI; refactored shared helpers into `common.js` (#93).
+- VS Code configuration and tasks for Rust development.
+
+### Changed
+- Refactor code structure for improved readability and maintainability.
+
 ## [0.7.0] - 2026-03-03
 
 ### Added
