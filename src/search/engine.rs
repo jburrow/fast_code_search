@@ -642,6 +642,8 @@ pub struct SearchEngine {
     pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
     /// Whether tree-sitter symbol extraction is enabled (default: true)
     pub enable_symbols: bool,
+    /// Canonical root paths used to produce root-relative display paths
+    root_paths: Vec<PathBuf>,
 }
 
 impl SearchEngine {
@@ -654,7 +656,41 @@ impl SearchEngine {
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
             enable_symbols: true,
+            root_paths: Vec::new(),
         }
+    }
+
+    /// Register an indexed root path so that `make_display_path` can produce
+    /// root-relative paths (e.g. `src/main.rs` instead of
+    /// `/workspace/project/src/main.rs`).
+    ///
+    /// The path is canonicalized on registration so that it matches the
+    /// canonical paths stored in `LazyMappedFile.path`.
+    pub fn add_root_path(&mut self, path: impl AsRef<Path>) {
+        let canonical = path
+            .as_ref()
+            .canonicalize()
+            .unwrap_or_else(|_| path.as_ref().to_path_buf());
+        if !self.root_paths.contains(&canonical) {
+            self.root_paths.push(canonical);
+        }
+    }
+
+    /// Convert a (canonical) stored file path into a root-relative display
+    /// string using forward slashes.
+    ///
+    /// If `path` is under one of the registered root paths the prefix is
+    /// stripped, leaving e.g. `src/main.rs`.  When no root matches the full
+    /// path is returned with backslashes normalised to forward slashes so that
+    /// the output is always OS-agnostic.
+    pub fn make_display_path(&self, path: &Path) -> String {
+        for root in &self.root_paths {
+            if let Ok(relative) = path.strip_prefix(root) {
+                return relative.to_string_lossy().replace('\\', "/");
+            }
+        }
+        // Fallback: return the full path with forward slashes
+        path.to_string_lossy().replace('\\', "/")
     }
 
     /// Index a file
@@ -1407,8 +1443,11 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter
-                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter.filter_documents_by_display(&candidate_docs, |doc_id| {
+                self.file_store
+                    .get_path(doc_id)
+                    .map(|p| self.make_display_path(p))
+            })
         };
 
         let total_candidates = filtered_docs.len() as usize;
@@ -1510,8 +1549,11 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter
-                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter.filter_documents_by_display(&candidate_docs, |doc_id| {
+                self.file_store
+                    .get_path(doc_id)
+                    .map(|p| self.make_display_path(p))
+            })
         };
 
         let total_candidates = filtered_docs.len() as usize;
@@ -1588,8 +1630,11 @@ impl SearchEngine {
         let filtered_docs = if path_filter.is_empty() {
             candidate_docs
         } else {
-            path_filter
-                .filter_documents_with(&candidate_docs, |doc_id| self.file_store.get_path(doc_id))
+            path_filter.filter_documents_by_display(&candidate_docs, |doc_id| {
+                self.file_store
+                    .get_path(doc_id)
+                    .map(|p| self.make_display_path(p))
+            })
         };
 
         let total_candidates = filtered_docs.len() as usize;
@@ -1661,12 +1706,13 @@ impl SearchEngine {
         };
 
         // Lazy-compute path info
-        let path_str = file.path.to_string_lossy().into_owned();
-        let path_bytes = path_str.as_bytes();
+        let raw_path_str = file.path.to_string_lossy().into_owned();
+        let path_bytes = raw_path_str.as_bytes();
         let is_src_lib = contains_bytes(path_bytes, b"/src/")
             || contains_bytes(path_bytes, b"\\src\\")
             || contains_bytes(path_bytes, b"/lib/")
             || contains_bytes(path_bytes, b"\\lib\\");
+        let display_path = self.make_display_path(&file.path);
 
         // Collect lines into a vector for indexed access
         let lines: Vec<&str> = content.lines().collect();
@@ -1677,12 +1723,12 @@ impl SearchEngine {
         for symbol in matching_symbols {
             // FileName symbols are synthetic (not from file content) — show the file path
             if symbol.symbol_type == SymbolType::FileName {
-                let display = path_str.clone();
+                let display = display_path.clone();
                 let (match_start, match_end) =
                     find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
                 matches.push(SearchMatch {
                     file_id: doc_id,
-                    file_path: path_str.clone(),
+                    file_path: display_path.clone(),
                     line_number: 0,
                     content: display,
                     match_start,
@@ -1727,7 +1773,7 @@ impl SearchEngine {
 
             matches.push(SearchMatch {
                 file_id: doc_id,
-                file_path: path_str.clone(),
+                file_path: display_path.clone(),
                 line_number: symbol.line + 1, // 1-based line numbers
                 content: truncated.content,
                 match_start: truncated.match_start,
@@ -1798,7 +1844,7 @@ impl SearchEngine {
         let mut matches = Vec::with_capacity(8);
 
         // Lazy-compute path info only if we find matches
-        let mut path_str: Option<String> = None;
+        let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
 
         // Search in each line using regex
@@ -1811,14 +1857,14 @@ impl SearchEngine {
             }
             if let Some(m) = regex.find(line) {
                 // Lazy initialize path info only when we have at least one match
-                let path_ref = path_str.get_or_insert_with(|| {
-                    let p = file.path.to_string_lossy().into_owned();
-                    let path_bytes = p.as_bytes();
+                let path_ref = display_path.get_or_insert_with(|| {
+                    let raw = file.path.to_string_lossy().into_owned();
+                    let path_bytes = raw.as_bytes();
                     is_src_lib = contains_bytes(path_bytes, b"/src/")
                         || contains_bytes(path_bytes, b"\\src\\")
                         || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
-                    p
+                    self.make_display_path(&file.path)
                 });
 
                 // Calculate score using pre-computed values
@@ -1867,7 +1913,7 @@ impl SearchEngine {
                 .any(|s| s.symbol_type == SymbolType::FileName && regex.is_match(&s.name));
             if has_filename_match {
                 let path_ref =
-                    path_str.get_or_insert_with(|| file.path.to_string_lossy().into_owned());
+                    display_path.get_or_insert_with(|| self.make_display_path(&file.path));
                 let display = path_ref.clone();
                 let (match_start, match_end) = regex
                     .find(&display)
@@ -1967,7 +2013,7 @@ impl SearchEngine {
         let mut matches = Vec::with_capacity(8);
 
         // Lazy-compute path info only if we find matches
-        let mut path_str: Option<String> = None;
+        let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
 
         // Search in each line using case-insensitive matching without allocation
@@ -1982,14 +2028,14 @@ impl SearchEngine {
                 find_match_position_case_insensitive(line, query_lower)
             {
                 // Lazy initialize path info only when we have at least one match
-                let path_ref = path_str.get_or_insert_with(|| {
-                    let p = file.path.to_string_lossy().into_owned();
-                    let path_bytes = p.as_bytes();
+                let path_ref = display_path.get_or_insert_with(|| {
+                    let raw = file.path.to_string_lossy().into_owned();
+                    let path_bytes = raw.as_bytes();
                     is_src_lib = contains_bytes(path_bytes, b"/src/")
                         || contains_bytes(path_bytes, b"\\src\\")
                         || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
-                    p
+                    self.make_display_path(&file.path)
                 });
 
                 // Calculate score using pre-computed values
@@ -2046,7 +2092,7 @@ impl SearchEngine {
             });
             if has_filename_match {
                 let path_ref =
-                    path_str.get_or_insert_with(|| file.path.to_string_lossy().into_owned());
+                    display_path.get_or_insert_with(|| self.make_display_path(&file.path));
                 let display = path_ref.clone();
                 let (match_start, match_end) =
                     find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
@@ -2092,11 +2138,11 @@ impl SearchEngine {
         self.dependency_index.get_dependencies(file_id)
     }
 
-    /// Get file path by ID
+    /// Get file path by ID as a root-relative display string.
     pub fn get_file_path(&self, file_id: u32) -> Option<String> {
         self.file_store
             .get(file_id)
-            .map(|f| f.path.to_string_lossy().to_string())
+            .map(|f| self.make_display_path(&f.path))
     }
 
     /// Find file ID by path.

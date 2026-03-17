@@ -175,8 +175,13 @@ pub fn run(config: BackgroundIndexerConfig) {
 
     // Propagate enable_symbols setting to the engine so that all code paths
     // (index_file, rebuild_symbols_and_dependencies, etc.) respect it.
+    // Also register root paths so that search results and file_handler can
+    // return root-relative display paths instead of full OS paths.
     if let Ok(mut engine) = index_engine.write() {
         engine.enable_symbols = indexer_config.enable_symbols;
+        for path in &indexer_config.paths {
+            engine.add_root_path(path);
+        }
     }
 
     // Log active persistence settings so the user knows what to expect

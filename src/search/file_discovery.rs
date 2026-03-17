@@ -3,6 +3,7 @@
 //! Provides a unified file discovery mechanism used by both the keyword and semantic
 //! search indexers. Handles exclude patterns, binary file detection, and large file filtering.
 
+use crate::search::path_filter::PathFilter;
 use crate::utils::{get_binary_extensions, has_binary_extension};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -53,15 +54,6 @@ impl FileDiscoveryConfig {
         }
     }
 
-    /// Pre-compile exclude patterns for efficient matching.
-    /// Strips leading/trailing wildcards and slashes for substring matching.
-    fn compile_exclude_patterns(&self) -> Vec<String> {
-        self.exclude_patterns
-            .iter()
-            .map(|p| p.trim_matches('*').trim_matches('/').to_string())
-            .collect()
-    }
-
     /// Get the combined set of binary extensions (default + extra).
     fn get_all_binary_extensions(&self) -> HashSet<String> {
         let mut extensions: HashSet<String> = get_binary_extensions()
@@ -82,8 +74,8 @@ pub struct FileDiscoveryIterator {
     /// Stack of walkdir iterators (one per path).
     walkers: Vec<walkdir::IntoIter>,
 
-    /// Compiled exclude patterns for substring matching.
-    exclude_patterns: Vec<String>,
+    /// Compiled exclude glob filter.
+    exclude_filter: PathFilter,
 
     /// Allowed file extensions (lowercased; empty = allow all).
     include_extensions: Vec<String>,
@@ -112,9 +104,18 @@ impl FileDiscoveryIterator {
             })
             .collect();
 
+        // Build a PathFilter from the exclude patterns. Patterns are matched against
+        // the full OS path of each discovered file so that patterns like
+        // `**/node_modules/**` are evaluated with proper glob semantics instead of
+        // the old substring-contains approach.
+        let exclude_filter = PathFilter::new(&[], &config.exclude_patterns).unwrap_or_else(|e| {
+            tracing::warn!("Invalid exclude pattern(s): {}; exclusions disabled", e);
+            PathFilter::default()
+        });
+
         Self {
             walkers,
-            exclude_patterns: config.compile_exclude_patterns(),
+            exclude_filter,
             include_extensions: config
                 .include_extensions
                 .iter()
@@ -128,9 +129,12 @@ impl FileDiscoveryIterator {
     /// Check if a path matches any exclude pattern.
     fn is_excluded(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        self.exclude_patterns
-            .iter()
-            .any(|pattern| path_str.contains(pattern))
+        // Use forward slashes so patterns authored on any OS work uniformly.
+        let normalized = path_str.replace('\\', "/");
+        // PathFilter::matches() returns true when the path is *not* excluded by
+        // any exclude pattern (i.e. the file should be kept).  We negate it here
+        // to satisfy the `is_excluded` contract expected by the call-site.
+        !self.exclude_filter.matches(&normalized)
     }
 
     /// Check if a file has a binary extension.

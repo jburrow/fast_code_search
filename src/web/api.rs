@@ -552,7 +552,7 @@ pub async fn file_handler(
 
         let size_bytes = content.len();
         let line_count = content.lines().count();
-        let file_path = mapped.path.to_string_lossy().to_string();
+        let file_path = engine.make_display_path(&mapped.path);
 
         Ok(Json(FileResponse {
             file: file_path,
