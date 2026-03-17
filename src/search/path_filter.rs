@@ -144,11 +144,7 @@ impl PathFilter {
     /// - Takes a bitmap of candidate document IDs
     /// - Uses a callback to look up display paths (root-relative, forward-slash normalized)
     /// - Returns a new bitmap with only matching documents
-    pub fn filter_documents_with<F>(
-        &self,
-        candidates: &RoaringBitmap,
-        get_path: F,
-    ) -> RoaringBitmap
+    pub fn filter_documents_with<F>(&self, candidates: &RoaringBitmap, get_path: F) -> RoaringBitmap
     where
         F: Fn(u32) -> Option<String>,
     {
