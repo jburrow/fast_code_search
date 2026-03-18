@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-03-18
+
+### Added
+- Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).
+- New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.
+
+### Changed
+- UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.
+- Improved touch target sizes for mobile accessibility.
+
+### Fixed
+- Linting issues across the codebase (#94).
+
 ## [0.7.1] - 2026-03-17
 
 ### Fixed
