@@ -1039,6 +1039,57 @@ input.search-disabled::placeholder {
         flex-direction: column;
         align-items: stretch;
     }
+
+    /* Touch targets — 44px minimum height for finger-friendly tapping */
+    .advanced-toggle {
+        min-height: 44px;
+        padding: 0.65rem 0;
+    }
+
+    .example-btn {
+        min-height: 44px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.85rem;
+    }
+
+    .view-file-btn {
+        min-height: 36px;
+        padding: 0.35rem 0.65rem;
+        font-size: 0.8rem;
+    }
+
+    .file-modal-close {
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Prevent iOS Safari auto-zoom when focusing inputs smaller than 16px */
+    .filter-row input,
+    .search-options select {
+        font-size: 1rem;
+    }
+}
+
+/* Very narrow screens (≤480px) */
+@media (max-width: 480px) {
+    /* Allow results metadata to wrap rather than truncate */
+    .results-header {
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
+    /* Allow result-header to stack path and actions on two lines */
+    .result-header {
+        flex-wrap: wrap;
+    }
+
+    /* Hide decorative score bar — numeric value still shows */
+    .score-bar {
+        display: none;
+    }
 }
 
 /* ============================================

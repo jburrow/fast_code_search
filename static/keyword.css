@@ -227,3 +227,16 @@
     background: var(--code-bg);
     min-height: 0;
 }
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+/* Touch targets — 44px minimum height for mobile tapping */
+@media (max-width: 768px) {
+    .regex-toggle,
+    .symbols-toggle {
+        min-height: 44px;
+        padding: 0.5rem 0.75rem;
+    }
+}
