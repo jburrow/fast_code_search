@@ -264,6 +264,60 @@ function applyQueryHighlight(el, query) {
 }
 
 // ============================================
+// FILE VIEW HELPER (shared by modal and tooltip)
+// ============================================
+
+/**
+ * Fetch a file and render it into `container` with syntax highlighting,
+ * query-term highlighting, and the matched line scrolled into view within
+ * the container (works for both the full-screen modal and the fixed tooltip).
+ */
+async function populateFileView(container, filePath, highlightLine, query, signal) {
+    const response = await fetch(
+        `${API_BASE}/api/file?file=${encodeURIComponent(filePath)}`,
+        signal ? { signal } : {}
+    );
+    if (!response.ok) {
+        const text = await response.text();
+        const statusMessages = { 404: 'File not found', 403: 'Access denied', 503: 'Server busy' };
+        throw new Error(statusMessages[response.status] || text || response.statusText);
+    }
+    const data = await response.json();
+    const lang = hljsLangForPath(filePath);
+    const linesHtml = data.content.split('\n')
+        .map((line, idx) => renderFileLine(line, idx + 1, highlightLine))
+        .join('');
+
+    container.innerHTML =
+        `<div class="file-meta">${data.line_count.toLocaleString()} lines · ${formatBytes(data.size_bytes)}</div>` +
+        `<div class="file-code" data-lang="${lang}">${linesHtml}</div>`;
+
+    if (typeof hljs !== 'undefined') {
+        container.querySelectorAll('.file-line-content').forEach(span => {
+            const code = document.createElement('code');
+            code.className = `language-${lang}`;
+            code.textContent = span.textContent;
+            hljs.highlightElement(code);
+            span.innerHTML = code.innerHTML;
+        });
+    }
+
+    if (query) {
+        container.querySelectorAll('.file-line-content').forEach(span => applyQueryHighlight(span, query));
+    }
+
+    // Scroll the matched line to the centre of the container.
+    // Using getBoundingClientRect so it works for both fixed-position tooltips
+    // and normal flow modal bodies.
+    const targetLine = container.querySelector(`#file-line-${highlightLine}`);
+    if (targetLine) {
+        const cRect = container.getBoundingClientRect();
+        const lRect = targetLine.getBoundingClientRect();
+        container.scrollTop += lRect.top - cRect.top - container.clientHeight / 2 + lRect.height / 2;
+    }
+}
+
+// ============================================
 // CONTEXT TOOLTIP
 // ============================================
 
@@ -298,68 +352,20 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
     _ctxFetchController = new AbortController();
 
     const tooltip = getOrCreateTooltip();
-    tooltip.innerHTML = '<div class="ctx-loading">Loading context…</div>';
+    tooltip.innerHTML =
+        `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>` +
+        `<div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
     positionTooltip(tooltip, resultItem);
-    tooltip.style.display = 'block';
+    tooltip.style.display = 'flex';
 
+    const fileBody = tooltip.querySelector('.ctx-file-body');
     try {
-        const resp = await fetch(
-            `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=8`,
-            { signal: _ctxFetchController.signal }
-        );
-        if (!resp.ok) throw new Error(await resp.text());
-        const data = await resp.json();
-
-        const lang = hljsLangForPath(filePath);
-        const linesHtml = data.lines.map((line, i) => {
-            const num = data.start_line + i;
-            const isMatch = num === data.match_line;
-            const escaped = escapeHtml(line);
-            return `<div class="ctx-line${isMatch ? ' ctx-line-match' : ''}">`
-                 + `<span class="ctx-line-num">${num}</span>`
-                 + `<span class="ctx-line-code">${escaped}</span>`
-                 + `</div>`;
-        }).join('');
-
-        tooltip.innerHTML =
-            `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>` +
-            `<pre class="ctx-code language-${lang}">${data.lines.map(l => escapeHtml(l)).join('\n')}</pre>`;
-
-        if (typeof hljs !== 'undefined') {
-            const pre = tooltip.querySelector('pre');
-            if (pre) hljs.highlightElement(pre);
-        }
-
-        // Re-overlay line highlights on top of hljs output by wrapping matched line
-        overlayMatchLine(tooltip, data.start_line, data.match_line);
-
+        await populateFileView(fileBody, filePath, lineNumber, queryInput.value.trim(), _ctxFetchController.signal);
         positionTooltip(tooltip, resultItem);
     } catch (e) {
         if (e.name === 'AbortError') return;
         if (_ctxTooltip) _ctxTooltip.style.display = 'none';
     }
-}
-
-/**
- * After hljs runs on the pre block, wrap the matched line number's text with
- * a highlight overlay using absolute line tracking.
- */
-function overlayMatchLine(tooltip, startLine, matchLine) {
-    const pre = tooltip.querySelector('pre.ctx-code');
-    if (!pre) return;
-    const raw = pre.innerHTML;
-    // Split by newlines and wrap the target line
-    const lineIndex = matchLine - startLine; // 0-based
-    const parts = raw.split('\n');
-    if (lineIndex >= 0 && lineIndex < parts.length) {
-        parts[lineIndex] = `<span class="ctx-match-line">${parts[lineIndex]}</span>`;
-    }
-    const lineNums = parts.map((part, i) => {
-        const num = startLine + i;
-        const isMatch = num === matchLine;
-        return `<span class="ctx-gutter${isMatch ? ' ctx-gutter-match' : ''}">${num}</span>${part}`;
-    }).join('\n');
-    pre.innerHTML = lineNums;
 }
 
 function positionTooltip(tooltip, anchor) {
@@ -673,49 +679,9 @@ async function showFileModal(filePath, highlightLine) {
     document.body.appendChild(modal);
 
     try {
-        const response = await fetch(`${API_BASE}/api/file?file=${encodeURIComponent(filePath)}`);
-        if (!response.ok) {
-            const text = await response.text();
-            const statusMessages = { 404: 'File not found', 403: 'Access denied', 503: 'Server busy' };
-            throw new Error(statusMessages[response.status] || text || response.statusText);
-        }
-        const data = await response.json();
-        const query = queryInput.value.trim();
-
-        const linesHtml = data.content.split('\n')
-            .map((line, idx) => renderFileLine(line, idx + 1, highlightLine))
-            .join('');
-
-        const modalBody = document.getElementById('file-modal-body');
-        if (modalBody) {
-            const lang = hljsLangForPath(filePath);
-            modalBody.innerHTML =
-                `<div class="file-meta">${data.line_count.toLocaleString()} lines · ${formatBytes(data.size_bytes)}</div>` +
-                `<div class="file-code" data-lang="${lang}">${linesHtml}</div>`;
-
-            // Apply hljs to each line content span individually
-            if (typeof hljs !== 'undefined') {
-                modalBody.querySelectorAll('.file-line-content').forEach(span => {
-                    // Wrap in a code element for hljs, then unwrap
-                    const code = document.createElement('code');
-                    code.className = `language-${lang}`;
-                    code.textContent = span.textContent;
-                    hljs.highlightElement(code);
-                    span.innerHTML = code.innerHTML;
-                });
-            }
-
-            // Scroll the highlighted line into view
-            const targetLine = modalBody.querySelector(`#file-line-${highlightLine}`);
-            if (targetLine) {
-                targetLine.scrollIntoView({ block: 'center' });
-            }
-        }
+        await populateFileView(body, filePath, highlightLine, queryInput.value.trim());
     } catch (error) {
-        const modalBody = document.getElementById('file-modal-body');
-        if (modalBody) {
-            modalBody.innerHTML = `<div class="error-message"><strong>Error:</strong> ${escapeHtml(error.message)}</div>`;
-        }
+        body.innerHTML = `<div class="error-message"><strong>Error:</strong> ${escapeHtml(error.message)}</div>`;
     }
 }
 

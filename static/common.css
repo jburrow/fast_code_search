@@ -107,6 +107,22 @@ body {
     opacity: 1;
 }
 
+/* Wordmark: monospace + terminal-cursor prefix.
+   Used by all pages — accent color adapts per-app via view-specific CSS. */
+.wordmark {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.wordmark::before {
+    content: '> ';
+    color: var(--accent);
+    font-weight: 400;
+    opacity: 0.9;
+}
+
 .header-stats {
     display: flex;
     gap: 0.5rem;
@@ -719,12 +735,6 @@ input.search-disabled::placeholder {
     transition: width 0.3s ease;
 }
 
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
 /* ============================================
    FILE VIEWER MODAL
    ============================================ */
@@ -960,6 +970,15 @@ input.search-disabled::placeholder {
         flex-direction: column;
     }
 
+    /* Inline toggles (Regex/Symbols) wrap below the input on small screens */
+    .query-row {
+        flex-wrap: wrap;
+    }
+
+    .query-row #query {
+        flex-basis: 100%;
+    }
+
     .search-button {
         width: 100%;
         justify-content: center;
@@ -968,5 +987,38 @@ input.search-disabled::placeholder {
     .search-options {
         flex-direction: column;
         align-items: stretch;
+    }
+}
+
+/* ============================================
+   FOCUS STATES (keyboard navigation)
+   ============================================ */
+.header-link:focus-visible,
+.view-file-btn:focus-visible,
+.example-btn:focus-visible,
+.file-modal-close:focus-visible,
+.search-button:focus-visible,
+.advanced-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
+/* When keyboard focus lands inside a toggle label, highlight the border */
+.regex-toggle:focus-within,
+.symbols-toggle:focus-within {
+    border-color: var(--accent);
+}
+
+/* ============================================
+   REDUCED MOTION
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }
