@@ -174,12 +174,18 @@ function createResultCard(result) {
     const score = (result.similarity_score * 100).toFixed(1);
     const scorePercent = Math.min(100, score);
     
-    // Determine chunk type badge
+    // Determine chunk type badge with colour class
     let badgeText = 'Code';
-    if (result.chunk_type === 'function') badgeText = '⚡ Function';
-    else if (result.chunk_type === 'class') badgeText = '📦 Class';
-    else if (result.chunk_type === 'module') badgeText = '📄 Module';
-    
+    let badgeClass = 'result-badge';
+    if (result.chunk_type === 'function') { badgeText = '⚡ Function'; badgeClass = 'result-badge chunk-function'; }
+    else if (result.chunk_type === 'class') { badgeText = '📦 Class'; badgeClass = 'result-badge chunk-class'; }
+    else if (result.chunk_type === 'module') { badgeText = '📄 Module'; badgeClass = 'result-badge chunk-module'; }
+
+    // Language badge derived from file extension (uses shared langClassForPath from common.js)
+    const ext = (result.file_path.split('.').pop() || '').toLowerCase();
+    const langClass = langClassForPath(result.file_path);
+    const langBadge = langClass ? `<span class="lang-badge lang-${langClass}">${ext}</span>` : '';
+
     const codeWithLines = formatCodeWithLineNumbers(result.content, result.start_line);
     
     return `
@@ -188,9 +194,10 @@ function createResultCard(result) {
                 <div class="result-info">
                     <div class="result-file">📄 ${escapeHtml(result.file_path)}</div>
                     <div class="result-meta">
+                        ${langBadge}
                         <span>Lines ${result.start_line}-${result.end_line}</span>
                         ${result.symbol_name ? `<span>Symbol: <strong>${escapeHtml(result.symbol_name)}</strong></span>` : ''}
-                        <span class="result-badge">${badgeText}</span>
+                        <span class="${badgeClass}">${badgeText}</span>
                     </div>
                 </div>
                 <div class="result-score">

@@ -548,6 +548,24 @@ function syncUrlFromState(fields) {
     history.replaceState(null, '', url);
 }
 
+/**
+ * Map a file path's extension to a CSS class suffix for language badge colouring.
+ * Used by both keyword and semantic search result rendering.
+ * Returns null for unknown/generic extensions.
+ */
+function langClassForPath(filePath) {
+    const ext = (filePath.split('.').pop() || '').toLowerCase();
+    const MAP = {
+        rs: 'rs', py: 'py', js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+        ts: 'ts', tsx: 'ts',
+        go: 'go', rb: 'rb', java: 'java', cs: 'cs', cpp: 'cpp', cc: 'cpp',
+        cxx: 'cpp', hpp: 'cpp', c: 'c', h: 'c', sh: 'sh', bash: 'sh',
+        zsh: 'sh', toml: 'toml', yaml: 'yaml', yml: 'yaml', json: 'json',
+        css: 'css', scss: 'css', sql: 'sql', md: 'md', proto: 'proto',
+    };
+    return MAP[ext] || null;
+}
+
 // Export for module usage (if needed in future)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -568,6 +586,7 @@ if (typeof module !== 'undefined' && module.exports) {
         StatusPoller,
         SearchReadinessManager,
         loadStateFromUrl,
-        syncUrlFromState
+        syncUrlFromState,
+        langClassForPath,
     };
 }

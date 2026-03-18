@@ -509,9 +509,13 @@ async function performSearch() {
             const matchType = getMatchTypeLabel(result.match_type);
             const depCount = result.dependency_count || 0;
             const depBadge = depCount > 0 
-                ? `<span class="result-badge" title="${depCount} files depend on this" style="cursor:pointer" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
+                ? `<span class="result-badge deps-badge" title="${depCount} files depend on this" style="cursor:pointer" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
                 : '';
             const lang = hljsLangForPath(result.file_path);
+            const langClass = langClassForPath(result.file_path);
+            const langBadge = langClass
+                ? `<span class="lang-badge lang-${langClass}">${(result.file_path.split('.').pop() || '').toLowerCase()}</span>`
+                : '';
             return `
                 <div class="result-item" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${result.line_number}">
                     <div class="result-header">
@@ -520,6 +524,7 @@ async function performSearch() {
                             <span class="result-line">:${result.line_number}</span>
                         </div>
                         <div class="result-meta">
+                            ${langBadge}
                             ${depBadge}
                             <span class="result-score">Score: ${result.score.toFixed(2)}</span>
                             <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
