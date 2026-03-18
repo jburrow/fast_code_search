@@ -40,6 +40,16 @@
       "source": "pbakaus/impeccable",
       "sourceType": "github",
       "computedHash": "f46bb3c71cfe635a7742b94516ba53f0c5bfac65430513e99f1162d6d4e2e71d"
+    },
+    "polish": {
+      "source": "pbakaus/impeccable",
+      "sourceType": "github",
+      "computedHash": "12a83281065df7cecc24c17fdf9a126a13f664140ed6939c8230eb3f447d1aa3"
+    },
+    "typeset": {
+      "source": "pbakaus/impeccable",
+      "sourceType": "github",
+      "computedHash": "ea3e583e71370737cf611517d1dc9f1869f58fba0a0f91033aba6bdf2d07c3bf"
     }
   }
 }
