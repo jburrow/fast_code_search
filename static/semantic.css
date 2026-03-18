@@ -3,10 +3,17 @@
    Extends common.css
    ============================================ */
 
-/* Semantic uses a purple accent color */
+/* Semantic uses an indigo accent color */
 :root {
     --accent: #6366f1;
     --accent-hover: #4f46e5;
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        --accent: #4f46e5;
+        --accent-hover: #4338ca;
+    }
 }
 
 /* Input uses class from common, just minor tweaks */

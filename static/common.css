@@ -21,6 +21,26 @@
     --match-highlight: #f9e2af;
     --shadow: rgba(0, 0, 0, 0.2);
     --color-path: #74c7ec;
+    --color-deps: #cba6f7;
+    /* Language badge colors — readable on dark bg */
+    --lang-rs:    #f74c00;
+    --lang-py:    #4a90d9;
+    --lang-js:    #e8c53a;
+    --lang-ts:    #3b82f6;
+    --lang-go:    #00bcd4;
+    --lang-rb:    #e05252;
+    --lang-java:  #f89820;
+    --lang-cs:    #68b723;
+    --lang-cpp:   #e06c75;
+    --lang-c:     #7b7be8;
+    --lang-sh:    #4db544;
+    --lang-yaml:  #a855f7;
+    --lang-json:  #e8c53a;
+    --lang-css:   #264de4;
+    --lang-proto: #9333ea;
+    --lang-toml:  #c4820a;
+    --lang-sql:   #d97706;
+    --lang-md:    #64748b;
 }
 
 @media (prefers-color-scheme: light) {
@@ -41,6 +61,26 @@
         --match-highlight: #df8e1d;
         --shadow: rgba(0, 0, 0, 0.1);
         --color-path: #209fb5;
+        --color-deps: #7c3aed;
+        /* Language badge colors — readable on light bg */
+        --lang-rs:    #c43b00;
+        --lang-py:    #2563ac;
+        --lang-js:    #a06700;
+        --lang-ts:    #1d4ed8;
+        --lang-go:    #0077a8;
+        --lang-rb:    #b91c1c;
+        --lang-java:  #b45309;
+        --lang-cs:    #3a7a0a;
+        --lang-cpp:   #be185d;
+        --lang-c:     #4545c8;
+        --lang-sh:    #166534;
+        --lang-yaml:  #7e22ce;
+        --lang-json:  #a06700;
+        --lang-css:   #1e40af;
+        --lang-proto: #6d28d9;
+        --lang-toml:  #92400e;
+        --lang-sql:   #b45309;
+        --lang-md:    #475569;
     }
 }
 
@@ -164,7 +204,7 @@ body {
 .header-stats .stat-value {
     font-size: 0.9rem;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--accent);
 }
 
 .header-stats .stat-label {
@@ -172,6 +212,13 @@ body {
     color: var(--text-muted);
     text-transform: uppercase;
 }
+
+/* Distinct left-border accent per stat pill */
+.header-stats .stat:nth-child(1) { border-left: 3px solid var(--color-path); }
+.header-stats .stat:nth-child(2) { border-left: 3px solid var(--success); }
+.header-stats .stat:nth-child(3) { border-left: 3px solid var(--warning); }
+.header-stats .stat:nth-child(4) { border-left: 3px solid var(--accent); }
+.header-stats .stat:nth-child(5) { border-left: 3px solid var(--color-deps); }
 
 /* Progress Indicator (inline) */
 .header-progress {
@@ -633,6 +680,63 @@ body {
 .result-type.symbol {
     background: var(--success);
     color: var(--bg-primary);
+}
+
+/* Dependency count badge — mauve/purple to stand out from type badges */
+.deps-badge {
+    color: var(--color-deps);
+    background: color-mix(in srgb, var(--color-deps) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-deps) 40%, transparent);
+}
+
+/* Language extension badge */
+.lang-badge {
+    font-size: 0.6rem;
+    padding: 0.12rem 0.4rem;
+    border-radius: 3px;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid currentColor;
+    opacity: 0.85;
+}
+
+.lang-rs   { color: var(--lang-rs); }
+.lang-py   { color: var(--lang-py); }
+.lang-js   { color: var(--lang-js); }
+.lang-ts   { color: var(--lang-ts); }
+.lang-go   { color: var(--lang-go); }
+.lang-rb   { color: var(--lang-rb); }
+.lang-java { color: var(--lang-java); }
+.lang-cs   { color: var(--lang-cs); }
+.lang-cpp  { color: var(--lang-cpp); }
+.lang-c    { color: var(--lang-c); }
+.lang-sh   { color: var(--lang-sh); }
+.lang-yaml { color: var(--lang-yaml); }
+.lang-json { color: var(--lang-json); }
+.lang-css  { color: var(--lang-css); }
+.lang-proto { color: var(--lang-proto); }
+.lang-toml { color: var(--lang-toml); }
+.lang-sql  { color: var(--lang-sql); }
+.lang-md   { color: var(--lang-md); }
+
+/* Semantic chunk-type badges */
+.chunk-function {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+}
+
+.chunk-class {
+    color: var(--color-deps);
+    background: color-mix(in srgb, var(--color-deps) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-deps) 40%, transparent);
+}
+
+.chunk-module {
+    color: var(--color-path);
+    background: color-mix(in srgb, var(--color-path) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-path) 40%, transparent);
 }
 
 /* Code content */
