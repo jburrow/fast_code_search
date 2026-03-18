@@ -81,13 +81,17 @@ body {
     display: flex;
     align-items: center;
     gap: 1rem;
-    flex-wrap: wrap;
+    /* Never wrap — content is hidden progressively via breakpoints below */
+    flex-wrap: nowrap;
+    overflow: hidden;
+    min-height: 2.5rem;
 }
 
 .header-title {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    flex-shrink: 0; /* wordmark always visible */
 }
 
 .header-title h1 {
@@ -96,14 +100,28 @@ body {
     white-space: nowrap;
 }
 
+/* ? help icon button */
 .header-link {
-    font-size: 1.1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 700;
     text-decoration: none;
-    opacity: 0.7;
-    transition: opacity 0.2s;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    line-height: 1;
 }
 
 .header-link:hover {
+    border-color: var(--accent);
+    color: var(--accent);
     opacity: 1;
 }
 
@@ -126,8 +144,11 @@ body {
 .header-stats {
     display: flex;
     gap: 0.5rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap; /* pills are hidden via breakpoints, not reflowed */
     margin-left: auto;
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .header-stats .stat {
@@ -161,9 +182,10 @@ body {
     border-radius: 4px;
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--border);
-    flex: 1;
-    min-width: 200px;
+    flex: 1 1 0;
+    min-width: 0; /* can shrink to nothing without forcing a wrap */
     max-width: 400px;
+    overflow: hidden;
 }
 
 .header-progress .progress-bar-container {
@@ -940,30 +962,59 @@ input.search-disabled::placeholder {
 }
 
 /* ============================================
-   RESPONSIVE
+   RESPONSIVE — progressive header content hiding
+   The header never wraps; stats disappear as the viewport narrows.
    ============================================ */
+
+/* Hide Deps below 1080px */
+@media (max-width: 1080px) {
+    .header-stats .stat:nth-child(5) {
+        display: none;
+    }
+}
+
+/* Hide Trigrams below 940px */
+@media (max-width: 940px) {
+    .header-stats .stat:nth-child(4) {
+        display: none;
+    }
+}
+
+/* Hide Index below 800px */
+@media (max-width: 800px) {
+    .header-stats .stat:nth-child(3) {
+        display: none;
+    }
+}
+
+/* Hide Content below 680px */
+@media (max-width: 680px) {
+    .header-stats .stat:nth-child(2) {
+        display: none;
+    }
+    /* Also hide progress message text to save space */
+    .header-progress .progress-message {
+        display: none;
+    }
+}
+
+/* Hide all stats and trim progress below 560px */
+@media (max-width: 560px) {
+    #stats {
+        display: none;
+    }
+    .header-progress .progress-percent {
+        display: none;
+    }
+    .header-compact {
+        gap: 0.5rem;
+    }
+}
+
+/* Search box responsive */
 @media (max-width: 768px) {
     .container {
         padding: 0.75rem;
-    }
-
-    .header-compact {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0.5rem;
-    }
-
-    .header-title h1 {
-        font-size: 1.1rem;
-        text-align: center;
-    }
-
-    .header-stats {
-        display: none;
-    }
-
-    .header-progress {
-        max-width: none;
     }
 
     .query-input-wrapper {
