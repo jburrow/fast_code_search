@@ -55,9 +55,9 @@ function loadStateFromUrl() {
     if (symbolsModeCheckbox && params.get('symbols') === 'true') symbolsModeCheckbox.checked = true;
     if (rankModeSelect && params.has('rank')) rankModeSelect.value = params.get('rank');
 
-    // Auto-expand Advanced Options if any non-default values were loaded
+    // Auto-expand Options if any non-default values were loaded (regex/symbols are now always visible)
     const hasAdvanced = params.has('include') || params.has('exclude') ||
-        params.has('regex') || params.has('symbols') || params.has('rank') || params.has('max');
+        params.has('rank') || params.has('max');
     if (hasAdvanced) {
         const details = document.querySelector('.advanced-options');
         if (details) details.open = true;

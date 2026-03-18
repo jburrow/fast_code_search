@@ -15,8 +15,8 @@
     <div class="container">
         <header class="header-compact">
             <div class="header-title">
-                <h1>Fast Code Search</h1>
-                <a href="/docs.html" class="header-link" title="Documentation">📚</a>
+                <h1 class="wordmark">Fast Code Search</h1>
+                <a href="/docs.html" class="header-link" title="Documentation">Docs</a>
             </div>
 
             <div class="header-progress" id="progress-panel" style="display: none;">
@@ -29,23 +29,23 @@
             </div>
 
             <div class="header-stats" id="stats">
-                <div class="stat">
+                <div class="stat" title="Total number of source files in the index">
                     <span class="stat-value" id="stat-files">-</span>
                     <span class="stat-label">Files</span>
                 </div>
-                <div class="stat">
+                <div class="stat" title="Total size of all indexed file content">
                     <span class="stat-value" id="stat-content">-</span>
                     <span class="stat-label">Content</span>
                 </div>
-                <div class="stat">
+                <div class="stat" title="On-disk size of the serialized search index">
                     <span class="stat-value" id="stat-size">-</span>
                     <span class="stat-label">Index</span>
                 </div>
-                <div class="stat">
+                <div class="stat" title="Number of unique 3-character sequences — more trigrams means a larger, more precise index">
                     <span class="stat-value" id="stat-trigrams">-</span>
                     <span class="stat-label">Trigrams</span>
                 </div>
-                <div class="stat">
+                <div class="stat" title="Number of import/dependency edges used to boost relevance scoring">
                     <span class="stat-value" id="stat-deps">-</span>
                     <span class="stat-label">Deps</span>
                 </div>
@@ -53,11 +53,21 @@
         </header>
 
         <div class="search-box">
-            <input type="text" id="query" placeholder="Search code..." autocomplete="off" autofocus>
+            <div class="query-row">
+                <input type="text" id="query" placeholder="Search code..." autocomplete="off" autofocus>
+                <label class="regex-toggle" title="Enable regular expression syntax in your query">
+                    <input type="checkbox" id="regex-mode">
+                    <span>Regex</span>
+                </label>
+                <label class="symbols-toggle" title="Only match function, class, and symbol definitions">
+                    <input type="checkbox" id="symbols-mode">
+                    <span>Symbols</span>
+                </label>
+            </div>
 
             <details class="advanced-options">
                 <summary class="advanced-toggle">
-                    <span class="toggle-icon">▶</span> Advanced Options
+                    <span class="toggle-icon">▶</span> Options
                 </summary>
                 <div class="advanced-content">
                     <div class="search-options">
@@ -70,20 +80,12 @@
                                 <option value="250">250</option>
                             </select>
                         </label>
-                        <label class="regex-toggle">
-                            <input type="checkbox" id="regex-mode">
-                            <span>Regex</span>
-                        </label>
-                        <label class="symbols-toggle">
-                            <input type="checkbox" id="symbols-mode">
-                            <span>Symbols Only</span>
-                        </label>
                         <label class="rank-mode-label">
                             Ranking:
                             <select id="rank-mode">
                                 <option value="auto" selected>Auto</option>
-                                <option value="fast">⚡ Fast</option>
-                                <option value="full">📊 Full</option>
+                                <option value="fast">Fast</option>
+                                <option value="full">Full</option>
                             </select>
                         </label>
                     </div>

@@ -3,7 +3,68 @@
    Extends common.css
    ============================================ */
 
-/* Toggle buttons specific to keyword search */
+/* Identity: teal accent distinguishes keyword search from semantic (indigo) */
+:root {
+    --accent: #94e2d5;
+    --accent-hover: #89dceb;
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        --accent: #179299;
+        --accent-hover: #04a5e5;
+    }
+}
+
+/* Wordmark: monospace + terminal-cursor prefix */
+.wordmark {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.wordmark::before {
+    content: '> ';
+    color: var(--accent);
+    font-weight: 400;
+    opacity: 0.9;
+}
+
+/* ============================================
+   SEARCH ROW
+   ============================================ */
+
+/* Flex row: input + inline toggles */
+.query-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Keyword search input — flex child, not full-width block */
+#query {
+    flex: 1;
+    min-width: 0;
+    padding: 0.6rem 0.85rem;
+    font-size: 1rem;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+#query:focus {
+    border-color: var(--accent);
+}
+
+#query::placeholder {
+    color: var(--text-muted);
+}
+
+/* Inline toggle buttons (Regex / Symbols) */
 .regex-toggle,
 .symbols-toggle {
     display: flex;
@@ -16,6 +77,8 @@
     background: var(--bg-primary);
     transition: all 0.2s;
     font-size: 0.85rem;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .regex-toggle:hover,
@@ -31,34 +94,11 @@
     accent-color: var(--accent);
 }
 
-.regex-toggle input[type="checkbox"]:checked+span,
-.symbols-toggle input[type="checkbox"]:checked+span {
+.regex-toggle input[type="checkbox"]:checked + span,
+.symbols-toggle input[type="checkbox"]:checked + span {
     color: var(--accent);
     font-weight: 600;
 }
-
-/* Keyword search uses full-width input (no button) */
-.search-box>input#query {
-    width: 100%;
-    padding: 0.6rem 0.85rem;
-    font-size: 1rem;
-    border: 2px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    outline: none;
-    transition: border-color 0.2s;
-}
-
-.search-box>input#query:focus {
-    border-color: var(--accent);
-}
-
-.search-box>input#query::placeholder {
-    color: var(--text-muted);
-}
-
-/* Ranking info in results header */
 #ranking-info {
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -176,7 +216,7 @@
     padding: 0.35rem 0.75rem;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
-    color: var(--accent);
+    color: var(--color-path);
     font-size: 0.78rem;
     white-space: nowrap;
     overflow: hidden;

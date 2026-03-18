@@ -20,6 +20,7 @@
     --code-bg: #11111b;
     --match-highlight: #f9e2af;
     --shadow: rgba(0, 0, 0, 0.2);
+    --color-path: #74c7ec;
 }
 
 @media (prefers-color-scheme: light) {
@@ -39,6 +40,7 @@
         --code-bg: #dce0e8;
         --match-highlight: #df8e1d;
         --shadow: rgba(0, 0, 0, 0.1);
+        --color-path: #209fb5;
     }
 }
 
@@ -125,7 +127,7 @@ body {
 .header-stats .stat-value {
     font-size: 0.9rem;
     font-weight: 700;
-    color: var(--accent);
+    color: var(--text-primary);
 }
 
 .header-stats .stat-label {
@@ -518,7 +520,7 @@ body {
 .result-file {
     font-family: 'Fira Code', 'Consolas', monospace;
     font-size: 0.85rem;
-    color: var(--accent);
+    color: var(--color-path);
     word-break: break-all;
 }
 
@@ -573,14 +575,15 @@ body {
     font-size: 0.65rem;
     padding: 0.15rem 0.4rem;
     border-radius: 3px;
-    background: var(--accent);
-    color: var(--bg-primary);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
     font-weight: 600;
     text-transform: uppercase;
 }
 
 .result-type.symbol {
     background: var(--success);
+    color: var(--bg-primary);
 }
 
 /* Code content */
@@ -818,7 +821,7 @@ input.search-disabled::placeholder {
 .file-modal-path {
     font-family: 'Fira Code', 'Consolas', monospace;
     font-size: 0.85rem;
-    color: var(--accent);
+    color: var(--color-path);
     word-break: break-all;
     flex: 1;
     min-width: 0;
