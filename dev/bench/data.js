@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773746068997,
+  "lastUpdate": 1773818085993,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -2939,6 +2939,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 706152,
             "range": "± 5781",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "Copilot",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "167f67109ccc2fec4ae224e7cbde3f757e339c75",
+          "message": "feat: workspace-relative display paths (VSCode-style folder name in results) (#95)\n\n* Initial plan\n\n* feat: workspace-relative display paths (VSCode-style folder name in results)\n\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>\n\n---------\n\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>",
+          "timestamp": "2026-03-18T07:04:08Z",
+          "tree_id": "8984e03fb8e7e73e011b46a6c4e0e7563bf12d05",
+          "url": "https://github.com/jburrow/fast_code_search/commit/167f67109ccc2fec4ae224e7cbde3f757e339c75"
+        },
+        "date": 1773818085023,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 302277,
+            "range": "± 7760",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 23551,
+            "range": "± 519",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 504,
+            "range": "± 15",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 514585,
+            "range": "± 45384",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 24056,
+            "range": "± 578",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 657,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 938654,
+            "range": "± 41801",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 24577,
+            "range": "± 695",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 978,
+            "range": "± 49",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 360408,
+            "range": "± 23913",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 596575,
+            "range": "± 22543",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 534931,
+            "range": "± 20339",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 826900,
+            "range": "± 5177",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 507618,
+            "range": "± 19967",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 355842,
+            "range": "± 5445",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 525031,
+            "range": "± 5733",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 704986,
+            "range": "± 4653",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 510446,
+            "range": "± 17763",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 512803,
+            "range": "± 26895",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 263266,
+            "range": "± 16131",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 512981,
+            "range": "± 27350",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 512905,
+            "range": "± 47213",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 529681,
+            "range": "± 47568",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 340710,
+            "range": "± 8613",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 285449,
+            "range": "± 15700",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 3823,
+            "range": "± 42",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 18405766,
+            "range": "± 20722",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 36475778,
+            "range": "± 119634",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 72497789,
+            "range": "± 236692",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 31708154,
+            "range": "± 333686",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 32868202,
+            "range": "± 79534",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 63427985,
+            "range": "± 215753",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 65783192,
+            "range": "± 183237",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 902770,
+            "range": "± 33689",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3410148,
+            "range": "± 29686",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6495993,
+            "range": "± 148581",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1974340,
+            "range": "± 33332",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 8118252,
+            "range": "± 67305",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 16676683,
+            "range": "± 130166",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 198812,
+            "range": "± 3544",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 316491,
+            "range": "± 12687",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 474327,
+            "range": "± 13314",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 147210,
+            "range": "± 1599",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 666612,
+            "range": "± 6699",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1317905,
+            "range": "± 48373",
             "unit": "ns/iter"
           }
         ]
