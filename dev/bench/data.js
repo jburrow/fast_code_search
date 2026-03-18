@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773820895371,
+  "lastUpdate": 1773826985577,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -4409,6 +4409,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 1330282,
             "range": "± 25863",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "Copilot",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c027c59c2b2628c853679c31487c688ccc81fc5a",
+          "message": "colorize: Add strategic color to the web UI (#96)\n\n* Initial plan\n\n* colorize: Add strategic color to web UI static files\n\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>\n\n---------\n\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>\nCo-authored-by: jburrow <1444266+jburrow@users.noreply.github.com>",
+          "timestamp": "2026-03-18T09:32:16Z",
+          "tree_id": "d7d12ce9bb8a2666dc961f7a4f4ea0f05c46bf5b",
+          "url": "https://github.com/jburrow/fast_code_search/commit/c027c59c2b2628c853679c31487c688ccc81fc5a"
+        },
+        "date": 1773826984988,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 339598,
+            "range": "± 80321",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 22561,
+            "range": "± 432",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 459,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 514248,
+            "range": "± 23300",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 22867,
+            "range": "± 375",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 585,
+            "range": "± 23",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 938964,
+            "range": "± 30368",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 23693,
+            "range": "± 417",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 844,
+            "range": "± 32",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 372064,
+            "range": "± 18572",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 598970,
+            "range": "± 28207",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 521738,
+            "range": "± 22484",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 830910,
+            "range": "± 89396",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 500942,
+            "range": "± 15842",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 354545,
+            "range": "± 5923",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 534922,
+            "range": "± 16080",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 707401,
+            "range": "± 12357",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 508891,
+            "range": "± 17768",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 512613,
+            "range": "± 26620",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 250789,
+            "range": "± 4167",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 507390,
+            "range": "± 20864",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 509174,
+            "range": "± 29621",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 526542,
+            "range": "± 52337",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 338795,
+            "range": "± 15862",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 287815,
+            "range": "± 24813",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 3779,
+            "range": "± 19",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 18652074,
+            "range": "± 122104",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 37003167,
+            "range": "± 235529",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 73590177,
+            "range": "± 434583",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 32452081,
+            "range": "± 136972",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 33267906,
+            "range": "± 226171",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 63499875,
+            "range": "± 542016",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 66929411,
+            "range": "± 286235",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 885866,
+            "range": "± 25763",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3831412,
+            "range": "± 169679",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 7618753,
+            "range": "± 491445",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1961246,
+            "range": "± 30711",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 8176083,
+            "range": "± 359725",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 17401991,
+            "range": "± 564506",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 185433,
+            "range": "± 10262",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 327678,
+            "range": "± 14390",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 464860,
+            "range": "± 9291",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 147659,
+            "range": "± 3189",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 669285,
+            "range": "± 5774",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1321473,
+            "range": "± 53259",
             "unit": "ns/iter"
           }
         ]
