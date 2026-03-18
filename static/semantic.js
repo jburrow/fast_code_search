@@ -25,7 +25,6 @@ const searchReadiness = new SearchReadinessManager({
     resultsContainerId: 'results',
     additionalInputIds: ['max-results'],
     onReadyChange: (isReady, status) => {
-        console.log(`Semantic search readiness changed: ${isReady ? 'READY' : 'NOT READY'}`, status?.status);
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
             performSearch();
@@ -39,8 +38,8 @@ const searchReadiness = new SearchReadinessManager({
 
 const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
-    onConnected: () => console.log('Semantic progress WebSocket connected'),
-    onDisconnected: () => console.log('Semantic progress WebSocket disconnected'),
+    onConnected: () => {},
+    onDisconnected: () => {},
     onError: (err) => console.error('Semantic progress WebSocket error:', err)
 });
 
@@ -118,7 +117,6 @@ const URL_FIELDS = [
 async function performSearch() {
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
-        console.log('Semantic search blocked: index not ready');
         return;
     }
     

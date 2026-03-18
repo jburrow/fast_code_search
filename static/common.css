@@ -316,6 +316,7 @@ body {
 
 .search-button:active {
     transform: translateY(0);
+    box-shadow: none;
 }
 
 /* ============================================
@@ -384,6 +385,11 @@ body {
     color: var(--text-primary);
     font-size: 0.85rem;
     cursor: pointer;
+}
+
+.search-options select:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 /* Toggle buttons (checkbox-based) */
@@ -491,6 +497,11 @@ body {
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border-color: var(--accent);
+}
+
+.example-btn:active {
+    background: var(--bg-tertiary);
+    transform: scale(0.97);
 }
 
 /* ============================================
@@ -812,6 +823,13 @@ input.search-disabled::placeholder {
     border-color: var(--accent);
 }
 
+/* Hover tooltip is mouse-only; hide the pseudo-element on touch devices */
+@media (hover: none) {
+    .view-file-btn::after {
+        display: none;
+    }
+}
+
 /* Modal overlay */
 .file-modal-overlay {
     position: fixed;
@@ -1071,6 +1089,12 @@ input.search-disabled::placeholder {
     .search-options select {
         font-size: 1rem;
     }
+
+    /* Expand the ? help button to a minimum touch target */
+    .header-link {
+        min-width: 44px;
+        min-height: 44px;
+    }
 }
 
 /* Very narrow screens (≤480px) */
@@ -1079,6 +1103,7 @@ input.search-disabled::placeholder {
     .results-header {
         flex-wrap: wrap;
         gap: 0.25rem;
+        justify-content: flex-start;
     }
 
     /* Allow result-header to stack path and actions on two lines */

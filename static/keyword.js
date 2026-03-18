@@ -99,7 +99,6 @@ const searchReadiness = new SearchReadinessManager({
     resultsContainerId: 'results',
     additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'rank-mode'],
     onReadyChange: (isReady, status) => {
-        console.log(`Search readiness changed: ${isReady ? 'READY' : 'NOT READY'}`, status?.status);
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
             performSearch();
@@ -131,12 +130,8 @@ async function fetchStats() {
 // Progress WebSocket instance (real-time updates)
 const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
-    onConnected: () => {
-        console.log('Progress WebSocket connected');
-    },
-    onDisconnected: () => {
-        console.log('Progress WebSocket disconnected');
-    },
+    onConnected: () => {},
+    onDisconnected: () => {},
     onError: (err) => {
         console.error('Progress WebSocket error:', err);
         // Progress will continue via reconnection
@@ -441,7 +436,6 @@ const URL_FIELDS = [
 async function performSearch() {
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
-        console.log('Search blocked: index not ready');
         return;
     }
     
@@ -461,8 +455,6 @@ async function performSearch() {
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter a search query to find code</p></div>';
         return;
     }
-
-    syncUrlFromState(URL_FIELDS);
 
     resultsContainer.innerHTML = '<div class="loading">Searching...</div>';
     resultsHeader.style.display = 'none';
