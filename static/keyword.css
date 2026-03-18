@@ -3,18 +3,8 @@
    Extends common.css
    ============================================ */
 
-/* Identity: teal accent distinguishes keyword search from semantic (indigo) */
-:root {
-    --accent: #94e2d5;
-    --accent-hover: #89dceb;
-}
-
-@media (prefers-color-scheme: light) {
-    :root {
-        --accent: #179299;
-        --accent-hover: #04a5e5;
-    }
-}
+/* Identity: vermillion accent (matches common.css base) */
+/* No override needed — common.css sets the vermillion accent as default */
 
 /* ============================================
    SEARCH ROW
@@ -27,26 +17,30 @@
     gap: 0.5rem;
 }
 
-/* Keyword search input — flex child, not full-width block */
+/* Keyword search input — oversized for prominence */
 #query {
     flex: 1;
     min-width: 0;
-    padding: 0.6rem 0.85rem;
+    padding: 0.7rem 1rem;
     font-size: 1rem;
-    border: 2px solid var(--border);
-    border-radius: 6px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 500;
+    border: 1.5px solid var(--border);
+    border-radius: 4px;
     background: var(--bg-primary);
     color: var(--text-primary);
     outline: none;
-    transition: border-color 0.2s;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 #query:focus {
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 #query::placeholder {
     color: var(--text-muted);
+    font-weight: 400;
 }
 
 /* Inline toggle buttons (Regex / Symbols) */
@@ -56,25 +50,29 @@
     align-items: center;
     gap: 0.3rem;
     cursor: pointer;
-    padding: 0.3rem 0.6rem;
+    padding: 0.4rem 0.7rem;
     border-radius: 4px;
-    border: 1px solid var(--border);
-    background: var(--bg-primary);
-    transition: all 0.2s;
-    font-size: 0.85rem;
+    border: 1.5px solid var(--border);
+    background: transparent;
+    transition: border-color 0.15s, color 0.15s;
+    font-size: 0.8rem;
+    font-weight: 500;
     white-space: nowrap;
     flex-shrink: 0;
+    font-family: 'Space Grotesk', sans-serif;
+    color: var(--text-secondary);
 }
 
 .regex-toggle:hover,
 .symbols-toggle:hover {
     border-color: var(--accent);
+    color: var(--text-primary);
 }
 
 .regex-toggle input[type="checkbox"],
 .symbols-toggle input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
     cursor: pointer;
     accent-color: var(--accent);
 }
@@ -90,10 +88,8 @@
    ============================================ */
 #ranking-info {
     color: var(--text-muted);
-    font-size: 0.85rem;
-    padding: 0.2rem 0.5rem;
-    background: var(--bg-secondary);
-    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
     cursor: help;
 }
 
@@ -106,17 +102,19 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.85rem;
+    font-size: 0.825rem;
+    font-weight: 500;
     color: var(--text-secondary);
 }
 
 .rank-mode-label select {
     padding: 0.25rem 0.5rem;
     border-radius: 4px;
-    border: 1px solid var(--border);
+    border: 1.5px solid var(--border);
     background: var(--bg-primary);
     color: var(--text-primary);
-    font-size: 0.85rem;
+    font-size: 0.825rem;
+    font-family: 'Space Grotesk', sans-serif;
     cursor: pointer;
 }
 
@@ -131,50 +129,44 @@
 
 /*
  * Neutralise the hardcoded background colour that every hljs theme injects.
- * We want our own --code-bg variable to govern the background so the code
- * block blends correctly in both light and dark modes.
  */
 .result-content pre.result-code,
 .result-content pre.result-code.hljs {
     background: var(--code-bg) !important;
-    color: inherit;         /* let hljs span colours take over          */
+    color: inherit;
     margin: 0;
-    padding: 0.55rem 0.75rem;
-    border-radius: 0 0 6px 6px;
-    font-size: 0.82rem;
+    padding: 0.625rem 0.875rem;
+    border-radius: 0;
+    font-size: 0.78rem;
     line-height: 1.55;
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;
-}
-
-/* Subtle separator between header and code */
-.result-content {
-    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
 /*
- * In light mode the default text colour of the page is dark, so hljs tokens
- * that don't get a colour inherit correctly.  In dark mode same applies.
- * Force only the base text colour to match the current theme.
+ * Force base text colour to match the hljs theme in each mode.
+ * Light: GitHub Light base = #24292e on near-white bg.
+ * Dark:  GitHub Dark base  = #c9d1d9 on VS Code-ish dark bg.
  */
 @media (prefers-color-scheme: light) {
     .result-content pre.result-code .hljs-name,
     .result-content pre.result-code {
-        color: #24292e;  /* github light base text */
+        color: #24292e;
     }
 }
 @media (prefers-color-scheme: dark) {
     .result-content pre.result-code .hljs-name,
     .result-content pre.result-code {
-        color: #e6edf3;  /* github dark base text */
+        color: #c9d1d9;
     }
 }
 
 /* Query-match highlight rendered inside hljs-coloured spans */
 .result-content mark.highlight {
     background: var(--match-highlight);
-    color: inherit;
+    color: oklch(15% 0.01 60);
     border-radius: 2px;
     padding: 0 1px;
     font-style: inherit;
@@ -193,11 +185,11 @@
     min-width: 220px;
     background: var(--bg-primary);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    border-radius: 4px;
+    box-shadow: 0 12px 40px var(--shadow-lg);
     overflow: hidden;
     max-height: 560px;
-    font-family: monospace;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 0.78rem;
     flex-direction: column;
 }
@@ -207,7 +199,8 @@
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     color: var(--color-path);
-    font-size: 0.78rem;
+    font-size: 0.75rem;
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -216,7 +209,7 @@
 .ctx-loading {
     padding: 0.75rem 1rem;
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
 }
 
 /* Scrollable file-view body inside the tooltip */

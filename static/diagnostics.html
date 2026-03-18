@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Diagnostics - Fast Code Search</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="/common.css">
     <style>
         .diagnostics-container {
@@ -43,7 +45,7 @@
 
         .status-banner {
             padding: 1rem 1.5rem;
-            border-radius: 8px;
+            border-radius: 4px;
             margin-bottom: 1.5rem;
             display: flex;
             align-items: center;
@@ -51,17 +53,17 @@
         }
 
         .status-banner.healthy {
-            background: rgba(166, 227, 161, 0.15);
+            background: color-mix(in srgb, var(--success) 10%, transparent);
             border: 1px solid var(--success);
         }
 
         .status-banner.degraded {
-            background: rgba(249, 226, 175, 0.15);
+            background: color-mix(in srgb, var(--warning) 10%, transparent);
             border: 1px solid var(--warning);
         }
 
         .status-banner.unhealthy {
-            background: rgba(243, 139, 168, 0.15);
+            background: color-mix(in srgb, var(--error) 10%, transparent);
             border: 1px solid var(--error);
         }
 
@@ -83,11 +85,13 @@
             margin-left: auto;
             padding: 0.5rem 1rem;
             background: var(--accent);
-            color: var(--bg-primary);
+            color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.875rem;
+            font-size: 0.825rem;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 600;
             display: flex;
             align-items: center;
             gap: 0.5rem;
@@ -128,7 +132,7 @@
         .card {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 4px;
             padding: 1rem;
         }
 
@@ -155,14 +159,17 @@
 
         .stat-item .value {
             font-size: 1.5rem;
-            font-weight: 600;
+            font-weight: 700;
             color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
         }
 
         .stat-item .label {
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             color: var(--text-muted);
             text-transform: uppercase;
+            letter-spacing: 0.07em;
+            font-weight: 600;
         }
 
         .extension-list {
@@ -182,8 +189,9 @@
         }
 
         .extension-name {
-            font-family: monospace;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
             color: var(--color-path);
+            font-size: 0.825rem;
         }
 
         .extension-count {
@@ -193,7 +201,7 @@
         .test-results {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 4px;
             overflow: hidden;
         }
 
