@@ -14,7 +14,11 @@ use std::path::PathBuf;
 /// - Include patterns: Files must match at least one pattern (if any specified)
 /// - Exclude patterns: Files must not match any pattern
 ///
-/// Patterns are matched against display paths (root-relative, forward-slash normalized).
+/// Patterns are matched against workspace-relative display paths produced by
+/// `SearchEngine::make_display_path`.  Display paths always include the indexed
+/// root folder's own name as the first component, e.g. `project/src/main.rs`
+/// (not just `src/main.rs`), so patterns like `src/**/*.rs` are automatically
+/// expanded to `**/src/**/*.rs` and will match at any depth.
 #[derive(Debug, Default)]
 pub struct PathFilter {
     /// Include patterns - file must match at least one (if non-empty)
@@ -142,7 +146,7 @@ impl PathFilter {
     ///
     /// This is optimized for use after trigram pre-filtering:
     /// - Takes a bitmap of candidate document IDs
-    /// - Uses a callback to look up display paths (root-relative, forward-slash normalized)
+    /// - Uses a callback to look up display paths (workspace-relative, forward-slash normalized)
     /// - Returns a new bitmap with only matching documents
     pub fn filter_documents_with<F>(&self, candidates: &RoaringBitmap, get_path: F) -> RoaringBitmap
     where
@@ -166,10 +170,10 @@ impl PathFilter {
 
     /// Filter a set of document IDs based on pre-computed display path strings.
     ///
-    /// Patterns are matched against root-relative display paths (e.g.
-    /// `src/main.rs`) produced by `SearchEngine::make_display_path`.  Use this
-    /// variant instead of `filter_documents_with` when the caller already
-    /// converts stored paths to display form.
+    /// Patterns are matched against workspace-relative display paths (e.g.
+    /// `project/src/main.rs`) produced by `SearchEngine::make_display_path`.
+    /// Use this variant instead of `filter_documents_with` when the caller
+    /// already converts stored paths to display form.
     pub fn filter_documents_by_display<F>(
         &self,
         candidates: &RoaringBitmap,

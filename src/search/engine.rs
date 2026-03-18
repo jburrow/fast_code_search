@@ -661,7 +661,7 @@ impl SearchEngine {
     }
 
     /// Register an indexed root path so that `make_display_path` can produce
-    /// root-relative paths (e.g. `src/main.rs` instead of
+    /// workspace-relative paths (e.g. `project/src/main.rs` instead of
     /// `/workspace/project/src/main.rs`).
     ///
     /// The path is canonicalized on registration so that it matches the
@@ -676,16 +676,37 @@ impl SearchEngine {
         }
     }
 
-    /// Convert a (canonical) stored file path into a root-relative display
+    /// Convert a (canonical) stored file path into a workspace-relative display
     /// string using forward slashes.
     ///
-    /// If `path` is under one of the registered root paths the prefix is
-    /// stripped, leaving e.g. `src/main.rs`.  When no root matches the full
-    /// path is returned with backslashes normalised to forward slashes so that
-    /// the output is always OS-agnostic.
+    /// The display path always includes the root folder's own name as the first
+    /// component — mirroring the VSCode workspace experience where opening
+    /// `/workspace/project` shows files as `project/src/main.rs`.  This makes
+    /// results unambiguous when multiple root paths share the same internal
+    /// layout (e.g. two repos both containing a `src/main.rs`).
+    ///
+    /// If `path` is under one of the registered root paths the absolute prefix
+    /// *above* the root folder is stripped, preserving the root folder name.
+    /// E.g. root `/workspace/project`, file `/workspace/project/src/main.rs`
+    /// → `project/src/main.rs`.  When no root matches, the full path is
+    /// returned with backslashes normalised to forward slashes so that the
+    /// output is always OS-agnostic.
     pub fn make_display_path(&self, path: &Path) -> String {
         for root in &self.root_paths {
             if let Ok(relative) = path.strip_prefix(root) {
+                // Include the root folder name so the display path is
+                // workspace-relative (e.g. `project/src/main.rs`).
+                if let Some(root_name) = root.file_name() {
+                    let root_name_str = root_name.to_string_lossy();
+                    let relative_str = relative.to_string_lossy().replace('\\', "/");
+                    if relative_str.is_empty() {
+                        // Path IS the root directory itself
+                        return root_name_str.to_string();
+                    }
+                    return format!("{}/{}", root_name_str, relative_str);
+                }
+                // Root has no file_name (e.g. filesystem root "/") — fall back
+                // to the bare relative path.
                 return relative.to_string_lossy().replace('\\', "/");
             }
         }
@@ -3859,5 +3880,87 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             truncated_slice, needle,
             "match_start/match_end must point to the needle even with suffix-only truncation"
         );
+    }
+
+    // ── make_display_path workspace-relative tests ───────────────────────────
+
+    /// When no root paths are registered the full path (forward-slash
+    /// normalised) is returned as a fallback.
+    #[test]
+    fn test_make_display_path_no_roots() {
+        let engine = SearchEngine::new();
+        let path = Path::new("/home/user/project/src/main.rs");
+        let result = engine.make_display_path(path);
+        // With no roots, the full path is returned with forward slashes
+        assert_eq!(result, "/home/user/project/src/main.rs");
+    }
+
+    /// The root folder name must be the first component of the display path.
+    /// E.g. root `/tmp/myproject`, file `/tmp/myproject/src/main.rs`
+    /// → `myproject/src/main.rs`.
+    #[test]
+    fn test_make_display_path_includes_root_folder_name() {
+        let temp_dir = TempDir::new().unwrap();
+        // Create a sub-directory that will be the "project root"
+        let project_dir = temp_dir.path().join("myproject");
+        fs::create_dir_all(&project_dir).unwrap();
+        let src_dir = project_dir.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        let file = src_dir.join("main.rs");
+        fs::write(&file, "fn main() {}").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(&project_dir);
+
+        let canonical_file = file.canonicalize().unwrap();
+        let display = engine.make_display_path(&canonical_file);
+
+        // Should be "myproject/src/main.rs" — root name included
+        assert_eq!(display, "myproject/src/main.rs");
+    }
+
+    /// A file directly inside the root (no sub-directory) should be displayed
+    /// as `rootname/file.txt`.
+    #[test]
+    fn test_make_display_path_file_at_root_level() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("README.md");
+        fs::write(&file, "# readme").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(&project_dir);
+
+        let canonical_file = file.canonicalize().unwrap();
+        let display = engine.make_display_path(&canonical_file);
+
+        assert_eq!(display, "project/README.md");
+    }
+
+    /// With two registered roots, each file shows under its own workspace name.
+    #[test]
+    fn test_make_display_path_multiple_roots() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let root_a = temp_dir.path().join("alpha");
+        let root_b = temp_dir.path().join("beta");
+        fs::create_dir_all(&root_a).unwrap();
+        fs::create_dir_all(&root_b).unwrap();
+
+        let file_a = root_a.join("utils.rs");
+        let file_b = root_b.join("utils.rs");
+        fs::write(&file_a, "// alpha utils").unwrap();
+        fs::write(&file_b, "// beta utils").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(&root_a);
+        engine.add_root_path(&root_b);
+
+        let display_a = engine.make_display_path(&file_a.canonicalize().unwrap());
+        let display_b = engine.make_display_path(&file_b.canonicalize().unwrap());
+
+        assert_eq!(display_a, "alpha/utils.rs");
+        assert_eq!(display_b, "beta/utils.rs");
     }
 }
