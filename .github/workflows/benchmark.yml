@@ -58,6 +58,9 @@ jobs:
             bench_output.txt
             validator_output.json
 
+      - name: Reset local changes before branch switch
+        run: git checkout -- .
+
       - name: Store benchmark results for trend tracking
         uses: benchmark-action/github-action-benchmark@v1
         with:
