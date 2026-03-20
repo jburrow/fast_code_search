@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-03-20
+
+### Added
+- New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.
+
+### Changed
+- Updated scoring factors and improved score tooltip information in keyword search results.
+- Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.
+
+### Fixed
+- Benchmark CI failure: reset local changes before gh-pages branch switch to prevent dirty `Cargo.lock` blocking the workflow (#97).
+
 ## [0.7.2] - 2026-03-18
 
 ### Added
