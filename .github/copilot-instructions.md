@@ -50,7 +50,9 @@ High-performance, in-memory code search service in Rust. Trigram indexing + symb
 4. **Search** (`src/search/`) — parallel search, regex, path filtering
 5. **Server** (`src/server/`, `src/web/`) — gRPC + REST APIs
 
-**Scoring factors**: Symbol defs (3x), exact match (2x), src/lib dirs (1.5x), import count (log boost)
+**Scoring factors**: Symbol defs (3x), exact match (2x), src/lib dirs (1.5x), import count (log boost), start-of-line (1.5x), shorter lines (log scale, min 0.3x)
+
+> **Keep in sync**: When changing scoring factors in `src/search/engine.rs` (`calculate_score_inline` / `calculate_score_regex_inline`), update the `title` tooltip on the `result-score` span in `static/keyword.js` to match.
 
 > See [README.md](../README.md#architecture) for detailed architecture docs.
 

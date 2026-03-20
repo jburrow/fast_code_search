@@ -364,40 +364,44 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
 }
 
 function positionTooltip(tooltip, anchor) {
-    const gap = 10;
-    const rect = anchor.getBoundingClientRect(); // viewport-relative (works with position:fixed)
-    const viewW = window.innerWidth;
-    const viewH = window.innerHeight;
+    const GAP = 8;
+    const MAX_W = 960;
+    const MIN_W = 200;
+    const rect = anchor.getBoundingClientRect(); // viewport-relative
+    const vW = window.innerWidth;
+    const vH = window.innerHeight;
 
-    const spaceLeft = rect.left - gap * 2;
-    const spaceRight = viewW - rect.right - gap * 2;
-    // Max width that can ever fit on screen regardless of side
-    const maxFit = viewW - gap * 2;
+    // Available space on each side (inner edges, accounting for gap from viewport edge)
+    const availLeft  = rect.left - GAP * 2;         // width if we fill left-of-button
+    const availRight = vW - rect.right - GAP * 2;   // width if we fill right-of-button
 
-    let width, left;
-    if (spaceLeft >= spaceRight || spaceLeft >= 220) {
-        // Place LEFT of the button
-        width = Math.min(Math.max(220, spaceLeft), 960, maxFit);
-        left = rect.left - width - gap;
+    let w, left;
+    if (availLeft >= MIN_W || availLeft >= availRight) {
+        // Fill the space to the LEFT of the button.
+        // Right edge sits gap-away from button; left edge = GAP from viewport.
+        w    = Math.min(availLeft, MAX_W);
+        left = rect.left - w - GAP;          // = GAP when w is not capped by MAX_W
     } else {
-        // More space on the right — place RIGHT of the button
-        width = Math.min(Math.max(220, spaceRight), 960, maxFit);
-        left = rect.right + gap;
+        // More usable space to the RIGHT — place there instead.
+        w    = Math.min(Math.max(MIN_W, availRight), MAX_W);
+        left = rect.right + GAP;
     }
 
-    // Clamp so the right edge never escapes the viewport
-    left = Math.max(gap, Math.min(left, viewW - width - gap));
+    // Clamp so neither edge escapes the viewport.
+    left = Math.max(GAP, Math.min(left, vW - w - GAP));
 
-    // Override CSS min-width so it doesn't re-expand beyond what fits
-    tooltip.style.minWidth = '0';
-    tooltip.style.width = `${width}px`;
-    tooltip.style.left = `${left}px`;
+    // Override every CSS box property that could constrain the width.
+    tooltip.style.minWidth  = '0';
+    tooltip.style.maxWidth  = 'none';
+    tooltip.style.right     = 'auto';
+    tooltip.style.width     = `${w}px`;
+    tooltip.style.left      = `${left}px`;
 
-    // Vertically centre on the button, clamped to viewport
-    const ttH = tooltip.offsetHeight || 520;
-    let top = rect.top + (rect.height / 2) - (ttH / 2);
-    if (top + ttH > viewH - gap) top = viewH - ttH - gap;
-    if (top < gap) top = gap;
+    // Vertically centre on the anchor, clamped to viewport.
+    const ttH = tooltip.offsetHeight || 480;
+    let top = rect.top + rect.height / 2 - ttH / 2;
+    if (top + ttH > vH - GAP) top = vH - ttH - GAP;
+    if (top < GAP) top = GAP;
     tooltip.style.top = `${top}px`;
 }
 
@@ -453,6 +457,12 @@ async function performSearch() {
     if (!query) {
         resultsHeader.style.display = 'none';
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter a search query to find code</p></div>';
+        return;
+    }
+
+    if (query.length < 3) {
+        resultsHeader.style.display = 'none';
+        resultsContainer.innerHTML = '<div class="empty-state"><p>Enter at least 3 characters to search</p></div>';
         return;
     }
 
@@ -518,7 +528,7 @@ async function performSearch() {
                         <div class="result-meta">
                             ${langBadge}
                             ${depBadge}
-                            <span class="result-score">Score: ${result.score.toFixed(2)}</span>
+                            <span class="result-score" style="cursor:help" title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + log10(import count)&#10;&#10;Higher scores rank first.">Score: ${result.score.toFixed(2)}</span>
                             <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
                             <button class="view-file-btn"
                                 data-file-path="${escapeHtml(result.file_path)}"
