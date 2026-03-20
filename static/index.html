@@ -1,133 +1,507 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html class="light" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Fast Code Search</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="/common.css">
-    <link rel="stylesheet" href="/keyword.css">    
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
     <link rel="stylesheet" href="/highlight-light.min.css" media="(prefers-color-scheme: light)">
     <link rel="stylesheet" href="/highlight-dark.min.css" media="(prefers-color-scheme: dark)">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-primary-fixed": "#1e1d00",
+                        "background": "#fefae4",
+                        "secondary-fixed": "#ebe77f",
+                        "on-tertiary": "#ffffff",
+                        "tertiary-fixed": "#a9efed",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "on-secondary-fixed": "#1e1d00",
+                        "secondary": "#646100",
+                        "on-primary-fixed-variant": "#4b4900",
+                        "on-surface-variant": "#494831",
+                        "surface": "#fefae4",
+                        "primary-fixed": "#eee900",
+                        "error": "#ba1a1a",
+                        "tertiary-fixed-dim": "#8ed3d1",
+                        "surface-container-low": "#f8f4df",
+                        "on-background": "#1d1c0f",
+                        "outline-variant": "#cbc8aa",
+                        "tertiary": "#1e6868",
+                        "on-tertiary-fixed": "#00201f",
+                        "primary-container": "#fff900",
+                        "on-primary": "#ffffff",
+                        "surface-container-highest": "#e7e3ce",
+                        "on-tertiary-container": "#327978",
+                        "secondary-fixed-dim": "#cecb66",
+                        "on-surface": "#1d1c0f",
+                        "surface-variant": "#e7e3ce",
+                        "surface-dim": "#dedac6",
+                        "secondary-container": "#ebe77f",
+                        "primary": "#646100",
+                        "on-tertiary-fixed-variant": "#00504f",
+                        "inverse-on-surface": "#f5f1dc",
+                        "surface-bright": "#fefae4",
+                        "on-secondary-fixed-variant": "#4b4900",
+                        "tertiary-container": "#bafffd",
+                        "primary-fixed-dim": "#d1cc00",
+                        "inverse-primary": "#d1cc00",
+                        "outline": "#7a785f",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-tint": "#646100",
+                        "surface-container-high": "#ece9d4",
+                        "inverse-surface": "#323123",
+                        "on-secondary-container": "#6a6707",
+                        "surface-container": "#f2eed9",
+                        "on-primary-container": "#747100",
+                        "on-error": "#ffffff",
+                        "error-container": "#ffdad6"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk", "sans-serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        /* Language badge color variables (from common.css) */
+        :root {
+            --lang-rs: #d44e38; --lang-py: #3d6fad; --lang-js: #d9a41a; --lang-ts: #2f6bbf;
+            --lang-go: #38a0b0; --lang-rb: #b83a28; --lang-java: #cc7a1a; --lang-cs: #2e7c4f;
+            --lang-cpp: #b84030; --lang-c: #5c4fbf; --lang-sh: #2e7c50; --lang-yaml: #8e3fad;
+            --lang-json: #b89010; --lang-css: #4040cc; --lang-proto: #7a28ad;
+            --lang-toml: #a06018; --lang-sql: #b07818; --lang-md: #4a5a6a;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-family: 'Material Symbols Outlined';
+            font-style: normal;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            overflow-wrap: normal;
+            direction: ltr;
+            -webkit-font-smoothing: antialiased;
+            vertical-align: middle;
+        }
+        body {
+            background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
+        }
+        /* Query match highlight */
+        mark.highlight, .code-highlight {
+            background-color: #fff900;
+            color: #000;
+            padding: 0 2px;
+            border-radius: 0;
+            font-style: inherit;
+            font-weight: bold;
+        }
+        /* Result code block — neutralise hljs background */
+        .result-code, .result-code.hljs {
+            background: #fff !important;
+            color: inherit;
+            margin: 0;
+            padding: 0.625rem 1rem;
+            font-size: 0.78rem;
+            line-height: 1.55;
+            overflow-x: auto;
+            white-space: pre;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        }
+        /* Context tooltip */
+        .ctx-tooltip {
+            position: fixed;
+            z-index: 2000;
+            display: none;
+            max-width: 960px;
+            min-width: 220px;
+            background: #fff;
+            border: 1px solid #000;
+            overflow: hidden;
+            max-height: 560px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            flex-direction: column;
+            box-shadow: 4px 4px 0 #000;
+        }
+        .ctx-header {
+            padding: 0.35rem 0.75rem;
+            background: #dedac6;
+            border-bottom: 1px solid #000;
+            font-size: 0.72rem;
+            color: #494831;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .ctx-file-body {
+            overflow-y: auto;
+            flex: 1;
+        }
+        .ctx-loading {
+            padding: 1rem;
+            color: #7a785f;
+        }
+        /* File modal */
+        .file-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.65);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1500;
+        }
+        .file-modal-dialog {
+            background: #fff;
+            border: 1px solid #000;
+            box-shadow: 6px 6px 0 #000;
+            width: 90vw;
+            max-width: 1100px;
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .file-modal-header {
+            background: #dedac6;
+            border-bottom: 1px solid #000;
+            padding: 0.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .file-modal-path {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #1d1c0f;
+        }
+        .file-modal-close {
+            background: none;
+            border: 1px solid #000;
+            width: 1.75rem;
+            height: 1.75rem;
+            cursor: pointer;
+            font-size: 1.1rem;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1d1c0f;
+            transition: background 0.1s;
+        }
+        .file-modal-close:hover { background: #fff900; }
+        .file-modal-body {
+            overflow-y: auto;
+            flex: 1;
+            padding: 0;
+            background: #fff;
+        }
+        /* File view lines */
+        .file-meta {
+            padding: 0.35rem 1rem;
+            background: #f2eed9;
+            border-bottom: 1px solid #cbc8aa;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            color: #7a785f;
+        }
+        .file-code { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+        .file-line {
+            display: flex;
+            padding: 0 1rem;
+            line-height: 1.55;
+        }
+        .file-line:hover { background: #f8f4df; }
+        .file-line-highlight { background: #fff900 !important; }
+        .file-line-num {
+            color: #7a785f;
+            min-width: 3rem;
+            text-align: right;
+            padding-right: 1.25rem;
+            user-select: none;
+            flex-shrink: 0;
+        }
+        .file-line-content { white-space: pre; flex: 1; }
+        /* Empty / loading / error states */
+        .empty-state {
+            padding: 3rem 1.5rem;
+            text-align: center;
+            color: #7a785f;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+        .loading {
+            padding: 2rem;
+            text-align: center;
+            color: #7a785f;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+        .loading-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #cbc8aa;
+            border-top-color: #646100;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            margin: 0 auto 0.5rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-index-state {
+            padding: 3rem;
+            text-align: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+            color: #7a785f;
+        }
+        .loading-progress {
+            width: 200px;
+            height: 4px;
+            background: #e7e3ce;
+            border: 1px solid #000;
+            margin: 0.75rem auto 0;
+            overflow: hidden;
+        }
+        .loading-progress-bar {
+            height: 100%;
+            background: #fff900;
+            border-right: 1px solid #000;
+            transition: width 0.3s;
+        }
+        .error-message {
+            padding: 1rem 1.5rem;
+            background: #ffdad6;
+            border: 1px solid #ba1a1a;
+            color: #93000a;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+        }
+        /* Progress bar animation */
+        .progress-fill {
+            height: 100%;
+            background: #fff900;
+            transition: width 0.3s ease;
+        }
+        .progress-fill.completed { background: #646100; }
+        /* Status badge */
+        .status-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.1rem 0.4rem;
+            border: 1px solid #000;
+            background: #fff900;
+            color: #000;
+            text-transform: uppercase;
+        }
+        .status-badge.status-idle { background: #ebe77f; }
+        .status-badge.status-completed { background: #a9efed; }
+        .status-badge.status-loading_index,
+        .status-badge.status-indexing,
+        .status-badge.status-discovering { background: #fff900; }
+        /* Search disabled state */
+        #query:disabled { opacity: 0.6; cursor: not-allowed; }
+        /* Filter panel */
+        #filter-panel { display: none; }
+        #filter-panel.open { display: block; }
+        /* Advanced options section */
+        .advanced-options { display: none; }
+        /* Hide results-header visually when JS sets display:none — override Tailwind */
+        #results-header[style*="display: none"] { display: none !important; }
+        #progress-panel[style*="display: none"] { display: none !important; }
+    </style>
 </head>
+<body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
-<body>
-    <div class="container">
-        <header class="header-compact">
-            <div class="header-title">
-                <h1 class="wordmark">Fast Code Search</h1>
-                <a href="/docs.html" class="header-link" title="Documentation">?</a>
-            </div>
+    <!-- ===== TOP NAV ===== -->
+    <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
+        <div class="flex items-center gap-6">
+            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
+            <nav class="hidden md:flex items-center gap-0 h-14">
+                <a class="h-full flex items-center px-3 border-b-2 border-primary-container text-black font-bold hover:bg-primary-container transition-colors duration-75" href="/">SEARCH</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black transition-colors duration-75" href="/docs.html">DOCS</a>
+            </nav>
+        </div>
+        <!-- Index stats row -->
+        <div class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
+            <span title="Total number of source files in the index">FILES: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
+            <span title="Total size of all indexed file content">CONTENT: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
+            <span title="On-disk size of the serialized search index">INDEX: <span id="stat-size" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of unique 3-character sequences">TRIGRAMS: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of import/dependency edges used to boost relevance scoring">DEPS: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
+        </div>
+        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors text-xl" title="Documentation">help_outline</a>
+    </header>
 
-            <div class="header-progress" id="progress-panel" style="display: none;">
-                <span class="status-badge" id="progress-status">Ready</span>
-                <div class="progress-bar-container">
-                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
-                </div>
-                <span class="progress-percent" id="progress-percent">0%</span>
-                <span class="progress-message" id="progress-message"></span>
-            </div>
+    <!-- ===== PROGRESS PANEL ===== -->
+    <div id="progress-panel" class="bg-surface-container-low border-b border-black px-6 py-2 items-center gap-4 text-xs font-label" style="display: none;">
+        <span class="status-badge" id="progress-status">Ready</span>
+        <div class="flex-1 h-2 bg-surface-container-highest border border-black overflow-hidden max-w-xs">
+            <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
+        </div>
+        <span class="text-outline" id="progress-percent">0%</span>
+        <span class="text-outline italic" id="progress-message"></span>
+    </div>
 
-            <div class="header-stats" id="stats">
-                <div class="stat" title="Total number of source files in the index">
-                    <span class="stat-value" id="stat-files">-</span>
-                    <span class="stat-label">Files</span>
-                </div>
-                <div class="stat" title="Total size of all indexed file content">
-                    <span class="stat-value" id="stat-content">-</span>
-                    <span class="stat-label">Content</span>
-                </div>
-                <div class="stat" title="On-disk size of the serialized search index">
-                    <span class="stat-value" id="stat-size">-</span>
-                    <span class="stat-label">Index</span>
-                </div>
-                <div class="stat" title="Number of unique 3-character sequences — more trigrams means a larger, more precise index">
-                    <span class="stat-value" id="stat-trigrams">-</span>
-                    <span class="stat-label">Trigrams</span>
-                </div>
-                <div class="stat" title="Number of import/dependency edges used to boost relevance scoring">
-                    <span class="stat-value" id="stat-deps">-</span>
-                    <span class="stat-label">Deps</span>
-                </div>
-            </div>
-        </header>
+    <!-- ===== MAIN ===== -->
+    <main class="max-w-[1440px] mx-auto p-6 space-y-6">
 
-        <div class="search-box">
-            <div class="query-row">
-                <input type="text" id="query" placeholder="Search code..." autocomplete="off" autofocus>
-                <label class="regex-toggle" title="Enable regular expression syntax in your query">
-                    <input type="checkbox" id="regex-mode">
-                    <span>Regex</span>
-                </label>
-                <label class="symbols-toggle" title="Only match function, class, and symbol definitions">
-                    <input type="checkbox" id="symbols-mode">
-                    <span>Symbols</span>
-                </label>
-            </div>
-
-            <details class="advanced-options">
-                <summary class="advanced-toggle">
-                    <span class="toggle-icon">▶</span> Options
-                </summary>
-                <div class="advanced-content">
-                    <div class="search-options">
-                        <label>
-                            Max results:
-                            <select id="max-results">
-                                <option value="25">25</option>
-                                <option value="50" selected>50</option>
-                                <option value="100">100</option>
-                                <option value="250">250</option>
-                            </select>
-                        </label>
-                        <label class="rank-mode-label">
-                            Ranking:
-                            <select id="rank-mode">
-                                <option value="auto" selected>Auto</option>
-                                <option value="fast">Fast</option>
-                                <option value="full">Full</option>
-                            </select>
-                        </label>
+        <!-- Search Execution Section -->
+        <section class="space-y-3">
+            <div class="flex flex-col md:flex-row gap-3">
+                <!-- Search input -->
+                <div class="flex-grow relative">
+                    <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                        <span class="material-symbols-outlined text-outline text-xl">search</span>
                     </div>
-                    <div class="filter-options">
-                        <div class="filter-row">
-                            <label>
-                                <span class="filter-label">Search only in (glob):</span>
-                                <input type="text" id="include-filter" placeholder="e.g., src/**/*.rs;lib/**"
-                                    autocomplete="off">
-                            </label>
-                        </div>
-                        <div class="filter-row">
-                            <label>
-                                <span class="filter-label">Skip paths (glob):</span>
-                                <input type="text" id="exclude-filter" placeholder="e.g., **/test/**;**/vendor/**"
-                                    autocomplete="off">
-                            </label>
-                        </div>
-                        <p class="filter-help">Glob patterns (separated by <code>;</code>) matched against workspace-relative paths (including the root folder name, e.g. <code>project/src/main.rs</code>). Use <code>**</code> for recursive directories, e.g. <code>src/**/*.rs</code> or <code>**/test/**</code></p>
+                    <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
+                        class="w-full bg-surface-container-lowest border border-black pl-12 pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container uppercase placeholder:normal-case placeholder:text-outline"/>
+                    <div class="absolute inset-y-0 right-4 flex items-center gap-2">
+                        <span class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden sm:inline">CMD+K</span>
                     </div>
                 </div>
+                <!-- Toggle group -->
+                <div class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
+                    <label class="flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black has-[:checked]:bg-primary-container has-[:checked]:text-black" title="Enable regular expression syntax">
+                        <input type="checkbox" id="regex-mode" class="sr-only">
+                        <span class="material-symbols-outlined text-sm">code</span>
+                        <span>REGEX</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold has-[:checked]:bg-primary-container has-[:checked]:text-black" title="Only match symbol definitions">
+                        <input type="checkbox" id="symbols-mode" class="sr-only">
+                        <span class="material-symbols-outlined text-sm">function</span>
+                        <span>SYMBOLS</span>
+                    </label>
+                </div>
+                <!-- Execute button -->
+                <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
+                    EXECUTE_QUERY
+                </button>
+            </div>
+
+            <!-- Results meta bar (shown after search) -->
+            <div id="results-header" class="flex justify-between items-center border-b border-outline-variant pb-2 px-1" style="display: none;">
+                <div class="flex gap-4 items-center flex-wrap">
+                    <span id="results-count" class="font-label text-xs font-bold bg-black text-white px-2 py-0.5"></span>
+                    <span id="search-time" class="font-label text-xs text-outline italic"></span>
+                    <span id="ranking-info" class="font-label text-xs text-outline"></span>
+                </div>
+                <div class="flex gap-3">
+                    <button id="filter-toggle-btn" class="flex items-center gap-1 font-label text-xs text-outline hover:text-black transition-colors">
+                        <span class="material-symbols-outlined text-sm">tune</span> FILTER
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filter panel (hidden by default) -->
+            <div id="filter-panel" class="bg-surface-container-low border border-black p-4 space-y-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
+                        MAX RESULTS
+                        <select id="max-results" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="250">250</option>
+                        </select>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
+                        RANKING
+                        <select id="rank-mode" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                            <option value="auto" selected>Auto</option>
+                            <option value="fast">Fast</option>
+                            <option value="full">Full</option>
+                        </select>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
+                        INCLUDE (GLOB)
+                        <input type="text" id="include-filter" placeholder="src/**/*.rs;lib/**" autocomplete="off"
+                            class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
+                        EXCLUDE (GLOB)
+                        <input type="text" id="exclude-filter" placeholder="**/test/**;**/vendor/**" autocomplete="off"
+                            class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                    </label>
+                </div>
+                <p class="text-[10px] font-label text-outline">Glob patterns (separated by <code class="bg-surface-container-highest px-1">;</code>) matched against workspace-relative paths. Use <code class="bg-surface-container-highest px-1">**</code> for recursive directories.</p>
+            </div>
+
+            <!-- Keep for advanced-options querySelector compat (hidden) -->
+            <details class="advanced-options" aria-hidden="true">
+                <summary></summary>
             </details>
-        </div>
+        </section>
 
-        <div class="results-header" id="results-header" style="display: none;">
-            <span id="results-count">0 results</span>
-            <span id="ranking-info"></span>
-            <span id="search-time"></span>
-        </div>
-
-        <div class="results" id="results">
+        <!-- Results -->
+        <section id="results" class="space-y-4">
             <div class="empty-state">
                 <p>Enter a search query to find code</p>
             </div>
-        </div>
-    </div>
+        </section>
+
+    </main>
+
+    <!-- ===== MOBILE BOTTOM NAV ===== -->
+    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
+        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/">
+            <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;">search</span>
+            <span>Search</span>
+        </a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html">
+            <span class="material-symbols-outlined">auto_awesome</span>
+            <span>Semantic</span>
+        </a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html">
+            <span class="material-symbols-outlined">analytics</span>
+            <span>Index</span>
+        </a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html">
+            <span class="material-symbols-outlined">description</span>
+            <span>Docs</span>
+        </a>
+    </nav>
 
     <script src="/highlight.min.js"></script>
     <script src="/common.js"></script>
     <script src="/keyword.js"></script>
+    <script>
+        // Filter panel toggle
+        document.getElementById('filter-toggle-btn')?.addEventListener('click', () => {
+            const panel = document.getElementById('filter-panel');
+            panel.classList.toggle('open');
+        });
+        // CMD+K shortcut
+        document.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('query')?.focus();
+            }
+        });
+        // Execute button triggers search
+        document.getElementById('search-btn')?.addEventListener('click', () => {
+            if (typeof performSearch === 'function') performSearch();
+        });
+    </script>
 </body>
-
 </html>

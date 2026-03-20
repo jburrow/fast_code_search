@@ -486,8 +486,8 @@ async function performSearch() {
         const duration = data.elapsed_ms !== undefined ? data.elapsed_ms : (performance.now() - startTime);
 
         resultsHeader.style.display = 'flex';
-        resultsCount.textContent = `${data.results.length} result${data.results.length !== 1 ? 's' : ''}`;
-        searchTimeEl.textContent = `${duration.toFixed(1)}ms`;
+        resultsCount.textContent = `${data.results.length} RESULT${data.results.length !== 1 ? 'S' : ''} FOUND`;
+        searchTimeEl.textContent = `LATENCY: ${duration.toFixed(1)}ms`;
 
         // Show ranking info if available
         if (data.rank_mode && data.total_candidates !== undefined) {
@@ -510,33 +510,66 @@ async function performSearch() {
         resultsContainer.innerHTML = data.results.map(result => {
             const matchType = getMatchTypeLabel(result.match_type);
             const depCount = result.dependency_count || 0;
-            const depBadge = depCount > 0 
-                ? `<span class="result-badge deps-badge" title="${depCount} files depend on this" style="cursor:pointer" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
-                : '';
             const lang = hljsLangForPath(result.file_path);
+            const ext = (result.file_path.split('.').pop() || '').toLowerCase();
             const langClass = langClassForPath(result.file_path);
-            const langBadge = langClass
-                ? `<span class="lang-badge lang-${langClass}">${(result.file_path.split('.').pop() || '').toLowerCase()}</span>`
+
+            // Split path into directory + filename for display
+            const pathParts = result.file_path.split('/');
+            const fileName = pathParts.pop();
+            const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
+
+            // File type icon based on extension
+            const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'settings_suggest' : 'code');
+
+            // Language badge style
+            const langBadgeStyle = langClass
+                ? `background:var(--lang-${langClass},#e7e3ce);color:#000;border:1px solid rgba(0,0,0,0.15)`
+                : 'background:#e7e3ce;color:#1d1c0f;border:1px solid #cbc8aa';
+
+            // Dependency badge
+            const depBadge = depCount > 0
+                ? `<span style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+                    title="${depCount} files depend on this" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
                 : '';
+
+            // Match type badge
+            const typeBadgeStyle = matchType.isSymbol
+                ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
+                : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
+
             return `
-                <div class="result-item" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${result.line_number}">
-                    <div class="result-header">
-                        <div class="result-info">
-                            <span class="result-path" title="${escapeHtml(result.file_path)}">${escapeHtml(result.file_path)}</span>
-                            <span class="result-line">:${result.line_number}</span>
+                <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${result.line_number}">
+                    <!-- Card header -->
+                    <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">${fileIcon}</span>
+                            <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(result.file_path)}">
+                                ${dirPath ? `<span style="color:#7a785f;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
+                            </span>
+                            <span class="font-label text-xs" style="color:#7a785f;flex-shrink:0">:${result.line_number}</span>
                         </div>
-                        <div class="result-meta">
-                            ${langBadge}
-                            ${depBadge}
-                            <span class="result-score" style="cursor:help" title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + log10(import count)&#10;&#10;Higher scores rank first.">Score: ${result.score.toFixed(2)}</span>
-                            <span class="result-type ${matchType.isSymbol ? 'symbol' : ''}">${matchType.text}</span>
-                            <button class="view-file-btn"
+                        <div class="flex items-center gap-3 flex-shrink-0">
+                            <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7a785f;text-transform:uppercase"
+                                title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + log10(import count)&#10;&#10;Higher scores rank first.">
+                                ${result.score.toFixed(2)}
+                            </span>
+                            <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
+                                style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
                                 data-file-path="${escapeHtml(result.file_path)}"
-                                data-line-number="${result.line_number}">📄 View</button>
+                                data-line-number="${result.line_number}"
+                                title="View full file">open_in_new</button>
                         </div>
                     </div>
-                    <div class="result-content">
+                    <!-- Code content -->
+                    <div class="overflow-x-auto" style="background:#fff">
                         <pre class="result-code language-${lang}" data-query="${escapeHtml(query)}">${escapeHtml(result.content)}</pre>
+                    </div>
+                    <!-- Footer badges -->
+                    <div class="px-4 py-1.5 flex gap-2 flex-wrap items-center" style="background:#f8f4df;border-top:1px solid #cbc8aa">
+                        ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
+                        <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
+                        ${depBadge}
                     </div>
                 </div>
             `;
@@ -745,8 +778,10 @@ loadStateFromUrl();
 // Start with search disabled until we know the status
 searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
 
-// Restore state from URL on page load; auto-expand Advanced Options for non-default values
+// Restore state from URL on page load; auto-expand filter panel for non-default values
 loadStateFromUrl(URL_FIELDS, () => {
+    const filterPanel = document.getElementById('filter-panel');
+    if (filterPanel) filterPanel.classList.add('open');
     const advancedDetails = document.querySelector('.advanced-options');
     if (advancedDetails) advancedDetails.open = true;
 });
