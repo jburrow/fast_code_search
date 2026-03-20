@@ -447,7 +447,7 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
 
 function positionTooltip(tooltip, anchor) {
     const GAP = 8;
-    const MAX_W = Math.min(1280, Math.round(window.innerWidth * 0.62));
+    const MAX_W = Math.min(1100, Math.round(window.innerWidth * 0.9));
     const MIN_W = 280;
     const rect = anchor.getBoundingClientRect(); // viewport-relative
     const vW = window.innerWidth;
