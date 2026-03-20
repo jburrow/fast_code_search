@@ -1,14 +1,82 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html class="light" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <title>Diagnostics - Semantic Code Search</title>
-    <link rel="stylesheet" href="/common.css">
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Semantic Diagnostics — Fast Code Search</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "background": "#fefae4", "primary-container": "#fff900", "outline": "#7a785f",
+                        "outline-variant": "#cbc8aa", "on-background": "#1d1c0f", "on-surface": "#1d1c0f",
+                        "surface-container-low": "#f8f4df", "surface-container": "#f2eed9",
+                        "surface-container-high": "#ece9d4", "surface-container-highest": "#e7e3ce",
+                        "surface-container-lowest": "#ffffff", "surface-dim": "#dedac6",
+                        "primary": "#646100", "on-surface-variant": "#494831",
+                        "tertiary": "#1e6868", "tertiary-container": "#bafffd",
+                        "secondary-container": "#ebe77f", "error": "#ba1a1a"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk", "sans-serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: { "DEFAULT": "0px", "lg": "0px", "xl": "0px", "full": "9999px" }
+                }
+            }
+        }
+    </script>
     <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-family: 'Material Symbols Outlined'; font-style: normal; line-height: 1;
+            letter-spacing: normal; text-transform: none; display: inline-block;
+            white-space: nowrap; overflow-wrap: normal; direction: ltr;
+            -webkit-font-smoothing: antialiased; vertical-align: middle;
+        }
+        body {
+            background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
+        }
+        :root {
+            --bg-primary: #fefae4; --bg-secondary: #f2eed9; --bg-tertiary: #ece9d4;
+            --text-primary: #1d1c0f; --text-secondary: #494831; --text-muted: #7a785f;
+            --accent: #646100; --accent-hover: #4b4900; --success: #1e6868; --warning: #6a6707;
+            --error: #ba1a1a; --border: #cbc8aa; --code-bg: #f8f4df; --code-text: #1d1c0f;
+            --color-path: #646100; --color-deps: #1e6868;
+            --shadow: rgba(29,28,15,0.08); --shadow-lg: rgba(29,28,15,0.16);
+        }
+        .card { border-radius: 0 !important; box-shadow: 2px 2px 0 rgba(0,0,0,0.12); }
+        .stat-item { border-radius: 0 !important; }
+        .test-results { border-radius: 0 !important; }
+        .sample-files { border-radius: 0 !important; }
+        .test-details { border-radius: 0 !important; }
+        .status-banner { border-radius: 0 !important; }
+        .model-info { border-radius: 0 !important; }
+        .chunk-item { border-radius: 0 !important; }
+        .card h3 { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+        .semantic-badge { background: #a9efed; border: 1px solid #1e6868; padding: 0.15rem 0.5rem; font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #004f4e; border-radius: 0 !important; }
+        .refresh-btn {
+            background: #fff900 !important; color: #000 !important;
+            border: 1px solid #000 !important; border-radius: 0 !important;
+            padding: 0.5rem 1rem; cursor: pointer; font-size: 0.78rem;
+            font-family: 'JetBrains Mono', monospace; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            display: flex; align-items: center; gap: 0.5rem; margin-left: auto;
+            transition: background 0.1s, color 0.1s;
+        }
+        .refresh-btn:hover { background: #000 !important; color: #fff900 !important; }
+        .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .refresh-btn.loading::after {
+            content: ''; width: 14px; height: 14px;
+            border: 2px solid transparent; border-top-color: currentColor;
+            border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;
+        }
         .diagnostics-container {
             max-width: 1200px;
             margin: 0 auto;
@@ -376,21 +444,35 @@
     </style>
 </head>
 
-<body>
-    <div class="diagnostics-container">
-        <div class="diagnostics-header">
-            <div>
-                <a href="/" class="back-link">← Back to Search</a>
-                <h1>🔧 Server Diagnostics <span class="semantic-badge">SEMANTIC</span></h1>
-            </div>
-        </div>
+<body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
+    <header class="bg-white font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
+        <div class="flex items-center gap-6">
+            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
+            <nav class="hidden md:flex items-center gap-0 h-14">
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/">SEARCH</a>
+                <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/docs.html">DOCS</a>
+            </nav>
+        </div>
+        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors" style="font-size:20px" title="Documentation">help_outline</a>
+    </header>
+
+    <main class="max-w-[1440px] mx-auto p-6">
         <div id="content">
-            <div class="loading-state">
-                <p>Loading diagnostics...</p>
+            <div style="text-align:center;padding:3rem;font-family:'JetBrains Mono',monospace;font-size:0.85rem;color:#7a785f;">
+                Loading diagnostics...
             </div>
         </div>
-    </div>
+    </main>
+
+    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><span class="material-symbols-outlined" style="font-size:20px">search</span><span>Search</span></a>
+        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/semantic.html"><span class="material-symbols-outlined" style="font-size:20px;font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24">auto_awesome</span><span>Semantic</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><span class="material-symbols-outlined" style="font-size:20px">analytics</span><span>Index</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html"><span class="material-symbols-outlined" style="font-size:20px">description</span><span>Docs</span></a>
+    </nav>
 
     <script>
         let isLoading = false;

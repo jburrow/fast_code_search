@@ -23,6 +23,7 @@ const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     searchButtonId: 'search-btn',
     resultsContainerId: 'results',
+    searchSectionId: 'search-section',
     additionalInputIds: ['max-results'],
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
@@ -33,13 +34,114 @@ const searchReadiness = new SearchReadinessManager({
 });
 
 // ============================================
+// BACKEND HEALTH
+// ============================================
+
+// Tracks whether the semantic backend is confirmed available for this page.
+// false = health check hasn't run yet or determined semantic is unavailable.
+let semanticAvailable = false;
+
+/**
+ * Check both keyword (8080) and semantic (8081) backends.
+ * Updates the backend status banner and sets semanticAvailable.
+ */
+async function checkBackendHealth() {
+    const hostname = window.location.hostname;
+
+    // Probe the server serving this page.
+    let currentServerType = null;
+    let healthOk = false;
+    try {
+        const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+            healthOk = true;
+            const data = await resp.json();
+            currentServerType = data.server_type ?? null;
+        }
+    } catch (e) { /* current server unreachable — WS offline detection handles it */ }
+
+    // Available if health OK and not explicitly identified as the keyword server.
+    // Older binaries omit server_type — treat as semantic when health is ok.
+    semanticAvailable = healthOk && currentServerType !== 'keyword';
+
+    if (!semanticAvailable) {
+        searchReadiness.setOffline(true);
+    }
+
+    // Check keyword backend at its default port for the status badge
+    let keywordUp = false;
+    try {
+        const resp = await fetch(`http://${hostname}:8080/api/health`, { signal: AbortSignal.timeout(2000) });
+        keywordUp = resp.ok;
+    } catch (e) { /* offline */ }
+
+    const onSemanticServer = currentServerType === 'semantic' || currentServerType === null;
+    renderBackendStatus(keywordUp, healthOk, onSemanticServer);
+}
+
+/**
+ * Update the backend status banner based on health check results.
+ */
+function renderBackendStatus(keywordUp, semanticServerUp, onSemanticServer) {
+    const banner = document.getElementById('backend-banner');
+    if (!banner) return;
+
+    updateBackendBadge('keyword-status-badge', keywordUp, 'KEYWORD');
+    updateBackendBadge('semantic-status-badge', semanticServerUp && onSemanticServer, 'SEMANTIC');
+
+    const msgEl = document.getElementById('backend-banner-msg');
+
+    // Build the problem description
+    const parts = [];
+    if (!semanticServerUp) {
+        parts.push('Semantic backend not running \u2014 start fast_code_search_semantic on port 8081');
+    } else if (!onSemanticServer) {
+        const semanticUrl = `http://${window.location.hostname}:8081`;
+        parts.push(`Semantic search requires the semantic backend \u2014 visit ${semanticUrl}`);
+    }
+    if (!keywordUp) {
+        parts.push('Keyword backend not running');
+    }
+
+    if (parts.length === 0) {
+        banner.style.display = 'none';
+        return;
+    }
+
+    // Warning colour: red for hard errors, amber when semantic is up but wrong server
+    const isWrongServer = semanticServerUp && !onSemanticServer;
+    banner.style.background = isWrongServer && keywordUp ? '#fff3cd' : '#ffdad6';
+    banner.style.color = isWrongServer && keywordUp ? '#5a4000' : '#93000a';
+    banner.style.display = 'flex';
+    if (msgEl) msgEl.textContent = parts.join(' \u00b7 ');
+}
+
+function updateBackendBadge(id, isUp, label) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = `${label}: ${isUp ? '\u2713' : '\u2717'}`;
+    el.style.background = isUp ? '#a9efed' : '#ffdad6';
+    el.style.borderColor = isUp ? '#1e6868' : '#ba1a1a';
+    el.style.color = isUp ? '#00201f' : '#93000a';
+}
+
+// ============================================
 // PROGRESS WEBSOCKET
 // ============================================
 
 const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
-    onConnected: () => {},
+    onConnected: () => {
+        // WS connected means this server is reachable — clear any offline state
+        if (semanticAvailable) {
+            searchReadiness.setOffline(false);
+        }
+    },
     onDisconnected: () => {},
+    onServerOffline: () => {
+        // Consecutive WS failures — the semantic search server is not running
+        searchReadiness.setOffline(true);
+    },
     onError: (err) => console.error('Semantic progress WebSocket error:', err)
 });
 
@@ -170,35 +272,44 @@ function displayResults(results, query, latency) {
 
 function createResultCard(result) {
     const score = (result.similarity_score * 100).toFixed(1);
-    const scorePercent = Math.min(100, score);
-    
-    // Determine chunk type badge with colour class
-    let badgeText = 'Code';
-    let badgeClass = 'result-badge';
-    if (result.chunk_type === 'function') { badgeText = '⚡ Function'; badgeClass = 'result-badge chunk-function'; }
-    else if (result.chunk_type === 'class') { badgeText = '📦 Class'; badgeClass = 'result-badge chunk-class'; }
-    else if (result.chunk_type === 'module') { badgeText = '📄 Module'; badgeClass = 'result-badge chunk-module'; }
+    const scorePercent = Math.min(100, parseFloat(score));
 
-    // Language badge derived from file extension (uses shared langClassForPath from common.js)
+    // Chunk type badge
+    let chunkLabel = 'CODE';
+    let chunkClass = 'result-badge';
+    if (result.chunk_type === 'function') { chunkLabel = 'FUNCTION'; chunkClass = 'result-badge chunk-function'; }
+    else if (result.chunk_type === 'class')    { chunkLabel = 'CLASS';    chunkClass = 'result-badge chunk-class'; }
+    else if (result.chunk_type === 'module')   { chunkLabel = 'MODULE';   chunkClass = 'result-badge chunk-module'; }
+
+    // Language badge (uses shared langClassForPath from common.js)
     const ext = (result.file_path.split('.').pop() || '').toLowerCase();
     const langClass = langClassForPath(result.file_path);
-    const langBadge = langClass ? `<span class="lang-badge lang-${langClass}">${ext}</span>` : '';
+    const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
+    const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${ext}</span>` : '';
+
+    // Split path into dir + filename
+    const lastSlash = result.file_path.lastIndexOf('/');
+    const fileDir  = lastSlash >= 0 ? result.file_path.slice(0, lastSlash + 1) : '';
+    const fileName = lastSlash >= 0 ? result.file_path.slice(lastSlash + 1) : result.file_path;
 
     const codeWithLines = formatCodeWithLineNumbers(result.content, result.start_line);
-    
+
     return `
         <div class="result-item">
             <div class="result-header">
                 <div class="result-info">
-                    <div class="result-file">📄 ${escapeHtml(result.file_path)}</div>
+                    <div class="result-file">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:#7a785f">description</span>
+                        <span style="color:#7a785f;font-weight:400">${escapeHtml(fileDir)}</span><span style="font-weight:700">${escapeHtml(fileName)}</span>
+                    </div>
                     <div class="result-meta">
                         ${langBadge}
-                        <span>Lines ${result.start_line}-${result.end_line}</span>
-                        ${result.symbol_name ? `<span>Symbol: <strong>${escapeHtml(result.symbol_name)}</strong></span>` : ''}
-                        <span class="${badgeClass}">${badgeText}</span>
+                        <span class="${chunkClass}">${chunkLabel}</span>
+                        ${result.symbol_name ? `<span class="result-badge" style="background:#ebe77f;border-color:#646100;color:#1e1d00">${escapeHtml(result.symbol_name)}</span>` : ''}
+                        <span style="font-size:0.65rem;color:#7a785f;font-family:'JetBrains Mono',monospace">L${result.start_line}–${result.end_line}</span>
                     </div>
                 </div>
-                <div class="result-score">
+                <div class="result-score" title="Similarity score: ${score}%">
                     <div class="score-bar">
                         <div class="score-fill" style="width: ${scorePercent}%"></div>
                     </div>
@@ -234,11 +345,8 @@ document.querySelectorAll('.example-btn').forEach(btn => {
 // INITIALIZATION
 // ============================================
 
-// Store original placeholder before readiness manager may change it
+// Store original placeholder for restoration when readiness state changes.
 searchReadiness.storeDefaultPlaceholder();
-
-// Start with search disabled until we know the status
-searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
 
 // Restore state from URL on page load; auto-expand Advanced Options for non-default values
 loadStateFromUrl(URL_FIELDS, () => {
@@ -246,5 +354,9 @@ loadStateFromUrl(URL_FIELDS, () => {
     if (advancedDetails) advancedDetails.open = true;
 });
 
-loadStats();
-progressWS.start();
+// Probe the backend; start the WebSocket only after confirmation.
+// Inputs start enabled (optimistic) — health check disables them only on failure.
+checkBackendHealth().then(() => {
+    progressWS.start();
+    loadStats();
+});

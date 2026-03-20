@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-03-20
+
+### Changed
+- New UI theme for the keyword search interface with improved layout and styling.
+
 ## [0.7.3] - 2026-03-20
 
 ### Added

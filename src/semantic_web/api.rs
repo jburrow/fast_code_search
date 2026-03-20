@@ -113,6 +113,7 @@ pub struct StatsResponse {
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
+    pub server_type: &'static str,
 }
 
 /// Handle search requests
@@ -197,6 +198,7 @@ pub async fn health_handler() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy",
         version: env!("CARGO_PKG_VERSION"),
+        server_type: "semantic",
     })
 }
 

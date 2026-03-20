@@ -1,98 +1,206 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html class="light" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Semantic Code Search</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="/common.css">
-    <link rel="stylesheet" href="/semantic.css">
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Semantic Search — Fast Code Search</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "background": "#fefae4", "primary-container": "#fff900", "outline": "#7a785f",
+                        "outline-variant": "#cbc8aa", "on-background": "#1d1c0f", "on-surface": "#1d1c0f",
+                        "surface-container-low": "#f8f4df", "surface-container": "#f2eed9",
+                        "surface-container-high": "#ece9d4", "surface-container-highest": "#e7e3ce",
+                        "surface-container-lowest": "#ffffff", "surface-dim": "#dedac6",
+                        "primary": "#646100", "on-surface-variant": "#494831",
+                        "tertiary": "#1e6868", "tertiary-container": "#bafffd",
+                        "secondary-container": "#ebe77f", "error": "#ba1a1a"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk", "sans-serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["JetBrains Mono", "monospace"]
+                    },
+                    borderRadius: { "DEFAULT": "0px", "lg": "0px", "xl": "0px", "full": "9999px" }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-family: 'Material Symbols Outlined'; font-style: normal; line-height: 1;
+            letter-spacing: normal; text-transform: none; display: inline-block;
+            white-space: nowrap; overflow-wrap: normal; direction: ltr;
+            -webkit-font-smoothing: antialiased; vertical-align: middle;
+        }
+        body {
+            background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
+        }
+        :root {
+            --bg-primary: #fefae4; --bg-secondary: #f2eed9; --bg-tertiary: #ece9d4;
+            --text-primary: #1d1c0f; --text-secondary: #494831; --text-muted: #7a785f;
+            --accent: #646100; --accent-hover: #4b4900; --success: #1e6868; --warning: #6a6707;
+            --error: #ba1a1a; --border: #cbc8aa; --code-bg: #f8f4df; --code-text: #1d1c0f;
+            --color-path: #646100; --color-deps: #1e6868;
+            --shadow: rgba(29,28,15,0.08); --shadow-lg: rgba(29,28,15,0.16);
+            --lang-rs: #d44e38; --lang-py: #3d6fad; --lang-js: #d9a41a; --lang-ts: #2f6bbf;
+            --lang-go: #38a0b0; --lang-rb: #b83a28; --lang-java: #cc7a1a; --lang-cs: #2e7c4f;
+            --lang-cpp: #b84030; --lang-c: #5c4fbf; --lang-sh: #2e7c50; --lang-yaml: #8e3fad;
+            --lang-json: #b89010; --lang-css: #4040cc; --lang-proto: #7a28ad;
+            --lang-toml: #a06018; --lang-sql: #b07818; --lang-md: #4a5a6a;
+        }
+        /* Semantic result cards */
+        .result-item { background: #fff; border: 1px solid #000; box-shadow: 2px 2px 0 #000; margin-bottom: 0; }
+        .result-header { display: flex; justify-content: space-between; align-items: flex-start; padding: 0.5rem 1rem; background: #dedac6; border-bottom: 1px solid #000; gap: 0.75rem; }
+        .result-info { flex: 1; min-width: 0; }
+        .result-file { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #646100; font-weight: 600; word-break: break-all; }
+        .result-meta { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.25rem; }
+        .result-badge { font-size: 0.65rem; padding: 0.1rem 0.4rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; text-transform: uppercase; background: #e7e3ce; border: 1px solid #cbc8aa; color: #494831; }
+        .chunk-function { background: #ebe77f; border-color: #646100; color: #1e1d00; }
+        .chunk-class { background: #a9efed; border-color: #1e6868; color: #00201f; }
+        .chunk-module { background: #e7e3ce; }
+        .lang-badge { font-size: 0.6rem; padding: 0.1rem 0.35rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; text-transform: uppercase; border: 1px solid currentColor; opacity: 0.85; }
+        .result-score { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+        .score-bar { width: 48px; height: 4px; background: #cbc8aa; border: 1px solid #000; overflow: hidden; }
+        .score-fill { height: 100%; background: #fff900; border-right: 1px solid #000; transition: width 0.3s; }
+        .score-value { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 700; color: #1d1c0f; min-width: 3rem; text-align: right; }
+        .result-content { overflow-x: auto; background: #fff; }
+        .result-content pre { margin: 0; padding: 0.625rem 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; line-height: 1.55; white-space: pre; }
+        .result-content pre code { background: none; font-size: inherit; }
+        .line-number { color: #7a785f; user-select: none; display: inline-block; min-width: 3rem; text-align: right; padding-right: 1.25rem; }
+        /* Results container */
+        #results { display: flex; flex-direction: column; gap: 1rem; }
+        /* Empty/loading/error states */
+        .no-results { text-align: center; padding: 3rem; color: #7a785f; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+        .no-results-icon { font-size: 2rem; margin-bottom: 0.75rem; opacity: 0.5; }
+        .loading { padding: 2rem; text-align: center; color: #7a785f; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+        .loading-spinner { width: 20px; height: 20px; border: 2px solid #cbc8aa; border-top-color: #646100; border-radius: 50%; animation: spin 0.7s linear infinite; margin: 0 auto 0.5rem; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-message { padding: 1rem 1.5rem; background: #ffdad6; border: 1px solid #ba1a1a; color: #93000a; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; }
+        .loading-index-state { padding: 3rem; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; color: #7a785f; }
+        .loading-progress { width: 200px; height: 4px; background: #e7e3ce; border: 1px solid #000; margin: 0.75rem auto 0; overflow: hidden; }
+        .loading-progress-bar { height: 100%; background: #fff900; border-right: 1px solid #000; transition: width 0.3s; }
+        /* Progress bar */
+        .progress-fill { height: 100%; background: #fff900; transition: width 0.3s; }
+        .progress-fill.completed { background: #646100; }
+        .status-badge { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.4rem; border: 1px solid #000; background: #fff900; color: #000; text-transform: uppercase; }
+        .status-badge.status-idle, .status-badge.status-completed { background: #a9efed; }
+        #query:disabled { opacity: 0.6; cursor: not-allowed; }
+        .advanced-options { display: none; }
+    </style>
 </head>
+<body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
-<body>
-    <div class="container">
-        <header class="header-compact">
-            <div class="header-title">
-                <h1 class="wordmark">Semantic Code Search</h1>
-            </div>
+    <!-- ===== TOP NAV ===== -->
+    <header class="bg-white font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
+        <div class="flex items-center gap-6">
+            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
+            <nav class="hidden md:flex items-center gap-0 h-14">
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/">SEARCH</a>
+                <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/docs.html">DOCS</a>
+            </nav>
+        </div>
+        <!-- Stats -->
+        <div class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
+            <span title="Total source files indexed">FILES: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of code chunks generated">CHUNKS: <span id="stat-chunks" class="text-on-surface font-bold">-</span></span>
+            <span title="Embeddings cached in memory">CACHE: <span id="stat-cache" class="text-on-surface font-bold">-</span></span>
+            <span title="Average embedding latency">LATENCY: <span id="stat-latency" class="text-on-surface font-bold">-</span></span>
+        </div>
+        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors" style="font-size:20px" title="Documentation">help_outline</a>
+    </header>
 
-            <div class="header-stats" id="stats">
-                <div class="stat" title="Total source files indexed for semantic search">
-                    <span class="stat-value" id="stat-files">-</span>
-                    <span class="stat-label">Files</span>
-                </div>
-                <div class="stat" title="Number of code chunks generated for embedding">
-                    <span class="stat-value" id="stat-chunks">-</span>
-                    <span class="stat-label">Chunks</span>
-                </div>
-                <div class="stat" title="Number of embeddings cached in memory">
-                    <span class="stat-value" id="stat-cache">-</span>
-                    <span class="stat-label">Cache</span>
-                </div>
-                <div class="stat" title="Average embedding generation latency">
-                    <span class="stat-value" id="stat-latency">-</span>
-                    <span class="stat-label">Latency</span>
-                </div>
-            </div>
+    <!-- Progress panel -->
+    <div id="progress-panel" class="bg-surface-container-low border-b border-black px-6 py-2 items-center gap-4 text-xs font-label" style="display: none;">
+        <span class="status-badge" id="progress-status">Ready</span>
+        <div class="flex-1 h-2 bg-surface-container-highest border border-black overflow-hidden max-w-xs">
+            <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
+        </div>
+        <span class="text-outline" id="progress-percent">0%</span>
+        <span class="text-outline italic" id="progress-message"></span>
+    </div>
 
-            <div class="header-progress" id="progress-panel" style="display: none;">
-                <span class="status-badge" id="progress-status">Ready</span>
-                <div class="progress-bar-container">
-                    <div class="progress-fill" id="progress-bar" style="width: 0%"></div>
-                </div>
-                <span class="progress-percent" id="progress-percent">0%</span>
-                <span class="progress-message" id="progress-message"></span>
-            </div>
-        </header>
+    <!-- Backend status banner (shown when a backend is unavailable or this is the wrong server) -->
+    <div id="backend-banner" style="display: none;" class="border-b border-black px-6 py-2 flex items-center gap-3 text-xs font-label">
+        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">warning</span>
+        <span id="backend-banner-msg" class="flex-1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <div class="flex items-center gap-2 flex-shrink-0">
+            <span id="keyword-status-badge" class="status-badge">KEYWORD</span>
+            <span id="semantic-status-badge" class="status-badge">SEMANTIC</span>
+        </div>
+    </div>
 
-        <div class="search-box">
-            <div class="query-input-wrapper">
-                <input type="text" id="query"
-                    placeholder="Ask in natural language... (e.g., 'authentication logic' or 'error handling')"
-                    autocomplete="off" autofocus>
-                <button id="search-btn" class="search-button">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;opacity:0.85">
-                        <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
-                        <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                    </svg>
-                    Search
+    <!-- ===== MAIN ===== -->
+    <main class="max-w-[1440px] mx-auto p-6 space-y-6">
+
+        <!-- Search section -->
+        <section id="search-section" class="space-y-3">
+            <div class="flex flex-col md:flex-row gap-3">
+                <div class="flex-grow relative">
+                    <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                        <span class="material-symbols-outlined text-outline" style="font-size:20px">auto_awesome</span>
+                    </div>
+                    <input type="text" id="query"
+                        placeholder="Ask in natural language... e.g. &quot;authentication logic&quot;"
+                        autocomplete="off" autofocus
+                        class="w-full bg-surface-container-lowest border border-black pl-12 pr-4 py-4 font-body text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                </div>
+                <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap flex items-center gap-2">
+                    <span class="material-symbols-outlined" style="font-size:18px">search</span>
+                    SEARCH
                 </button>
             </div>
 
-            <details class="advanced-options">
-                <summary class="advanced-toggle">
-                    <span class="toggle-icon">▶</span> Options
-                </summary>
-                <div class="advanced-content">
-                    <div class="search-options">
-                        <label>
-                            Max results:
-                            <select id="max-results">
-                                <option value="5">5</option>
-                                <option value="10" selected>10</option>
-                                <option value="25">25</option>
-                                <option value="50">50</option>
-                            </select>
-                        </label>
-                    </div>
-
-                    <div class="examples">
-                        <span class="examples-label">Try these examples:</span>
-                        <button class="example-btn" data-query="authentication and login">authentication and
-                            login</button>
-                        <button class="example-btn" data-query="error handling">error handling</button>
-                        <button class="example-btn" data-query="database connection">database connection</button>
-                        <button class="example-btn" data-query="API endpoints">API endpoints</button>
-                        <button class="example-btn" data-query="configuration loading">configuration loading</button>
+            <!-- Options + examples (filter panel) -->
+            <div class="bg-surface-container-low border border-black p-4 space-y-3">
+                <div class="flex flex-wrap gap-3 items-center">
+                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
+                        MAX RESULTS
+                        <select id="max-results" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="25">25</option>
+                            <option value="50">50</option>
+                        </select>
+                    </label>
+                    <div class="flex flex-col gap-1 text-xs font-label text-outline">
+                        EXAMPLES
+                        <div class="flex flex-wrap gap-2">
+                            <button class="example-btn font-label text-xs border border-black px-3 py-1 bg-white hover:bg-primary-container hover:text-black transition-colors" data-query="authentication and login">auth + login</button>
+                            <button class="example-btn font-label text-xs border border-black px-3 py-1 bg-white hover:bg-primary-container hover:text-black transition-colors" data-query="error handling">error handling</button>
+                            <button class="example-btn font-label text-xs border border-black px-3 py-1 bg-white hover:bg-primary-container hover:text-black transition-colors" data-query="database connection">database</button>
+                            <button class="example-btn font-label text-xs border border-black px-3 py-1 bg-white hover:bg-primary-container hover:text-black transition-colors" data-query="API endpoints">API endpoints</button>
+                            <button class="example-btn font-label text-xs border border-black px-3 py-1 bg-white hover:bg-primary-container hover:text-black transition-colors" data-query="configuration loading">config loading</button>
+                        </div>
                     </div>
                 </div>
-            </details>
-        </div>
+            </div>
 
-        <div id="results" class="results-container"></div>
-    </div>
+            <!-- Keep for JS compat (auto-expand on URL params) -->
+            <details class="advanced-options" aria-hidden="true"><summary></summary></details>
+        </section>
+
+        <!-- Results -->
+        <section id="results"></section>
+
+    </main>
+
+    <!-- Mobile bottom nav -->
+    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><span class="material-symbols-outlined" style="font-size:20px">search</span><span>Search</span></a>
+        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/semantic.html"><span class="material-symbols-outlined" style="font-size:20px;font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24">auto_awesome</span><span>Semantic</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><span class="material-symbols-outlined" style="font-size:20px">analytics</span><span>Index</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html"><span class="material-symbols-outlined" style="font-size:20px">description</span><span>Docs</span></a>
+    </nav>
 
     <script src="/common.js"></script>
     <script src="/semantic.js"></script>

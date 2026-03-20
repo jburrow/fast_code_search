@@ -164,8 +164,30 @@ class SearchReadinessManager {
         this.onReadyChange = options.onReadyChange || (() => {});
         
         // Current state
-        this.isReady = false;
+        this.isReady = true; // optimistic: start enabled, disable only on confirmed failure
         this.lastStatus = null;
+        this.isOffline = false;
+
+        // Optional: ID of a containing section to hide entirely when offline
+        // (cleaner than just greying out inputs)
+        this.searchSectionId = options.searchSectionId || null;
+
+        this.storeDefaultPlaceholder();
+    }
+
+    /**
+     * Mark the search engine server as offline or online.
+     * When offline, all inputs are disabled and a prominent banner is shown.
+     * When coming back online, the banner is removed and normal readiness flow resumes.
+     * @param {boolean} isOffline
+     */
+    setOffline(isOffline) {
+        if (this.isOffline === isOffline) return;
+        this.isOffline = isOffline;
+        if (isOffline) {
+            this.isReady = false;
+        }
+        this.updateUI();
     }
     
     /**
@@ -237,7 +259,59 @@ class SearchReadinessManager {
         const searchInput = document.getElementById(this.searchInputId);
         const searchButton = document.getElementById(this.searchButtonId);
         const resultsContainer = document.getElementById(this.resultsContainerId);
-        
+
+        // --- Offline state: server is not reachable ---
+        if (this.isOffline) {
+            // Hide the search section entirely (cleaner than greyed-out inputs)
+            if (this.searchSectionId) {
+                const section = document.getElementById(this.searchSectionId);
+                if (section) section.style.display = 'none';
+            }
+            if (searchInput) {
+                searchInput.disabled = true;
+                searchInput.classList.add('search-disabled');
+                searchInput.placeholder = 'Server not running';
+            }
+            if (searchButton) {
+                searchButton.disabled = true;
+                searchButton.classList.add('search-disabled');
+            }
+            this.additionalInputIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) { el.disabled = true; el.classList.add('search-disabled'); }
+            });
+            if (resultsContainer && !resultsContainer.querySelector('.server-offline-state')) {
+                resultsContainer.innerHTML = `
+                    <div class="server-offline-state" style="
+                        padding: 2.5rem 1.5rem;
+                        text-align: center;
+                        font-family: 'JetBrains Mono', monospace;
+                        background: #fff;
+                        border: 1px solid #000;
+                        box-shadow: 2px 2px 0 #000;
+                    ">
+                        <div style="font-size: 2rem; margin-bottom: 0.75rem; opacity: 0.45; line-height: 1;">&#9888;</div>
+                        <div style="font-weight: 700; font-size: 0.9rem; color: #1d1c0f; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.07em;">Server Not Running</div>
+                        <div style="color: #7a785f; font-size: 0.76rem; max-width: 340px; margin: 0 auto; line-height: 1.65;">
+                            The search server could not be reached.<br>
+                            Start the server and this page will reconnect automatically.
+                        </div>
+                    </div>
+                `;
+            }
+            return;
+        }
+
+        // Coming back online — restore section visibility and clear offline banner
+        if (this.searchSectionId) {
+            const section = document.getElementById(this.searchSectionId);
+            if (section) section.style.display = '';
+        }
+        if (resultsContainer) {
+            const offlineBanner = resultsContainer.querySelector('.server-offline-state');
+            if (offlineBanner) resultsContainer.innerHTML = '';
+        }
+
         if (searchInput) {
             searchInput.disabled = !this.isReady;
             searchInput.classList.toggle('search-disabled', !this.isReady);
@@ -361,11 +435,16 @@ class ProgressWebSocket {
         this.onError = options.onError || console.error;
         this.onConnected = options.onConnected || (() => {});
         this.onDisconnected = options.onDisconnected || (() => {});
+        // Called when consecutive reconnect failures exceed offlineThreshold
+        this.onServerOffline = options.onServerOffline || (() => {});
         this.ws = null;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
         this.reconnectDelay = 1000;
         this.shouldReconnect = true;
+        // Number of failed reconnect attempts before calling onServerOffline
+        this.offlineThreshold = options.offlineThreshold ?? 3;
+        this._reportedOffline = false;
     }
 
     connect() {
@@ -378,6 +457,10 @@ class ProgressWebSocket {
 
             this.ws.onopen = () => {
                 this.reconnectAttempts = 0;
+                // If we previously reported the server as offline, clear that state
+                if (this._reportedOffline) {
+                    this._reportedOffline = false;
+                }
                 this.onConnected();
             };
 
@@ -411,6 +494,11 @@ class ProgressWebSocket {
 
     scheduleReconnect() {
         this.reconnectAttempts++;
+        // After enough consecutive failures, notify that the server appears offline
+        if (!this._reportedOffline && this.reconnectAttempts >= this.offlineThreshold) {
+            this._reportedOffline = true;
+            this.onServerOffline();
+        }
         const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
         setTimeout(() => this.connect(), delay);
     }

@@ -97,6 +97,7 @@ function syncUrlFromState() {
 const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     resultsContainerId: 'results',
+    searchSectionId: 'search-section',
     additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'rank-mode'],
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
@@ -105,6 +106,80 @@ const searchReadiness = new SearchReadinessManager({
         }
     }
 });
+
+// ============================================
+// BACKEND HEALTH
+// ============================================
+
+let keywordAvailable = false;
+
+/**
+ * Check that the keyword backend is serving this page and probe the semantic
+ * backend for the status badge.  Updates the banner and sets keywordAvailable.
+ */
+async function checkBackendHealth() {
+    const hostname = window.location.hostname;
+
+    // Probe the server serving this page.
+    // If it responds OK we consider the keyword backend available regardless of
+    // whether the server_type field is present (older binaries omit it).
+    let currentServerType = null;
+    let healthOk = false;
+    try {
+        const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+            healthOk = true;
+            const data = await resp.json();
+            currentServerType = data.server_type ?? null;
+        }
+    } catch (e) { /* offline */ }
+
+    // Available if health OK and not explicitly identified as a different server type
+    keywordAvailable = healthOk && currentServerType !== 'semantic';
+
+    if (!keywordAvailable) {
+        searchReadiness.setOffline(true);
+    }
+
+    // Check semantic backend for the badge (non-blocking side-info)
+    let semanticUp = false;
+    try {
+        const resp = await fetch(`http://${hostname}:8081/api/health`, { signal: AbortSignal.timeout(2000) });
+        semanticUp = resp.ok;
+    } catch (e) { /* offline */ }
+
+    renderBackendStatus(keywordAvailable, semanticUp);
+}
+
+function renderBackendStatus(keywordUp, semanticUp) {
+    const banner = document.getElementById('backend-banner');
+    if (!banner) return;
+
+    updateBackendBadge('keyword-status-badge', keywordUp, 'KEYWORD');
+    updateBackendBadge('semantic-status-badge', semanticUp, 'SEMANTIC');
+
+    if (keywordUp) {
+        banner.style.display = 'none';
+        return;
+    }
+
+    const msgEl = document.getElementById('backend-banner-msg');
+    banner.style.background = '#ffdad6';
+    banner.style.color = '#93000a';
+    banner.style.display = 'flex';
+    if (msgEl) {
+        msgEl.textContent = 'Keyword search backend not running \u2014 start fast_code_search on port 8080';
+    }
+}
+
+function updateBackendBadge(id, isUp, label) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = `${label}: ${isUp ? '\u2713' : '\u2717'}`;
+    el.style.background = isUp ? '#a9efed' : '#ffdad6';
+    el.style.borderColor = isUp ? '#1e6868' : '#ba1a1a';
+    el.style.color = isUp ? '#00201f' : '#93000a';
+}
 
 // ============================================
 // STATS & STATUS
@@ -130,8 +205,15 @@ async function fetchStats() {
 // Progress WebSocket instance (real-time updates)
 const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
-    onConnected: () => {},
+    onConnected: () => {
+        // WS connected means the server is reachable — clear any offline state
+        searchReadiness.setOffline(false);
+    },
     onDisconnected: () => {},
+    onServerOffline: () => {
+        // Consecutive WS failures — the keyword search server is not running
+        searchReadiness.setOffline(true);
+    },
     onError: (err) => {
         console.error('Progress WebSocket error:', err);
         // Progress will continue via reconnection
@@ -769,14 +851,8 @@ if (excludeFilterInput) {
 // INITIALIZATION
 // ============================================
 
-// Store original placeholder before readiness manager may change it
+// Store original placeholder for restoration when readiness state changes.
 searchReadiness.storeDefaultPlaceholder();
-
-// Restore any state encoded in the URL (shared link or browser back navigation)
-loadStateFromUrl();
-
-// Start with search disabled until we know the status
-searchReadiness.update({ status: 'loading_index', message: 'Connecting to server...' });
 
 // Restore state from URL on page load; auto-expand filter panel for non-default values
 loadStateFromUrl(URL_FIELDS, () => {
@@ -786,5 +862,9 @@ loadStateFromUrl(URL_FIELDS, () => {
     if (advancedDetails) advancedDetails.open = true;
 });
 
-fetchStats();
-progressWS.start();
+// Probe the backend; start the WebSocket only after confirmation.
+// Inputs start enabled (optimistic) — health check disables them only on failure.
+checkBackendHealth().then(() => {
+    progressWS.start();
+    fetchStats();
+});
