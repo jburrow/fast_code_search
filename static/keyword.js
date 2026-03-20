@@ -447,8 +447,8 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
 
 function positionTooltip(tooltip, anchor) {
     const GAP = 8;
-    const MAX_W = 960;
-    const MIN_W = 200;
+    const MAX_W = Math.min(1280, Math.round(window.innerWidth * 0.62));
+    const MIN_W = 280;
     const rect = anchor.getBoundingClientRect(); // viewport-relative
     const vW = window.innerWidth;
     const vH = window.innerHeight;
@@ -479,12 +479,10 @@ function positionTooltip(tooltip, anchor) {
     tooltip.style.width     = `${w}px`;
     tooltip.style.left      = `${left}px`;
 
-    // Vertically centre on the anchor, clamped to viewport.
-    const ttH = tooltip.offsetHeight || 480;
-    let top = rect.top + rect.height / 2 - ttH / 2;
-    if (top + ttH > vH - GAP) top = vH - ttH - GAP;
-    if (top < GAP) top = GAP;
-    tooltip.style.top = `${top}px`;
+    // Fill viewport height.
+    const ttH = vH - GAP * 2;
+    tooltip.style.height = `${ttH}px`;
+    tooltip.style.top = `${GAP}px`;
 }
 
 // ============================================
