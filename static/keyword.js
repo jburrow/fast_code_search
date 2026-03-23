@@ -13,11 +13,13 @@ const excludeFilterInput = document.getElementById('exclude-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const rankModeSelect = document.getElementById('rank-mode');
+const contextLinesSelect = document.getElementById('context-lines');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
 const rankingInfoEl = document.getElementById('ranking-info');
 const searchTimeEl = document.getElementById('search-time');
+const searchHistoryDropdown = document.getElementById('search-history-dropdown');
 
 // Stats elements
 const statFiles = document.getElementById('stat-files');
@@ -37,6 +39,165 @@ let searchTimeout = null;
 const DEBOUNCE_MS = 300;
 
 // ============================================
+// LOCAL STORAGE PERSISTENCE
+// ============================================
+
+const LS_SETTINGS_KEY = 'fcs_settings';
+const LS_HISTORY_KEY = 'fcs_history';
+const MAX_HISTORY = 50;
+
+/**
+ * Save all current settings to localStorage.
+ */
+function saveSettingsToStorage() {
+    try {
+        const settings = {
+            max: maxResultsSelect?.value || '50',
+            rank: rankModeSelect?.value || 'auto',
+            context: contextLinesSelect?.value || '0',
+            include: includeFilterInput?.value.trim() || '',
+            exclude: excludeFilterInput?.value.trim() || '',
+            regex: regexModeCheckbox?.checked || false,
+            symbols: symbolsModeCheckbox?.checked || false,
+        };
+        localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings));
+    } catch (_) { /* storage unavailable */ }
+}
+
+/**
+ * Load settings from localStorage and apply to form fields.
+ * URL params take precedence over stored settings.
+ */
+function loadSettingsFromStorage() {
+    try {
+        const raw = localStorage.getItem(LS_SETTINGS_KEY);
+        if (!raw) return;
+        const s = JSON.parse(raw);
+        if (maxResultsSelect && s.max) maxResultsSelect.value = s.max;
+        if (rankModeSelect && s.rank) rankModeSelect.value = s.rank;
+        if (contextLinesSelect && s.context != null) contextLinesSelect.value = String(s.context);
+        if (includeFilterInput && s.include) includeFilterInput.value = s.include;
+        if (excludeFilterInput && s.exclude) excludeFilterInput.value = s.exclude;
+        if (regexModeCheckbox && s.regex) regexModeCheckbox.checked = true;
+        if (symbolsModeCheckbox && s.symbols) symbolsModeCheckbox.checked = true;
+    } catch (_) { /* ignore parse errors */ }
+}
+
+// ============================================
+// SEARCH HISTORY
+// ============================================
+
+/**
+ * Load search history array from localStorage.
+ * Returns an array of unique query strings (most-recent first).
+ */
+function loadHistory() {
+    try {
+        const raw = localStorage.getItem(LS_HISTORY_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+/**
+ * Persist a successful query to search history.
+ */
+function saveToHistory(query) {
+    if (!query || query.length < 2) return;
+    try {
+        let history = loadHistory();
+        // Remove duplicate, then prepend
+        history = history.filter(q => q !== query);
+        history.unshift(query);
+        if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
+        localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(history));
+    } catch (_) { /* storage unavailable */ }
+}
+
+/**
+ * Clear all saved search history.
+ */
+function clearHistory() {
+    try { localStorage.removeItem(LS_HISTORY_KEY); } catch (_) { /* ignore */ }
+    hideHistoryDropdown();
+}
+
+let _historyDropdownFocusedIdx = -1;
+
+function showHistoryDropdown(filter) {
+    if (!searchHistoryDropdown) return;
+    const all = loadHistory();
+    const matches = filter
+        ? all.filter(q => q.toLowerCase().includes(filter.toLowerCase()))
+        : all;
+
+    if (matches.length === 0) {
+        hideHistoryDropdown();
+        return;
+    }
+
+    _historyDropdownFocusedIdx = -1;
+    searchHistoryDropdown.innerHTML = matches.slice(0, 10).map((q, i) =>
+        `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-primary-container font-label text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
+            <span class="material-symbols-outlined" style="font-size:14px;color:#7a785f;flex-shrink:0">history</span>
+            <span class="flex-1 truncate">${escapeHtml(q)}</span>
+            <button class="history-delete material-symbols-outlined ml-auto flex-shrink-0" style="font-size:14px;color:#7a785f;background:none;border:none;cursor:pointer;padding:0" data-query="${escapeHtml(q)}" title="Remove">close</button>
+        </div>`
+    ).join('') +
+    `<div class="flex items-center justify-end px-4 py-1.5 border-t border-outline-variant">
+        <button id="clear-history-btn" class="font-label text-[10px] text-outline hover:text-black transition-colors">CLEAR ALL HISTORY</button>
+    </div>`;
+
+    searchHistoryDropdown.style.display = 'block';
+
+    // Attach click handlers
+    searchHistoryDropdown.querySelectorAll('.history-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+            // Ignore clicks on the delete button itself
+            if (e.target.classList.contains('history-delete')) return;
+            e.preventDefault();
+            queryInput.value = item.dataset.query;
+            hideHistoryDropdown();
+            performSearch();
+        });
+    });
+
+    searchHistoryDropdown.querySelectorAll('.history-delete').forEach(btn => {
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const q = btn.dataset.query;
+            try {
+                let h = loadHistory().filter(x => x !== q);
+                localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(h));
+            } catch (_) { /* ignore */ }
+            showHistoryDropdown(queryInput.value.trim());
+        });
+    });
+
+    const clearBtn = document.getElementById('clear-history-btn');
+    if (clearBtn) clearBtn.addEventListener('mousedown', (e) => { e.preventDefault(); clearHistory(); });
+}
+
+function hideHistoryDropdown() {
+    if (searchHistoryDropdown) searchHistoryDropdown.style.display = 'none';
+    _historyDropdownFocusedIdx = -1;
+}
+
+function navigateHistoryDropdown(dir) {
+    if (!searchHistoryDropdown || searchHistoryDropdown.style.display === 'none') return false;
+    const items = Array.from(searchHistoryDropdown.querySelectorAll('.history-item'));
+    if (items.length === 0) return false;
+    _historyDropdownFocusedIdx = Math.max(-1, Math.min(items.length - 1, _historyDropdownFocusedIdx + dir));
+    items.forEach((el, i) => el.classList.toggle('bg-primary-container', i === _historyDropdownFocusedIdx));
+    if (_historyDropdownFocusedIdx >= 0) {
+        queryInput.value = items[_historyDropdownFocusedIdx].dataset.query;
+    }
+    return true;
+}
+
+// ============================================
 // URL STATE
 // ============================================
 
@@ -54,10 +215,11 @@ function loadStateFromUrl() {
     if (regexModeCheckbox && params.get('regex') === 'true') regexModeCheckbox.checked = true;
     if (symbolsModeCheckbox && params.get('symbols') === 'true') symbolsModeCheckbox.checked = true;
     if (rankModeSelect && params.has('rank')) rankModeSelect.value = params.get('rank');
+    if (contextLinesSelect && params.has('context')) contextLinesSelect.value = params.get('context');
 
     // Auto-expand Options if any non-default values were loaded (regex/symbols are now always visible)
     const hasAdvanced = params.has('include') || params.has('exclude') ||
-        params.has('rank') || params.has('max');
+        params.has('rank') || params.has('max') || params.has('context');
     if (hasAdvanced) {
         const details = document.querySelector('.advanced-options');
         if (details) details.open = true;
@@ -89,6 +251,9 @@ function syncUrlFromState() {
     const rank = rankModeSelect?.value || 'auto';
     if (rank !== 'auto') params.set('rank', rank);
 
+    const context = contextLinesSelect?.value || '0';
+    if (context !== '0') params.set('context', context);
+
     const qs = params.toString();
     history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
 }
@@ -98,7 +263,7 @@ const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     resultsContainerId: 'results',
     searchSectionId: 'search-section',
-    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'rank-mode'],
+    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'rank-mode', 'context-lines'],
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
@@ -515,6 +680,7 @@ const URL_FIELDS = [
     { param: 'regex',   getter: () => regexModeCheckbox?.checked ? 'true' : '',      setter: (v) => { if (regexModeCheckbox) regexModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
     { param: 'symbols', getter: () => symbolsModeCheckbox?.checked ? 'true' : '',    setter: (v) => { if (symbolsModeCheckbox) symbolsModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
     { param: 'rank',    getter: () => rankModeSelect?.value || 'auto',               setter: (v) => { if (rankModeSelect) rankModeSelect.value = v; },                 defaultValue: 'auto' },
+    { param: 'context', getter: () => contextLinesSelect?.value || '0',             setter: (v) => { if (contextLinesSelect) contextLinesSelect.value = v; },         defaultValue: '0' },
 ];
 
 async function performSearch() {
@@ -530,9 +696,12 @@ async function performSearch() {
     const isRegex = regexModeCheckbox?.checked || false;
     const symbolsOnly = symbolsModeCheckbox?.checked || false;
     const rankMode = rankModeSelect?.value || 'auto';
+    const contextLines = parseInt(contextLinesSelect?.value || '0', 10);
 
     // Keep URL in sync so searches can be shared as links
     syncUrlFromState();
+    // Persist settings to localStorage
+    saveSettingsToStorage();
 
     if (!query) {
         resultsHeader.style.display = 'none';
@@ -558,12 +727,16 @@ async function performSearch() {
         if (isRegex) params.set('regex', 'true');
         if (symbolsOnly) params.set('symbols', 'true');
         if (rankMode !== 'auto') params.set('rank', rankMode);
+        if (contextLines > 0) params.set('context', String(contextLines));
         
         const response = await fetch(`${API_BASE}/api/search?${params}`);
         if (!response.ok) throw new Error(`Search failed: ${response.statusText}`);
 
         const data = await response.json();
         const duration = data.elapsed_ms !== undefined ? data.elapsed_ms : (performance.now() - startTime);
+
+        // Save successful query to history
+        saveToHistory(query);
 
         resultsHeader.style.display = 'flex';
         resultsCount.textContent = `${data.results.length} RESULT${data.results.length !== 1 ? 'S' : ''} FOUND`;
@@ -618,6 +791,29 @@ async function performSearch() {
                 ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
                 : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
 
+            // Build code content — with context lines if available, otherwise just the match line
+            let codeContent;
+            if (result.context_lines && result.context_lines.length > 0) {
+                const startLine = result.context_start_line || 1;
+                codeContent = result.context_lines.map((line, i) => {
+                    const lineNum = startLine + i;
+                    const isMatch = lineNum === result.line_number;
+                    const lineStyle = isMatch
+                        ? 'display:flex;background:#fffde7;border-left:3px solid #646100'
+                        : 'display:flex;border-left:3px solid transparent';
+                    return `<div style="${lineStyle}">` +
+                        `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
+                        `<span class="ctx-line-content${isMatch ? ' match-line' : ''}" style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
+                        `</div>`;
+                }).join('');
+            } else {
+                codeContent = escapeHtml(result.content);
+            }
+
+            const preClass = result.context_lines
+                ? `result-code result-code-ctx language-${lang}`
+                : `result-code language-${lang}`;
+
             return `
                 <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${result.line_number}">
                     <!-- Card header -->
@@ -643,7 +839,7 @@ async function performSearch() {
                     </div>
                     <!-- Code content -->
                     <div class="overflow-x-auto" style="background:#fff">
-                        <pre class="result-code language-${lang}" data-query="${escapeHtml(query)}">${escapeHtml(result.content)}</pre>
+                        <pre class="${preClass}" data-query="${escapeHtml(query)}" data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
                     </div>
                     <!-- Footer badges -->
                     <div class="px-4 py-1.5 flex gap-2 flex-wrap items-center" style="background:#f8f4df;border-top:1px solid #cbc8aa">
@@ -657,11 +853,29 @@ async function performSearch() {
 
         // Apply syntax highlighting then re-apply query-term highlight on each result
         resultsContainer.querySelectorAll('pre.result-code').forEach(pre => {
+            const hasContext = pre.dataset.hasContext === 'true';
             if (typeof hljs !== 'undefined') {
-                hljs.highlightElement(pre);
+                if (hasContext) {
+                    // Highlight individual line content spans for context view
+                    pre.querySelectorAll('.ctx-line-content').forEach(span => {
+                        const code = document.createElement('code');
+                        code.className = `language-${pre.dataset.lang || 'plaintext'}`;
+                        code.textContent = span.textContent;
+                        hljs.highlightElement(code);
+                        span.innerHTML = code.innerHTML;
+                    });
+                } else {
+                    hljs.highlightElement(pre);
+                }
             }
             const q = pre.dataset.query;
-            if (q) applyQueryHighlight(pre, q);
+            if (q) {
+                if (hasContext) {
+                    pre.querySelectorAll('.ctx-line-content').forEach(span => applyQueryHighlight(span, q));
+                } else {
+                    applyQueryHighlight(pre, q);
+                }
+            }
         });
 
         // Attach View button click handler and context tooltip
@@ -825,9 +1039,37 @@ function closeFileModal() {
 // EVENT LISTENERS
 // ============================================
 
-queryInput.addEventListener('input', debouncedSearch);
+queryInput.addEventListener('input', (e) => {
+    debouncedSearch();
+    showHistoryDropdown(e.target.value.trim());
+});
 queryInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') performSearch();
+    if (e.key === 'ArrowDown') {
+        navigateHistoryDropdown(1);
+        e.preventDefault();
+        return;
+    }
+    if (e.key === 'ArrowUp') {
+        navigateHistoryDropdown(-1);
+        e.preventDefault();
+        return;
+    }
+    if (e.key === 'Escape') {
+        hideHistoryDropdown();
+        return;
+    }
+    if (e.key === 'Enter') {
+        hideHistoryDropdown();
+        performSearch();
+    }
+});
+queryInput.addEventListener('focus', () => {
+    showHistoryDropdown(queryInput.value.trim());
+});
+document.addEventListener('click', (e) => {
+    if (e.target !== queryInput && !searchHistoryDropdown?.contains(e.target)) {
+        hideHistoryDropdown();
+    }
 });
 
 maxResultsSelect.addEventListener('change', performSearch);
@@ -835,6 +1077,7 @@ maxResultsSelect.addEventListener('change', performSearch);
 if (regexModeCheckbox) regexModeCheckbox.addEventListener('change', performSearch);
 if (symbolsModeCheckbox) symbolsModeCheckbox.addEventListener('change', performSearch);
 if (rankModeSelect) rankModeSelect.addEventListener('change', performSearch);
+if (contextLinesSelect) contextLinesSelect.addEventListener('change', performSearch);
 
 if (includeFilterInput) {
     includeFilterInput.addEventListener('input', debouncedSearch);
@@ -852,7 +1095,11 @@ if (excludeFilterInput) {
 // Store original placeholder for restoration when readiness state changes.
 searchReadiness.storeDefaultPlaceholder();
 
-// Restore state from URL on page load; auto-expand filter panel for non-default values
+// Load persisted settings from localStorage first (URL params will override below)
+loadSettingsFromStorage();
+
+// Restore state from URL on page load; URL params take precedence over localStorage.
+// Auto-expand filter panel for non-default values.
 loadStateFromUrl(URL_FIELDS, () => {
     const filterPanel = document.getElementById('filter-panel');
     if (filterPanel) filterPanel.classList.add('open');
