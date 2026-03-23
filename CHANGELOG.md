@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Web UI regression where loading `/` or `/semantic.html` with `?q=...` restored the query text but did not execute search automatically on page load.
+
 ## [0.7.4] - 2026-03-20
 
 ### Changed

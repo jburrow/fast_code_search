@@ -1035,6 +1035,18 @@ function closeFileModal() {
     document.removeEventListener('keydown', handleFileModalEscape);
 }
 
+/**
+ * Run a one-time startup search when a query was provided in the URL.
+ * If indexing is still in progress, performSearch() will no-op and the
+ * readiness callback will execute it once the index becomes searchable.
+ */
+function runInitialSearchFromUrl() {
+    const urlQuery = new URLSearchParams(window.location.search).get('q') || '';
+    if (!urlQuery.trim()) return;
+    if (!queryInput.value.trim()) return;
+    performSearch();
+}
+
 // ============================================
 // EVENT LISTENERS
 // ============================================
@@ -1112,4 +1124,5 @@ loadStateFromUrl(URL_FIELDS, () => {
 checkBackendHealth().then(() => {
     progressWS.start();
     fetchStats();
+    runInitialSearchFromUrl();
 });
