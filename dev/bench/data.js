@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774015457915,
+  "lastUpdate": 1774289045474,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -5879,6 +5879,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 1329704,
             "range": "± 22991",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "distinct": true,
+          "id": "3632f3e621e306b603ea66e9ede697fc6768c30d",
+          "message": "feat: add script to run keyword and semantic search servers concurrently",
+          "timestamp": "2026-03-23T17:52:27Z",
+          "tree_id": "e55ff77ed388a422f7f9b3b7b5bf5aab4df4f91e",
+          "url": "https://github.com/jburrow/fast_code_search/commit/3632f3e621e306b603ea66e9ede697fc6768c30d"
+        },
+        "date": 1774289044558,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 304343,
+            "range": "± 4599",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 22203,
+            "range": "± 366",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 487,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 516834,
+            "range": "± 19241",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 22520,
+            "range": "± 238",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 640,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 917513,
+            "range": "± 22694",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 23509,
+            "range": "± 297",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 954,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 356496,
+            "range": "± 21232",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 606284,
+            "range": "± 12680",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 536289,
+            "range": "± 20035",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 834861,
+            "range": "± 6649",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 510816,
+            "range": "± 38424",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 358652,
+            "range": "± 6887",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 532341,
+            "range": "± 37602",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 702870,
+            "range": "± 5152",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 509323,
+            "range": "± 28447",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 516482,
+            "range": "± 13806",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 263934,
+            "range": "± 21670",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 506690,
+            "range": "± 13787",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 516938,
+            "range": "± 26127",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 508235,
+            "range": "± 17579",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 334031,
+            "range": "± 8969",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 289849,
+            "range": "± 12304",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 3874,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 18808494,
+            "range": "± 110991",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 36948648,
+            "range": "± 208581",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 73538623,
+            "range": "± 264491",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 32170283,
+            "range": "± 257902",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 33170844,
+            "range": "± 174896",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 63661794,
+            "range": "± 212316",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 66469992,
+            "range": "± 287878",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 898012,
+            "range": "± 46211",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3360642,
+            "range": "± 111015",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6510046,
+            "range": "± 390415",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1936115,
+            "range": "± 21808",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 7999897,
+            "range": "± 132934",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 16103134,
+            "range": "± 387309",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 201240,
+            "range": "± 4828",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 304427,
+            "range": "± 7972",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 450757,
+            "range": "± 10206",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 147329,
+            "range": "± 1315",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 669244,
+            "range": "± 5139",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1329119,
+            "range": "± 31402",
             "unit": "ns/iter"
           }
         ]
