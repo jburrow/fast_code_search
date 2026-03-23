@@ -257,12 +257,84 @@
         /* Hide results-header visually when JS sets display:none — override Tailwind */
         #results-header[style*="display: none"] { display: none !important; }
         #progress-panel[style*="display: none"] { display: none !important; }
+
+        /* ===== COMPACT NAV SEARCH ===== */
+        /* Absolutely centred inside the sticky header; only transform+opacity animated */
+        #nav-search {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            /* -10px: slides up from just below centre on enter; resting at -50% (true centre) */
+            transform: translateX(-50%) translateY(calc(-50% - 10px));
+            opacity: 0;
+            pointer-events: none;
+            display: flex;
+            align-items: stretch;
+            height: 36px;
+            border: 1.5px solid #000;
+            background: #fff;
+            box-shadow: 3px 3px 0 #000;
+            transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+                        transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 10;
+            overflow: hidden;
+        }
+        #nav-search.nav-search-visible {
+            transform: translateX(-50%) translateY(-50%);
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #nav-search-icon {
+            display: flex;
+            align-items: center;
+            padding: 0 0.5rem 0 0.6rem;
+            color: #7a785f;
+            flex-shrink: 0;
+            font-size: 16px !important;
+        }
+        #nav-query {
+            border: none;
+            outline: none;
+            background: transparent;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.78rem;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #1d1c0f;
+            padding: 0 0.4rem;
+            width: 180px;
+        }
+        @media (min-width: 1024px) { #nav-query { width: 260px; } }
+        #nav-query::placeholder { color: #7a785f; }
+        #nav-search-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 0.65rem;
+            background: #1d1c0f;
+            color: #fff900;
+            border-left: 1.5px solid #000;
+            cursor: pointer;
+            font-size: 0.65rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            flex-shrink: 0;
+            transition: background 0.1s;
+            white-space: nowrap;
+        }
+        #nav-search-btn:hover { background: #000; }
+        @media (prefers-reduced-motion: reduce) {
+            #nav-search { transition: opacity 0.01ms; }
+        }
     </style>
 </head>
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
     <!-- ===== TOP NAV ===== -->
-    <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
+    <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black relative">
         <div class="flex items-center gap-6">
             <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
             <nav class="hidden md:flex items-center gap-0 h-14">
@@ -271,6 +343,14 @@
                 <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
                 <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/docs.html">DOCS</a>
             </nav>
+        </div>
+
+        <!-- Compact search bar — slides into nav when main search scrolls out of view -->
+        <div id="nav-search" role="search" aria-label="Quick search" aria-hidden="true">
+            <span id="nav-search-icon" class="material-symbols-outlined">search</span>
+            <input type="text" id="nav-query" placeholder="SEARCH..." autocomplete="off"
+                   tabindex="-1" aria-label="Quick search query"/>
+            <button id="nav-search-btn" tabindex="-1" title="Execute search">RUN ↵</button>
         </div>
         <!-- Index stats row -->
         <div class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
@@ -455,6 +535,72 @@
         document.getElementById('search-btn')?.addEventListener('click', () => {
             if (typeof performSearch === 'function') performSearch();
         });
+
+        // ===== COMPACT NAV SEARCH =====
+        // Shows when the main search section scrolls past the sticky header
+        (function () {
+            const navSearch = document.getElementById('nav-search');
+            const navQuery  = document.getElementById('nav-query');
+            const navBtn    = document.getElementById('nav-search-btn');
+            const mainQuery = document.getElementById('query');
+            const section   = document.getElementById('search-section');
+            if (!navSearch || !navQuery || !mainQuery || !section) return;
+
+            // Cached flag: false when SearchReadinessManager sets section to display:none
+            let sectionVisible = getComputedStyle(section).display !== 'none';
+
+            function show() {
+                navQuery.value = mainQuery.value;
+                navSearch.classList.add('nav-search-visible');
+                navSearch.setAttribute('aria-hidden', 'false');
+                navQuery.removeAttribute('tabindex');
+                navBtn && navBtn.removeAttribute('tabindex');
+            }
+            function hide() {
+                navSearch.classList.remove('nav-search-visible');
+                navSearch.setAttribute('aria-hidden', 'true');
+                navQuery.setAttribute('tabindex', '-1');
+                navBtn && navBtn.setAttribute('tabindex', '-1');
+            }
+
+            // Keep compact input in sync with main input (only when visible to avoid wasted writes)
+            mainQuery.addEventListener('input', () => {
+                if (sectionVisible) navQuery.value = mainQuery.value;
+            });
+
+            // Compact input drives main input + live search
+            navQuery.addEventListener('input', () => {
+                mainQuery.value = navQuery.value;
+                mainQuery.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            navQuery.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    mainQuery.value = navQuery.value;
+                    if (typeof performSearch === 'function') performSearch();
+                }
+            });
+            navBtn && navBtn.addEventListener('click', () => {
+                mainQuery.value = navQuery.value;
+                if (typeof performSearch === 'function') performSearch();
+            });
+
+            // Fire when search section crosses the bottom of the sticky header (56 px)
+            const observer = new IntersectionObserver(
+                (entries) => entries.forEach(e => {
+                    // Use cached flag to avoid getComputedStyle on every intersection event
+                    if (!e.isIntersecting && sectionVisible) show();
+                    else hide();
+                }),
+                { rootMargin: '-56px 0px 0px 0px', threshold: 0 }
+            );
+            observer.observe(section);
+
+            // Watch for section display:none toggled by SearchReadinessManager (server offline/online)
+            new MutationObserver(() => {
+                sectionVisible = getComputedStyle(section).display !== 'none';
+                if (!sectionVisible) hide();
+            }).observe(section, { attributes: true, attributeFilter: ['style'] });
+        })();
     </script>
 </body>
 </html>
