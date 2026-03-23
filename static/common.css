@@ -2,8 +2,7 @@
    COMMON STYLES - Shared across all search views
    ============================================ */
 
-/* Google Fonts — preconnect for performance */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts are self-hosted — see /fonts.css loaded in each HTML page */
 
 /* CSS Variables - Theme tokens */
 :root {

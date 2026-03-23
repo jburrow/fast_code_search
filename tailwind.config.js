@@ -1,0 +1,76 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+    darkMode: "class",
+    content: [
+        "./static/**/*.{html,js}",
+    ],
+    theme: {
+        extend: {
+            colors: {
+                "on-primary-fixed": "#1e1d00",
+                "background": "#fefae4",
+                "secondary-fixed": "#ebe77f",
+                "on-tertiary": "#ffffff",
+                "tertiary-fixed": "#a9efed",
+                "on-secondary": "#ffffff",
+                "on-error-container": "#93000a",
+                "on-secondary-fixed": "#1e1d00",
+                "secondary": "#646100",
+                "on-primary-fixed-variant": "#4b4900",
+                "on-surface-variant": "#494831",
+                "surface": "#fefae4",
+                "primary-fixed": "#eee900",
+                "error": "#ba1a1a",
+                "tertiary-fixed-dim": "#8ed3d1",
+                "surface-container-low": "#f8f4df",
+                "on-background": "#1d1c0f",
+                "outline-variant": "#cbc8aa",
+                "tertiary": "#1e6868",
+                "on-tertiary-fixed": "#00201f",
+                "primary-container": "#fff900",
+                "on-primary": "#ffffff",
+                "surface-container-highest": "#e7e3ce",
+                "on-tertiary-container": "#327978",
+                "secondary-fixed-dim": "#cecb66",
+                "on-surface": "#1d1c0f",
+                "surface-variant": "#e7e3ce",
+                "surface-dim": "#dedac6",
+                "secondary-container": "#ebe77f",
+                "primary": "#646100",
+                "on-tertiary-fixed-variant": "#00504f",
+                "inverse-on-surface": "#f5f1dc",
+                "surface-bright": "#fefae4",
+                "on-secondary-fixed-variant": "#4b4900",
+                "tertiary-container": "#bafffd",
+                "primary-fixed-dim": "#d1cc00",
+                "inverse-primary": "#d1cc00",
+                "outline": "#7a785f",
+                "surface-container-lowest": "#ffffff",
+                "surface-tint": "#646100",
+                "surface-container-high": "#ece9d4",
+                "inverse-surface": "#323123",
+                "on-secondary-container": "#6a6707",
+                "surface-container": "#f2eed9",
+                "on-primary-container": "#747100",
+                "on-error": "#ffffff",
+                "error-container": "#ffdad6"
+            },
+            fontFamily: {
+                "headline": ["Space Grotesk", "sans-serif"],
+                "body": ["Inter", "sans-serif"],
+                "label": ["JetBrains Mono", "monospace"]
+            },
+            borderRadius: {
+                // Design system uses sharp corners throughout; only pill/badge shapes use full rounding.
+                "DEFAULT": "0px",
+                "lg": "0px",
+                "xl": "0px",
+                "full": "9999px"
+            },
+        },
+    },
+    plugins: [
+        require("@tailwindcss/forms"),
+        require("@tailwindcss/container-queries"),
+    ],
+}
