@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "build:css": "tailwindcss -i ./static/input.css -o ./static/tailwind.css --content \"./static/**/*.{html,js}\" --minify",
+    "watch:css": "tailwindcss -i ./static/input.css -o ./static/tailwind.css --content \"./static/**/*.{html,js}\" --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.11",
+    "tailwindcss": "^3.4.19"
+  }
+}
