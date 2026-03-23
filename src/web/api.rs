@@ -44,11 +44,18 @@ pub struct SearchQuery {
     /// Ranking mode: "auto" (default), "fast", or "full"
     #[serde(default)]
     rank: String,
+    /// Number of context lines to return before and after each match (default: 0)
+    #[serde(default)]
+    context: usize,
 }
 
 fn default_max_results() -> usize {
     50
 }
+
+/// Maximum number of context lines allowed per match.
+/// Capped to avoid returning excessively large payloads for dense result sets.
+const MAX_CONTEXT_LINES: usize = 10;
 
 /// Search result for JSON response
 #[derive(Debug, Serialize)]
@@ -65,6 +72,12 @@ pub struct SearchResultJson {
     pub score: f64,
     pub match_type: &'static str,
     pub dependency_count: u32,
+    /// Context lines before and after the match (only present when context > 0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_lines: Option<Vec<String>>,
+    /// 1-based line number of the first context line (only present when context > 0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_start_line: Option<usize>,
 }
 
 /// Search response
@@ -153,6 +166,7 @@ pub async fn search_handler(
     let exclude_patterns = params.exclude;
     let is_regex = params.regex;
     let symbols_only = params.symbols;
+    let context_lines = params.context.min(MAX_CONTEXT_LINES);
 
     // Parse ranking mode
     let rank_mode = match params.rank.to_lowercase().as_str() {
@@ -232,20 +246,53 @@ pub async fn search_handler(
 
         let results: Vec<SearchResultJson> = matches
             .into_iter()
-            .map(|m| SearchResultJson {
-                file_path: m.file_path,
-                content: m.content,
-                line_number: m.line_number,
-                match_start: m.match_start,
-                match_end: m.match_end,
-                content_truncated: m.content_truncated,
-                score: m.score,
-                match_type: if m.is_symbol {
-                    "SYMBOL_DEFINITION"
+            .map(|m| {
+                // Fetch context lines from the file store when requested
+                let (ctx_lines, ctx_start) = if context_lines > 0 {
+                    if let Some(file_id) = engine.find_file_id(&m.file_path) {
+                        if let Some(mapped) = engine.file_store.get(file_id) {
+                            if let Ok(content) = mapped.as_str() {
+                                let all_lines: Vec<&str> = content.lines().collect();
+                                let total = all_lines.len();
+                                let match_idx =
+                                    m.line_number.saturating_sub(1).min(total.saturating_sub(1));
+                                let start_idx = match_idx.saturating_sub(context_lines);
+                                let end_idx = (match_idx + context_lines + 1).min(total);
+                                let lines: Vec<String> = all_lines[start_idx..end_idx]
+                                    .iter()
+                                    .map(|l| l.to_string())
+                                    .collect();
+                                (Some(lines), Some(start_idx + 1))
+                            } else {
+                                (None, None)
+                            }
+                        } else {
+                            (None, None)
+                        }
+                    } else {
+                        (None, None)
+                    }
                 } else {
-                    "TEXT"
-                },
-                dependency_count: m.dependency_count,
+                    (None, None)
+                };
+
+                SearchResultJson {
+                    file_path: m.file_path,
+                    content: m.content,
+                    line_number: m.line_number,
+                    match_start: m.match_start,
+                    match_end: m.match_end,
+                    content_truncated: m.content_truncated,
+                    score: m.score,
+                    match_type: if m.is_symbol {
+                        "SYMBOL_DEFINITION"
+                    } else {
+                        "TEXT"
+                    },
+                    dependency_count: m.dependency_count,
+                    context_lines: ctx_lines,
+                    context_start_line: ctx_start,
+                }
             })
             .collect();
 

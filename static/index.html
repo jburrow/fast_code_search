@@ -388,6 +388,8 @@
                     <div class="absolute inset-y-0 right-4 flex items-center gap-2">
                         <span class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden sm:inline">CMD+K</span>
                     </div>
+                    <!-- Search history dropdown -->
+                    <div id="search-history-dropdown" style="display:none" class="absolute top-full left-0 right-0 z-50 bg-white border border-black border-t-0 shadow-md max-h-64 overflow-y-auto"></div>
                 </div>
                 <!-- Toggle group -->
                 <div class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
@@ -440,6 +442,17 @@
                             <option value="auto" selected>Auto</option>
                             <option value="fast">Fast</option>
                             <option value="full">Full</option>
+                        </select>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
+                        CONTEXT LINES
+                        <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container" title="Lines of code shown either side of each match">
+                            <option value="0" selected>Match only</option>
+                            <option value="1">±1 line</option>
+                            <option value="2">±2 lines</option>
+                            <option value="3">±3 lines</option>
+                            <option value="4">±4 lines</option>
+                            <option value="5">±5 lines</option>
                         </select>
                     </label>
                     <label class="flex flex-col gap-1 text-xs font-label text-outline">
