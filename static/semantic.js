@@ -10,6 +10,7 @@ const queryInput = document.getElementById('query');
 const searchBtn = document.getElementById('search-btn');
 const maxResultsSelect = document.getElementById('max-results');
 const resultsContainer = document.getElementById('results');
+const searchHistoryDropdown = document.getElementById('search-history-dropdown');
 
 // Progress elements
 const progressPanel = document.getElementById('progress-panel');
@@ -17,6 +18,128 @@ const progressBar = document.getElementById('progress-bar');
 const progressStatus = document.getElementById('progress-status');
 const progressMessage = document.getElementById('progress-message');
 const progressPercent = document.getElementById('progress-percent');
+
+// ============================================
+// LOCAL STORAGE PERSISTENCE
+// ============================================
+
+const LS_SEM_SETTINGS_KEY = 'fcs_sem_settings';
+const LS_SEM_HISTORY_KEY = 'fcs_sem_history';
+const MAX_SEM_HISTORY = 50;
+
+function saveSettingsToStorage() {
+    try {
+        const settings = { max: maxResultsSelect?.value || '10' };
+        localStorage.setItem(LS_SEM_SETTINGS_KEY, JSON.stringify(settings));
+    } catch (_) { /* storage unavailable */ }
+}
+
+function loadSettingsFromStorage() {
+    try {
+        const raw = localStorage.getItem(LS_SEM_SETTINGS_KEY);
+        if (!raw) return;
+        const s = JSON.parse(raw);
+        if (maxResultsSelect && s.max) maxResultsSelect.value = s.max;
+    } catch (_) { /* ignore parse errors */ }
+}
+
+// ============================================
+// SEARCH HISTORY
+// ============================================
+
+function loadHistory() {
+    try {
+        const raw = localStorage.getItem(LS_SEM_HISTORY_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (_) { return []; }
+}
+
+function saveToHistory(query) {
+    if (!query || query.length < 2) return;
+    try {
+        let history = loadHistory().filter(q => q !== query);
+        history.unshift(query);
+        if (history.length > MAX_SEM_HISTORY) history = history.slice(0, MAX_SEM_HISTORY);
+        localStorage.setItem(LS_SEM_HISTORY_KEY, JSON.stringify(history));
+    } catch (_) { /* storage unavailable */ }
+}
+
+function clearHistory() {
+    try { localStorage.removeItem(LS_SEM_HISTORY_KEY); } catch (_) { /* ignore */ }
+    hideHistoryDropdown();
+}
+
+let _historyDropdownFocusedIdx = -1;
+
+function showHistoryDropdown(filter) {
+    if (!searchHistoryDropdown) return;
+    const all = loadHistory();
+    const matches = filter
+        ? all.filter(q => q.toLowerCase().includes(filter.toLowerCase()))
+        : all;
+
+    if (matches.length === 0) {
+        hideHistoryDropdown();
+        return;
+    }
+
+    _historyDropdownFocusedIdx = -1;
+    searchHistoryDropdown.innerHTML = matches.slice(0, 10).map((q, i) =>
+        `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-primary-container font-label text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
+            <span class="material-symbols-outlined" style="font-size:14px;color:#7a785f;flex-shrink:0">history</span>
+            <span class="flex-1 truncate">${escapeHtml(q)}</span>
+            <button class="history-delete material-symbols-outlined ml-auto flex-shrink-0" style="font-size:14px;color:#7a785f;background:none;border:none;cursor:pointer;padding:0" data-query="${escapeHtml(q)}" title="Remove">close</button>
+        </div>`
+    ).join('') +
+    `<div class="flex items-center justify-end px-4 py-1.5 border-t border-outline-variant">
+        <button id="clear-history-btn" class="font-label text-[10px] text-outline hover:text-black transition-colors">CLEAR ALL HISTORY</button>
+    </div>`;
+
+    searchHistoryDropdown.style.display = 'block';
+
+    searchHistoryDropdown.querySelectorAll('.history-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('history-delete')) return;
+            e.preventDefault();
+            queryInput.value = item.dataset.query;
+            hideHistoryDropdown();
+            performSearch();
+        });
+    });
+
+    searchHistoryDropdown.querySelectorAll('.history-delete').forEach(btn => {
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const q = btn.dataset.query;
+            try {
+                let h = loadHistory().filter(x => x !== q);
+                localStorage.setItem(LS_SEM_HISTORY_KEY, JSON.stringify(h));
+            } catch (_) { /* ignore */ }
+            showHistoryDropdown(queryInput.value.trim());
+        });
+    });
+
+    const clearBtn = document.getElementById('clear-history-btn');
+    if (clearBtn) clearBtn.addEventListener('mousedown', (e) => { e.preventDefault(); clearHistory(); });
+}
+
+function hideHistoryDropdown() {
+    if (searchHistoryDropdown) searchHistoryDropdown.style.display = 'none';
+    _historyDropdownFocusedIdx = -1;
+}
+
+function navigateHistoryDropdown(dir) {
+    if (!searchHistoryDropdown || searchHistoryDropdown.style.display === 'none') return false;
+    const items = Array.from(searchHistoryDropdown.querySelectorAll('.history-item'));
+    if (items.length === 0) return false;
+    _historyDropdownFocusedIdx = Math.max(-1, Math.min(items.length - 1, _historyDropdownFocusedIdx + dir));
+    items.forEach((el, i) => el.classList.toggle('bg-primary-container', i === _historyDropdownFocusedIdx));
+    if (_historyDropdownFocusedIdx >= 0) {
+        queryInput.value = items[_historyDropdownFocusedIdx].dataset.query;
+    }
+    return true;
+}
 
 // Search readiness manager (disables search until index is ready)
 const searchReadiness = new SearchReadinessManager({
@@ -228,6 +351,8 @@ async function performSearch() {
     if (!query) return;
 
     syncUrlFromState(URL_FIELDS);
+    // Persist settings to localStorage
+    saveSettingsToStorage();
     
     showLoading('results', `Searching for: "${query}"`);
     const startTime = Date.now();
@@ -240,6 +365,9 @@ async function performSearch() {
         
         const data = await response.json();
         const latency = Date.now() - startTime;
+
+        // Save successful query to history
+        saveToHistory(query);
         
         updateStat('stat-latency', `${latency}ms`);
         displayResults(data.results, query, latency);
@@ -327,11 +455,42 @@ function createResultCard(result) {
 // EVENT LISTENERS
 // ============================================
 
-queryInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') performSearch();
+queryInput.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+        navigateHistoryDropdown(1);
+        e.preventDefault();
+        return;
+    }
+    if (e.key === 'ArrowUp') {
+        navigateHistoryDropdown(-1);
+        e.preventDefault();
+        return;
+    }
+    if (e.key === 'Escape') {
+        hideHistoryDropdown();
+        return;
+    }
+    if (e.key === 'Enter') {
+        hideHistoryDropdown();
+        performSearch();
+    }
+});
+queryInput.addEventListener('focus', () => {
+    showHistoryDropdown(queryInput.value.trim());
+});
+queryInput.addEventListener('input', (e) => {
+    showHistoryDropdown(e.target.value.trim());
+});
+document.addEventListener('click', (e) => {
+    if (e.target !== queryInput && !searchHistoryDropdown?.contains(e.target)) {
+        hideHistoryDropdown();
+    }
 });
 
-searchBtn.addEventListener('click', performSearch);
+searchBtn.addEventListener('click', () => {
+    hideHistoryDropdown();
+    performSearch();
+});
 
 // Example query buttons
 document.querySelectorAll('.example-btn').forEach(btn => {
@@ -348,7 +507,11 @@ document.querySelectorAll('.example-btn').forEach(btn => {
 // Store original placeholder for restoration when readiness state changes.
 searchReadiness.storeDefaultPlaceholder();
 
-// Restore state from URL on page load; auto-expand Advanced Options for non-default values
+// Load persisted settings from localStorage first (URL params will override below)
+loadSettingsFromStorage();
+
+// Restore state from URL on page load; URL params take precedence over localStorage.
+// Auto-expand Advanced Options for non-default values.
 loadStateFromUrl(URL_FIELDS, () => {
     const advancedDetails = document.querySelector('.advanced-options');
     if (advancedDetails) advancedDetails.open = true;
