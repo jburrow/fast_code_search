@@ -454,6 +454,89 @@ function hljsLangForPath(filePath) {
     return MAP[ext] || 'plaintext';
 }
 
+const LANG_BADGE_STYLE_CACHE = new Map();
+
+/**
+ * Parse a CSS color string to RGB object for contrast calculations.
+ * Supports #rgb, #rrggbb, rgb(), and rgba().
+ */
+function parseColorToRgb(color) {
+    if (!color) return null;
+    const value = color.trim();
+
+    if (value.startsWith('#')) {
+        const hex = value.slice(1);
+        if (hex.length === 3) {
+            return {
+                r: parseInt(hex[0] + hex[0], 16),
+                g: parseInt(hex[1] + hex[1], 16),
+                b: parseInt(hex[2] + hex[2], 16),
+            };
+        }
+        if (hex.length === 6) {
+            return {
+                r: parseInt(hex.slice(0, 2), 16),
+                g: parseInt(hex.slice(2, 4), 16),
+                b: parseInt(hex.slice(4, 6), 16),
+            };
+        }
+        return null;
+    }
+
+    const rgbMatch = value.match(/^rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+    if (!rgbMatch) return null;
+    return {
+        r: Number(rgbMatch[1]),
+        g: Number(rgbMatch[2]),
+        b: Number(rgbMatch[3]),
+    };
+}
+
+function toLinearChannel(v) {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance(rgb) {
+    return 0.2126 * toLinearChannel(rgb.r)
+        + 0.7152 * toLinearChannel(rgb.g)
+        + 0.0722 * toLinearChannel(rgb.b);
+}
+
+function contrastRatio(l1, l2) {
+    const lighter = Math.max(l1, l2);
+    const darker = Math.min(l1, l2);
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
+/**
+ * Build a readable language badge style from the configured language color.
+ */
+function getLangBadgeStyle(langClass) {
+    if (!langClass) return 'background:#e7e3ce;color:#1d1c0f;border:1px solid #cbc8aa';
+    if (LANG_BADGE_STYLE_CACHE.has(langClass)) return LANG_BADGE_STYLE_CACHE.get(langClass);
+
+    const cssValue = getComputedStyle(document.documentElement)
+        .getPropertyValue(`--lang-${langClass}`)
+        .trim() || '#e7e3ce';
+    const rgb = parseColorToRgb(cssValue);
+    if (!rgb) {
+        const fallback = `background:${cssValue};color:#000;border:1px solid rgba(0,0,0,0.2)`;
+        LANG_BADGE_STYLE_CACHE.set(langClass, fallback);
+        return fallback;
+    }
+
+    const bgLum = relativeLuminance(rgb);
+    const blackContrast = contrastRatio(bgLum, 0);
+    const whiteContrast = contrastRatio(bgLum, 1);
+    const textColor = whiteContrast > blackContrast ? '#fff' : '#000';
+    const borderColor = textColor === '#fff' ? 'rgba(255,255,255,0.38)' : 'rgba(0,0,0,0.2)';
+
+    const style = `background:${cssValue};color:${textColor};border:1px solid ${borderColor}`;
+    LANG_BADGE_STYLE_CACHE.set(langClass, style);
+    return style;
+}
+
 /**
  * Highlight a `<pre>` element using highlight.js.
  * @param {HTMLElement} el - the <pre> element
@@ -776,9 +859,7 @@ async function performSearch() {
             const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'settings_suggest' : 'code');
 
             // Language badge style
-            const langBadgeStyle = langClass
-                ? `background:var(--lang-${langClass},#e7e3ce);color:#000;border:1px solid rgba(0,0,0,0.15)`
-                : 'background:#e7e3ce;color:#1d1c0f;border:1px solid #cbc8aa';
+            const langBadgeStyle = getLangBadgeStyle(langClass);
 
             // Dependency badge
             const depBadge = depCount > 0
