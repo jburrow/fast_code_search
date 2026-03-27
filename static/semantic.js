@@ -504,6 +504,13 @@ document.addEventListener('click', (e) => {
     }
 });
 
+document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        queryInput?.focus();
+    }
+});
+
 searchBtn.addEventListener('click', () => {
     hideHistoryDropdown();
     performSearch();

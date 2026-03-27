@@ -875,7 +875,9 @@ async function performSearch() {
             // Dependency badge
             const depBadge = depCount > 0
                 ? `<span style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                    title="${depCount} files depend on this" onclick="showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
+                    onmouseenter="showDepsTooltip(this,'${escapeHtml(result.file_path)}')"
+                    onmouseleave="hideDepsTooltip()"
+                    onclick="hideDepsTooltipImmediately();showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
                 : '';
 
             // Match type badge
@@ -988,10 +990,146 @@ async function performSearch() {
 const debouncedSearch = debounce(performSearch, DEBOUNCE_MS);
 
 // ============================================
+// DEPS BADGE POPOVER
+// ============================================
+
+let _depsPopover = null;
+let _depsHideTimer = null;
+let _depsAbortController = null;
+
+function getOrCreateDepsPopover() {
+    if (!_depsPopover) {
+        _depsPopover = document.createElement('div');
+        _depsPopover.id = 'deps-popover';
+        _depsPopover.className = 'deps-popover';
+        _depsPopover.addEventListener('mouseenter', () => clearTimeout(_depsHideTimer));
+        _depsPopover.addEventListener('mouseleave', hideDepsTooltip);
+        document.body.appendChild(_depsPopover);
+    }
+    return _depsPopover;
+}
+
+function hideDepsTooltip() {
+    _depsHideTimer = setTimeout(() => {
+        if (_depsPopover) _depsPopover.style.display = 'none';
+    }, 150);
+}
+
+function hideDepsTooltipImmediately() {
+    clearTimeout(_depsHideTimer);
+    if (_depsAbortController) {
+        _depsAbortController.abort();
+        _depsAbortController = null;
+    }
+    if (_depsPopover) _depsPopover.style.display = 'none';
+}
+
+function openDependencyFile(filePath) {
+    hideDepsTooltipImmediately();
+    showFileModal(filePath);
+}
+
+function positionDepsPopover(popover, anchor) {
+    const GAP = 6;
+    const rect = anchor.getBoundingClientRect();
+    const vW = window.innerWidth;
+    const vH = window.innerHeight;
+
+    // Preferred: appear above the badge; fall back to below if not enough space
+    const popH = Math.min(popover.scrollHeight || 300, vH * 0.6);
+
+    let top;
+    if (rect.top - popH - GAP >= GAP) {
+        top = rect.top - popH - GAP;
+    } else {
+        top = rect.bottom + GAP;
+    }
+
+    // Horizontal: align left edge of popover with badge, clamped to viewport
+    const maxW = Math.min(380, vW - GAP * 2);
+    let left = rect.left;
+    left = Math.max(GAP, Math.min(left, vW - maxW - GAP));
+
+    popover.style.maxWidth = `${maxW}px`;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+    popover.style.height = 'auto';
+}
+
+async function showDepsTooltip(badgeEl, filePath) {
+    clearTimeout(_depsHideTimer);
+    if (_depsAbortController) _depsAbortController.abort();
+    _depsAbortController = new AbortController();
+    const signal = _depsAbortController.signal;
+
+    const popover = getOrCreateDepsPopover();
+    const basename = filePath.split('/').pop();
+    popover.innerHTML =
+        `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
+        `<div class="deps-popover-loading">Loading…</div>`;
+    popover.style.display = 'block';
+    positionDepsPopover(popover, badgeEl);
+
+    try {
+        const [depRes, imptRes] = await Promise.all([
+            fetch(`${API_BASE}/api/dependents?file=${encodeURIComponent(filePath)}`, { signal }),
+            fetch(`${API_BASE}/api/dependencies?file=${encodeURIComponent(filePath)}`, { signal }),
+        ]);
+        if (signal.aborted) return;
+
+        const [depData, imptData] = await Promise.all([depRes.json(), imptRes.json()]);
+        if (signal.aborted) return;
+
+        const MAX = 8;
+
+        function buildSection(files, label, onMoreClick) {
+            const shown = files.slice(0, MAX);
+            const extra = files.length - shown.length;
+            const items = shown.map(f => {
+                const name = f.split('/').pop();
+                const escapedPath = f.replace(/'/g, "\\'");
+                return `<li><button type="button" class="deps-popover-link" title="${escapeHtml(f)}" onclick="openDependencyFile('${escapedPath}')">${escapeHtml(name)}</button></li>`;
+            }).join('');
+            const more = extra > 0
+                ? `<span class="deps-more" onclick="${onMoreClick}">…and ${extra} more</span>`
+                : '';
+            return `<div class="deps-popover-section">` +
+                `<div class="deps-section-title">${escapeHtml(label)} (${files.length})</div>` +
+                `<ul>${items || '<li style="color:#7a785f;font-style:italic">none</li>'}</ul>` +
+                more +
+                `</div>`;
+        }
+
+        const fp = filePath.replace(/'/g, "\\'");
+        const dependentsSection = buildSection(
+            depData.files || [],
+            'Imported by',
+            `hideDepsTooltipImmediately();showDependents('${fp}')`
+        );
+        const importsSection = buildSection(
+            imptData.files || [],
+            'Imports',
+            `hideDepsTooltipImmediately();showDependencies('${fp}')`
+        );
+
+        popover.innerHTML =
+            `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
+            dependentsSection +
+            importsSection;
+
+        positionDepsPopover(popover, badgeEl);
+    } catch (e) {
+        if (e.name === 'AbortError') return;
+        if (_depsPopover) _depsPopover.style.display = 'none';
+    }
+}
+
+// ============================================
 // DEPENDENCY MODAL
 // ============================================
 
 async function showDependents(filePath) {
+    hideDepsTooltipImmediately();
     try {
         const response = await fetch(`${API_BASE}/api/dependents?file=${encodeURIComponent(filePath)}`);
         if (!response.ok) throw new Error(`Failed to fetch dependents`);
@@ -1003,25 +1141,38 @@ async function showDependents(filePath) {
     }
 }
 
+async function showDependencies(filePath) {
+    hideDepsTooltipImmediately();
+    try {
+        const response = await fetch(`${API_BASE}/api/dependencies?file=${encodeURIComponent(filePath)}`);
+        if (!response.ok) throw new Error(`Failed to fetch dependencies`);
+        const data = await response.json();
+        showDependencyModal('Dependencies', filePath, data.files, 'Files imported by this file:');
+    } catch (error) {
+        console.error('Error fetching dependencies:', error);
+        alert('Failed to load dependencies: ' + error.message);
+    }
+}
+
 function showDependencyModal(title, filePath, files, description) {
     const existingModal = document.getElementById('dep-modal');
     if (existingModal) existingModal.remove();
 
     const fileList = files.length > 0
-        ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;">${escapeHtml(f)}</li>`).join('')
-        : '<li style="color:var(--text-muted);">No files found</li>';
+        ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;color:#1d1c0f">${escapeHtml(f)}</li>`).join('')
+        : '<li style="color:#7a785f;">No files found</li>';
 
     const modal = document.createElement('div');
     modal.id = 'dep-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;';
     modal.innerHTML = `
-        <div style="background:var(--bg-secondary);border-radius:8px;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;border:1px solid var(--border);">
+        <div style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 style="font-size:1.1rem;">${title} (${files.length})</h2>
-                <button onclick="closeModal()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-secondary);">&times;</button>
+                <h2 style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${title} (${files.length})</h2>
+                <button onclick="closeModal()" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
-            <p style="font-family:monospace;font-size:0.85rem;color:var(--accent);margin-bottom:0.5rem;">${escapeHtml(filePath)}</p>
-            <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
+            <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
+            <p style="color:#494831;font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
             <ul style="list-style:none;padding:0;">${fileList}</ul>
         </div>
     `;

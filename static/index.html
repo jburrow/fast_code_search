@@ -17,6 +17,8 @@
             --lang-cpp: #b84030; --lang-c: #5c4fbf; --lang-sh: #2e7c50; --lang-yaml: #8e3fad;
             --lang-json: #b89010; --lang-css: #4040cc; --lang-proto: #7a28ad;
             --lang-toml: #a06018; --lang-sql: #b07818; --lang-md: #4a5a6a;
+            --hl-line-bg: #fff900;
+            --hl-left-border: #646100;
         }
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -35,69 +37,14 @@
         body {
             background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
         }
-        /* CSS variables — update once, apply everywhere */
-        :root {
-            --hl-line-bg:     #fff900;
-            --hl-left-border: #646100;
-        }
-        body[data-highlight-style="option3"] { --hl-line-bg: rgba(255,249,0,0.5); }
-        body[data-highlight-style="option4"] { --hl-line-bg: rgba(255,249,0,0.7); }
-        body[data-highlight-style="option5"] { --hl-line-bg: #fffde7; --hl-left-border: #9e9d2a; }
-
-        /* Query match highlight — three style options, same color (#fff900) */
-        /* Option 1: Original (solid yellow, bold text) */
-        body[data-highlight-style="option1"] mark.highlight,
-        body[data-highlight-style="option1"] .code-highlight,
+        /* Search hit highlight */
         mark.highlight, .code-highlight {
-            background-color: #fff900;
+            background-color: var(--hl-line-bg);
             color: #000;
             padding: 0 2px;
             border-radius: 0;
             font-style: inherit;
             font-weight: bold;
-        }
-        /* Option 2: Yellow with border for definition */
-        body[data-highlight-style="option2"] mark.highlight,
-        body[data-highlight-style="option2"] .code-highlight {
-            background-color: #fff900;
-            color: #000;
-            border: 1px solid #000;
-            padding: 0 3px;
-            border-radius: 1px;
-            font-style: inherit;
-            font-weight: bold;
-        }
-        /* Option 3: Yellow semi-transparent (lets code show through) */
-        body[data-highlight-style="option3"] mark.highlight,
-        body[data-highlight-style="option3"] .code-highlight {
-            background-color: rgba(255, 249, 0, 0.5);
-            color: inherit;
-            padding: 0 2px;
-            border-radius: 0;
-            font-style: inherit;
-            font-weight: normal;
-        }
-        /* Option 4: Semi-transparent yellow with black border */
-        body[data-highlight-style="option4"] mark.highlight,
-        body[data-highlight-style="option4"] .code-highlight {
-            background-color: rgba(255, 249, 0, 0.7);
-            color: inherit;
-            border: 1px solid #000;
-            padding: 0 3px;
-            border-radius: 1px;
-            font-style: inherit;
-            font-weight: normal;
-        }
-        /* Option 5: Original cream background (#fffde7) with black border */
-        body[data-highlight-style="option5"] mark.highlight,
-        body[data-highlight-style="option5"] .code-highlight {
-            background-color: #fffde7;
-            color: inherit;
-            border: 1px solid #000;
-            padding: 0 3px;
-            border-radius: 1px;
-            font-style: inherit;
-            font-weight: normal;
         }
         /* Result code block — neutralise hljs background */
         .result-code, .result-code.hljs {
@@ -142,6 +89,81 @@
             padding: 1rem;
             color: #7a785f;
         }
+        /* Deps popover */
+        .deps-popover {
+            position: fixed;
+            z-index: 2001;
+            display: none;
+            min-width: 200px;
+            max-width: 360px;
+            background: #fff;
+            border: 1px solid #000;
+            box-shadow: 4px 4px 0 #000;
+            overflow: hidden;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+        }
+        .deps-popover-header {
+            padding: 0.3rem 0.65rem;
+            background: #dedac6;
+            border-bottom: 1px solid #cbc8aa;
+            color: #494831;
+            font-size: 0.72rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .deps-popover-section {
+            padding: 0.45rem 0.65rem 0.4rem;
+        }
+        .deps-popover-section + .deps-popover-section {
+            border-top: 1px solid #cbc8aa;
+        }
+        .deps-section-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #7a785f;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 0.3rem;
+        }
+        .deps-popover ul { list-style: none; padding: 0; margin: 0; }
+        .deps-popover li {
+            padding: 0;
+            margin: 0;
+        }
+        .deps-popover-link {
+            display: block;
+            width: 100%;
+            padding: 0.12rem 0;
+            color: #1d4f6e;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 0.75rem;
+            line-height: 1.45;
+            text-align: left;
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .deps-popover-link:hover,
+        .deps-popover-link:focus-visible {
+            color: #d44e38;
+            outline: none;
+            text-decoration: underline;
+        }
+        .deps-more {
+            display: inline-block;
+            margin-top: 0.25rem;
+            color: #d44e38;
+            font-style: italic;
+            cursor: pointer;
+            font-size: 0.72rem;
+        }
+        .deps-more:hover { text-decoration: underline; }
+        .deps-popover-loading { padding: 0.5rem 0.65rem; color: #7a785f; font-size: 0.75rem; }
         /* File modal */
         .file-modal-overlay {
             position: fixed;
@@ -215,12 +237,8 @@
             line-height: 1.55;
         }
         .file-line:hover { background: #f8f4df; }
-        /* Matched line highlight — driven by CSS variable, always in sync */
+        /* Matched line highlight */
         .file-line-highlight { background: var(--hl-line-bg) !important; }
-        /* Border options (2, 4 & 5) */
-        body[data-highlight-style="option2"] .file-line-highlight,
-        body[data-highlight-style="option4"] .file-line-highlight,
-        body[data-highlight-style="option5"] .file-line-highlight { outline: 1px solid #000; }
         .file-line-num {
             color: #7a785f;
             min-width: 3rem;
@@ -579,55 +597,6 @@
     <script src="/common.js"></script>
     <script src="/keyword.js"></script>
     <script>
-        // ===== HIGHLIGHT STYLE SWITCHER =====
-        const HIGHLIGHT_STYLES = ['option1', 'option2', 'option3', 'option4', 'option5'];
-        const HIGHLIGHT_STYLE_KEY = 'fcs_highlight_style';
-        
-        function initHighlightStyleToggle() {
-            // Load saved preference or default to option1
-            const saved = localStorage.getItem(HIGHLIGHT_STYLE_KEY) || 'option1';
-            document.body.setAttribute('data-highlight-style', saved);
-            
-            // Create toggle button in header nav
-            const nav = document.querySelector('header nav');
-            if (nav) {
-                const btn = document.createElement('button');
-                btn.id = 'highlight-style-btn';
-                btn.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;padding:0 12px;font-size:0.8rem;font-family:inherit;font-weight:500;opacity:0.7;transition:opacity 0.2s;';
-                btn.title = 'Cycle highlight styles: Option 1 → 2 → 3 → 4 → 1';
-                updateHighlightButtonLabel(btn, saved);
-                btn.addEventListener('click', cycleHighlightStyle);
-                btn.addEventListener('mouseenter', (e) => e.target.style.opacity = '1');
-                btn.addEventListener('mouseleave', (e) => e.target.style.opacity = '0.7');
-                nav.appendChild(btn);
-            }
-        }
-        
-        function updateHighlightButtonLabel(btn, style) {
-            const num = style.replace('option', '');
-            btn.textContent = `Highlight: ${num}`;
-        }
-        
-        function cycleHighlightStyle() {
-            const current = document.body.getAttribute('data-highlight-style') || 'option1';
-            const currentIdx = HIGHLIGHT_STYLES.indexOf(current);
-            const nextIdx = (currentIdx + 1) % HIGHLIGHT_STYLES.length;
-            const next = HIGHLIGHT_STYLES[nextIdx];
-            
-            document.body.setAttribute('data-highlight-style', next);
-            localStorage.setItem(HIGHLIGHT_STYLE_KEY, next);
-            
-            const btn = document.getElementById('highlight-style-btn');
-            if (btn) updateHighlightButtonLabel(btn, next);
-        }
-        
-        // Initialize when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initHighlightStyleToggle);
-        } else {
-            initHighlightStyleToggle();
-        }
-
         // Filter panel toggle
         document.getElementById('filter-toggle-btn')?.addEventListener('click', () => {
             const panel = document.getElementById('filter-panel');

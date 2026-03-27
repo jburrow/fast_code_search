@@ -221,6 +221,88 @@
 }
 
 /* ============================================
+   DEPS POPOVER
+   ============================================ */
+
+.deps-popover {
+    position: fixed;
+    z-index: 2001;
+    display: none;
+    min-width: 220px;
+    max-width: 380px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 8px 28px var(--shadow-lg);
+    overflow: hidden;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+}
+
+.deps-popover-header {
+    padding: 0.3rem 0.65rem;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    color: var(--color-path);
+    font-size: 0.72rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.deps-popover-section {
+    padding: 0.45rem 0.65rem 0.4rem;
+}
+
+.deps-popover-section + .deps-popover-section {
+    border-top: 1px solid var(--border);
+}
+
+.deps-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.3rem;
+}
+
+.deps-popover ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.deps-popover li {
+    padding: 0.12rem 0;
+    color: var(--color-path);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.75rem;
+    line-height: 1.45;
+}
+
+.deps-more {
+    display: inline-block;
+    margin-top: 0.25rem;
+    color: var(--accent);
+    font-style: italic;
+    cursor: pointer;
+    font-size: 0.72rem;
+}
+
+.deps-more:hover {
+    text-decoration: underline;
+}
+
+.deps-popover-loading {
+    padding: 0.5rem 0.65rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 
