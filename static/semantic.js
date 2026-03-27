@@ -1,6 +1,11 @@
 // ============================================
 // SEMANTIC SEARCH - View-specific logic
 // Uses: common.js
+//
+// NOTE: This semantic UI is simplified compared to keyword search (keyword.js).
+// No tooltips, no full-file modal, no advanced filtering/ranking options.
+// If adding these features in the future, ensure tooltip cleanup behavior
+// matches keyword.js (call hideContextTooltipImmediately() before opening modals).
 // ============================================
 
 const API_BASE = '/api';

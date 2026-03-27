@@ -185,6 +185,57 @@ When changing code, update:
 
 Instruction governance source: `docs/INSTRUCTION_FILES_BLUEPRINT.md`
 
+## Web UI Architecture & Consistency
+
+### Two Parallel Search Interfaces
+
+| Aspect | Keyword Search (`index.html`) | Semantic Search (`semantic.html`) |
+|--------|------|------|
+| **File** | `static/index.html` + `static/keyword.js` | `static/semantic.html` + `static/semantic.js` |
+| **Features** | Advanced: regex, filtering, symbols, ranking, context lines | Simplified: basic semantic matching only |
+| **Result Interaction** | Hover tooltips + full-file modal viewer | Read-only card display (no tooltips/modal) |
+| **UI Framework** | Tailwind CSS + custom layout | Tailwind CSS + custom layout |
+
+### Consistent Behaviors (Must Stay in Sync)
+
+Both UIs **must maintain consistency** in:
+1. **Search History** — localStorage (`fcs_history` / `fcs_sem_history`) via `loadHistory()` / `saveToHistory()`
+2. **Settings Persistence** — localStorage (`fcs_settings` / `fcs_sem_settings`) via `loadSettingsToStorage()`
+3. **URL State** — query parameter sync via `syncUrlFromState()` and `loadStateFromUrl()`
+4. **Index Readiness** — shared `searchReadiness` object from `common.js` (progress, WebSocket, readiness signals)
+5. **Backend Health** — both call `checkBackendHealth()` and render status banners identically
+6. **HTML Escaping** — both use `escapeHtml()` from `common.js` to prevent XSS
+7. **Language Badges** — both use `langClassForPath()` from `common.js` for consistent language coloring
+8. **Loading/Error States** — both use `showLoading()` / `showError()` from `common.js`
+
+### UI-Specific Behaviors (Do NOT Transfer)
+
+**Keyword Search Only:**
+- Context tooltip system (`hideContextTooltipImmediately()`, `showContextTooltip()`, `_ctxTooltip`) — **Tooltip must dismiss immediately when viewing a file to prevent lingering underneath the modal**
+- Full-file modal viewer (`showFileModal()`, `closeFileModal()`)
+- Regex mode, symbol-only filtering, ranking mode selection
+- Context lines display in results
+- Path filtering (include/exclude patterns)
+
+**Semantic Search Only:**
+- Similarity score bar visualization
+- Chunk type badges (function, class, module — not in keyword search)
+- Simplified 1-step result display (no drill-down)
+
+### When Updating Frontend Code
+
+1. **Shared code** (in `common.js`): Update both UIs via the shared function
+2. **Keyword-only features**: Update `keyword.js` only; never port to semantic unless UX parity is intentional
+3. **Semantic-only features**: Update `semantic.js` only; never port to keyword (would overcomplicate the interface)
+4. **New shared feature** (e.g., a new badge type, new localStorage key): Add to `common.js` first, then use in both UIs
+5. **After any edit to common.js**: Test both `index.html` **and** `semantic.html` in the browser to confirm consistency
+
+### Tooltip Cleanup (Keyword UI)
+
+When clicking to view a file or performing any navigation that opens a modal/overlay:
+- Always call `hideContextTooltipImmediately()` **before** rendering the modal to prevent tooltip artifacts
+- This function clears pending timers, aborts in-flight fetches, and hides the element immediately (unlike the delayed `hideContextTooltip()`)
+
 ## Benchmarks
 
 ```bash

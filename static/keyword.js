@@ -671,6 +671,17 @@ function hideContextTooltip() {
     }, 150);
 }
 
+function hideContextTooltipImmediately() {
+    clearTimeout(_ctxHideTimer);
+    if (_ctxFetchController) {
+        _ctxFetchController.abort();
+        _ctxFetchController = null;
+    }
+    if (_ctxTooltip) {
+        _ctxTooltip.style.display = 'none';
+    }
+}
+
 async function showContextTooltip(resultItem, filePath, lineNumber) {
     clearTimeout(_ctxHideTimer);
     if (_ctxFetchController) _ctxFetchController.abort();
@@ -1047,6 +1058,9 @@ function renderFileLine(line, lineNum, highlightLine) {
 let _fileModalOverlayListener = null;
 
 async function showFileModal(filePath, highlightLine) {
+    // Ensure hover preview is not left visible behind the modal.
+    hideContextTooltipImmediately();
+
     // Clean up any existing file modal and its listeners
     const existingModal = document.getElementById('file-modal');
     if (existingModal) {
