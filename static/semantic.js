@@ -339,12 +339,51 @@ function displayResults(results, query, latency) {
         `;
         return;
     }
-    
-    const resultsHtml = results.map(result => createResultCard(result)).join('');
+
+    const groupedResults = groupResultsByFile(results);
+    const resultsHtml = groupedResults.map(group => createGroupedResultCard(group)).join('');
     resultsContainer.innerHTML = createResultsSummary(results.length, latency) + resultsHtml;
 }
 
-function createResultCard(result) {
+function createGroupedResultCard(group) {
+    const firstResult = group.hits[0];
+    const ext = (group.filePath.split('.').pop() || '').toLowerCase();
+    const langClass = langClassForPath(group.filePath);
+    const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
+    const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${ext}</span>` : '';
+
+    const lastSlash = group.filePath.lastIndexOf('/');
+    const fileDir = lastSlash >= 0 ? group.filePath.slice(0, lastSlash + 1) : '';
+    const fileName = lastSlash >= 0 ? group.filePath.slice(lastSlash + 1) : group.filePath;
+
+    const hitsHtml = group.hits.map((result, idx) => createSemanticHitCard(result, idx > 0)).join('');
+
+    return `
+        <div class="result-item">
+            <div class="result-header">
+                <div class="result-info">
+                    <div class="result-file">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:#7a785f">description</span>
+                        <span style="color:#7a785f;font-weight:400">${escapeHtml(fileDir)}</span><span style="font-weight:700">${escapeHtml(fileName)}</span>
+                    </div>
+                    <div class="result-meta">
+                        ${langBadge}
+                        <span class="result-badge">${group.hits.length} ${group.hits.length === 1 ? 'CHUNK' : 'CHUNKS'}</span>
+                    </div>
+                </div>
+                <div class="result-score" title="Top similarity score in file: ${(firstResult.similarity_score * 100).toFixed(1)}%">
+                    <div class="score-bar">
+                        <div class="score-fill" style="width: ${Math.min(100, firstResult.similarity_score * 100)}%"></div>
+                    </div>
+                    <span class="score-value">${(firstResult.similarity_score * 100).toFixed(1)}%</span>
+                </div>
+            </div>
+            ${hitsHtml}
+        </div>
+    `;
+}
+
+function createSemanticHitCard(result, addTopBorder) {
     const score = (result.similarity_score * 100).toFixed(1);
     const scorePercent = Math.min(100, parseFloat(score));
 
@@ -361,21 +400,13 @@ function createResultCard(result) {
     const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
     const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${ext}</span>` : '';
 
-    // Split path into dir + filename
-    const lastSlash = result.file_path.lastIndexOf('/');
-    const fileDir  = lastSlash >= 0 ? result.file_path.slice(0, lastSlash + 1) : '';
-    const fileName = lastSlash >= 0 ? result.file_path.slice(lastSlash + 1) : result.file_path;
-
     const codeWithLines = formatCodeWithLineNumbers(result.content, result.start_line);
+    const wrapperStyle = addTopBorder ? 'border-top:1px solid var(--border);' : '';
 
     return `
-        <div class="result-item">
-            <div class="result-header">
+        <div style="${wrapperStyle}">
+            <div class="result-header" style="padding-top:0.75rem;padding-bottom:0.5rem;">
                 <div class="result-info">
-                    <div class="result-file">
-                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:#7a785f">description</span>
-                        <span style="color:#7a785f;font-weight:400">${escapeHtml(fileDir)}</span><span style="font-weight:700">${escapeHtml(fileName)}</span>
-                    </div>
                     <div class="result-meta">
                         ${langBadge}
                         <span class="${chunkClass}">${chunkLabel}</span>
@@ -395,6 +426,34 @@ function createResultCard(result) {
             </div>
         </div>
     `;
+}
+
+function groupResultsByFile(results) {
+    const groups = [];
+    const indexByPath = new Map();
+
+    results.forEach((result) => {
+        const key = normalizeFileGroupKey(result.file_path);
+        let groupIndex = indexByPath.get(key);
+
+        if (groupIndex === undefined) {
+            groupIndex = groups.length;
+            indexByPath.set(key, groupIndex);
+            groups.push({ filePath: key, hits: [] });
+        }
+
+        groups[groupIndex].hits.push(result);
+    });
+
+    return groups;
+}
+
+function normalizeFileGroupKey(filePath) {
+    if (!filePath) return '';
+
+    // Normalize separators and case so Windows path variants collapse into one group.
+    const normalizedSlashes = filePath.replace(/\\/g, '/');
+    return normalizedSlashes.toLowerCase();
 }
 
 /**

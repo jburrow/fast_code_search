@@ -779,15 +779,17 @@ async function performSearch() {
             return;
         }
 
-        resultsContainer.innerHTML = data.results.map(result => {
-            const matchType = getMatchTypeLabel(result.match_type);
-            const depCount = result.dependency_count || 0;
-            const lang = hljsLangForPath(result.file_path);
-            const ext = (result.file_path.split('.').pop() || '').toLowerCase();
-            const langClass = langClassForPath(result.file_path);
+        const groupedResults = groupResultsByFile(data.results);
+
+        resultsContainer.innerHTML = groupedResults.map(group => {
+            const firstHit = group.hits[0];
+            const depCount = Math.max(...group.hits.map(hit => hit.dependency_count || 0));
+            const lang = hljsLangForPath(group.filePath);
+            const ext = (group.filePath.split('.').pop() || '').toLowerCase();
+            const langClass = langClassForPath(group.filePath);
 
             // Split path into directory + filename for display
-            const pathParts = result.file_path.split('/');
+            const pathParts = group.filePath.split('/');
             const fileName = pathParts.pop();
             const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
 
@@ -800,72 +802,92 @@ async function performSearch() {
             // Dependency badge
             const depBadge = depCount > 0
                 ? `<span style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                    onmouseenter="showDepsTooltip(this,'${escapeHtml(result.file_path)}')"
+                    onmouseenter="showDepsTooltip(this,'${escapeHtml(group.filePath)}')"
                     onmouseleave="hideDepsTooltip()"
-                    onclick="hideDepsTooltipImmediately();showDependents('${escapeHtml(result.file_path)}')">${depCount} deps</span>`
+                    onclick="hideDepsTooltipImmediately();showDependents('${escapeHtml(group.filePath)}')">${depCount} deps</span>`
                 : '';
 
-            // Match type badge
-            const typeBadgeStyle = matchType.isSymbol
-                ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
-                : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
+            const hitsHtml = group.hits.map((result, idx) => {
+                const matchType = getMatchTypeLabel(result.match_type);
+                const typeBadgeStyle = matchType.isSymbol
+                    ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
+                    : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
 
-            // Build code content — with context lines if available, otherwise just the match line
-            let codeContent;
-            if (result.context_lines && result.context_lines.length > 0) {
-                const startLine = result.context_start_line || 1;
-                codeContent = result.context_lines.map((line, i) => {
-                    const lineNum = startLine + i;
-                    const isMatch = lineNum === result.line_number;
-                    const lineStyle = isMatch
-                        ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
-                        : 'display:flex;border-left:3px solid transparent';
-                    return `<div style="${lineStyle}">` +
-                        `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
-                        `<span class="ctx-line-content${isMatch ? ' match-line' : ''}" style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
-                        `</div>`;
-                }).join('');
-            } else {
-                codeContent = escapeHtml(result.content);
-            }
+                // Build code content — with context lines if available, otherwise just the match line
+                let codeContent;
+                if (result.context_lines && result.context_lines.length > 0) {
+                    const startLine = result.context_start_line || 1;
+                    codeContent = result.context_lines.map((line, i) => {
+                        const lineNum = startLine + i;
+                        const isMatch = lineNum === result.line_number;
+                        const lineStyle = isMatch
+                            ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
+                            : 'display:flex;border-left:3px solid transparent';
+                        return `<div style="${lineStyle}">` +
+                            `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
+                            `<span class="ctx-line-content${isMatch ? ' match-line' : ''}" style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
+                            `</div>`;
+                    }).join('');
+                } else {
+                    codeContent = escapeHtml(result.content);
+                }
 
-            const preClass = result.context_lines
-                ? `result-code result-code-ctx language-${lang}`
-                : `result-code language-${lang}`;
+                const preClass = result.context_lines
+                    ? `result-code result-code-ctx language-${lang}`
+                    : `result-code language-${lang}`;
+
+                const hitContainerStyle = idx === 0
+                    ? 'background:#fff'
+                    : 'background:#fff;border-top:1px solid #d4d0ba';
+
+                return `
+                    <div style="${hitContainerStyle}">
+                        <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="font-label text-xs" style="color:#7a785f;flex-shrink:0">line ${result.line_number}</span>
+                                <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
+                            </div>
+                            <div class="flex items-center gap-3 flex-shrink-0">
+                                <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7a785f;text-transform:uppercase"
+                                    title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + log10(import count)&#10;&#10;Higher scores rank first.">
+                                    ${result.score.toFixed(2)}
+                                </span>
+                                <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
+                                    style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                                    data-file-path="${escapeHtml(result.file_path)}"
+                                    data-line-number="${result.line_number}"
+                                    title="View full file at this line">open_in_new</button>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto" style="background:#fff">
+                            <pre class="${preClass}" data-query="${escapeHtml(query)}" data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
+                        </div>
+                    </div>
+                `;
+            }).join('');
 
             return `
-                <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${result.line_number}">
-                    <!-- Card header -->
+                <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${firstHit.line_number}">
+                    <!-- File header -->
                     <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
                         <div class="flex items-center gap-2 min-w-0">
                             <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">${fileIcon}</span>
-                            <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(result.file_path)}">
+                            <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
                                 ${dirPath ? `<span style="color:#7a785f;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
                             </span>
-                            <span class="font-label text-xs" style="color:#7a785f;flex-shrink:0">:${result.line_number}</span>
+                            <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
                         </div>
-                        <div class="flex items-center gap-3 flex-shrink-0">
-                            <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7a785f;text-transform:uppercase"
-                                title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + log10(import count)&#10;&#10;Higher scores rank first.">
-                                ${result.score.toFixed(2)}
-                            </span>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
+                            ${depBadge}
                             <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
                                 style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
-                                data-file-path="${escapeHtml(result.file_path)}"
-                                data-line-number="${result.line_number}"
+                                data-file-path="${escapeHtml(group.filePath)}"
+                                data-line-number="${firstHit.line_number}"
                                 title="View full file">open_in_new</button>
                         </div>
                     </div>
-                    <!-- Code content -->
-                    <div class="overflow-x-auto" style="background:#fff">
-                        <pre class="${preClass}" data-query="${escapeHtml(query)}" data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
-                    </div>
-                    <!-- Footer badges -->
-                    <div class="px-4 py-1.5 flex gap-2 flex-wrap items-center" style="background:#f8f4df;border-top:1px solid #cbc8aa">
-                        ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
-                        <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
-                        ${depBadge}
-                    </div>
+                    ${hitsHtml}
                 </div>
             `;
         }).join('');
@@ -913,6 +935,37 @@ async function performSearch() {
 }
 
 const debouncedSearch = debounce(performSearch, DEBOUNCE_MS);
+
+function groupResultsByFile(results) {
+    const groups = [];
+    const indexByPath = new Map();
+
+    results.forEach((result) => {
+        const key = normalizeFileGroupKey(result.file_path);
+        let groupIndex = indexByPath.get(key);
+
+        if (groupIndex === undefined) {
+            groupIndex = groups.length;
+            indexByPath.set(key, groupIndex);
+            groups.push({
+                filePath: key,
+                hits: [],
+            });
+        }
+
+        groups[groupIndex].hits.push(result);
+    });
+
+    return groups;
+}
+
+function normalizeFileGroupKey(filePath) {
+    if (!filePath) return '';
+
+    // Normalize separators and case so Windows path variants collapse into one group.
+    const normalizedSlashes = filePath.replace(/\\/g, '/');
+    return normalizedSlashes.toLowerCase();
+}
 
 // ============================================
 // DEPS BADGE POPOVER
