@@ -35,7 +35,19 @@
         body {
             background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
         }
-        /* Query match highlight */
+        /* CSS variables — update once, apply everywhere */
+        :root {
+            --hl-line-bg:     #fff900;
+            --hl-left-border: #646100;
+        }
+        body[data-highlight-style="option3"] { --hl-line-bg: rgba(255,249,0,0.5); }
+        body[data-highlight-style="option4"] { --hl-line-bg: rgba(255,249,0,0.7); }
+        body[data-highlight-style="option5"] { --hl-line-bg: #fffde7; --hl-left-border: #9e9d2a; }
+
+        /* Query match highlight — three style options, same color (#fff900) */
+        /* Option 1: Original (solid yellow, bold text) */
+        body[data-highlight-style="option1"] mark.highlight,
+        body[data-highlight-style="option1"] .code-highlight,
         mark.highlight, .code-highlight {
             background-color: #fff900;
             color: #000;
@@ -43,6 +55,49 @@
             border-radius: 0;
             font-style: inherit;
             font-weight: bold;
+        }
+        /* Option 2: Yellow with border for definition */
+        body[data-highlight-style="option2"] mark.highlight,
+        body[data-highlight-style="option2"] .code-highlight {
+            background-color: #fff900;
+            color: #000;
+            border: 1px solid #000;
+            padding: 0 3px;
+            border-radius: 1px;
+            font-style: inherit;
+            font-weight: bold;
+        }
+        /* Option 3: Yellow semi-transparent (lets code show through) */
+        body[data-highlight-style="option3"] mark.highlight,
+        body[data-highlight-style="option3"] .code-highlight {
+            background-color: rgba(255, 249, 0, 0.5);
+            color: inherit;
+            padding: 0 2px;
+            border-radius: 0;
+            font-style: inherit;
+            font-weight: normal;
+        }
+        /* Option 4: Semi-transparent yellow with black border */
+        body[data-highlight-style="option4"] mark.highlight,
+        body[data-highlight-style="option4"] .code-highlight {
+            background-color: rgba(255, 249, 0, 0.7);
+            color: inherit;
+            border: 1px solid #000;
+            padding: 0 3px;
+            border-radius: 1px;
+            font-style: inherit;
+            font-weight: normal;
+        }
+        /* Option 5: Original cream background (#fffde7) with black border */
+        body[data-highlight-style="option5"] mark.highlight,
+        body[data-highlight-style="option5"] .code-highlight {
+            background-color: #fffde7;
+            color: inherit;
+            border: 1px solid #000;
+            padding: 0 3px;
+            border-radius: 1px;
+            font-style: inherit;
+            font-weight: normal;
         }
         /* Result code block — neutralise hljs background */
         .result-code, .result-code.hljs {
@@ -160,7 +215,12 @@
             line-height: 1.55;
         }
         .file-line:hover { background: #f8f4df; }
-        .file-line-highlight { background: #fff900 !important; }
+        /* Matched line highlight — driven by CSS variable, always in sync */
+        .file-line-highlight { background: var(--hl-line-bg) !important; }
+        /* Border options (2, 4 & 5) */
+        body[data-highlight-style="option2"] .file-line-highlight,
+        body[data-highlight-style="option4"] .file-line-highlight,
+        body[data-highlight-style="option5"] .file-line-highlight { outline: 1px solid #000; }
         .file-line-num {
             color: #7a785f;
             min-width: 3rem;
@@ -519,6 +579,55 @@
     <script src="/common.js"></script>
     <script src="/keyword.js"></script>
     <script>
+        // ===== HIGHLIGHT STYLE SWITCHER =====
+        const HIGHLIGHT_STYLES = ['option1', 'option2', 'option3', 'option4', 'option5'];
+        const HIGHLIGHT_STYLE_KEY = 'fcs_highlight_style';
+        
+        function initHighlightStyleToggle() {
+            // Load saved preference or default to option1
+            const saved = localStorage.getItem(HIGHLIGHT_STYLE_KEY) || 'option1';
+            document.body.setAttribute('data-highlight-style', saved);
+            
+            // Create toggle button in header nav
+            const nav = document.querySelector('header nav');
+            if (nav) {
+                const btn = document.createElement('button');
+                btn.id = 'highlight-style-btn';
+                btn.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;padding:0 12px;font-size:0.8rem;font-family:inherit;font-weight:500;opacity:0.7;transition:opacity 0.2s;';
+                btn.title = 'Cycle highlight styles: Option 1 → 2 → 3 → 4 → 1';
+                updateHighlightButtonLabel(btn, saved);
+                btn.addEventListener('click', cycleHighlightStyle);
+                btn.addEventListener('mouseenter', (e) => e.target.style.opacity = '1');
+                btn.addEventListener('mouseleave', (e) => e.target.style.opacity = '0.7');
+                nav.appendChild(btn);
+            }
+        }
+        
+        function updateHighlightButtonLabel(btn, style) {
+            const num = style.replace('option', '');
+            btn.textContent = `Highlight: ${num}`;
+        }
+        
+        function cycleHighlightStyle() {
+            const current = document.body.getAttribute('data-highlight-style') || 'option1';
+            const currentIdx = HIGHLIGHT_STYLES.indexOf(current);
+            const nextIdx = (currentIdx + 1) % HIGHLIGHT_STYLES.length;
+            const next = HIGHLIGHT_STYLES[nextIdx];
+            
+            document.body.setAttribute('data-highlight-style', next);
+            localStorage.setItem(HIGHLIGHT_STYLE_KEY, next);
+            
+            const btn = document.getElementById('highlight-style-btn');
+            if (btn) updateHighlightButtonLabel(btn, next);
+        }
+        
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initHighlightStyleToggle);
+        } else {
+            initHighlightStyleToggle();
+        }
+
         // Filter panel toggle
         document.getElementById('filter-toggle-btn')?.addEventListener('click', () => {
             const panel = document.getElementById('filter-panel');

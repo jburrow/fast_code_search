@@ -891,7 +891,7 @@ async function performSearch() {
                     const lineNum = startLine + i;
                     const isMatch = lineNum === result.line_number;
                     const lineStyle = isMatch
-                        ? 'display:flex;background:#fffde7;border-left:3px solid #646100'
+                        ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
                         : 'display:flex;border-left:3px solid transparent';
                     return `<div style="${lineStyle}">` +
                         `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
