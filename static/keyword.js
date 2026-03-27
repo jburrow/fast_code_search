@@ -87,114 +87,39 @@ function loadSettingsFromStorage() {
 // SEARCH HISTORY
 // ============================================
 
-/**
- * Load search history array from localStorage.
- * Returns an array of unique query strings (most-recent first).
- */
+// ============================================
+// SEARCH HISTORY (uses shared utilities from common.js)
+// ============================================
+
 function loadHistory() {
-    try {
-        const raw = localStorage.getItem(LS_HISTORY_KEY);
-        return raw ? JSON.parse(raw) : [];
-    } catch (_) {
-        return [];
-    }
+    return loadSearchHistory(LS_HISTORY_KEY);
 }
 
-/**
- * Persist a successful query to search history.
- */
 function saveToHistory(query) {
-    if (!query || query.length < 2) return;
-    try {
-        let history = loadHistory();
-        // Remove duplicate, then prepend
-        history = history.filter(q => q !== query);
-        history.unshift(query);
-        if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
-        localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(history));
-    } catch (_) { /* storage unavailable */ }
+    saveSearchHistory(LS_HISTORY_KEY, query, MAX_HISTORY);
 }
 
-/**
- * Clear all saved search history.
- */
 function clearHistory() {
-    try { localStorage.removeItem(LS_HISTORY_KEY); } catch (_) { /* ignore */ }
+    clearSearchHistory(LS_HISTORY_KEY);
     hideHistoryDropdown();
 }
 
-let _historyDropdownFocusedIdx = -1;
-
 function showHistoryDropdown(filter) {
-    if (!searchHistoryDropdown) return;
-    const all = loadHistory();
-    const matches = filter
-        ? all.filter(q => q.toLowerCase().includes(filter.toLowerCase()))
-        : all;
-
-    if (matches.length === 0) {
-        hideHistoryDropdown();
-        return;
-    }
-
-    _historyDropdownFocusedIdx = -1;
-    searchHistoryDropdown.innerHTML = matches.slice(0, 10).map((q, i) =>
-        `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-primary-container font-label text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
-            <span class="material-symbols-outlined" style="font-size:14px;color:#7a785f;flex-shrink:0">history</span>
-            <span class="flex-1 truncate">${escapeHtml(q)}</span>
-            <button class="history-delete material-symbols-outlined ml-auto flex-shrink-0" style="font-size:14px;color:#7a785f;background:none;border:none;cursor:pointer;padding:0" data-query="${escapeHtml(q)}" title="Remove">close</button>
-        </div>`
-    ).join('') +
-    `<div class="flex items-center justify-end px-4 py-1.5 border-t border-outline-variant">
-        <button id="clear-history-btn" class="font-label text-[10px] text-outline hover:text-black transition-colors">CLEAR ALL HISTORY</button>
-    </div>`;
-
-    searchHistoryDropdown.style.display = 'block';
-
-    // Attach click handlers
-    searchHistoryDropdown.querySelectorAll('.history-item').forEach(item => {
-        item.addEventListener('mousedown', (e) => {
-            // Ignore clicks on the delete button itself
-            if (e.target.classList.contains('history-delete')) return;
-            e.preventDefault();
-            queryInput.value = item.dataset.query;
-            hideHistoryDropdown();
+    showSearchHistoryDropdown(searchHistoryDropdown, queryInput, LS_HISTORY_KEY,
+        (selectedQuery) => {
+            queryInput.value = selectedQuery;
             performSearch();
-        });
-    });
-
-    searchHistoryDropdown.querySelectorAll('.history-delete').forEach(btn => {
-        btn.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const q = btn.dataset.query;
-            try {
-                let h = loadHistory().filter(x => x !== q);
-                localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(h));
-            } catch (_) { /* ignore */ }
-            showHistoryDropdown(queryInput.value.trim());
-        });
-    });
-
-    const clearBtn = document.getElementById('clear-history-btn');
-    if (clearBtn) clearBtn.addEventListener('mousedown', (e) => { e.preventDefault(); clearHistory(); });
+        },
+        () => showHistoryDropdown(queryInput.value.trim())
+    );
 }
 
 function hideHistoryDropdown() {
-    if (searchHistoryDropdown) searchHistoryDropdown.style.display = 'none';
-    _historyDropdownFocusedIdx = -1;
+    hideSearchHistoryDropdown(searchHistoryDropdown);
 }
 
 function navigateHistoryDropdown(dir) {
-    if (!searchHistoryDropdown || searchHistoryDropdown.style.display === 'none') return false;
-    const items = Array.from(searchHistoryDropdown.querySelectorAll('.history-item'));
-    if (items.length === 0) return false;
-    _historyDropdownFocusedIdx = Math.max(-1, Math.min(items.length - 1, _historyDropdownFocusedIdx + dir));
-    items.forEach((el, i) => el.classList.toggle('bg-primary-container', i === _historyDropdownFocusedIdx));
-    if (_historyDropdownFocusedIdx >= 0) {
-        queryInput.value = items[_historyDropdownFocusedIdx].dataset.query;
-    }
-    return true;
+    return navigateSearchHistoryDropdown(searchHistoryDropdown, queryInput, dir);
 }
 
 // ============================================

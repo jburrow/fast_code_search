@@ -654,6 +654,123 @@ function langClassForPath(filePath) {
     return MAP[ext] || null;
 }
 
+// ============================================
+// SHARED SEARCH HISTORY UTILITIES
+// ============================================
+
+/**
+ * Load search history from a specific storage key.
+ * @param {string} storageKey - localStorage key (e.g., 'fcs_history')
+ * @returns {Array<string>} History array, most-recent first
+ */
+function loadSearchHistory(storageKey) {
+    try {
+        const raw = localStorage.getItem(storageKey);
+        return raw ? JSON.parse(raw) : [];
+    } catch (_) { return []; }
+}
+
+/**
+ * Save a query to search history.
+ * @param {string} storageKey - localStorage key
+ * @param {string} query - Query to save
+ * @param {number} maxSize - Max history size (default: 50)
+ */
+function saveSearchHistory(storageKey, query, maxSize = 50) {
+    if (!query || query.length < 2) return;
+    try {
+        let history = loadSearchHistory(storageKey).filter(q => q !== query);
+        history.unshift(query);
+        if (history.length > maxSize) history = history.slice(0, maxSize);
+        localStorage.setItem(storageKey, JSON.stringify(history));
+    } catch (_) { /* storage unavailable */ }
+}
+
+/**
+ * Clear all history for a storage key.
+ * @param {string} storageKey - localStorage key
+ */
+function clearSearchHistory(storageKey) {
+    try { localStorage.removeItem(storageKey); } catch (_) { /* ignore */ }
+}
+
+/**
+ * Render and show history dropdown with callbacks.
+ * @param {HTMLElement} dropdownEl - Dropdown to populate
+ * @param {HTMLInputElement} queryInput - Query input field
+ * @param {string} storageKey - localStorage key
+ * @param {Function} onSelectQuery - Callback: (query) => void
+ * @param {Function} onDelete - Callback: (query) => void (optional)
+ */
+function showSearchHistoryDropdown(dropdownEl, queryInput, storageKey, onSelectQuery, onDelete = null) {
+    if (!dropdownEl) return;
+    const filter = queryInput?.value?.trim() || '';
+    const all = loadSearchHistory(storageKey);
+    const matches = filter ? all.filter(q => q.toLowerCase().includes(filter.toLowerCase())) : all;
+    if (matches.length === 0) { dropdownEl.style.display = 'none'; return; }
+
+    dropdownEl.innerHTML = matches.slice(0, 10).map((q, i) =>
+        `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-primary-container font-label text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
+            <span class="material-symbols-outlined" style="font-size:14px;color:#7a785f;flex-shrink:0">history</span>
+            <span class="flex-1 truncate">${escapeHtml(q)}</span>
+            <button class="history-delete material-symbols-outlined ml-auto flex-shrink-0" style="font-size:14px;color:#7a785f;background:none;border:none;cursor:pointer;padding:0" data-query="${escapeHtml(q)}" title="Remove">close</button>
+        </div>`
+    ).join('') + `<div class="flex items-center justify-end px-4 py-1.5 border-t border-outline-variant">
+        <button id="clear-history-btn" class="font-label text-[10px] text-outline hover:text-black transition-colors">CLEAR ALL HISTORY</button>
+    </div>`;
+    dropdownEl.style.display = 'block';
+
+    dropdownEl.querySelectorAll('.history-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('history-delete')) return;
+            e.preventDefault();
+            dropdownEl.style.display = 'none';
+            if (onSelectQuery) onSelectQuery(item.dataset.query);
+        });
+    });
+
+    dropdownEl.querySelectorAll('.history-delete').forEach(btn => {
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const q = btn.dataset.query;
+            try { let h = loadSearchHistory(storageKey).filter(x => x !== q); localStorage.setItem(storageKey, JSON.stringify(h)); } catch (_) {}
+            if (onDelete) onDelete(q);
+            showSearchHistoryDropdown(dropdownEl, queryInput, storageKey, onSelectQuery, onDelete);
+        });
+    });
+
+    const clearBtn = document.getElementById('clear-history-btn');
+    if (clearBtn) clearBtn.addEventListener('mousedown', (e) => { e.preventDefault(); clearSearchHistory(storageKey); dropdownEl.style.display = 'none'; });
+}
+
+/**
+ * Hide history dropdown.
+ * @param {HTMLElement} dropdownEl - Dropdown to hide
+ */
+function hideSearchHistoryDropdown(dropdownEl) {
+    if (dropdownEl) dropdownEl.style.display = 'none';
+}
+
+/**
+ * Navigate history dropdown with arrow keys.
+ * @param {HTMLElement} dropdownEl - Dropdown element
+ * @param {HTMLInputElement} queryInput - Query input to update
+ * @param {number} direction - +1 for down, -1 for up
+ * @returns {boolean} True if handled
+ */
+function navigateSearchHistoryDropdown(dropdownEl, queryInput, direction) {
+    if (!dropdownEl || dropdownEl.style.display === 'none') return false;
+    const items = Array.from(dropdownEl.querySelectorAll('.history-item'));
+    if (items.length === 0) return false;
+    let focusedIdx = parseInt(dropdownEl.dataset.focusedIdx || '-1', 10);
+    focusedIdx = Math.max(-1, Math.min(items.length - 1, focusedIdx + direction));
+    dropdownEl.dataset.focusedIdx = focusedIdx;
+    items.forEach((el, i) => el.classList.toggle('bg-primary-container', i === focusedIdx));
+    if (focusedIdx >= 0 && queryInput) queryInput.value = items[focusedIdx].dataset.query;
+    return true;
+}
+
 // Export for module usage (if needed in future)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
