@@ -9,8 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2026-03-27
 
+### Added
+- Dependency popover and tooltip interactions in the web UI to improve code navigation context.
+- Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.
+
 ### Changed
-- Release version bump.
+- Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.
+- Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.
+
+### Fixed
+- Keyword UI tooltip cleanup behavior now hides context tooltips immediately when opening file views/modal overlays, preventing lingering tooltip artifacts.
 
 ## [0.7.5] - 2026-03-24
 
