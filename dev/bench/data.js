@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774596279861,
+  "lastUpdate": 1774615414470,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -7643,6 +7643,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 1333139,
             "range": "± 26612",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "distinct": true,
+          "id": "4f5c3504593c9097f6d7ebcdea1f81417d5a4019",
+          "message": "refactor: remove redundant syntax highlighting and tooltip styles, inherit from common.css",
+          "timestamp": "2026-03-27T11:52:50Z",
+          "tree_id": "ebe8d5ac9e576797a0f835ce1775ba4014af108c",
+          "url": "https://github.com/jburrow/fast_code_search/commit/4f5c3504593c9097f6d7ebcdea1f81417d5a4019"
+        },
+        "date": 1774615413953,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 287127,
+            "range": "± 8835",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 22283,
+            "range": "± 779",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 476,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 503847,
+            "range": "± 32026",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 23440,
+            "range": "± 851",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 600,
+            "range": "± 18",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 935715,
+            "range": "± 15777",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 23910,
+            "range": "± 796",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 962,
+            "range": "± 53",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 344623,
+            "range": "± 8207",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 593965,
+            "range": "± 11445",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 502577,
+            "range": "± 5792",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 804638,
+            "range": "± 3194",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 500285,
+            "range": "± 13566",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 335842,
+            "range": "± 2269",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 499942,
+            "range": "± 3298",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 683423,
+            "range": "± 5427",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 497988,
+            "range": "± 15797",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 507242,
+            "range": "± 26435",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 233645,
+            "range": "± 4999",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 487111,
+            "range": "± 15069",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 495655,
+            "range": "± 12571",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 472777,
+            "range": "± 8251",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 313165,
+            "range": "± 9243",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 280339,
+            "range": "± 8065",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 3745,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 18694840,
+            "range": "± 55646",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 37087610,
+            "range": "± 42505",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 73597655,
+            "range": "± 276218",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 32255866,
+            "range": "± 50827",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 33082266,
+            "range": "± 42874",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 63977528,
+            "range": "± 273489",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 66294713,
+            "range": "± 719660",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 867930,
+            "range": "± 16912",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3245403,
+            "range": "± 31290",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6094062,
+            "range": "± 470018",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1799585,
+            "range": "± 7919",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 7299880,
+            "range": "± 144176",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 14683293,
+            "range": "± 49447",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 174890,
+            "range": "± 2230",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 297474,
+            "range": "± 10992",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 451340,
+            "range": "± 1758",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 125593,
+            "range": "± 2617",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 565881,
+            "range": "± 17722",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1129152,
+            "range": "± 37291",
             "unit": "ns/iter"
           }
         ]
