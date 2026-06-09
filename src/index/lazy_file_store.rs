@@ -37,8 +37,6 @@ pub struct LazyMappedFile {
     /// evicted — both are infrequent operations that occur only when the OS
     /// `vm.max_map_count` limit is exceeded.
     content_fallback: Mutex<Option<Vec<u8>>>,
-    /// Cached result of UTF-8 validation
-    utf8_valid: OnceLock<bool>,
     /// Transcoded UTF-8 content for non-UTF-8 files (None if natively UTF-8)
     transcoded: OnceLock<Option<String>>,
     /// Detected encoding name for diagnostics (None if natively UTF-8)
@@ -52,7 +50,6 @@ impl LazyMappedFile {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
             content_fallback: Mutex::new(None),
-            utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
         }
@@ -64,7 +61,6 @@ impl LazyMappedFile {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
             content_fallback: Mutex::new(None),
-            utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
         };
@@ -171,15 +167,12 @@ impl LazyMappedFile {
         match self.ensure_mapped() {
             Ok(mmap) => {
                 let bytes = &mmap[..];
-                let is_valid = *self
-                    .utf8_valid
-                    .get_or_init(|| std::str::from_utf8(bytes).is_ok());
-
-                if is_valid {
-                    // SAFETY: We validated UTF-8 above and cached the result
-                    return Ok(Cow::Borrowed(unsafe {
-                        std::str::from_utf8_unchecked(bytes)
-                    }));
+                // Re-validate on every call rather than caching: the bytes behind
+                // the mmap can change if the file is rewritten on disk, so a cached
+                // "valid" flag could bless bytes that are no longer valid UTF-8.
+                // `from_utf8` is SIMD-accelerated and yields a *safe* borrow.
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    return Ok(Cow::Borrowed(s));
                 }
 
                 // Slow path: try transcoding non-UTF-8 content (result is cached)
@@ -207,28 +200,28 @@ impl LazyMappedFile {
                 }
             }
             Err(_) => {
-                // Fallback path: load bytes via evictable Mutex cache
+                // Fallback path: load bytes via evictable Mutex cache. The bytes are
+                // re-read from disk on each access, so UTF-8 validity is NEVER cached
+                // here — validating the freshly-read buffer with the safe
+                // `String::from_utf8` avoids the use-after-change UB that a cached
+                // flag + `from_utf8_unchecked` would introduce.
                 let bytes = self.load_fallback_bytes()?;
 
-                // Cache UTF-8 validity (uses the locally-owned bytes only during init)
-                let is_valid = *self
-                    .utf8_valid
-                    .get_or_init(|| std::str::from_utf8(bytes.as_slice()).is_ok());
-
-                if is_valid {
-                    // SAFETY: We validated UTF-8 above
-                    return Ok(Cow::Owned(unsafe { String::from_utf8_unchecked(bytes) }));
-                }
-
-                // Non-UTF-8 fallback: transcode without caching (rare path)
-                match crate::utils::transcode_to_utf8(&bytes) {
-                    Ok(Some(result)) => {
-                        let _ = self.detected_encoding.set(Some(result.encoding_name));
-                        Ok(Cow::Owned(result.content))
-                    }
-                    _ => {
-                        let _ = self.detected_encoding.set(None);
-                        anyhow::bail!("File is not valid text: {}", self.path.display())
+                match String::from_utf8(bytes) {
+                    Ok(s) => Ok(Cow::Owned(s)),
+                    Err(e) => {
+                        // Non-UTF-8 fallback: transcode (rare path)
+                        let raw = e.into_bytes();
+                        match crate::utils::transcode_to_utf8(&raw) {
+                            Ok(Some(result)) => {
+                                let _ = self.detected_encoding.set(Some(result.encoding_name));
+                                Ok(Cow::Owned(result.content))
+                            }
+                            _ => {
+                                let _ = self.detected_encoding.set(None);
+                                anyhow::bail!("File is not valid text: {}", self.path.display())
+                            }
+                        }
                     }
                 }
             }

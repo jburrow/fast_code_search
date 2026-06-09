@@ -642,6 +642,8 @@ pub struct SearchEngine {
     pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
     /// Whether tree-sitter symbol extraction is enabled (default: true)
     pub enable_symbols: bool,
+    /// Whether non-UTF-8 files are transcoded during single-file indexing (default: true)
+    pub transcode_non_utf8: bool,
     /// Canonical root paths used to produce root-relative display paths
     root_paths: Vec<PathBuf>,
 }
@@ -656,6 +658,7 @@ impl SearchEngine {
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
             enable_symbols: true,
+            transcode_non_utf8: true,
             root_paths: Vec::new(),
         }
     }
@@ -714,79 +717,34 @@ impl SearchEngine {
         path.to_string_lossy().replace('\\', "/")
     }
 
-    /// Index a file
+    /// Index a file.
+    ///
+    /// Reads the file content into an **owned buffer** (via `PartialIndexedFile::process`)
+    /// rather than extracting through a live memory map. Holding an mmap across trigram /
+    /// symbol extraction is unsafe: if the file is truncated on disk concurrently (editors
+    /// and build tools routinely truncate-and-rewrite), touching mapped pages past the new
+    /// EOF raises an uncatchable SIGBUS / access violation. Reading owned bytes up front
+    /// avoids that entirely.
+    ///
+    /// The content safety check runs *before* the file is registered in any index, so an
+    /// unsafe/binary/oversized file never leaks a permanent file id with no trigrams.
     pub fn index_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        let file_id = self.file_store.add_file(path)?;
 
-        // Register file in dependency index for import resolution
-        self.dependency_index.register_file(file_id, path);
+        // Phase 1: owned read + safety check + trigram extraction (no live mmap).
+        // `process` returns None for binary/unsafe/oversized files — skip silently.
+        let (partial, _transcoded) =
+            match PartialIndexedFile::process(path, self.transcode_non_utf8) {
+                Some(p) => p,
+                None => return Ok(()),
+            };
 
-        // Get the content
-        let content_cow = self.file_store.get(file_id).and_then(|f| f.as_str().ok());
-        let content: &str = content_cow.as_deref().unwrap_or("");
+        // Phase 2: tree-sitter symbol/import extraction with panic protection
+        // (from_partial wraps tree-sitter in catch_unwind).
+        let pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
 
-        // Safety check: skip files that could crash tree-sitter or produce garbage
-        if let Some(reason) = crate::utils::content_safety_check(content) {
-            tracing::warn!(
-                path = %path.display(),
-                reason = reason,
-                "Skipping unsafe file during indexing"
-            );
-            return Ok(());
-        }
-
-        // Extract filename stem for indexing (enables searching by filename)
-        let filename_stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_else(|| {
-                warn!(
-                    "Failed to extract filename stem from path: {}",
-                    path.display()
-                );
-                ""
-            });
-
-        // Index trigrams for case-insensitive search.
-        // Extract from the filename stem and content separately to avoid creating a
-        // large intermediate concatenated string and any spurious cross-boundary trigrams.
-        let mut trigrams = extract_unique_trigrams(&filename_stem.to_lowercase());
-        trigrams.extend(extract_unique_trigrams(&content.to_lowercase()));
-        self.trigram_index.add_document_trigrams(file_id, trigrams);
-
-        // Extract symbols (only when symbol extraction is enabled)
-        let mut symbols = Vec::new();
-        if self.enable_symbols {
-            let extractor = SymbolExtractor::new(path);
-            symbols = extractor.extract(content).unwrap_or_default();
-
-            // Extract imports and store for later resolution
-            if let Ok(imports) = extractor.extract_imports(content) {
-                if !imports.is_empty() {
-                    let import_paths: Vec<String> = imports.into_iter().map(|i| i.path).collect();
-                    self.pending_imports
-                        .push((file_id, path.to_path_buf(), import_paths));
-                }
-            }
-        }
-
-        // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
-        if !filename_stem.is_empty() {
-            symbols.push(Symbol {
-                name: filename_stem.to_string(),
-                symbol_type: SymbolType::FileName,
-                line: 0,
-                column: 0,
-                is_definition: true,
-            });
-        }
-
-        // Ensure symbol_cache is large enough
-        while self.symbol_cache.len() <= file_id as usize {
-            self.symbol_cache.push(Vec::new());
-        }
-        self.symbol_cache[file_id as usize] = symbols;
+        // Merge into the engine: registers the file and adds trigrams/symbols/imports.
+        self.index_batch(vec![pre]);
 
         Ok(())
     }

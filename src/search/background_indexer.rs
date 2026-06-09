@@ -179,6 +179,7 @@ pub fn run(config: BackgroundIndexerConfig) {
     // return root-relative display paths instead of full OS paths.
     if let Ok(mut engine) = index_engine.write() {
         engine.enable_symbols = indexer_config.enable_symbols;
+        engine.transcode_non_utf8 = indexer_config.transcode_non_utf8;
         for path in &indexer_config.paths {
             engine.add_root_path(path);
         }
@@ -778,7 +779,21 @@ fn process_batch(
         })
         .filter_map(|path| {
             tracing::debug!(path = %path.display(), "Phase1: reading and extracting trigrams");
-            PartialIndexedFile::process(path, transcode_non_utf8)
+            // Catch panics from Phase 1 (file IO, transcoding, trigram extraction)
+            // so one pathological file cannot unwind the rayon worker and kill the
+            // entire background-indexing thread.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                PartialIndexedFile::process(path, transcode_non_utf8)
+            })) {
+                Ok(opt) => opt,
+                Err(_) => {
+                    tracing::error!(
+                        path = %path.display(),
+                        "Phase1 panicked during read/trigram extraction; skipping file"
+                    );
+                    None
+                }
+            }
         })
         .collect();
 
@@ -816,20 +831,18 @@ fn process_batch(
 
     let batch_indexed_count = pre_indexed.len();
 
-    // Merge into engine and incrementally resolve imports
+    // Merge into engine and incrementally resolve imports.
+    // Recover from a poisoned lock (caused by a panic in some other thread)
+    // rather than dropping this and every subsequent batch — the engine's
+    // own data structures remain consistent because index_batch only merges
+    // already-computed data.
     {
-        let mut engine = match index_engine.write() {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    files_dropped = batch.len(),
-                    "Failed to acquire write lock on search engine; skipping batch merge"
-                );
-                batch.clear();
-                return 0;
-            }
-        };
+        let mut engine = index_engine.write().unwrap_or_else(|poisoned| {
+            tracing::error!(
+                "Search engine lock was poisoned; recovering and continuing batch merge"
+            );
+            poisoned.into_inner()
+        });
         engine.index_batch(pre_indexed);
         engine.resolve_imports_incremental();
 
@@ -866,16 +879,10 @@ fn finalize_imports(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
 ) {
-    let mut engine = match index_engine.write() {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                "Failed to acquire write lock on search engine; skipping import finalization"
-            );
-            return;
-        }
-    };
+    let mut engine = index_engine.write().unwrap_or_else(|poisoned| {
+        tracing::error!("Search engine lock was poisoned; recovering for import finalization");
+        poisoned.into_inner()
+    });
 
     let pending_count = engine.pending_imports_count();
 
