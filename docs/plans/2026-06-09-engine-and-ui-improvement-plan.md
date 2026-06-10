@@ -81,7 +81,12 @@ Conventions for the implementing agent:
 ## Phase 2 — Index correctness (P0/P1)
 
 ### 2.1 Remap trigram doc IDs on index reload (silent result corruption)
-- [ ] Files: `src/search/engine.rs` (all three load paths: ~2323–2334, ~2470–2519, ~2623–2645), `src/index/persistence.rs` (`restore_trigram_index`, ~215)
+- [x] Files: `src/search/engine.rs` (all three load paths), `src/index/persistence.rs`
+  DONE: added `build_orig_to_new_map` (from ACTUAL registration ids) +
+  `remap_trigram_bitmaps` (with O(files) identity fast-path); all three load paths now
+  register files first, build the map, and remap the restored bitmaps.
+  `restore_symbols_and_deps` takes the same map. Round-trip test added
+  (`test_reload_remaps_trigram_ids_after_stale_file`).
 - Persisted trigram bitmaps key on save-time file IDs (positions in `persisted.files`).
   On reload, only still-valid files are re-added, receiving compacted IDs. Symbols/deps
   are remapped via `orig_to_new_id`; the trigram bitmaps are NOT — so if even one file is
@@ -94,7 +99,13 @@ Conventions for the implementing agent:
   searches return correct paths for all remaining files.
 
 ### 2.2 Real incremental updates: refresh / remove / rename
-- [ ] Files: `src/index/trigram.rs`, `src/index/lazy_file_store.rs` (~393–396), `src/index/file_store.rs` (~144–147), `src/search/engine.rs` (`update_file` ~2675), `src/search/watcher.rs` (~188–197), `src/main.rs` (watcher event loop ~226–277)
+- [x] Files: trigram.rs, lazy_file_store.rs, dependencies/mod.rs, engine.rs, watcher.rs, main.rs
+  DONE: `TrigramIndex::remove_document`; `LazyFileStore::remove_file_by_id` (tombstone) +
+  `refresh_file_by_id` (fresh mmap/caches); `DependencyIndex::remove_file`; engine
+  `update_file` now strips old data and re-extracts under the same id, `remove_file`
+  added; watcher handles `Modify(Name)` renames (two-path and single-path); main.rs wires
+  `Deleted` to `remove_file` and `Renamed` to remove-old + index-new. Integration test
+  `test_incremental_update_remove_rename`.
 - Today: `update_file` → `add_file` early-returns for known paths (old mmap + frozen
   caches kept; modified content never indexed; on shrink, see crash 1.1). `TrigramIndex`
   has no removal API. Deletes are a logged no-op. The watcher drops renames entirely (on
@@ -127,19 +138,14 @@ Conventions for the implementing agent:
 - Accept: killing the process mid-save leaves the previous index intact and loadable.
 
 ### 2.4 Indexing pipeline robustness (smaller, batched together)
-- [ ] `src/search/background_indexer.rs` ~697–701: on `RecvTimeout` with discovery done,
-  `try_recv()` Ok-result is dropped on the floor — drain with
-  `while let Ok(p) = rx.try_recv() { batch.push(p) }` before breaking.
-- [ ] `src/search/engine.rs` ~718–737: `index_file` registers the file (consuming an ID,
-  persisted forever) before the content-safety check; reorder so the check runs first,
-  mirroring the batch path.
-- [ ] `src/search/file_discovery.rs` ~99: `follow_links(true)` duplicates symlinked
-  trees; either set false or canonicalize + dedupe in the discovery thread.
-- [ ] Configured `max_file_size` is silently capped by hardcoded 10 MB in
-  `PartialIndexedFile::process` (engine.rs ~370–384) and not applied to stale files
-  (background_indexer.rs ~562–583); plumb the configured value through both.
-- [ ] `src/search/engine.rs` ~2861–2868: `now - started` on wall-clock millis →
-  `saturating_sub`.
+- [x] background_indexer drain race: timeout-with-discovery-done now drains stragglers
+  into the batch instead of discarding an `Ok(path)`.
+- [x] `index_file` safety-check-before-register: done via the 1.1 rewrite (process()
+  rejects unsafe/binary/oversized before any id is assigned).
+- [x] file_discovery `follow_links(false)` (avoids duplicate symlinked trees / out-of-root).
+- [x] `max_file_size` plumbed through `PartialIndexedFile::process` (param; 0 = default
+  cap), engine field, and process_batch; stale-file loop now applies the size cap.
+- [x] `elapsed_secs` uses `saturating_sub`.
 
 ---
 

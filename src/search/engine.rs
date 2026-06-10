@@ -366,8 +366,8 @@ pub struct PartialIndexedFile {
 }
 
 impl PartialIndexedFile {
-    /// Maximum file size to process (10MB) - larger files are skipped
-    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+    /// Default maximum file size to process (10MB) when no explicit limit is given.
+    pub const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
     /// Phase 1: pure-Rust work only — safe to run in parallel across rayon threads.
     /// Does NOT call tree-sitter (C FFI) to avoid concurrent heap corruption.
@@ -375,11 +375,20 @@ impl PartialIndexedFile {
     /// When `transcode_non_utf8` is true, files in non-UTF-8 encodings (Latin-1,
     /// Shift-JIS, UTF-16, etc.) are automatically transcoded. When false, only
     /// UTF-8 files are accepted.
+    ///
+    /// `max_file_size` is the configured byte cap (0 means "use the default cap");
+    /// files larger than it are skipped so a configured limit above the old
+    /// hardcoded 10 MB is actually honored instead of being silently capped.
     /// Returns `Some((file, transcoded))` where `transcoded` is `true` when
     /// the file was converted from a non-UTF-8 encoding via `transcode_to_utf8`.
-    pub fn process(path: &Path, transcode_non_utf8: bool) -> Option<(Self, bool)> {
+    pub fn process(path: &Path, transcode_non_utf8: bool, max_file_size: u64) -> Option<(Self, bool)> {
+        let max_size = if max_file_size == 0 {
+            Self::DEFAULT_MAX_FILE_SIZE
+        } else {
+            max_file_size
+        };
         let metadata = std::fs::metadata(path).ok()?;
-        if metadata.len() > Self::MAX_FILE_SIZE {
+        if metadata.len() > max_size {
             return None;
         }
 
@@ -644,6 +653,8 @@ pub struct SearchEngine {
     pub enable_symbols: bool,
     /// Whether non-UTF-8 files are transcoded during single-file indexing (default: true)
     pub transcode_non_utf8: bool,
+    /// Maximum file size (bytes) accepted during single-file indexing (default 10MB)
+    pub max_file_size: u64,
     /// Canonical root paths used to produce root-relative display paths
     root_paths: Vec<PathBuf>,
 }
@@ -659,6 +670,7 @@ impl SearchEngine {
             pending_imports: Vec::new(),
             enable_symbols: true,
             transcode_non_utf8: true,
+            max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
             root_paths: Vec::new(),
         }
     }
@@ -734,7 +746,7 @@ impl SearchEngine {
         // Phase 1: owned read + safety check + trigram extraction (no live mmap).
         // `process` returns None for binary/unsafe/oversized files — skip silently.
         let (partial, _transcoded) =
-            match PartialIndexedFile::process(path, self.transcode_non_utf8) {
+            match PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size) {
                 Some(p) => p,
                 None => return Ok(()),
             };
@@ -979,48 +991,99 @@ impl SearchEngine {
         self.rebuild_symbols_and_dependencies_with_progress(|_, _| {})
     }
 
-    /// Restore symbol caches and dependency graph directly from persisted data.
+    /// Build the `original persisted file index → new file id` map from the
+    /// **actual** ids assigned during registration.
     ///
-    /// `valid_file_indices` are the positions in `persisted.files` that were not stale/removed.
-    /// Files are registered in the file_store in that order, so new file ID `k` corresponds to
-    /// `valid_file_indices[k]` in the persisted data.
+    /// `new_ids[p]` is the id assigned to the file at persisted index
+    /// `valid_file_indices[p]`, or `u32::MAX` if that file failed to register
+    /// (e.g. it was deleted between the staleness check and registration).
+    /// Failed registrations are dropped from the map so their trigrams, symbols,
+    /// and dependency edges are discarded rather than aliased onto another file.
+    fn build_orig_to_new_map(
+        valid_file_indices: &[usize],
+        new_ids: &[u32],
+    ) -> rustc_hash::FxHashMap<u32, u32> {
+        valid_file_indices
+            .iter()
+            .zip(new_ids.iter())
+            .filter(|(_, &new_id)| new_id != u32::MAX)
+            .map(|(&orig_idx, &new_id)| (orig_idx as u32, new_id))
+            .collect()
+    }
+
+    /// Remap a restored trigram map (keyed by *original* persisted doc ids) onto
+    /// the new file ids assigned during load.
+    ///
+    /// This MUST mirror the same `orig_to_new` mapping used for symbols and
+    /// dependency edges: persisted bitmaps reference positions in
+    /// `persisted.files`, but reload only re-registers the still-valid files and
+    /// assigns them fresh compacted ids. Without this remap, a single stale file
+    /// shifts every later file's id and search hits get attributed to the wrong
+    /// file. Original ids with no entry in `orig_to_new` (stale/removed/failed)
+    /// are dropped, and trigrams whose postings become empty are pruned.
+    fn remap_trigram_bitmaps(
+        map: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap>,
+        orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
+        persisted_files_len: usize,
+    ) -> rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> {
+        // Fast path: identity mapping (clean reload — nothing stale/removed and no
+        // dedupe, so every original id maps to itself and none are missing).
+        // Avoids rebuilding every posting list. This is O(files), not O(postings).
+        let is_identity = orig_to_new.len() == persisted_files_len
+            && orig_to_new.iter().all(|(&o, &n)| o == n);
+        if is_identity {
+            return map;
+        }
+
+        let mut out: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> =
+            rustc_hash::FxHashMap::default();
+        for (trigram, bitmap) in map {
+            let mut remapped = roaring::RoaringBitmap::new();
+            for old_id in bitmap.iter() {
+                if let Some(&new_id) = orig_to_new.get(&old_id) {
+                    remapped.insert(new_id);
+                }
+            }
+            if !remapped.is_empty() {
+                out.insert(trigram, remapped);
+            }
+        }
+        out
+    }
+
+    /// Restore symbol caches and dependency graph directly from persisted data,
+    /// using the actual `original index → new file id` map.
     pub fn restore_symbols_and_deps(
         &mut self,
-        valid_file_indices: &[usize],
+        orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
         persisted: &crate::index::PersistedIndex,
     ) {
-        let total_new_files = valid_file_indices.len();
-
-        // Allocate symbol cache sized for the newly registered files
+        // Size the symbol cache to the number of files actually registered.
+        let total_new_files = self.file_store.len();
         self.symbol_cache = vec![Vec::new(); total_new_files];
 
-        // Build a mapping: original persisted file index → new file ID
-        let orig_to_new_id: rustc_hash::FxHashMap<u32, u32> = valid_file_indices
-            .iter()
-            .enumerate()
-            .map(|(new_id, &orig_idx)| (orig_idx as u32, new_id as u32))
-            .collect();
-
         // Register files in dependency_index for future import resolution
-        // and restore per-file symbol caches
-        for (new_id, &orig_idx) in valid_file_indices.iter().enumerate() {
-            let new_id = new_id as u32;
+        // and restore per-file symbol caches, keyed by the real new ids.
+        for (&orig_idx, &new_id) in orig_to_new {
+            if (new_id as usize) >= total_new_files {
+                continue;
+            }
             if let Some(path) = self.file_store.get_path(new_id) {
                 self.dependency_index.register_file(new_id, path);
             }
-            if let Some(syms) = persisted.symbols.get(orig_idx) {
+            if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
                 self.symbol_cache[new_id as usize] = syms.clone();
             }
         }
 
         // Restore dependency edges, remapping original indices to new file IDs
-        // and dropping edges whose endpoints were stale/removed
+        // and dropping edges whose endpoints were stale/removed.
         let remapped_edges: Vec<(u32, u32)> = persisted
             .dependency_edges
             .iter()
             .filter_map(|&(from_orig, to_orig)| {
-                let new_from = orig_to_new_id.get(&from_orig)?;
-                let new_to = orig_to_new_id.get(&to_orig)?;
+                let new_from = orig_to_new.get(&from_orig)?;
+                let new_to = orig_to_new.get(&to_orig)?;
                 Some((*new_from, *new_to))
             })
             .collect();
@@ -2277,17 +2340,28 @@ impl SearchEngine {
             }
         }
 
+        // Map from original persisted index → new file id, built from the ACTUAL
+        // ids assigned during registration so trigrams/symbols/deps stay aligned.
+        let mut orig_to_new: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
+
         // Only restore index if we have valid files
         if !valid_file_indices.is_empty() {
-            // Restore trigram index (parallelized)
-            let trigram_map = persisted.restore_trigram_index()?;
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
-
-            // Re-add valid files to the file store
+            // Re-add valid files FIRST, capturing the real id each one receives.
+            let mut new_ids = Vec::with_capacity(valid_file_indices.len());
             for &idx in &valid_file_indices {
                 let file_meta = &persisted.files[idx];
-                let _ = self.file_store.add_file(&file_meta.path);
+                match self.file_store.add_file(&file_meta.path) {
+                    Ok(id) => new_ids.push(id),
+                    Err(_) => new_ids.push(u32::MAX), // failed → dropped from the map
+                }
             }
+            orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
+
+            // Restore the trigram index and remap its doc ids onto the new ids.
+            let trigram_map = persisted.restore_trigram_index()?;
+            let remapped =
+                Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
 
             self.trigram_index.finalize();
         }
@@ -2296,7 +2370,7 @@ impl SearchEngine {
             if !persisted.symbols.is_empty() {
                 // Restore symbols and dependency graph directly from persisted data,
                 // remapping original file indices to the new file IDs assigned during load.
-                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 tracing::info!(
                     files_restored = valid_file_indices.len(),
                     "Restored symbol and dependency caches from persisted index"
@@ -2424,20 +2498,14 @@ impl SearchEngine {
 
         let valid_count = valid_file_indices.len();
 
+        // Map from original persisted index → new file id, built from the ACTUAL
+        // ids returned by registration (handles path dedupe correctly).
+        let mut orig_to_new: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
+
         // Only restore index if we have valid files
         if !valid_file_indices.is_empty() {
-            // Phase 4: Restore trigram index
-            progress_callback(
-                LoadingPhase::RestoringTrigrams,
-                None,
-                None,
-                "Restoring search index...",
-            );
-
-            let trigram_map = persisted.restore_trigram_index()?;
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
-
-            // Phase 5: Register file paths (LAZY - no I/O, instant!)
+            // Phase 5: Register file paths FIRST (LAZY - no I/O, instant!) so we
+            // know the real id assigned to each before remapping the trigrams.
             progress_callback(
                 LoadingPhase::MappingFiles,
                 Some(valid_count),
@@ -2461,7 +2529,8 @@ impl SearchEngine {
             self.file_store.reserve(paths_to_register.len());
 
             // Register all files instantly (no I/O, just storing paths)
-            let _ids = self.file_store.register_files_bulk(&paths_to_register);
+            let new_ids = self.file_store.register_files_bulk(&paths_to_register);
+            orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
 
             // Track content bytes from persisted metadata
             self.file_store.add_content_bytes(total_content_bytes);
@@ -2473,6 +2542,19 @@ impl SearchEngine {
                 Some(valid_count),
                 &format!("Registered {} files (lazy loading enabled)", valid_count),
             );
+
+            // Phase 4: Restore trigram index and remap doc ids onto the new ids.
+            progress_callback(
+                LoadingPhase::RestoringTrigrams,
+                None,
+                None,
+                "Restoring search index...",
+            );
+
+            let trigram_map = persisted.restore_trigram_index()?;
+            let remapped =
+                Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
 
             self.trigram_index.finalize();
         }
@@ -2488,7 +2570,7 @@ impl SearchEngine {
 
             if !persisted.symbols.is_empty() {
                 // Restore symbols and dependency graph directly from persisted data
-                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 progress_callback(
                     LoadingPhase::RebuildingSymbols,
                     Some(total_files),
@@ -2578,11 +2660,8 @@ impl SearchEngine {
             }
         }
 
-        // Restore trigram index (parallelized)
-        let trigram_map = persisted.restore_trigram_index()?;
-        self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
-
-        // Register file paths lazily (no I/O - instant!)
+        // Register file paths lazily (no I/O - instant!) FIRST so we know the
+        // real id assigned to each before remapping the trigram doc ids.
         let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
             .map(|&idx| persisted.files[idx].path.clone())
@@ -2595,16 +2674,23 @@ impl SearchEngine {
             .sum();
 
         self.file_store.reserve(paths_to_register.len());
-        let _ids = self.file_store.register_files_bulk(&paths_to_register);
+        let new_ids = self.file_store.register_files_bulk(&paths_to_register);
+        let orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
 
         // Track content bytes from persisted metadata
         self.file_store.add_content_bytes(total_content_bytes);
+
+        // Restore trigram index (parallelized) and remap doc ids onto new ids.
+        let trigram_map = persisted.restore_trigram_index()?;
+        let remapped =
+            Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+        self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
 
         self.trigram_index.finalize();
 
         if !self.file_store.is_empty() {
             if !persisted.symbols.is_empty() {
-                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 tracing::info!(
                     files_restored = valid_file_indices.len(),
                     "Restored symbol and dependency caches from persisted index"
@@ -2630,12 +2716,82 @@ impl SearchEngine {
         Ok(stale_files)
     }
 
-    /// Update the index for a single file (for incremental indexing)
+    /// Update the index for a single file (for incremental indexing).
+    ///
+    /// If the file is already indexed, its stale trigrams, symbols, and
+    /// dependency edges are removed and the store entry is refreshed (dropping the
+    /// old mmap and cached UTF-8/transcode results) before re-extracting from the
+    /// current content — all under the SAME file id so existing ids stay stable.
+    /// A brand-new file is indexed normally.
     pub fn update_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        // For now, just re-index the file
-        // A more sophisticated implementation could track document IDs
-        // and update only the affected trigrams
-        self.index_file(path)
+        let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
+            // Not yet indexed — treat as a fresh add.
+            return self.index_file(path);
+        };
+
+        // Strip all stale data for this id first.
+        self.trigram_index.remove_document(id);
+        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        self.dependency_index.remove_file(id);
+
+        // Read fresh owned content + safety check (no live mmap — avoids SIGBUS if
+        // the file is being rewritten concurrently).
+        let (partial, _transcoded) =
+            match PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size) {
+                Some(p) => p,
+                None => {
+                    // File is now binary/unsafe/oversized/unreadable — drop it from
+                    // the index entirely rather than keeping stale content.
+                    self.file_store.remove_file_by_id(id);
+                    return Ok(());
+                }
+            };
+        let pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
+
+        // Refresh the store entry so the stale mapping + caches are discarded, and
+        // re-register for import resolution.
+        self.file_store.refresh_file_by_id(id);
+        self.dependency_index.register_file(id, path);
+
+        // Re-add trigrams and symbols under the same id.
+        self.trigram_index.add_document_trigrams(id, pre.trigrams);
+        while self.symbol_cache.len() <= id as usize {
+            self.symbol_cache.push(Vec::new());
+        }
+        self.symbol_cache[id as usize] = pre.symbols;
+
+        if !pre.imports.is_empty() {
+            self.pending_imports
+                .push((id, path.to_path_buf(), pre.imports));
+            self.resolve_imports_incremental();
+        }
+
+        // The all-documents cache was invalidated by remove/add; it lazily
+        // recomputes on the next short-query search.
+        Ok(())
+    }
+
+    /// Remove a file from the index entirely (for delete / rename-away events).
+    ///
+    /// Drops the file's trigrams, symbols, dependency edges, and store slot
+    /// (tombstoned so its id is never reused). Returns true if a matching file
+    /// was found and removed.
+    pub fn remove_file(&mut self, path: &std::path::Path) -> bool {
+        let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
+            return false;
+        };
+        self.trigram_index.remove_document(id);
+        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        if let Some(meta) = self.file_metadata.get_mut(id as usize) {
+            *meta = FileMetadata::default();
+        }
+        self.dependency_index.remove_file(id);
+        self.file_store.remove_file_by_id(id);
+        true
     }
 }
 
@@ -2822,7 +2978,10 @@ impl IndexingProgress {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        Some((now - started) as f64 / 1000.0)
+        // saturating_sub guards against wall-clock going backwards (NTP step,
+        // VM resume), which would otherwise underflow-panic in debug or yield a
+        // ~584-million-year elapsed value in release.
+        Some(now.saturating_sub(started) as f64 / 1000.0)
     }
 
     /// Calculate progress percentage (0-100)

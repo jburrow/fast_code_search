@@ -283,6 +283,10 @@ pub struct LazyFileStore {
     files: Vec<LazyMappedFile>,
     /// Map from path to file ID (for deduplication)
     path_to_id: HashMap<PathBuf, u32>,
+    /// IDs that have been tombstoned (removed during incremental updates).
+    /// Tombstoned slots are hidden from `get`/`get_path`/lookups and never
+    /// reused, so existing file IDs stay stable. Typically tiny.
+    tombstoned: std::collections::HashSet<u32>,
     /// Statistics: number of files that have been mapped
     mapped_count: AtomicUsize,
     /// Statistics: total bytes of content indexed (accumulated as files are added)
@@ -309,6 +313,7 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
+            tombstoned: std::collections::HashSet::new(),
             mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),
             mmap_safe_limit,
@@ -437,9 +442,40 @@ impl LazyFileStore {
         Ok(id)
     }
 
-    /// Get a file by ID
+    /// Get a file by ID (returns None for tombstoned/removed ids)
     pub fn get(&self, id: u32) -> Option<&LazyMappedFile> {
+        if self.tombstoned.contains(&id) {
+            return None;
+        }
         self.files.get(id as usize)
+    }
+
+    /// Tombstone a file id: hide it from `get`/`get_path`/lookups and remove it
+    /// from the path map so the same path re-added later receives a fresh id.
+    /// The slot itself is retained so existing ids remain stable.
+    pub fn remove_file_by_id(&mut self, id: u32) {
+        if let Some(f) = self.files.get(id as usize) {
+            let p = f.path.clone();
+            self.path_to_id.remove(&p);
+        }
+        self.tombstoned.insert(id);
+    }
+
+    /// Replace the entry for an existing id with a fresh, unmapped one so a stale
+    /// memory map and cached UTF-8/transcode results are dropped. The id and its
+    /// path are preserved; the next access maps the file fresh. Un-tombstones the
+    /// id if it had been removed. Returns false if `id` is out of range.
+    pub fn refresh_file_by_id(&mut self, id: u32) -> bool {
+        if let Some(f) = self.files.get_mut(id as usize) {
+            let p = f.path.clone();
+            *f = LazyMappedFile::new(&p);
+            // Ensure the path remains resolvable and the id is live again.
+            self.path_to_id.insert(p, id);
+            self.tombstoned.remove(&id);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get the total number of registered files
@@ -472,8 +508,11 @@ impl LazyFileStore {
         self.total_content_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
-    /// Get a file path by ID (always available, no I/O needed)
+    /// Get a file path by ID (always available, no I/O needed; None if tombstoned)
     pub fn get_path(&self, id: u32) -> Option<&Path> {
+        if self.tombstoned.contains(&id) {
+            return None;
+        }
         self.files.get(id as usize).map(|f| f.path.as_path())
     }
 
@@ -495,6 +534,9 @@ impl LazyFileStore {
         // Normalize to forward slashes so callers can use either separator.
         let normalized = suffix.replace('\\', "/");
         self.files.iter().enumerate().find_map(|(id, f)| {
+            if self.tombstoned.contains(&(id as u32)) {
+                return None;
+            }
             let file_path = f.path.to_string_lossy().replace('\\', "/");
             if file_path.ends_with(normalized.as_str()) {
                 Some(id as u32)
@@ -504,9 +546,14 @@ impl LazyFileStore {
         })
     }
 
-    /// Get all file paths (no I/O needed)
+    /// Get all file paths (no I/O needed; excludes tombstoned/removed files)
     pub fn get_all_paths(&self) -> Vec<PathBuf> {
-        self.files.iter().map(|f| f.path.clone()).collect()
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(id, _)| !self.tombstoned.contains(&(*id as u32)))
+            .map(|(_, f)| f.path.clone())
+            .collect()
     }
 
     /// Get the number of files that have been actually mapped
@@ -570,6 +617,7 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
+            tombstoned: std::collections::HashSet::new(),
             mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),
             mmap_safe_limit,

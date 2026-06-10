@@ -180,6 +180,7 @@ pub fn run(config: BackgroundIndexerConfig) {
     if let Ok(mut engine) = index_engine.write() {
         engine.enable_symbols = indexer_config.enable_symbols;
         engine.transcode_non_utf8 = indexer_config.transcode_non_utf8;
+        engine.max_file_size = indexer_config.max_file_size;
         for path in &indexer_config.paths {
             engine.add_root_path(path);
         }
@@ -565,6 +566,18 @@ fn spawn_discovery_thread(
             if !stale_path.exists() {
                 continue;
             }
+            // Apply the configured size cap so a previously-indexed file that has
+            // since grown beyond the limit is not blindly re-queued (it would only
+            // be dropped later by process(), wasting a read each run).
+            if let Ok(meta) = std::fs::metadata(&stale_path) {
+                if meta.len() > max_file_size {
+                    tracing::debug!(
+                        path = %stale_path.display(),
+                        "Skipping stale file exceeding max_file_size"
+                    );
+                    continue;
+                }
+            }
             // Apply exclude_patterns before queueing for re-indexing
             let path_str = stale_path.to_string_lossy();
             if compiled_excludes
@@ -667,6 +680,7 @@ fn process_batches(
                         &indexer_config.exclude_files,
                         indexer_config.transcode_non_utf8,
                         indexer_config.enable_symbols,
+                        indexer_config.max_file_size,
                     );
                     total_indexed += indexed;
 
@@ -696,8 +710,20 @@ fn process_batches(
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if discovery_done.load(Ordering::Acquire) && rx.try_recv().is_err() {
-                    break;
+                if discovery_done.load(Ordering::Acquire) {
+                    // Drain any straggler files the discovery thread enqueued just
+                    // before setting discovery_done. The previous code called
+                    // try_recv() purely as an emptiness probe and DISCARDED an
+                    // Ok(path), silently dropping the last file(s). Push them into
+                    // the batch instead; the final flush below indexes them.
+                    let mut drained_any = false;
+                    while let Ok(path) = rx.try_recv() {
+                        batch.push(path);
+                        drained_any = true;
+                    }
+                    if !drained_any {
+                        break;
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -718,6 +744,7 @@ fn process_batches(
             &indexer_config.exclude_files,
             indexer_config.transcode_non_utf8,
             indexer_config.enable_symbols,
+            indexer_config.max_file_size,
         );
         total_indexed += indexed;
 
@@ -743,6 +770,7 @@ fn process_batch(
     exclude_files: &[String],
     transcode_non_utf8: bool,
     enable_symbols: bool,
+    max_file_size: u64,
 ) -> usize {
     *batch_num += 1;
     let batch_start = Instant::now();
@@ -783,7 +811,7 @@ fn process_batch(
             // so one pathological file cannot unwind the rayon worker and kill the
             // entire background-indexing thread.
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                PartialIndexedFile::process(path, transcode_non_utf8)
+                PartialIndexedFile::process(path, transcode_non_utf8, max_file_size)
             })) {
                 Ok(opt) => opt,
                 Err(_) => {

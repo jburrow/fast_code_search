@@ -169,38 +169,52 @@ impl FileWatcher {
 
 /// Process a notify event and convert to FileChange
 fn process_event(event: &DebouncedEvent, exclude_patterns: &[String]) -> Option<FileChange> {
+    use notify_debouncer_full::notify::event::ModifyKind;
     use notify_debouncer_full::notify::EventKind;
 
     let paths = &event.paths;
 
     // Skip if all paths match exclude patterns
-    let should_process = paths.iter().any(|path| {
-        let path_str = path.to_string_lossy();
-        !exclude_patterns
-            .iter()
-            .any(|pattern| path_str.contains(pattern))
-    });
+    let should_process = paths.iter().any(|path| !should_exclude(path, exclude_patterns));
 
     if !should_process {
         return None;
     }
 
     match &event.kind {
-        EventKind::Create(_) | EventKind::Modify(_) => {
-            // Only process regular files
-            if let Some(path) = paths.first() {
-                if path.is_file() {
-                    return Some(FileChange::Modified(path.clone()));
+        // Renames arrive as Modify(Name) — on Windows/Linux typically with two
+        // paths [from, to]. The old code took paths.first() (the OLD path),
+        // failed is_file(), and dropped the event entirely, leaving the old path
+        // in the index forever and never indexing the new one.
+        EventKind::Modify(ModifyKind::Name(_)) => {
+            match (paths.first(), paths.get(1)) {
+                (Some(from), Some(to)) => Some(FileChange::Renamed {
+                    from: from.clone(),
+                    to: to.clone(),
+                }),
+                (Some(p), None) => {
+                    // Single-path name event: deleted if it no longer exists,
+                    // otherwise treat as a modification of the (new) path.
+                    if p.exists() {
+                        Some(FileChange::Modified(p.clone()))
+                    } else {
+                        Some(FileChange::Deleted(p.clone()))
+                    }
                 }
+                _ => None,
             }
-            None
         }
-        EventKind::Remove(_) => {
-            if let Some(path) = paths.first() {
-                return Some(FileChange::Deleted(path.clone()));
-            }
-            None
+        EventKind::Create(_) | EventKind::Modify(_) => {
+            // Use the first non-excluded path that is a regular file.
+            paths
+                .iter()
+                .find(|p| !should_exclude(p, exclude_patterns) && p.is_file())
+                .map(|p| FileChange::Modified(p.clone()))
         }
+        EventKind::Remove(_) => paths
+            .iter()
+            .find(|p| !should_exclude(p, exclude_patterns))
+            .map(|p| FileChange::Deleted(p.clone())),
         EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
     }
 }

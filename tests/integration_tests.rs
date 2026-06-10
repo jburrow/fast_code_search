@@ -1080,7 +1080,7 @@ async fn test_config_disable_transcoding() -> Result<()> {
     std::fs::write(&file_path, latin1_bytes)?;
 
     // With transcoding enabled, should succeed
-    let result_enabled = PartialIndexedFile::process(&file_path, true);
+    let result_enabled = PartialIndexedFile::process(&file_path, true, 0);
     assert!(
         result_enabled.is_some(),
         "Expected transcoding to succeed when enabled"
@@ -1092,7 +1092,7 @@ async fn test_config_disable_transcoding() -> Result<()> {
     );
 
     // With transcoding disabled, should return None for non-UTF-8 files
-    let result_disabled = PartialIndexedFile::process(&file_path, false);
+    let result_disabled = PartialIndexedFile::process(&file_path, false, 0);
     assert!(
         result_disabled.is_none(),
         "Expected non-UTF-8 file to be skipped when transcoding disabled"
@@ -1114,7 +1114,7 @@ async fn test_config_disable_symbols() -> Result<()> {
     )?;
 
     // With symbols enabled (default), FileName symbol + parsed symbols should be present
-    let (partial_enabled, _) = PartialIndexedFile::process(&file_path, false).unwrap();
+    let (partial_enabled, _) = PartialIndexedFile::process(&file_path, false, 0).unwrap();
     let pre_enabled = PreIndexedFile::from_partial(partial_enabled, true);
     // At minimum the FileName symbol is always added
     assert!(
@@ -1123,7 +1123,7 @@ async fn test_config_disable_symbols() -> Result<()> {
     );
 
     // With symbols disabled, only the FileName symbol should be present (no tree-sitter extraction)
-    let (partial_disabled, _) = PartialIndexedFile::process(&file_path, false).unwrap();
+    let (partial_disabled, _) = PartialIndexedFile::process(&file_path, false, 0).unwrap();
     let pre_disabled = PreIndexedFile::from_partial(partial_disabled, false);
     // FileName symbol is always added even when symbols are disabled
     assert_eq!(
@@ -2008,6 +2008,128 @@ async fn test_super_integration() -> Result<()> {
             "Results for 'AuthManager' must include at least one SYMBOL_DEFINITION"
         );
     }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Index correctness: reload remapping (2.1) and incremental updates (2.2)
+// ---------------------------------------------------------------------------
+
+/// 2.1: After a save/reload where one file became stale, the trigram doc ids
+/// must be remapped so every remaining file's tokens still resolve to the
+/// CORRECT file (regression: stale file shifted all later ids).
+#[tokio::test]
+async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mut paths = Vec::new();
+    for i in 0..5 {
+        let p = temp.path().join(format!("file{}.rs", i));
+        std::fs::write(&p, format!("fn unique_token_{i}() {{ let x = {i}; }}\n"))?;
+        paths.push(p);
+    }
+
+    let index_path = temp.path().join("index.bin");
+    let mut config = IndexerConfig::default();
+    config.paths = vec![temp.path().to_string_lossy().to_string()];
+
+    {
+        let mut eng = SearchEngine::new();
+        for p in &paths {
+            eng.index_file(p)?;
+        }
+        eng.save_index(&index_path, &config)?;
+    }
+
+    // Make file #1 stale (different size => detected as stale on reload).
+    std::fs::write(&paths[1], "fn unique_token_1_modified_substantially() {}\n")?;
+
+    let mut eng2 = SearchEngine::new();
+    eng2.load_index_with_reconciliation(&index_path, &config)?;
+
+    // Each unchanged file's unique token must resolve to its OWN file.
+    for i in [0usize, 2, 3, 4] {
+        let results = eng2.search(&format!("unique_token_{i}"), 10);
+        assert!(
+            results
+                .iter()
+                .any(|m| m.file_path.ends_with(&format!("file{}.rs", i))),
+            "token {i} must map to file{i}.rs after reload; got {:?}",
+            results.iter().map(|m| &m.file_path).collect::<Vec<_>>()
+        );
+    }
+
+    Ok(())
+}
+
+/// 2.2: Modifying, deleting, and renaming files updates the index so searches
+/// reflect only the current on-disk content.
+#[tokio::test]
+async fn test_incremental_update_remove_rename() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    // Replace a file's content via write-temp-then-rename, mimicking how editors
+    // (and the watcher's intended flow) modify files. A plain in-place truncate
+    // fails on Windows while the engine holds a memory map on the file.
+    fn atomic_write(path: &std::path::Path, content: &str) -> Result<()> {
+        let tmp = path.with_extension("tmp_write");
+        std::fs::write(&tmp, content)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    let temp = TempDir::new()?;
+    let a = temp.path().join("a.rs");
+    let b = temp.path().join("b.rs");
+    std::fs::write(&a, "fn alpha_token() {}\n")?;
+    std::fs::write(&b, "fn beta_token() {}\n")?;
+
+    let mut eng = SearchEngine::new();
+    eng.index_file(&a)?;
+    eng.index_file(&b)?;
+
+    assert!(!eng.search("alpha_token", 10).is_empty());
+    assert!(!eng.search("beta_token", 10).is_empty());
+
+    // Modify a.rs: replace its content entirely.
+    atomic_write(&a, "fn gamma_token() {}\n")?;
+    eng.update_file(&a)?;
+    assert!(
+        eng.search("alpha_token", 10).is_empty(),
+        "old content must be gone after update"
+    );
+    assert!(
+        !eng.search("gamma_token", 10).is_empty(),
+        "new content must be searchable after update"
+    );
+
+    // Delete b.rs.
+    assert!(eng.remove_file(&b), "remove_file should find and remove b.rs");
+    assert!(
+        eng.search("beta_token", 10).is_empty(),
+        "deleted file must not match"
+    );
+
+    // Rename a.rs -> c.rs (delete old path, index new).
+    let c = temp.path().join("c.rs");
+    std::fs::rename(&a, &c)?;
+    eng.remove_file(&a);
+    eng.update_file(&c)?;
+    let res = eng.search("gamma_token", 10);
+    assert!(
+        res.iter().any(|m| m.file_path.ends_with("c.rs")),
+        "renamed file must be searchable under its new path; got {:?}",
+        res.iter().map(|m| &m.file_path).collect::<Vec<_>>()
+    );
+    assert!(
+        !res.iter().any(|m| m.file_path.ends_with("a.rs")),
+        "old path must no longer appear"
+    );
 
     Ok(())
 }

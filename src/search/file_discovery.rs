@@ -96,7 +96,12 @@ impl FileDiscoveryIterator {
             .filter_map(|path_str| {
                 let path = Path::new(path_str);
                 if path.exists() {
-                    Some(WalkDir::new(path).follow_links(true).into_iter())
+                    // Do NOT follow symlinks: following them duplicates files when a
+                    // link points inside the same root (the same file indexed under
+                    // two paths -> duplicate search results) and can pull in trees
+                    // outside the requested roots. This matches the default of most
+                    // code-search tools (e.g. ripgrep).
+                    Some(WalkDir::new(path).follow_links(false).into_iter())
                 } else {
                     tracing::warn!(path = %path_str, "Path does not exist, skipping");
                     None

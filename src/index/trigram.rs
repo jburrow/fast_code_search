@@ -104,6 +104,21 @@ impl TrigramIndex {
         self.all_docs_cache = None;
     }
 
+    /// Remove a document from the index (for incremental updates / deletions).
+    ///
+    /// Strips `doc_id` from every posting list, drops trigram entries whose
+    /// posting list becomes empty, and invalidates the all-documents cache so a
+    /// removed file can never reappear as a candidate. O(number of trigrams),
+    /// which is acceptable for the infrequent update/delete path.
+    pub fn remove_document(&mut self, doc_id: u32) {
+        self.trigram_to_docs.retain(|_, docs| {
+            docs.remove(doc_id);
+            !docs.is_empty()
+        });
+        // Invalidate cache; it will be recomputed on next finalize()/all_documents().
+        self.all_docs_cache = None;
+    }
+
     /// Release over-allocated bucket memory from incremental inserts.
     /// Complements `finalize()` — safe to call at any time between batches.
     pub fn shrink_to_fit(&mut self) {
