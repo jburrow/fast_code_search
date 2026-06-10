@@ -75,19 +75,27 @@ pub fn create_router(
 }
 
 /// Serve index.html
-async fn index_handler(State(state): State<WebState>) -> Response<Body> {
-    serve_static_file("index.html", state.static_dir.as_deref())
+async fn index_handler(
+    State(state): State<WebState>,
+    headers: header::HeaderMap,
+) -> Response<Body> {
+    serve_static_file("index.html", state.static_dir.as_deref(), &headers)
 }
 
 /// Serve static files from embedded assets or from disk
 async fn static_handler(
     State(state): State<WebState>,
     axum::extract::Path(path): axum::extract::Path<String>,
+    headers: header::HeaderMap,
 ) -> Response<Body> {
-    serve_static_file(&path, state.static_dir.as_deref())
+    serve_static_file(&path, state.static_dir.as_deref(), &headers)
 }
 
-fn serve_static_file(path: &str, static_dir: Option<&std::path::Path>) -> Response<Body> {
+fn serve_static_file(
+    path: &str,
+    static_dir: Option<&std::path::Path>,
+    req_headers: &header::HeaderMap,
+) -> Response<Body> {
     // Remove leading slash if present
     let path = path.trim_start_matches('/');
 
@@ -133,8 +141,26 @@ fn serve_static_file(path: &str, static_dir: Option<&std::path::Path>) -> Respon
         Some(content) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
 
-            // Use ETag based on content hash for proper cache invalidation
-            let etag = format!("\"{:x}\"", md5::compute(&content.data));
+            // ETag uses rust_embed's COMPILE-TIME sha256 hash — no per-request
+            // hashing (the previous code hashed every asset, incl. the multi-MB
+            // font, on every request).
+            let etag = format!("\"{}\"", hex_encode(&content.metadata.sha256_hash()));
+
+            // Honor conditional requests: return 304 when the client's cached
+            // ETag matches, so unchanged assets aren't resent.
+            if let Some(inm) = req_headers.get(header::IF_NONE_MATCH) {
+                if inm.to_str().map(|v| v == etag).unwrap_or(false) {
+                    return Response::builder()
+                        .status(StatusCode::NOT_MODIFIED)
+                        .header(header::ETAG, etag)
+                        .header(
+                            header::CACHE_CONTROL,
+                            "public, max-age=3600, must-revalidate",
+                        )
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            }
 
             Response::builder()
                 .status(StatusCode::OK)
@@ -152,4 +178,14 @@ fn serve_static_file(path: &str, static_dir: Option<&std::path::Path>) -> Respon
             .body(Body::from("Not Found"))
             .unwrap(),
     }
+}
+
+/// Lowercase hex-encode bytes (for ETag values).
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{:02x}", b);
+    }
+    s
 }

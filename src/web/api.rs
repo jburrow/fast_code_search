@@ -21,6 +21,45 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
+/// JSON error body returned by all API handlers for non-2xx responses, so error
+/// and success responses have a consistent (JSON) content type.
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
+}
+
+/// Unified API error. Renders as `{ "error": ... }` with the appropriate status,
+/// and attaches `Retry-After: 1` to 503s so clients back off briefly while the
+/// index is being updated instead of hammering the server.
+///
+/// Handlers keep producing `(StatusCode, String)` tuples; the `?` operator
+/// converts them here via the `From` impl, so call sites need no changes.
+#[derive(Debug)]
+pub struct ApiError {
+    pub status: StatusCode,
+    pub message: String,
+}
+
+impl From<(StatusCode, String)> for ApiError {
+    fn from((status, message): (StatusCode, String)) -> Self {
+        Self { status, message }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        let mut resp =
+            (self.status, Json(ErrorResponse { error: self.message })).into_response();
+        if self.status == StatusCode::SERVICE_UNAVAILABLE {
+            resp.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("1"),
+            );
+        }
+        resp
+    }
+}
+
 /// Search query parameters
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
@@ -86,6 +125,9 @@ pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
     pub query: String,
     pub total_results: usize,
+    /// True when the result set was capped at `max` (more matches likely exist).
+    /// `total_results` reflects the returned page length, not the full match count.
+    pub has_more: bool,
     /// Time taken by the search in milliseconds
     pub elapsed_ms: f64,
     /// Ranking mode used: "auto", "fast", or "full"
@@ -146,7 +188,7 @@ pub struct StatusResponse {
 pub async fn search_handler(
     State(state): State<WebState>,
     Query(params): Query<SearchQuery>,
-) -> Result<Json<SearchResponse>, (StatusCode, String)> {
+) -> Result<Json<SearchResponse>, ApiError> {
     let query = params.q.trim().to_string();
 
     if query.is_empty() {
@@ -154,6 +196,7 @@ pub async fn search_handler(
             results: vec![],
             query: String::new(),
             total_results: 0,
+            has_more: false,
             elapsed_ms: 0.0,
             rank_mode: None,
             total_candidates: None,
@@ -176,7 +219,7 @@ pub async fn search_handler(
     };
 
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Start timing the search
         let start_time = std::time::Instant::now();
 
@@ -297,12 +340,15 @@ pub async fn search_handler(
             .collect();
 
         let total_results = results.len();
+        // Results are capped at max_results; equal length signals likely truncation.
+        let has_more = total_results >= max_results;
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
         Ok(Json(SearchResponse {
             results,
             query,
             total_results,
+            has_more,
             elapsed_ms,
             rank_mode: ranking_info
                 .as_ref()
@@ -318,14 +364,15 @@ pub async fn search_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }
 
 /// Handle stats requests
 pub async fn stats_handler(
     State(state): State<WebState>,
-) -> Result<Json<StatsResponse>, (StatusCode, String)> {
+) -> Result<Json<StatsResponse>, ApiError> {
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = engine.try_read().map_err(|e| match e {
             std::sync::TryLockError::WouldBlock => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -354,6 +401,7 @@ pub async fn stats_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }
 
 /// Handle health check requests
@@ -368,7 +416,7 @@ pub async fn health_handler() -> Json<HealthResponse> {
 /// Handle indexing status requests
 pub async fn status_handler(
     State(state): State<WebState>,
-) -> Result<Json<StatusResponse>, (StatusCode, String)> {
+) -> Result<Json<StatusResponse>, ApiError> {
     // Use try_read so we never block a tokio worker thread on a std::sync::RwLock.
     // The progress lock is written by the background indexer; if it is momentarily
     // held we return 503 rather than stalling the async executor.
@@ -459,9 +507,9 @@ pub struct DependencyResponse {
 pub async fn dependents_handler(
     State(state): State<WebState>,
     Query(params): Query<DependencyQuery>,
-) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
+) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = engine.try_read().map_err(|e| match e {
             std::sync::TryLockError::WouldBlock => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -501,15 +549,16 @@ pub async fn dependents_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }
 
 /// Get files that the specified file depends on (imports)
 pub async fn dependencies_handler(
     State(state): State<WebState>,
     Query(params): Query<DependencyQuery>,
-) -> Result<Json<DependencyResponse>, (StatusCode, String)> {
+) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = engine.try_read().map_err(|e| match e {
             std::sync::TryLockError::WouldBlock => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -549,6 +598,7 @@ pub async fn dependencies_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }
 
 /// Query parameters for file content endpoint
@@ -571,9 +621,9 @@ pub struct FileResponse {
 pub async fn file_handler(
     State(state): State<WebState>,
     Query(params): Query<FileQuery>,
-) -> Result<Json<FileResponse>, (StatusCode, String)> {
+) -> Result<Json<FileResponse>, ApiError> {
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = engine.try_read().map_err(|e| match e {
             std::sync::TryLockError::WouldBlock => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -624,6 +674,7 @@ pub async fn file_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }
 
 /// Query parameters for context (lines around a hit) endpoint
@@ -655,9 +706,9 @@ pub struct ContextResponse {
 pub async fn context_handler(
     State(state): State<WebState>,
     Query(params): Query<ContextQuery>,
-) -> Result<Json<ContextResponse>, (StatusCode, String)> {
+) -> Result<Json<ContextResponse>, ApiError> {
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = engine.try_read().map_err(|e| match e {
             std::sync::TryLockError::WouldBlock => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -718,6 +769,7 @@ pub async fn context_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }
 
 /// WebSocket upgrade handler for progress streaming
@@ -882,11 +934,11 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 pub async fn diagnostics_handler(
     State(state): State<WebState>,
     Query(params): Query<DiagnosticsQuery>,
-) -> Result<Json<KeywordDiagnosticsResponse>, (StatusCode, String)> {
+) -> Result<Json<KeywordDiagnosticsResponse>, ApiError> {
     let sample_count = params.sample_count.clamp(1, 20);
     let engine = state.engine.clone();
 
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Use try_read to avoid blocking when a write lock is held during indexing.
         let engine = engine.try_read().map_err(|e| match e {
             std::sync::TryLockError::WouldBlock => (
@@ -1219,4 +1271,5 @@ pub async fn diagnostics_handler(
             format!("Task join error: {}", e),
         )
     })?
+    .map_err(ApiError::from)
 }

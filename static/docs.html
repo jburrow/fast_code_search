@@ -332,6 +332,12 @@
                     <td>auto</td>
                     <td>Ranking mode: <code>auto</code>, <code>fast</code>, or <code>full</code></td>
                 </tr>
+                <tr>
+                    <td><code>context</code></td>
+                    <td>integer</td>
+                    <td>0</td>
+                    <td>Lines of context returned before and after each match (0-10)</td>
+                </tr>
             </table>
             <p><strong>Note:</strong> <code>rank</code> applies to text searches only. Regex and symbols-only queries
                 use internal fast ranking and omit ranking metadata in the response.</p>
@@ -365,11 +371,16 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
   ],
   "query": "parse",
   "total_results": 1,
+  "has_more": false,
   "elapsed_ms": 23.4,
   "rank_mode": "fast",
     "total_candidates": 15000,
     "candidates_searched": 2000
 }</code></pre>
+            <p><strong>Note:</strong> <code>total_results</code> is the number of results in this
+                response (the returned page), not the total number of matches in the index.
+                <code>has_more</code> is <code>true</code> when the result set was capped at
+                <code>max</code>, indicating more matches likely exist — raise <code>max</code> to see them.</p>
 
             <h2>Path Filter Patterns</h2>
             <p>Use glob patterns to filter which files are searched:</p>
@@ -420,10 +431,28 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
                     <td>List files that import a given file</td>
                 </tr>
                 <tr>
+                    <td><code>GET /api/dependencies?file=...</code></td>
+                    <td>List files that a given file imports</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/file?file=...</code></td>
+                    <td>Full UTF-8 content of a file (path, content, size_bytes, line_count)</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/context?file=...&amp;line=N&amp;context=K</code></td>
+                    <td>A window of K lines (default 5) around line N — used by hover previews</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/diagnostics?sample_count=N</code></td>
+                    <td>Index health, extension breakdown, and self-tests</td>
+                </tr>
+                <tr>
                     <td><code>WS /ws/progress</code></td>
                     <td>WebSocket for real-time indexing progress</td>
                 </tr>
             </table>
+            <p><strong>Errors:</strong> non-2xx responses return JSON <code>{ "error": "…" }</code>.
+                A <code>503</code> (index updating) includes a <code>Retry-After</code> header.</p>
         </div>
     </main>
 

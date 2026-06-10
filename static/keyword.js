@@ -35,7 +35,6 @@ const progressStatus = document.getElementById('progress-status');
 const progressMessage = document.getElementById('progress-message');
 
 // Search state
-let searchTimeout = null;
 const DEBOUNCE_MS = 300;
 
 // ============================================
@@ -600,6 +599,10 @@ async function populateFileView(container, filePath, highlightLine, query, signa
 let _ctxTooltip = null;
 let _ctxHideTimer = null;
 let _ctxFetchController = null;
+let _ctxHoverTimer = null;
+// Cache of /api/context responses keyed by `${filePath}::${lineNumber}` so
+// sweeping the cursor over results doesn't re-fetch the same windows.
+const _ctxContextCache = new Map();
 
 function getOrCreateTooltip() {
     if (!_ctxTooltip) {
@@ -633,21 +636,69 @@ function hideContextTooltipImmediately() {
     }
 }
 
+// Lines of context shown above/below the match in the hover preview.
+const CTX_TOOLTIP_CONTEXT = 12;
+
+function renderContextBody(data, highlightLine) {
+    const start = data.start_line || 1;
+    const rows = (data.lines || []).map((line, i) => {
+        const ln = start + i;
+        const isMatch = ln === highlightLine;
+        return `<div class="file-line${isMatch ? ' file-line-highlight' : ''}">` +
+            `<span class="file-line-num">${ln}</span>` +
+            `<span class="file-line-content">${escapeHtml(line)}</span>` +
+            `</div>`;
+    }).join('');
+    return `<div class="ctx-file-body">${rows}</div>`;
+}
+
+function highlightContextTooltip(tooltip) {
+    const q = queryInput.value.trim();
+    tooltip.querySelectorAll('.file-line-content').forEach(span => {
+        if (typeof hljs !== 'undefined') {
+            const code = document.createElement('code');
+            code.textContent = span.textContent;
+            try { hljs.highlightElement(code); span.innerHTML = code.innerHTML; } catch (e) { /* leave plain */ }
+        }
+        if (q) applyQueryHighlight(span, q);
+    });
+}
+
 async function showContextTooltip(resultItem, filePath, lineNumber) {
     clearTimeout(_ctxHideTimer);
     if (_ctxFetchController) _ctxFetchController.abort();
     _ctxFetchController = new AbortController();
+    const signal = _ctxFetchController.signal;
 
     const tooltip = getOrCreateTooltip();
-    tooltip.innerHTML =
-        `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>` +
-        `<div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
+    const headerHtml = `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>`;
+    const cacheKey = `${filePath}::${lineNumber}`;
+
+    // Cache hit: render immediately, no fetch.
+    const cached = _ctxContextCache.get(cacheKey);
+    if (cached) {
+        tooltip.innerHTML = headerHtml + renderContextBody(cached, lineNumber);
+        tooltip.style.display = 'flex';
+        highlightContextTooltip(tooltip);
+        positionTooltip(tooltip, resultItem);
+        return;
+    }
+
+    tooltip.innerHTML = headerHtml + `<div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
     positionTooltip(tooltip, resultItem);
     tooltip.style.display = 'flex';
 
-    const fileBody = tooltip.querySelector('.ctx-file-body');
     try {
-        await populateFileView(fileBody, filePath, lineNumber, queryInput.value.trim(), _ctxFetchController.signal);
+        // Use the lightweight /api/context endpoint (a small window) instead of
+        // fetching and highlighting the ENTIRE file on every hover.
+        const url = `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=${CTX_TOOLTIP_CONTEXT}`;
+        const resp = await fetch(url, { signal });
+        if (!resp.ok) throw new Error(await readErrorBody(resp));
+        const data = await resp.json();
+        if (signal.aborted) return;
+        _ctxContextCache.set(cacheKey, data);
+        tooltip.innerHTML = headerHtml + renderContextBody(data, lineNumber);
+        highlightContextTooltip(tooltip);
         positionTooltip(tooltip, resultItem);
     } catch (e) {
         if (e.name === 'AbortError') return;
@@ -793,7 +844,8 @@ async function performSearch() {
 
         // Show ranking info if available
         if (data.rank_mode && data.total_candidates !== undefined) {
-            const modeLabel = data.rank_mode === 'fast' ? '⚡ Fast' : (data.rank_mode === 'full' ? '📊 Full' : '🔄 Auto');
+            // Plain mono labels (no emoji) to match the brutalist design language.
+            const modeLabel = data.rank_mode === 'fast' ? 'FAST' : (data.rank_mode === 'full' ? 'FULL' : 'AUTO');
             const candidateInfo = data.candidates_searched !== data.total_candidates 
                 ? `${data.candidates_searched.toLocaleString()}/${data.total_candidates.toLocaleString()} files`
                 : `${data.total_candidates.toLocaleString()} files`;
@@ -957,8 +1009,19 @@ async function performSearch() {
             const filePath = btn.dataset.filePath;
             const lineNumber = parseInt(btn.dataset.lineNumber, 10);
             btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
-            btn.addEventListener('mouseenter', () => showContextTooltip(btn, filePath, lineNumber));
-            btn.addEventListener('mouseleave', hideContextTooltip);
+            // Hover-intent delay: only fetch a preview if the cursor lingers ~200ms,
+            // so sweeping down a results list doesn't fire a burst of requests.
+            btn.addEventListener('mouseenter', () => {
+                clearTimeout(_ctxHoverTimer);
+                _ctxHoverTimer = setTimeout(
+                    () => showContextTooltip(btn, filePath, lineNumber),
+                    200
+                );
+            });
+            btn.addEventListener('mouseleave', () => {
+                clearTimeout(_ctxHoverTimer);
+                hideContextTooltip();
+            });
         });
 
         // Copy-path buttons: copy the file path to the clipboard with brief feedback.

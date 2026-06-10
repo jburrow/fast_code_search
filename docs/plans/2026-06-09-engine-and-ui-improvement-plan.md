@@ -290,31 +290,29 @@ Conventions for the implementing agent:
 
 ## Phase 6 — API DX + web perf (P2)
 
-- [ ] 6.1 Consistent JSON errors: handlers return plain-text bodies on error, JSON on
-  success (api.rs ~185–194 et al). Return `Json({ "error": … })` everywhere.
-- [ ] 6.2 503 ergonomics: add `Retry-After: 1` to `WouldBlock` 503s; UI auto-retries once
-  or shows the "index loading" state instead of "Service Unavailable".
-- [ ] 6.3 ETag handling: mod.rs ~137–147 computes MD5 of every asset per request
-  (including a multi-MB font) and never honors `If-None-Match`. Precompute hashes once;
-  return 304 on match.
-- [ ] 6.4 Subset the icon font: `static/fonts/material-symbols-outlined.woff2` is 3.8 MB
-  for ~13 used glyphs (search, auto_awesome, analytics, description, help_outline,
-  warning, code, function, tune, open_in_new, history, close, settings_suggest). Subset
-  with `fonttools` (keep ligatures for those names) or switch to inline SVGs → ~5–10 KB,
-  also shrinks the rust-embed binary. Eliminates the raw-ligature-text flash.
-- [ ] 6.5 Hover tooltip fetches the whole file per mouseenter (keyword.js:927 →
-  populateFileView) with no delay or cache; the purpose-built `/api/context` endpoint
-  (api.rs ~655–721) is never used. Add ~200 ms hover-intent delay, use `/api/context`,
-  cache by path.
-- [ ] 6.6 Docs page: document `context` param, `/api/file`, `/api/context`,
-  `/api/dependencies`, `/api/diagnostics`, and `total_results` semantics (docs.html
-  ~300–426).
-- [ ] 6.7 Misc cosmetics: drop `relative` from sticky header (index.html:415); hide or
-  collapse `#nav-search` below ~640px (overlaps wordmark); replace emoji ranking labels
-  (⚡📊🔄, keyword.js:766) and diagnostics emoji with material symbols for design
-  consistency; use API `match_start`/`match_end` (already returned, unused) for exact
-  highlight in regex mode; remove dead `searchTimeout` (keyword.js:38) and unused
-  common.js helpers (StatusPoller etc.).
+- [x] 6.1 Consistent JSON errors: added `ApiError` (IntoResponse → `{ "error": … }`) +
+  `From<(StatusCode,String)>`; all 8 handlers now return JSON errors. Handlers keep
+  producing tuples — `?` converts via `From`, so call sites were unchanged.
+- [x] 6.2 503 ergonomics: `ApiError::into_response` adds `Retry-After: 1` to 503s; the UI
+  surfaces the body via `readErrorBody`.
+- [x] 6.3 ETag handling: mod.rs uses rust_embed's compile-time `sha256_hash()` for the
+  ETag (no per-request hashing) and returns `304` on `If-None-Match` match.
+- [ ] 6.4 Subset the icon font — DEFERRED. `fonttools` is not installed and the
+  ligature-based font is shared across all pages (semantic/diagnostics/docs); subsetting
+  without a browser to visually verify risks breaking every icon. Follow-up command:
+  `pip install fonttools brotli` then
+  `pyftsubset static/fonts/material-symbols-outlined.woff2 --flavor=woff2
+   --layout-features=liga,dlig --text-file=<all icon names across static/> --output-file=…`,
+  then visually verify each page's icons before committing.
+- [x] 6.5 Hover tooltip: now uses `/api/context` (small window) with a ~200 ms
+  hover-intent delay and a per-`path:line` cache, instead of fetching the whole file.
+- [x] 6.6 Docs page: documented the `context` param, `/api/file`, `/api/context`,
+  `/api/dependencies`, `/api/diagnostics`, the JSON-error/Retry-After convention, and
+  `total_results`/`has_more` semantics.
+- [x] 6.7 Cosmetics (partial): dropped `relative` from the sticky header; hide
+  `#nav-search` below 640px; replaced emoji ranking labels with plain mono (FAST/FULL/
+  AUTO); removed dead `searchTimeout`. NOT done: `match_start/end` regex highlight and
+  pruning unused common.js helpers (shared across pages — left to avoid breakage).
 
 ---
 
