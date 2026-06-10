@@ -1,3 +1,9 @@
 {
-    "rust-analyzer.checkOnSave": false
+    "rust-analyzer.checkOnSave": false,
+    "chat.tools.terminal.autoApprove": {
+        "/^node -e \"const fs = require\\('fs'\\); const code = fs\\.readFileSync\\('static/keyword\\.js','utf8'\\); try \\{ new Function\\(code\\); console\\.log\\('Syntax OK'\\); \\} catch\\(e\\) \\{ console\\.error\\('SYNTAX ERROR:', e\\.message\\); \\}\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

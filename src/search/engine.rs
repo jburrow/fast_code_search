@@ -23,6 +23,13 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;
     }
+    // Non-ASCII needle: use Unicode-aware folding so candidates surfaced by the
+    // (Unicode-lowercased) trigram index are not silently dropped here. The
+    // trigram index lowercases content with `to_lowercase()`, so verification
+    // must fold the same way for non-ASCII text (e.g. `über` vs `ÜBER`).
+    if !needle_lower.is_ascii() {
+        return unicode_ci_find(haystack, needle_lower).is_some();
+    }
     let needle_len = needle_lower.len();
     if haystack.len() < needle_len {
         return false;
@@ -184,6 +191,54 @@ fn find_char_boundary_ceil(s: &str, pos: usize) -> usize {
     p
 }
 
+/// Unicode-aware case-insensitive substring search.
+///
+/// `needle_lower` must already be Unicode-lowercased (as the query is). Folds
+/// each haystack char via `char::to_lowercase()` and matches against the needle,
+/// returning byte offsets into the ORIGINAL `haystack`. A match that would split
+/// a haystack char whose case-fold expands to multiple chars (e.g. `ß` → `ss`) is
+/// rejected so the returned offsets always fall on char boundaries. Only used on
+/// the rare non-ASCII path, so its O(n·m) cost is acceptable.
+fn unicode_ci_find(haystack: &str, needle_lower: &str) -> Option<(usize, usize)> {
+    let needle: Vec<char> = needle_lower.chars().collect();
+    if needle.is_empty() {
+        return Some((0, 0));
+    }
+    for (start, _) in haystack.char_indices() {
+        let mut ni = 0usize;
+        let mut byte_end = start;
+        let mut ok = true;
+        for c in haystack[start..].chars() {
+            if ni == needle.len() {
+                break;
+            }
+            for lc in c.to_lowercase() {
+                if ni == needle.len() {
+                    // c's fold extends past the needle end — would split a char.
+                    ok = false;
+                    break;
+                }
+                if lc != needle[ni] {
+                    ok = false;
+                    break;
+                }
+                ni += 1;
+            }
+            if !ok {
+                break;
+            }
+            byte_end += c.len_utf8();
+            if ni == needle.len() {
+                break;
+            }
+        }
+        if ok && ni == needle.len() {
+            return Some((start, byte_end));
+        }
+    }
+    None
+}
+
 /// Find match position using case-insensitive search
 #[inline]
 fn find_match_position_case_insensitive(
@@ -192,6 +247,11 @@ fn find_match_position_case_insensitive(
 ) -> Option<(usize, usize)> {
     if needle_lower.is_empty() {
         return Some((0, 0));
+    }
+    // Non-ASCII needle: Unicode-aware match returning original-string byte offsets
+    // (see contains_case_insensitive for the rationale).
+    if !needle_lower.is_ascii() {
+        return unicode_ci_find(haystack, needle_lower);
     }
     let needle_len = needle_lower.len();
     if haystack.len() < needle_len {
@@ -366,8 +426,8 @@ pub struct PartialIndexedFile {
 }
 
 impl PartialIndexedFile {
-    /// Maximum file size to process (10MB) - larger files are skipped
-    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+    /// Default maximum file size to process (10MB) when no explicit limit is given.
+    pub const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
     /// Phase 1: pure-Rust work only — safe to run in parallel across rayon threads.
     /// Does NOT call tree-sitter (C FFI) to avoid concurrent heap corruption.
@@ -375,11 +435,20 @@ impl PartialIndexedFile {
     /// When `transcode_non_utf8` is true, files in non-UTF-8 encodings (Latin-1,
     /// Shift-JIS, UTF-16, etc.) are automatically transcoded. When false, only
     /// UTF-8 files are accepted.
+    ///
+    /// `max_file_size` is the configured byte cap (0 means "use the default cap");
+    /// files larger than it are skipped so a configured limit above the old
+    /// hardcoded 10 MB is actually honored instead of being silently capped.
     /// Returns `Some((file, transcoded))` where `transcoded` is `true` when
     /// the file was converted from a non-UTF-8 encoding via `transcode_to_utf8`.
-    pub fn process(path: &Path, transcode_non_utf8: bool) -> Option<(Self, bool)> {
+    pub fn process(path: &Path, transcode_non_utf8: bool, max_file_size: u64) -> Option<(Self, bool)> {
+        let max_size = if max_file_size == 0 {
+            Self::DEFAULT_MAX_FILE_SIZE
+        } else {
+            max_file_size
+        };
         let metadata = std::fs::metadata(path).ok()?;
-        if metadata.len() > Self::MAX_FILE_SIZE {
+        if metadata.len() > max_size {
             return None;
         }
 
@@ -642,6 +711,10 @@ pub struct SearchEngine {
     pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
     /// Whether tree-sitter symbol extraction is enabled (default: true)
     pub enable_symbols: bool,
+    /// Whether non-UTF-8 files are transcoded during single-file indexing (default: true)
+    pub transcode_non_utf8: bool,
+    /// Maximum file size (bytes) accepted during single-file indexing (default 10MB)
+    pub max_file_size: u64,
     /// Canonical root paths used to produce root-relative display paths
     root_paths: Vec<PathBuf>,
 }
@@ -656,6 +729,8 @@ impl SearchEngine {
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
             enable_symbols: true,
+            transcode_non_utf8: true,
+            max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
             root_paths: Vec::new(),
         }
     }
@@ -714,79 +789,34 @@ impl SearchEngine {
         path.to_string_lossy().replace('\\', "/")
     }
 
-    /// Index a file
+    /// Index a file.
+    ///
+    /// Reads the file content into an **owned buffer** (via `PartialIndexedFile::process`)
+    /// rather than extracting through a live memory map. Holding an mmap across trigram /
+    /// symbol extraction is unsafe: if the file is truncated on disk concurrently (editors
+    /// and build tools routinely truncate-and-rewrite), touching mapped pages past the new
+    /// EOF raises an uncatchable SIGBUS / access violation. Reading owned bytes up front
+    /// avoids that entirely.
+    ///
+    /// The content safety check runs *before* the file is registered in any index, so an
+    /// unsafe/binary/oversized file never leaks a permanent file id with no trigrams.
     pub fn index_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        let file_id = self.file_store.add_file(path)?;
 
-        // Register file in dependency index for import resolution
-        self.dependency_index.register_file(file_id, path);
+        // Phase 1: owned read + safety check + trigram extraction (no live mmap).
+        // `process` returns None for binary/unsafe/oversized files — skip silently.
+        let (partial, _transcoded) =
+            match PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size) {
+                Some(p) => p,
+                None => return Ok(()),
+            };
 
-        // Get the content
-        let content_cow = self.file_store.get(file_id).and_then(|f| f.as_str().ok());
-        let content: &str = content_cow.as_deref().unwrap_or("");
+        // Phase 2: tree-sitter symbol/import extraction with panic protection
+        // (from_partial wraps tree-sitter in catch_unwind).
+        let pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
 
-        // Safety check: skip files that could crash tree-sitter or produce garbage
-        if let Some(reason) = crate::utils::content_safety_check(content) {
-            tracing::warn!(
-                path = %path.display(),
-                reason = reason,
-                "Skipping unsafe file during indexing"
-            );
-            return Ok(());
-        }
-
-        // Extract filename stem for indexing (enables searching by filename)
-        let filename_stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_else(|| {
-                warn!(
-                    "Failed to extract filename stem from path: {}",
-                    path.display()
-                );
-                ""
-            });
-
-        // Index trigrams for case-insensitive search.
-        // Extract from the filename stem and content separately to avoid creating a
-        // large intermediate concatenated string and any spurious cross-boundary trigrams.
-        let mut trigrams = extract_unique_trigrams(&filename_stem.to_lowercase());
-        trigrams.extend(extract_unique_trigrams(&content.to_lowercase()));
-        self.trigram_index.add_document_trigrams(file_id, trigrams);
-
-        // Extract symbols (only when symbol extraction is enabled)
-        let mut symbols = Vec::new();
-        if self.enable_symbols {
-            let extractor = SymbolExtractor::new(path);
-            symbols = extractor.extract(content).unwrap_or_default();
-
-            // Extract imports and store for later resolution
-            if let Ok(imports) = extractor.extract_imports(content) {
-                if !imports.is_empty() {
-                    let import_paths: Vec<String> = imports.into_iter().map(|i| i.path).collect();
-                    self.pending_imports
-                        .push((file_id, path.to_path_buf(), import_paths));
-                }
-            }
-        }
-
-        // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
-        if !filename_stem.is_empty() {
-            symbols.push(Symbol {
-                name: filename_stem.to_string(),
-                symbol_type: SymbolType::FileName,
-                line: 0,
-                column: 0,
-                is_definition: true,
-            });
-        }
-
-        // Ensure symbol_cache is large enough
-        while self.symbol_cache.len() <= file_id as usize {
-            self.symbol_cache.push(Vec::new());
-        }
-        self.symbol_cache[file_id as usize] = symbols;
+        // Merge into the engine: registers the file and adds trigrams/symbols/imports.
+        self.index_batch(vec![pre]);
 
         Ok(())
     }
@@ -1021,48 +1051,99 @@ impl SearchEngine {
         self.rebuild_symbols_and_dependencies_with_progress(|_, _| {})
     }
 
-    /// Restore symbol caches and dependency graph directly from persisted data.
+    /// Build the `original persisted file index → new file id` map from the
+    /// **actual** ids assigned during registration.
     ///
-    /// `valid_file_indices` are the positions in `persisted.files` that were not stale/removed.
-    /// Files are registered in the file_store in that order, so new file ID `k` corresponds to
-    /// `valid_file_indices[k]` in the persisted data.
+    /// `new_ids[p]` is the id assigned to the file at persisted index
+    /// `valid_file_indices[p]`, or `u32::MAX` if that file failed to register
+    /// (e.g. it was deleted between the staleness check and registration).
+    /// Failed registrations are dropped from the map so their trigrams, symbols,
+    /// and dependency edges are discarded rather than aliased onto another file.
+    fn build_orig_to_new_map(
+        valid_file_indices: &[usize],
+        new_ids: &[u32],
+    ) -> rustc_hash::FxHashMap<u32, u32> {
+        valid_file_indices
+            .iter()
+            .zip(new_ids.iter())
+            .filter(|(_, &new_id)| new_id != u32::MAX)
+            .map(|(&orig_idx, &new_id)| (orig_idx as u32, new_id))
+            .collect()
+    }
+
+    /// Remap a restored trigram map (keyed by *original* persisted doc ids) onto
+    /// the new file ids assigned during load.
+    ///
+    /// This MUST mirror the same `orig_to_new` mapping used for symbols and
+    /// dependency edges: persisted bitmaps reference positions in
+    /// `persisted.files`, but reload only re-registers the still-valid files and
+    /// assigns them fresh compacted ids. Without this remap, a single stale file
+    /// shifts every later file's id and search hits get attributed to the wrong
+    /// file. Original ids with no entry in `orig_to_new` (stale/removed/failed)
+    /// are dropped, and trigrams whose postings become empty are pruned.
+    fn remap_trigram_bitmaps(
+        map: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap>,
+        orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
+        persisted_files_len: usize,
+    ) -> rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> {
+        // Fast path: identity mapping (clean reload — nothing stale/removed and no
+        // dedupe, so every original id maps to itself and none are missing).
+        // Avoids rebuilding every posting list. This is O(files), not O(postings).
+        let is_identity = orig_to_new.len() == persisted_files_len
+            && orig_to_new.iter().all(|(&o, &n)| o == n);
+        if is_identity {
+            return map;
+        }
+
+        let mut out: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> =
+            rustc_hash::FxHashMap::default();
+        for (trigram, bitmap) in map {
+            let mut remapped = roaring::RoaringBitmap::new();
+            for old_id in bitmap.iter() {
+                if let Some(&new_id) = orig_to_new.get(&old_id) {
+                    remapped.insert(new_id);
+                }
+            }
+            if !remapped.is_empty() {
+                out.insert(trigram, remapped);
+            }
+        }
+        out
+    }
+
+    /// Restore symbol caches and dependency graph directly from persisted data,
+    /// using the actual `original index → new file id` map.
     pub fn restore_symbols_and_deps(
         &mut self,
-        valid_file_indices: &[usize],
+        orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
         persisted: &crate::index::PersistedIndex,
     ) {
-        let total_new_files = valid_file_indices.len();
-
-        // Allocate symbol cache sized for the newly registered files
+        // Size the symbol cache to the number of files actually registered.
+        let total_new_files = self.file_store.len();
         self.symbol_cache = vec![Vec::new(); total_new_files];
 
-        // Build a mapping: original persisted file index → new file ID
-        let orig_to_new_id: rustc_hash::FxHashMap<u32, u32> = valid_file_indices
-            .iter()
-            .enumerate()
-            .map(|(new_id, &orig_idx)| (orig_idx as u32, new_id as u32))
-            .collect();
-
         // Register files in dependency_index for future import resolution
-        // and restore per-file symbol caches
-        for (new_id, &orig_idx) in valid_file_indices.iter().enumerate() {
-            let new_id = new_id as u32;
+        // and restore per-file symbol caches, keyed by the real new ids.
+        for (&orig_idx, &new_id) in orig_to_new {
+            if (new_id as usize) >= total_new_files {
+                continue;
+            }
             if let Some(path) = self.file_store.get_path(new_id) {
                 self.dependency_index.register_file(new_id, path);
             }
-            if let Some(syms) = persisted.symbols.get(orig_idx) {
+            if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
                 self.symbol_cache[new_id as usize] = syms.clone();
             }
         }
 
         // Restore dependency edges, remapping original indices to new file IDs
-        // and dropping edges whose endpoints were stale/removed
+        // and dropping edges whose endpoints were stale/removed.
         let remapped_edges: Vec<(u32, u32)> = persisted
             .dependency_edges
             .iter()
             .filter_map(|&(from_orig, to_orig)| {
-                let new_from = orig_to_new_id.get(&from_orig)?;
-                let new_to = orig_to_new_id.get(&to_orig)?;
+                let new_from = orig_to_new.get(&from_orig)?;
+                let new_to = orig_to_new.get(&to_orig)?;
                 Some((*new_from, *new_to))
             })
             .collect();
@@ -1236,6 +1317,20 @@ impl SearchEngine {
         max_results: usize,
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        // Empty / whitespace-only queries match nothing. Without this guard they
+        // fall into the short-query branch, pull in ALL documents, and the empty
+        // needle "matches" every line — a full-corpus scan returning garbage.
+        if query.trim().is_empty() {
+            return (
+                Vec::new(),
+                SearchRankingInfo {
+                    mode: rank_mode,
+                    total_candidates: 0,
+                    candidates_searched: 0,
+                },
+            );
+        }
+
         let query_lower = query.to_lowercase();
         // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
         // all documents so that short terms like `_` or `__` return results.
@@ -1448,6 +1543,18 @@ impl SearchEngine {
         max_results: usize,
         rank_mode: RankMode,
     ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        // Empty / whitespace-only queries match nothing (see search_ranked).
+        if query.trim().is_empty() {
+            return Ok((
+                Vec::new(),
+                SearchRankingInfo {
+                    mode: rank_mode,
+                    total_candidates: 0,
+                    candidates_searched: 0,
+                },
+            ));
+        }
+
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
@@ -1536,6 +1643,34 @@ impl SearchEngine {
     /// * `include_patterns` - Semicolon-delimited glob patterns to include
     /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
     /// * `max_results` - Maximum number of results to return
+    /// Compute candidate documents for a regex from its sound literal constraints.
+    ///
+    /// Returns `None` when the regex has no usable constraints (caller should fall
+    /// back to a full scan). Otherwise returns the intersection across constraints
+    /// of the union of each constraint's per-literal trigram matches.
+    fn regex_candidate_docs(&self, analysis: &RegexAnalysis) -> Option<roaring::RoaringBitmap> {
+        if analysis.constraints.is_empty() {
+            return None;
+        }
+        let mut result: Option<roaring::RoaringBitmap> = None;
+        for group in &analysis.constraints {
+            // Union of trigram matches for the alternatives in this constraint.
+            let mut group_docs = roaring::RoaringBitmap::new();
+            for literal in group {
+                // Trigram index stores lowercased content.
+                group_docs |= self.trigram_index.search(&literal.to_lowercase());
+            }
+            result = Some(match result {
+                Some(acc) => acc & group_docs,
+                None => group_docs,
+            });
+            if result.as_ref().is_some_and(|r| r.is_empty()) {
+                break; // intersection already empty
+            }
+        }
+        result
+    }
+
     #[tracing::instrument(skip(self))]
     pub fn search_regex(
         &self,
@@ -1550,20 +1685,19 @@ impl SearchEngine {
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
-        // Get candidate documents using trigram acceleration if possible
-        let candidate_docs = if analysis.is_accelerated {
-            if let Some(literal) = analysis.best_literal() {
-                // Lowercase the literal since the trigram index stores lowercased content
-                let literal_lower = literal.to_lowercase();
-                tracing::debug!(pattern = %pattern, literal = %literal, "Using trigram acceleration for regex");
-                self.trigram_index.search(&literal_lower)
-            } else {
-                tracing::warn!(pattern = %pattern, "Regex has no usable literals - full scan");
+        // Get candidate documents using trigram acceleration if possible.
+        // The candidate set is the INTERSECTION across constraints, and the UNION
+        // of the trigram matches within each constraint. This keeps alternations
+        // correct (e.g. `hello|world` keeps files that contain only `world`).
+        let candidate_docs = match self.regex_candidate_docs(&analysis) {
+            Some(docs) => {
+                tracing::debug!(pattern = %pattern, "Using trigram acceleration for regex");
+                docs
+            }
+            None => {
+                tracing::warn!(pattern = %pattern, "Regex has no sound literal constraints - full scan");
                 self.trigram_index.all_documents()
             }
-        } else {
-            tracing::warn!(pattern = %pattern, "Regex has no extractable literals >= 3 chars - full scan");
-            self.trigram_index.all_documents()
         };
 
         // Apply path filter
@@ -1632,6 +1766,11 @@ impl SearchEngine {
         exclude_patterns: &str,
         max_results: usize,
     ) -> Result<Vec<SearchMatch>> {
+        // Empty / whitespace-only queries match nothing (see search_ranked).
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
@@ -2319,17 +2458,28 @@ impl SearchEngine {
             }
         }
 
+        // Map from original persisted index → new file id, built from the ACTUAL
+        // ids assigned during registration so trigrams/symbols/deps stay aligned.
+        let mut orig_to_new: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
+
         // Only restore index if we have valid files
         if !valid_file_indices.is_empty() {
-            // Restore trigram index (parallelized)
-            let trigram_map = persisted.restore_trigram_index()?;
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
-
-            // Re-add valid files to the file store
+            // Re-add valid files FIRST, capturing the real id each one receives.
+            let mut new_ids = Vec::with_capacity(valid_file_indices.len());
             for &idx in &valid_file_indices {
                 let file_meta = &persisted.files[idx];
-                let _ = self.file_store.add_file(&file_meta.path);
+                match self.file_store.add_file(&file_meta.path) {
+                    Ok(id) => new_ids.push(id),
+                    Err(_) => new_ids.push(u32::MAX), // failed → dropped from the map
+                }
             }
+            orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
+
+            // Restore the trigram index and remap its doc ids onto the new ids.
+            let trigram_map = persisted.restore_trigram_index()?;
+            let remapped =
+                Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
 
             self.trigram_index.finalize();
         }
@@ -2338,7 +2488,7 @@ impl SearchEngine {
             if !persisted.symbols.is_empty() {
                 // Restore symbols and dependency graph directly from persisted data,
                 // remapping original file indices to the new file IDs assigned during load.
-                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 tracing::info!(
                     files_restored = valid_file_indices.len(),
                     "Restored symbol and dependency caches from persisted index"
@@ -2466,20 +2616,14 @@ impl SearchEngine {
 
         let valid_count = valid_file_indices.len();
 
+        // Map from original persisted index → new file id, built from the ACTUAL
+        // ids returned by registration (handles path dedupe correctly).
+        let mut orig_to_new: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
+
         // Only restore index if we have valid files
         if !valid_file_indices.is_empty() {
-            // Phase 4: Restore trigram index
-            progress_callback(
-                LoadingPhase::RestoringTrigrams,
-                None,
-                None,
-                "Restoring search index...",
-            );
-
-            let trigram_map = persisted.restore_trigram_index()?;
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
-
-            // Phase 5: Register file paths (LAZY - no I/O, instant!)
+            // Phase 5: Register file paths FIRST (LAZY - no I/O, instant!) so we
+            // know the real id assigned to each before remapping the trigrams.
             progress_callback(
                 LoadingPhase::MappingFiles,
                 Some(valid_count),
@@ -2503,7 +2647,8 @@ impl SearchEngine {
             self.file_store.reserve(paths_to_register.len());
 
             // Register all files instantly (no I/O, just storing paths)
-            let _ids = self.file_store.register_files_bulk(&paths_to_register);
+            let new_ids = self.file_store.register_files_bulk(&paths_to_register);
+            orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
 
             // Track content bytes from persisted metadata
             self.file_store.add_content_bytes(total_content_bytes);
@@ -2515,6 +2660,19 @@ impl SearchEngine {
                 Some(valid_count),
                 &format!("Registered {} files (lazy loading enabled)", valid_count),
             );
+
+            // Phase 4: Restore trigram index and remap doc ids onto the new ids.
+            progress_callback(
+                LoadingPhase::RestoringTrigrams,
+                None,
+                None,
+                "Restoring search index...",
+            );
+
+            let trigram_map = persisted.restore_trigram_index()?;
+            let remapped =
+                Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
 
             self.trigram_index.finalize();
         }
@@ -2530,7 +2688,7 @@ impl SearchEngine {
 
             if !persisted.symbols.is_empty() {
                 // Restore symbols and dependency graph directly from persisted data
-                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 progress_callback(
                     LoadingPhase::RebuildingSymbols,
                     Some(total_files),
@@ -2620,11 +2778,8 @@ impl SearchEngine {
             }
         }
 
-        // Restore trigram index (parallelized)
-        let trigram_map = persisted.restore_trigram_index()?;
-        self.trigram_index = crate::index::TrigramIndex::from_trigram_map(trigram_map);
-
-        // Register file paths lazily (no I/O - instant!)
+        // Register file paths lazily (no I/O - instant!) FIRST so we know the
+        // real id assigned to each before remapping the trigram doc ids.
         let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
             .map(|&idx| persisted.files[idx].path.clone())
@@ -2637,16 +2792,23 @@ impl SearchEngine {
             .sum();
 
         self.file_store.reserve(paths_to_register.len());
-        let _ids = self.file_store.register_files_bulk(&paths_to_register);
+        let new_ids = self.file_store.register_files_bulk(&paths_to_register);
+        let orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
 
         // Track content bytes from persisted metadata
         self.file_store.add_content_bytes(total_content_bytes);
+
+        // Restore trigram index (parallelized) and remap doc ids onto new ids.
+        let trigram_map = persisted.restore_trigram_index()?;
+        let remapped =
+            Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+        self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
 
         self.trigram_index.finalize();
 
         if !self.file_store.is_empty() {
             if !persisted.symbols.is_empty() {
-                self.restore_symbols_and_deps(&valid_file_indices, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 tracing::info!(
                     files_restored = valid_file_indices.len(),
                     "Restored symbol and dependency caches from persisted index"
@@ -2672,12 +2834,82 @@ impl SearchEngine {
         Ok(stale_files)
     }
 
-    /// Update the index for a single file (for incremental indexing)
+    /// Update the index for a single file (for incremental indexing).
+    ///
+    /// If the file is already indexed, its stale trigrams, symbols, and
+    /// dependency edges are removed and the store entry is refreshed (dropping the
+    /// old mmap and cached UTF-8/transcode results) before re-extracting from the
+    /// current content — all under the SAME file id so existing ids stay stable.
+    /// A brand-new file is indexed normally.
     pub fn update_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        // For now, just re-index the file
-        // A more sophisticated implementation could track document IDs
-        // and update only the affected trigrams
-        self.index_file(path)
+        let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
+            // Not yet indexed — treat as a fresh add.
+            return self.index_file(path);
+        };
+
+        // Strip all stale data for this id first.
+        self.trigram_index.remove_document(id);
+        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        self.dependency_index.remove_file(id);
+
+        // Read fresh owned content + safety check (no live mmap — avoids SIGBUS if
+        // the file is being rewritten concurrently).
+        let (partial, _transcoded) =
+            match PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size) {
+                Some(p) => p,
+                None => {
+                    // File is now binary/unsafe/oversized/unreadable — drop it from
+                    // the index entirely rather than keeping stale content.
+                    self.file_store.remove_file_by_id(id);
+                    return Ok(());
+                }
+            };
+        let pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
+
+        // Refresh the store entry so the stale mapping + caches are discarded, and
+        // re-register for import resolution.
+        self.file_store.refresh_file_by_id(id);
+        self.dependency_index.register_file(id, path);
+
+        // Re-add trigrams and symbols under the same id.
+        self.trigram_index.add_document_trigrams(id, pre.trigrams);
+        while self.symbol_cache.len() <= id as usize {
+            self.symbol_cache.push(Vec::new());
+        }
+        self.symbol_cache[id as usize] = pre.symbols;
+
+        if !pre.imports.is_empty() {
+            self.pending_imports
+                .push((id, path.to_path_buf(), pre.imports));
+            self.resolve_imports_incremental();
+        }
+
+        // The all-documents cache was invalidated by remove/add; it lazily
+        // recomputes on the next short-query search.
+        Ok(())
+    }
+
+    /// Remove a file from the index entirely (for delete / rename-away events).
+    ///
+    /// Drops the file's trigrams, symbols, dependency edges, and store slot
+    /// (tombstoned so its id is never reused). Returns true if a matching file
+    /// was found and removed.
+    pub fn remove_file(&mut self, path: &std::path::Path) -> bool {
+        let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
+            return false;
+        };
+        self.trigram_index.remove_document(id);
+        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        if let Some(meta) = self.file_metadata.get_mut(id as usize) {
+            *meta = FileMetadata::default();
+        }
+        self.dependency_index.remove_file(id);
+        self.file_store.remove_file_by_id(id);
+        true
     }
 }
 
@@ -2864,7 +3096,10 @@ impl IndexingProgress {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        Some((now - started) as f64 / 1000.0)
+        // saturating_sub guards against wall-clock going backwards (NTP step,
+        // VM resume), which would otherwise underflow-panic in debug or yield a
+        // ~584-million-year elapsed value in release.
+        Some(now.saturating_sub(started) as f64 / 1000.0)
     }
 
     /// Calculate progress percentage (0-100)
@@ -2972,6 +3207,39 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_unicode_ci_find_matches_accented() {
+        // Needle already Unicode-lowercased; haystack has uppercase accented form.
+        assert_eq!(unicode_ci_find("ÜBER alles", "über"), Some((0, "Ü".len() + 3)));
+        assert!(unicode_ci_find("der ÜBER mensch", "über").is_some());
+        assert!(unicode_ci_find("nothing here", "über").is_none());
+    }
+
+    #[test]
+    fn test_contains_case_insensitive_unicode() {
+        assert!(contains_case_insensitive("ÜBER", "über"));
+        assert!(contains_case_insensitive("Café", "café"));
+        assert!(!contains_case_insensitive("cafe", "café"));
+    }
+
+    #[test]
+    fn test_empty_query_returns_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("e.txt");
+        std::fs::write(&file_path, "hello world\n").unwrap();
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+
+        assert!(engine.search("", 10).is_empty(), "empty query → no results");
+        assert!(
+            engine.search("   ", 10).is_empty(),
+            "whitespace query → no results"
+        );
+        let (m, info) = engine.search_ranked("  ", 10, RankMode::Auto);
+        assert!(m.is_empty());
+        assert_eq!(info.total_candidates, 0, "must not scan any documents");
+    }
 
     #[test]
     fn test_search_engine() {

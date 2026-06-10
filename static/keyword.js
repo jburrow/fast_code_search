@@ -35,7 +35,6 @@ const progressStatus = document.getElementById('progress-status');
 const progressMessage = document.getElementById('progress-message');
 
 // Search state
-let searchTimeout = null;
 const DEBOUNCE_MS = 300;
 
 // ============================================
@@ -108,7 +107,7 @@ function showHistoryDropdown(filter) {
     showSearchHistoryDropdown(searchHistoryDropdown, queryInput, LS_HISTORY_KEY,
         (selectedQuery) => {
             queryInput.value = selectedQuery;
-            performSearch();
+            submitSearch();
         },
         () => showHistoryDropdown(queryInput.value.trim())
     );
@@ -142,12 +141,14 @@ function loadStateFromUrl() {
     if (rankModeSelect && params.has('rank')) rankModeSelect.value = params.get('rank');
     if (contextLinesSelect && params.has('context')) contextLinesSelect.value = params.get('context');
 
-    // Auto-expand Options if any non-default values were loaded (regex/symbols are now always visible)
+    // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
+    // so the applied filters are discoverable. The previous code opened the hidden
+    // `.advanced-options` element, so filters from a shared link applied invisibly.
     const hasAdvanced = params.has('include') || params.has('exclude') ||
         params.has('rank') || params.has('max') || params.has('context');
     if (hasAdvanced) {
-        const details = document.querySelector('.advanced-options');
-        if (details) details.open = true;
+        const filterPanel = document.getElementById('filter-panel');
+        if (filterPanel) filterPanel.classList.add('open');
     }
 }
 
@@ -231,10 +232,14 @@ async function checkBackendHealth() {
         searchReadiness.setOffline(true);
     }
 
-    // Check semantic backend for the badge (non-blocking side-info)
+    // Check semantic backend for the badge (non-blocking side-info).
+    // Use the page's own protocol so this works under https (mixed-content
+    // requests to http:// are blocked). The port is overridable via
+    // window.SEMANTIC_PORT for non-default deployments.
     let semanticUp = false;
     try {
-        const resp = await fetch(`http://${hostname}:8081/api/health`, { signal: AbortSignal.timeout(2000) });
+        const semanticPort = window.SEMANTIC_PORT || 8081;
+        const resp = await fetch(`${window.location.protocol}//${hostname}:${semanticPort}/api/health`, { signal: AbortSignal.timeout(2000) });
         semanticUp = resp.ok;
     } catch (e) { /* offline */ }
 
@@ -297,12 +302,17 @@ const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
     onConnected: () => {
         // WS connected means the server is reachable — clear any offline state
+        // and re-check health so a banner shown at page load (server was down
+        // then) is cleared once the server recovers.
         searchReadiness.setOffline(false);
+        checkBackendHealth();
     },
     onDisconnected: () => {},
     onServerOffline: () => {
-        // Consecutive WS failures — the keyword search server is not running
+        // Consecutive WS failures — the keyword search server is not running.
         searchReadiness.setOffline(true);
+        // Refresh the banner so it reflects the now-offline server.
+        checkBackendHealth();
     },
     onError: (err) => {
         console.error('Progress WebSocket error:', err);
@@ -310,15 +320,30 @@ const progressWS = new ProgressWebSocket({
     }
 });
 
+let _progressHideTimer = null;
+
 function updateProgressUI(status) {
     const isIdle = status.status === 'idle';
     const isCompleted = status.status === 'completed';
-    
+
     // Update search readiness based on status
     searchReadiness.update(status);
-    
-    toggleElement('progress-panel', !isIdle, 'flex');
-    
+
+    // Show the panel while indexing. On 'completed', keep it visible briefly then
+    // hide it — a permanent 100% "Complete" bar otherwise reads as "stuck". 'idle'
+    // hides immediately.
+    if (isCompleted) {
+        toggleElement('progress-panel', true, 'flex');
+        clearTimeout(_progressHideTimer);
+        _progressHideTimer = setTimeout(
+            () => toggleElement('progress-panel', false, 'flex'),
+            4000
+        );
+    } else {
+        clearTimeout(_progressHideTimer);
+        toggleElement('progress-panel', !isIdle, 'flex');
+    }
+
     if (progressBar) {
         progressBar.style.width = `${status.progress_percent}%`;
         progressBar.className = `progress-fill ${isCompleted ? 'completed' : ''}`;
@@ -574,6 +599,10 @@ async function populateFileView(container, filePath, highlightLine, query, signa
 let _ctxTooltip = null;
 let _ctxHideTimer = null;
 let _ctxFetchController = null;
+let _ctxHoverTimer = null;
+// Cache of /api/context responses keyed by `${filePath}::${lineNumber}` so
+// sweeping the cursor over results doesn't re-fetch the same windows.
+const _ctxContextCache = new Map();
 
 function getOrCreateTooltip() {
     if (!_ctxTooltip) {
@@ -607,21 +636,69 @@ function hideContextTooltipImmediately() {
     }
 }
 
+// Lines of context shown above/below the match in the hover preview.
+const CTX_TOOLTIP_CONTEXT = 12;
+
+function renderContextBody(data, highlightLine) {
+    const start = data.start_line || 1;
+    const rows = (data.lines || []).map((line, i) => {
+        const ln = start + i;
+        const isMatch = ln === highlightLine;
+        return `<div class="file-line${isMatch ? ' file-line-highlight' : ''}">` +
+            `<span class="file-line-num">${ln}</span>` +
+            `<span class="file-line-content">${escapeHtml(line)}</span>` +
+            `</div>`;
+    }).join('');
+    return `<div class="ctx-file-body">${rows}</div>`;
+}
+
+function highlightContextTooltip(tooltip) {
+    const q = queryInput.value.trim();
+    tooltip.querySelectorAll('.file-line-content').forEach(span => {
+        if (typeof hljs !== 'undefined') {
+            const code = document.createElement('code');
+            code.textContent = span.textContent;
+            try { hljs.highlightElement(code); span.innerHTML = code.innerHTML; } catch (e) { /* leave plain */ }
+        }
+        if (q) applyQueryHighlight(span, q);
+    });
+}
+
 async function showContextTooltip(resultItem, filePath, lineNumber) {
     clearTimeout(_ctxHideTimer);
     if (_ctxFetchController) _ctxFetchController.abort();
     _ctxFetchController = new AbortController();
+    const signal = _ctxFetchController.signal;
 
     const tooltip = getOrCreateTooltip();
-    tooltip.innerHTML =
-        `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>` +
-        `<div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
+    const headerHtml = `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>`;
+    const cacheKey = `${filePath}::${lineNumber}`;
+
+    // Cache hit: render immediately, no fetch.
+    const cached = _ctxContextCache.get(cacheKey);
+    if (cached) {
+        tooltip.innerHTML = headerHtml + renderContextBody(cached, lineNumber);
+        tooltip.style.display = 'flex';
+        highlightContextTooltip(tooltip);
+        positionTooltip(tooltip, resultItem);
+        return;
+    }
+
+    tooltip.innerHTML = headerHtml + `<div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
     positionTooltip(tooltip, resultItem);
     tooltip.style.display = 'flex';
 
-    const fileBody = tooltip.querySelector('.ctx-file-body');
     try {
-        await populateFileView(fileBody, filePath, lineNumber, queryInput.value.trim(), _ctxFetchController.signal);
+        // Use the lightweight /api/context endpoint (a small window) instead of
+        // fetching and highlighting the ENTIRE file on every hover.
+        const url = `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=${CTX_TOOLTIP_CONTEXT}`;
+        const resp = await fetch(url, { signal });
+        if (!resp.ok) throw new Error(await readErrorBody(resp));
+        const data = await resp.json();
+        if (signal.aborted) return;
+        _ctxContextCache.set(cacheKey, data);
+        tooltip.innerHTML = headerHtml + renderContextBody(data, lineNumber);
+        highlightContextTooltip(tooltip);
         positionTooltip(tooltip, resultItem);
     } catch (e) {
         if (e.name === 'AbortError') return;
@@ -686,28 +763,25 @@ function getMatchTypeLabel(matchType) {
     }
 }
 
-// URL state field descriptors for keyword search
-const URL_FIELDS = [
-    { param: 'q',       getter: () => queryInput.value.trim(),                      setter: (v) => { queryInput.value = v; },                                         defaultValue: '' },
-    { param: 'max',     getter: () => maxResultsSelect.value,                        setter: (v) => { maxResultsSelect.value = v; },                                   defaultValue: '50' },
-    { param: 'include', getter: () => includeFilterInput?.value.trim() || '',        setter: (v) => { if (includeFilterInput) includeFilterInput.value = v; },         defaultValue: '' },
-    { param: 'exclude', getter: () => excludeFilterInput?.value.trim() || '',        setter: (v) => { if (excludeFilterInput) excludeFilterInput.value = v; },         defaultValue: '' },
-    // Boolean fields use 'true' / '' (empty string) convention: empty string is the
-    // "off" default and is never written to the URL; 'true' appears as ?regex=true.
-    // An unrecognised value such as ?regex=false leaves the checkbox unchecked, which is
-    // intentionally correct behaviour.
-    { param: 'regex',   getter: () => regexModeCheckbox?.checked ? 'true' : '',      setter: (v) => { if (regexModeCheckbox) regexModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
-    { param: 'symbols', getter: () => symbolsModeCheckbox?.checked ? 'true' : '',    setter: (v) => { if (symbolsModeCheckbox) symbolsModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
-    { param: 'rank',    getter: () => rankModeSelect?.value || 'auto',               setter: (v) => { if (rankModeSelect) rankModeSelect.value = v; },                 defaultValue: 'auto' },
-    { param: 'context', getter: () => contextLinesSelect?.value || '0',             setter: (v) => { if (contextLinesSelect) contextLinesSelect.value = v; },         defaultValue: '0' },
-];
+// Tracks the in-flight search so a slow earlier request can be aborted before a
+// newer one renders (prevents stale results overwriting fresh ones).
+let _searchAbort = null;
+
+// Index of the keyboard-selected result group (-1 = none). Reset on each render.
+let _selectedGroupIndex = -1;
 
 async function performSearch() {
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
         return;
     }
-    
+
+    // Cancel any in-flight request: whether this call ends up searching or just
+    // clearing results, the previous request must not win a render race.
+    if (_searchAbort) _searchAbort.abort();
+    _searchAbort = new AbortController();
+    const signal = _searchAbort.signal;
+
     const query = queryInput.value.trim();
     const maxResults = parseInt(maxResultsSelect.value, 10);
     const includeFilter = includeFilterInput?.value.trim() || '';
@@ -748,22 +822,30 @@ async function performSearch() {
         if (rankMode !== 'auto') params.set('rank', rankMode);
         if (contextLines > 0) params.set('context', String(contextLines));
         
-        const response = await fetch(`${API_BASE}/api/search?${params}`);
-        if (!response.ok) throw new Error(`Search failed: ${response.statusText}`);
+        const response = await fetch(`${API_BASE}/api/search?${params}`, { signal });
+        if (!response.ok) {
+            // Surface the server's actual error body (e.g. "Invalid regex pattern: …"
+            // or the 503 "index is updating" message) instead of a bare status text.
+            throw new Error(await readErrorBody(response));
+        }
 
         const data = await response.json();
         const duration = data.elapsed_ms !== undefined ? data.elapsed_ms : (performance.now() - startTime);
 
-        // Save successful query to history
-        saveToHistory(query);
-
         resultsHeader.style.display = 'flex';
-        resultsCount.textContent = `${data.results.length} RESULT${data.results.length !== 1 ? 'S' : ''} FOUND`;
+        // Communicate truncation: prefer the server's has_more flag; fall back to
+        // "results filled the page" so the user knows to raise MAX RESULTS.
+        const n = data.results.length;
+        const truncated = data.has_more === true || (data.has_more === undefined && n >= maxResults);
+        resultsCount.textContent = truncated
+            ? `${n}+ RESULTS (raise MAX RESULTS)`
+            : `${n} RESULT${n !== 1 ? 'S' : ''} FOUND`;
         searchTimeEl.textContent = `LATENCY: ${duration.toFixed(1)}ms`;
 
         // Show ranking info if available
         if (data.rank_mode && data.total_candidates !== undefined) {
-            const modeLabel = data.rank_mode === 'fast' ? '⚡ Fast' : (data.rank_mode === 'full' ? '📊 Full' : '🔄 Auto');
+            // Plain mono labels (no emoji) to match the brutalist design language.
+            const modeLabel = data.rank_mode === 'fast' ? 'FAST' : (data.rank_mode === 'full' ? 'FULL' : 'AUTO');
             const candidateInfo = data.candidates_searched !== data.total_candidates 
                 ? `${data.candidates_searched.toLocaleString()}/${data.total_candidates.toLocaleString()} files`
                 : `${data.total_candidates.toLocaleString()} files`;
@@ -780,6 +862,7 @@ async function performSearch() {
         }
 
         const groupedResults = groupResultsByFile(data.results);
+        _selectedGroupIndex = -1; // reset keyboard selection on each render
 
         resultsContainer.innerHTML = groupedResults.map(group => {
             const firstHit = group.hits[0];
@@ -801,10 +884,8 @@ async function performSearch() {
 
             // Dependency badge
             const depBadge = depCount > 0
-                ? `<span style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                    onmouseenter="showDepsTooltip(this,'${escapeHtml(group.filePath)}')"
-                    onmouseleave="hideDepsTooltip()"
-                    onclick="hideDepsTooltipImmediately();showDependents('${escapeHtml(group.filePath)}')">${depCount} deps</span>`
+                ? `<span class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+                    data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</span>`
                 : '';
 
             const hitsHtml = group.hits.map((result, idx) => {
@@ -867,7 +948,7 @@ async function performSearch() {
             }).join('');
 
             return `
-                <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${firstHit.line_number}">
+                <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${firstHit.line_number}">
                     <!-- File header -->
                     <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
                         <div class="flex items-center gap-2 min-w-0">
@@ -880,6 +961,10 @@ async function performSearch() {
                         <div class="flex items-center gap-2 flex-shrink-0">
                             ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
                             ${depBadge}
+                            <button class="copy-path-btn material-symbols-outlined hover:text-primary transition-colors"
+                                style="font-size:16px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                                data-file-path="${escapeHtml(group.filePath)}"
+                                title="Copy file path">content_copy</button>
                             <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
                                 style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
                                 data-file-path="${escapeHtml(group.filePath)}"
@@ -924,17 +1009,130 @@ async function performSearch() {
             const filePath = btn.dataset.filePath;
             const lineNumber = parseInt(btn.dataset.lineNumber, 10);
             btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
-            btn.addEventListener('mouseenter', () => showContextTooltip(btn, filePath, lineNumber));
-            btn.addEventListener('mouseleave', hideContextTooltip);
+            // Hover-intent delay: only fetch a preview if the cursor lingers ~200ms,
+            // so sweeping down a results list doesn't fire a burst of requests.
+            btn.addEventListener('mouseenter', () => {
+                clearTimeout(_ctxHoverTimer);
+                _ctxHoverTimer = setTimeout(
+                    () => showContextTooltip(btn, filePath, lineNumber),
+                    200
+                );
+            });
+            btn.addEventListener('mouseleave', () => {
+                clearTimeout(_ctxHoverTimer);
+                hideContextTooltip();
+            });
+        });
+
+        // Copy-path buttons: copy the file path to the clipboard with brief feedback.
+        resultsContainer.querySelectorAll('.copy-path-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(btn.dataset.filePath || '');
+                    const prev = btn.textContent;
+                    btn.textContent = 'check';
+                    setTimeout(() => { btn.textContent = prev; }, 1200);
+                } catch (e) {
+                    console.error('Copy failed:', e);
+                }
+            });
+        });
+
+        // Attach dependency-badge handlers via dataset (no inline JS handlers, so
+        // file paths containing quotes can never inject code).
+        resultsContainer.querySelectorAll('.deps-badge').forEach(badge => {
+            const filePath = badge.dataset.filePath;
+            badge.addEventListener('mouseenter', () => showDepsTooltip(badge, filePath));
+            badge.addEventListener('mouseleave', hideDepsTooltip);
+            badge.addEventListener('click', () => {
+                hideDepsTooltipImmediately();
+                showDependents(filePath);
+            });
         });
 
     } catch (error) {
+        // A superseded request was aborted on purpose — ignore it so the newer
+        // search's results/UI are not clobbered by a stale error.
+        if (error.name === 'AbortError') return;
         console.error('Search error:', error);
         showError('results', error.message);
     }
 }
 
 const debouncedSearch = debounce(performSearch, DEBOUNCE_MS);
+
+/**
+ * Explicit submit: record the query in history (only here, NOT in performSearch,
+ * so the debounced keystroke path doesn't pollute history with prefixes like
+ * "per", "perfo", …) and run the search immediately.
+ */
+function submitSearch() {
+    debouncedSearch.cancel();
+    const q = queryInput.value.trim();
+    if (q) saveToHistory(q);
+    performSearch();
+}
+
+// ============================================
+// RESULTS KEYBOARD NAVIGATION
+// ============================================
+
+function getResultGroups() {
+    return Array.from(resultsContainer.querySelectorAll('.result-group'));
+}
+
+function highlightSelectedGroup(groups) {
+    groups.forEach((g, i) => {
+        if (i === _selectedGroupIndex) {
+            g.style.outline = '3px solid #646100';
+            g.style.outlineOffset = '2px';
+            g.scrollIntoView({ block: 'nearest' });
+        } else {
+            g.style.outline = '';
+            g.style.outlineOffset = '';
+        }
+    });
+}
+
+function moveResultSelection(delta) {
+    const groups = getResultGroups();
+    if (!groups.length) return;
+    _selectedGroupIndex = _selectedGroupIndex < 0
+        ? 0
+        : Math.max(0, Math.min(groups.length - 1, _selectedGroupIndex + delta));
+    highlightSelectedGroup(groups);
+}
+
+function openSelectedGroup() {
+    const g = getResultGroups()[_selectedGroupIndex];
+    if (!g) return;
+    showFileModal(g.dataset.filePath, parseInt(g.dataset.lineNumber, 10) || 1);
+}
+
+// Global shortcuts: '/' focuses search; j/k or arrows move the result selection;
+// Enter opens the selected file. Ignored while typing in a field or with a modal open.
+document.addEventListener('keydown', (e) => {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    const modalOpen = document.getElementById('file-modal') || document.getElementById('dep-modal');
+
+    if (e.key === '/' && !typing && !modalOpen) {
+        e.preventDefault();
+        queryInput.focus();
+        return;
+    }
+    if (typing || modalOpen) return;
+
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        moveResultSelection(1);
+    } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        moveResultSelection(-1);
+    } else if (e.key === 'Enter') {
+        openSelectedGroup();
+    }
+});
 
 function groupResultsByFile(results) {
     const groups = [];
@@ -948,7 +1146,11 @@ function groupResultsByFile(results) {
             groupIndex = groups.length;
             indexByPath.set(key, groupIndex);
             groups.push({
-                filePath: key,
+                // Use the normalized string ONLY as the grouping key. The displayed
+                // and fetched path must be the ORIGINAL file_path — the lowercased
+                // key broke the header display ("searchengine.rs") and made the
+                // group view/deps buttons 404 on case-sensitive systems.
+                filePath: result.file_path,
                 hits: [],
             });
         }
@@ -1060,16 +1262,18 @@ async function showDepsTooltip(badgeEl, filePath) {
 
         const MAX = 8;
 
-        function buildSection(files, label, onMoreClick) {
+        // Data-attribute driven: no interpolated inline handlers. Paths are stored
+        // in data-* attributes (escaped) and read back via dataset, so a path
+        // containing quotes can never break out into executable code.
+        function buildSection(files, label, moreAction) {
             const shown = files.slice(0, MAX);
             const extra = files.length - shown.length;
             const items = shown.map(f => {
                 const name = f.split('/').pop();
-                const escapedPath = f.replace(/'/g, "\\'");
-                return `<li><button type="button" class="deps-popover-link" title="${escapeHtml(f)}" onclick="openDependencyFile('${escapedPath}')">${escapeHtml(name)}</button></li>`;
+                return `<li><button type="button" class="deps-popover-link" title="${escapeHtml(f)}" data-dep-file="${escapeHtml(f)}">${escapeHtml(name)}</button></li>`;
             }).join('');
             const more = extra > 0
-                ? `<span class="deps-more" onclick="${onMoreClick}">…and ${extra} more</span>`
+                ? `<span class="deps-more" data-more-action="${escapeHtml(moreAction)}">…and ${extra} more</span>`
                 : '';
             return `<div class="deps-popover-section">` +
                 `<div class="deps-section-title">${escapeHtml(label)} (${files.length})</div>` +
@@ -1078,22 +1282,28 @@ async function showDepsTooltip(badgeEl, filePath) {
                 `</div>`;
         }
 
-        const fp = filePath.replace(/'/g, "\\'");
-        const dependentsSection = buildSection(
-            depData.files || [],
-            'Imported by',
-            `hideDepsTooltipImmediately();showDependents('${fp}')`
-        );
-        const importsSection = buildSection(
-            imptData.files || [],
-            'Imports',
-            `hideDepsTooltipImmediately();showDependencies('${fp}')`
-        );
+        const dependentsSection = buildSection(depData.files || [], 'Imported by', 'dependents');
+        const importsSection = buildSection(imptData.files || [], 'Imports', 'dependencies');
 
         popover.innerHTML =
             `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
             dependentsSection +
             importsSection;
+
+        // Wire popover links/“more” via delegation using dataset values.
+        popover.querySelectorAll('.deps-popover-link').forEach(link => {
+            link.addEventListener('click', () => openDependencyFile(link.dataset.depFile));
+        });
+        popover.querySelectorAll('.deps-more').forEach(more => {
+            more.addEventListener('click', () => {
+                hideDepsTooltipImmediately();
+                if (more.dataset.moreAction === 'dependencies') {
+                    showDependencies(filePath);
+                } else {
+                    showDependents(filePath);
+                }
+            });
+        });
 
         positionDepsPopover(popover, badgeEl);
     } catch (e) {
@@ -1146,8 +1356,8 @@ function showDependencyModal(title, filePath, files, description) {
     modal.innerHTML = `
         <div style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${title} (${files.length})</h2>
-                <button onclick="closeModal()" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
+                <h2 style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)} (${files.length})</h2>
+                <button class="dep-modal-close" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
             <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
             <p style="color:#494831;font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
@@ -1156,6 +1366,8 @@ function showDependencyModal(title, filePath, files, description) {
     `;
 
     modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    const closeBtn = modal.querySelector('.dep-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
     document.addEventListener('keydown', handleModalEscape);
     document.body.appendChild(modal);
 }
@@ -1296,7 +1508,8 @@ queryInput.addEventListener('keydown', (e) => {
     }
     if (e.key === 'Enter') {
         hideHistoryDropdown();
-        performSearch();
+        // Explicit submit: cancels the pending debounce and records history.
+        submitSearch();
     }
 });
 queryInput.addEventListener('focus', () => {
@@ -1335,13 +1548,8 @@ searchReadiness.storeDefaultPlaceholder();
 loadSettingsFromStorage();
 
 // Restore state from URL on page load; URL params take precedence over localStorage.
-// Auto-expand filter panel for non-default values.
-loadStateFromUrl(URL_FIELDS, () => {
-    const filterPanel = document.getElementById('filter-panel');
-    if (filterPanel) filterPanel.classList.add('open');
-    const advancedDetails = document.querySelector('.advanced-options');
-    if (advancedDetails) advancedDetails.open = true;
-});
+// loadStateFromUrl() opens the filter panel itself when filter params are present.
+loadStateFromUrl();
 
 // Probe the backend; start the WebSocket only after confirmation.
 // Inputs start enabled (optimistic) — health check disables them only on failure.

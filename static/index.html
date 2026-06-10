@@ -7,8 +7,10 @@
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
     <link rel="stylesheet" href="/material-symbols.css"/>
-    <link rel="stylesheet" href="/highlight-light.min.css" media="(prefers-color-scheme: light)">
-    <link rel="stylesheet" href="/highlight-dark.min.css" media="(prefers-color-scheme: dark)">
+    <!-- The page is a hard-coded light theme (result code is on a white background),
+         so always use the light highlight.js theme. Loading the dark theme under
+         prefers-color-scheme:dark rendered pale tokens on white = unreadable. -->
+    <link rel="stylesheet" href="/highlight-light.min.css">
     <style>
         /* Language badge color variables (from common.css) */
         :root {
@@ -362,6 +364,11 @@
             opacity: 1;
             pointer-events: auto;
         }
+        /* On narrow viewports the absolutely-centred compact search overlaps the
+           wordmark and help icon — hide it there (the main search box is in view). */
+        @media (max-width: 640px) {
+            #nav-search { display: none !important; }
+        }
         #nav-search-icon {
             display: flex;
             align-items: center;
@@ -412,7 +419,7 @@
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
     <!-- ===== TOP NAV ===== -->
-    <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black relative">
+    <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
         <div class="flex items-center gap-6">
             <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
             <nav class="hidden md:flex items-center gap-0 h-14">
@@ -487,11 +494,17 @@
                         <span class="material-symbols-outlined text-sm">code</span>
                         <span>REGEX</span>
                     </label>
-                    <label class="flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold has-[:checked]:bg-primary-container has-[:checked]:text-black" title="Only match symbol definitions">
+                    <label class="flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black has-[:checked]:bg-primary-container has-[:checked]:text-black" title="Only match symbol definitions">
                         <input type="checkbox" id="symbols-mode" class="sr-only">
                         <span class="material-symbols-outlined text-sm">function</span>
                         <span>SYMBOLS</span>
                     </label>
+                    <!-- Always-visible FILTER toggle so filters can be set BEFORE the
+                         first search (the one in the results bar only appears after a search). -->
+                    <button type="button" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold" title="Show filter and ranking options">
+                        <span class="material-symbols-outlined text-sm">tune</span>
+                        <span>FILTER</span>
+                    </button>
                 </div>
                 <!-- Execute button -->
                 <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
@@ -507,7 +520,7 @@
                     <span id="ranking-info" class="font-label text-xs text-outline"></span>
                 </div>
                 <div class="flex gap-3">
-                    <button id="filter-toggle-btn" class="flex items-center gap-1 font-label text-xs text-outline hover:text-black transition-colors">
+                    <button id="filter-toggle-btn" class="filter-toggle flex items-center gap-1 font-label text-xs text-outline hover:text-black transition-colors">
                         <span class="material-symbols-outlined text-sm">tune</span> FILTER
                     </button>
                 </div>
@@ -597,10 +610,12 @@
     <script src="/common.js"></script>
     <script src="/keyword.js"></script>
     <script>
-        // Filter panel toggle
-        document.getElementById('filter-toggle-btn')?.addEventListener('click', () => {
-            const panel = document.getElementById('filter-panel');
-            panel.classList.toggle('open');
+        // Filter panel toggle — bound to every .filter-toggle (the always-visible
+        // one in the toggle group and the one in the results bar).
+        document.querySelectorAll('.filter-toggle').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                document.getElementById('filter-panel')?.classList.toggle('open');
+            });
         });
         // CMD+K shortcut
         document.addEventListener('keydown', (e) => {
@@ -609,9 +624,10 @@
                 document.getElementById('query')?.focus();
             }
         });
-        // Execute button triggers search
+        // Execute button triggers search (records history via submitSearch)
         document.getElementById('search-btn')?.addEventListener('click', () => {
-            if (typeof performSearch === 'function') performSearch();
+            if (typeof submitSearch === 'function') submitSearch();
+            else if (typeof performSearch === 'function') performSearch();
         });
 
         // ===== COMPACT NAV SEARCH =====
@@ -654,12 +670,14 @@
             navQuery.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     mainQuery.value = navQuery.value;
-                    if (typeof performSearch === 'function') performSearch();
+                    if (typeof submitSearch === 'function') submitSearch();
+                    else if (typeof performSearch === 'function') performSearch();
                 }
             });
             navBtn && navBtn.addEventListener('click', () => {
                 mainQuery.value = navQuery.value;
-                if (typeof performSearch === 'function') performSearch();
+                if (typeof submitSearch === 'function') submitSearch();
+                else if (typeof performSearch === 'function') performSearch();
             });
 
             // Fire when search section crosses the bottom of the sticky header (56 px)

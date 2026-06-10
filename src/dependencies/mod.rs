@@ -196,6 +196,53 @@ impl DependencyIndex {
             .collect()
     }
 
+    /// Remove a file and all edges referencing it (for incremental updates).
+    ///
+    /// Drops the file from both the forward (`imports`) and reverse
+    /// (`imported_by`) graphs, updates cached `import_counts` for any file whose
+    /// dependent set changed, and removes it from the path lookups. Safe to call
+    /// for an id that isn't present (no-op for the graph parts).
+    pub fn remove_file(&mut self, file_id: u32) {
+        // Forward edges out of `file_id`: remove the reverse entry on each target.
+        if let Some(targets) = self.imports.remove(&file_id) {
+            for to_file in targets {
+                if let Some(set) = self.imported_by.get_mut(&to_file) {
+                    set.remove(&file_id);
+                    let count = set.len() as u32;
+                    if count == 0 {
+                        self.imported_by.remove(&to_file);
+                        self.import_counts.remove(&to_file);
+                    } else {
+                        self.import_counts.insert(to_file, count);
+                    }
+                }
+            }
+        }
+
+        // Reverse edges into `file_id`: remove the forward entry on each source.
+        if let Some(sources) = self.imported_by.remove(&file_id) {
+            for from_file in sources {
+                if let Some(set) = self.imports.get_mut(&from_file) {
+                    set.remove(&file_id);
+                    if set.is_empty() {
+                        self.imports.remove(&from_file);
+                    }
+                }
+            }
+        }
+        self.import_counts.remove(&file_id);
+
+        // Remove from path lookups so the id is no longer resolvable.
+        self.path_to_id.retain(|_, &mut v| v != file_id);
+        for paths in self.filename_to_paths.values_mut() {
+            // We don't know the exact path here; drop any path mapping to this id
+            // is handled via path_to_id above. filename_to_paths may retain a
+            // stale path, but resolution always re-checks path_to_id, so a stale
+            // filename entry can never resolve to a removed id.
+            let _ = paths;
+        }
+    }
+
     /// Clear all dependency information
     pub fn clear(&mut self) {
         self.imports.clear();

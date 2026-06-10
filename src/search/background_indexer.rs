@@ -179,6 +179,8 @@ pub fn run(config: BackgroundIndexerConfig) {
     // return root-relative display paths instead of full OS paths.
     if let Ok(mut engine) = index_engine.write() {
         engine.enable_symbols = indexer_config.enable_symbols;
+        engine.transcode_non_utf8 = indexer_config.transcode_non_utf8;
+        engine.max_file_size = indexer_config.max_file_size;
         for path in &indexer_config.paths {
             engine.add_root_path(path);
         }
@@ -548,28 +550,40 @@ fn spawn_discovery_thread(
     already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        // Pre-compile exclude patterns the same way FileDiscoveryIterator does
-        // so that stale files are subject to the same exclusion rules as newly
-        // discovered files. Without this, a file that was indexed before a
-        // "**/target/**" pattern was added would still be sent for re-indexing
-        // when it becomes stale.
-        let compiled_excludes: Vec<String> = exclude_patterns
-            .iter()
-            .map(|p| p.trim_matches('*').trim_matches('/').to_string())
-            .filter(|p| !p.is_empty())
-            .collect();
+        // Compile exclude patterns into the SAME glob filter that
+        // FileDiscoveryIterator uses, so stale files are subject to identical
+        // exclusion rules. The previous trim-and-substring approach diverged
+        // (e.g. it wrongly excluded `.github/` for a `**/.git/**` pattern).
+        let stale_exclude_filter = crate::search::path_filter::PathFilter::exclude_only(
+            &exclude_patterns,
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "Invalid exclude pattern(s) for stale-file filter: {}; exclusions disabled",
+                e
+            );
+            crate::search::path_filter::PathFilter::default()
+        });
 
         // First, send stale files that need re-indexing
         for stale_path in stale_files {
             if !stale_path.exists() {
                 continue;
             }
-            // Apply exclude_patterns before queueing for re-indexing
-            let path_str = stale_path.to_string_lossy();
-            if compiled_excludes
-                .iter()
-                .any(|pattern| path_str.contains(pattern.as_str()))
-            {
+            // Apply the configured size cap so a previously-indexed file that has
+            // since grown beyond the limit is not blindly re-queued (it would only
+            // be dropped later by process(), wasting a read each run).
+            if let Ok(meta) = std::fs::metadata(&stale_path) {
+                if meta.len() > max_file_size {
+                    tracing::debug!(
+                        path = %stale_path.display(),
+                        "Skipping stale file exceeding max_file_size"
+                    );
+                    continue;
+                }
+            }
+            // Apply exclude_patterns (glob semantics) before queueing for re-indexing
+            if stale_exclude_filter.is_excluded(&stale_path.to_string_lossy()) {
                 tracing::debug!(
                     path = %stale_path.display(),
                     "Skipping stale file that matches an exclude pattern"
@@ -666,6 +680,7 @@ fn process_batches(
                         &indexer_config.exclude_files,
                         indexer_config.transcode_non_utf8,
                         indexer_config.enable_symbols,
+                        indexer_config.max_file_size,
                     );
                     total_indexed += indexed;
 
@@ -695,8 +710,20 @@ fn process_batches(
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if discovery_done.load(Ordering::Acquire) && rx.try_recv().is_err() {
-                    break;
+                if discovery_done.load(Ordering::Acquire) {
+                    // Drain any straggler files the discovery thread enqueued just
+                    // before setting discovery_done. The previous code called
+                    // try_recv() purely as an emptiness probe and DISCARDED an
+                    // Ok(path), silently dropping the last file(s). Push them into
+                    // the batch instead; the final flush below indexes them.
+                    let mut drained_any = false;
+                    while let Ok(path) = rx.try_recv() {
+                        batch.push(path);
+                        drained_any = true;
+                    }
+                    if !drained_any {
+                        break;
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -717,6 +744,7 @@ fn process_batches(
             &indexer_config.exclude_files,
             indexer_config.transcode_non_utf8,
             indexer_config.enable_symbols,
+            indexer_config.max_file_size,
         );
         total_indexed += indexed;
 
@@ -742,6 +770,7 @@ fn process_batch(
     exclude_files: &[String],
     transcode_non_utf8: bool,
     enable_symbols: bool,
+    max_file_size: u64,
 ) -> usize {
     *batch_num += 1;
     let batch_start = Instant::now();
@@ -778,7 +807,21 @@ fn process_batch(
         })
         .filter_map(|path| {
             tracing::debug!(path = %path.display(), "Phase1: reading and extracting trigrams");
-            PartialIndexedFile::process(path, transcode_non_utf8)
+            // Catch panics from Phase 1 (file IO, transcoding, trigram extraction)
+            // so one pathological file cannot unwind the rayon worker and kill the
+            // entire background-indexing thread.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                PartialIndexedFile::process(path, transcode_non_utf8, max_file_size)
+            })) {
+                Ok(opt) => opt,
+                Err(_) => {
+                    tracing::error!(
+                        path = %path.display(),
+                        "Phase1 panicked during read/trigram extraction; skipping file"
+                    );
+                    None
+                }
+            }
         })
         .collect();
 
@@ -816,20 +859,18 @@ fn process_batch(
 
     let batch_indexed_count = pre_indexed.len();
 
-    // Merge into engine and incrementally resolve imports
+    // Merge into engine and incrementally resolve imports.
+    // Recover from a poisoned lock (caused by a panic in some other thread)
+    // rather than dropping this and every subsequent batch — the engine's
+    // own data structures remain consistent because index_batch only merges
+    // already-computed data.
     {
-        let mut engine = match index_engine.write() {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    files_dropped = batch.len(),
-                    "Failed to acquire write lock on search engine; skipping batch merge"
-                );
-                batch.clear();
-                return 0;
-            }
-        };
+        let mut engine = index_engine.write().unwrap_or_else(|poisoned| {
+            tracing::error!(
+                "Search engine lock was poisoned; recovering and continuing batch merge"
+            );
+            poisoned.into_inner()
+        });
         engine.index_batch(pre_indexed);
         engine.resolve_imports_incremental();
 
@@ -866,16 +907,10 @@ fn finalize_imports(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
 ) {
-    let mut engine = match index_engine.write() {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                "Failed to acquire write lock on search engine; skipping import finalization"
-            );
-            return;
-        }
-    };
+    let mut engine = index_engine.write().unwrap_or_else(|poisoned| {
+        tracing::error!("Search engine lock was poisoned; recovering for import finalization");
+        poisoned.into_inner()
+    });
 
     let pending_count = engine.pending_imports_count();
 

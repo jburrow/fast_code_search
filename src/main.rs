@@ -245,10 +245,16 @@ async fn main() -> Result<()> {
                                     );
                                 }
                             }
-                            Some(FileChange::Renamed { from: _, to }) => {
-                                tracing::debug!(path = %to.display(), "File renamed, indexing new path");
+                            Some(FileChange::Renamed { from, to }) => {
+                                tracing::debug!(
+                                    from = %from.display(),
+                                    to = %to.display(),
+                                    "File renamed: removing old path and indexing new path"
+                                );
                                 let mut update_ok = false;
                                 if let Ok(mut engine) = watch_engine.write() {
+                                    // Drop the old path's entry, then index the new path.
+                                    engine.remove_file(&from);
                                     match engine.update_file(&to) {
                                         Ok(()) => update_ok = true,
                                         Err(e) => tracing::warn!(
@@ -268,12 +274,19 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Some(FileChange::Deleted(path)) => {
-                                // Engine does not yet support file removal from index;
-                                // log for observability and no-op.
-                                tracing::debug!(
-                                    path = %path.display(),
-                                    "File deleted (removal from index not yet supported)"
-                                );
+                                tracing::debug!(path = %path.display(), "File deleted, removing from index");
+                                let mut removed = false;
+                                if let Ok(mut engine) = watch_engine.write() {
+                                    removed = engine.remove_file(&path);
+                                }
+                                if removed {
+                                    watcher_updates_total += 1;
+                                    save_on_watcher_update(
+                                        &watch_indexer_config,
+                                        &watch_engine,
+                                        watcher_updates_total,
+                                    );
+                                }
                             }
                             None => {} // recv_timeout returned nothing, loop again
                         }

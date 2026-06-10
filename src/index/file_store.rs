@@ -10,8 +10,6 @@ use tracing::warn;
 pub struct MappedFile {
     pub path: PathBuf,
     pub mmap: Mmap,
-    /// Cached result of UTF-8 validation (validated once, reused on subsequent calls)
-    utf8_valid: OnceLock<bool>,
     /// Transcoded UTF-8 content for non-UTF-8 files (None if natively UTF-8)
     transcoded: OnceLock<Option<String>>,
     /// Detected encoding name for diagnostics (None if natively UTF-8)
@@ -32,7 +30,6 @@ impl MappedFile {
         Ok(Self {
             path: path.to_path_buf(),
             mmap,
-            utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
         })
@@ -41,15 +38,15 @@ impl MappedFile {
     /// Get the content as a string slice.
     /// For valid UTF-8 files, returns a zero-copy reference to the mmap.
     /// For non-UTF-8 text files, returns a reference to the transcoded content.
-    /// UTF-8 validation is cached after the first call for performance.
+    ///
+    /// UTF-8 validity is re-checked on every call rather than cached: the bytes
+    /// behind the mmap can change if the file is rewritten on disk, so a cached
+    /// "valid" flag could later bless bytes that are no longer valid UTF-8.
+    /// `std::str::from_utf8` is SIMD-accelerated and returns a *safe* borrow, so
+    /// there is no `unsafe`/UB exposure even if the underlying bytes mutate.
     pub fn as_str(&self) -> Result<&str> {
-        let is_valid = *self
-            .utf8_valid
-            .get_or_init(|| std::str::from_utf8(&self.mmap).is_ok());
-
-        if is_valid {
-            // SAFETY: We validated UTF-8 above and cached the result
-            return Ok(unsafe { std::str::from_utf8_unchecked(&self.mmap) });
+        if let Ok(s) = std::str::from_utf8(&self.mmap) {
+            return Ok(s);
         }
 
         // Slow path: try transcoding non-UTF-8 content

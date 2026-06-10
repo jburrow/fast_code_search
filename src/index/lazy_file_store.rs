@@ -37,8 +37,6 @@ pub struct LazyMappedFile {
     /// evicted — both are infrequent operations that occur only when the OS
     /// `vm.max_map_count` limit is exceeded.
     content_fallback: Mutex<Option<Vec<u8>>>,
-    /// Cached result of UTF-8 validation
-    utf8_valid: OnceLock<bool>,
     /// Transcoded UTF-8 content for non-UTF-8 files (None if natively UTF-8)
     transcoded: OnceLock<Option<String>>,
     /// Detected encoding name for diagnostics (None if natively UTF-8)
@@ -52,7 +50,6 @@ impl LazyMappedFile {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
             content_fallback: Mutex::new(None),
-            utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
         }
@@ -64,7 +61,6 @@ impl LazyMappedFile {
             path: path.as_ref().to_path_buf(),
             mmap: OnceLock::new(),
             content_fallback: Mutex::new(None),
-            utf8_valid: OnceLock::new(),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
         };
@@ -171,15 +167,12 @@ impl LazyMappedFile {
         match self.ensure_mapped() {
             Ok(mmap) => {
                 let bytes = &mmap[..];
-                let is_valid = *self
-                    .utf8_valid
-                    .get_or_init(|| std::str::from_utf8(bytes).is_ok());
-
-                if is_valid {
-                    // SAFETY: We validated UTF-8 above and cached the result
-                    return Ok(Cow::Borrowed(unsafe {
-                        std::str::from_utf8_unchecked(bytes)
-                    }));
+                // Re-validate on every call rather than caching: the bytes behind
+                // the mmap can change if the file is rewritten on disk, so a cached
+                // "valid" flag could bless bytes that are no longer valid UTF-8.
+                // `from_utf8` is SIMD-accelerated and yields a *safe* borrow.
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    return Ok(Cow::Borrowed(s));
                 }
 
                 // Slow path: try transcoding non-UTF-8 content (result is cached)
@@ -207,28 +200,28 @@ impl LazyMappedFile {
                 }
             }
             Err(_) => {
-                // Fallback path: load bytes via evictable Mutex cache
+                // Fallback path: load bytes via evictable Mutex cache. The bytes are
+                // re-read from disk on each access, so UTF-8 validity is NEVER cached
+                // here — validating the freshly-read buffer with the safe
+                // `String::from_utf8` avoids the use-after-change UB that a cached
+                // flag + `from_utf8_unchecked` would introduce.
                 let bytes = self.load_fallback_bytes()?;
 
-                // Cache UTF-8 validity (uses the locally-owned bytes only during init)
-                let is_valid = *self
-                    .utf8_valid
-                    .get_or_init(|| std::str::from_utf8(bytes.as_slice()).is_ok());
-
-                if is_valid {
-                    // SAFETY: We validated UTF-8 above
-                    return Ok(Cow::Owned(unsafe { String::from_utf8_unchecked(bytes) }));
-                }
-
-                // Non-UTF-8 fallback: transcode without caching (rare path)
-                match crate::utils::transcode_to_utf8(&bytes) {
-                    Ok(Some(result)) => {
-                        let _ = self.detected_encoding.set(Some(result.encoding_name));
-                        Ok(Cow::Owned(result.content))
-                    }
-                    _ => {
-                        let _ = self.detected_encoding.set(None);
-                        anyhow::bail!("File is not valid text: {}", self.path.display())
+                match String::from_utf8(bytes) {
+                    Ok(s) => Ok(Cow::Owned(s)),
+                    Err(e) => {
+                        // Non-UTF-8 fallback: transcode (rare path)
+                        let raw = e.into_bytes();
+                        match crate::utils::transcode_to_utf8(&raw) {
+                            Ok(Some(result)) => {
+                                let _ = self.detected_encoding.set(Some(result.encoding_name));
+                                Ok(Cow::Owned(result.content))
+                            }
+                            _ => {
+                                let _ = self.detected_encoding.set(None);
+                                anyhow::bail!("File is not valid text: {}", self.path.display())
+                            }
+                        }
                     }
                 }
             }
@@ -290,6 +283,10 @@ pub struct LazyFileStore {
     files: Vec<LazyMappedFile>,
     /// Map from path to file ID (for deduplication)
     path_to_id: HashMap<PathBuf, u32>,
+    /// IDs that have been tombstoned (removed during incremental updates).
+    /// Tombstoned slots are hidden from `get`/`get_path`/lookups and never
+    /// reused, so existing file IDs stay stable. Typically tiny.
+    tombstoned: std::collections::HashSet<u32>,
     /// Statistics: number of files that have been mapped
     mapped_count: AtomicUsize,
     /// Statistics: total bytes of content indexed (accumulated as files are added)
@@ -316,6 +313,7 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
+            tombstoned: std::collections::HashSet::new(),
             mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),
             mmap_safe_limit,
@@ -444,9 +442,40 @@ impl LazyFileStore {
         Ok(id)
     }
 
-    /// Get a file by ID
+    /// Get a file by ID (returns None for tombstoned/removed ids)
     pub fn get(&self, id: u32) -> Option<&LazyMappedFile> {
+        if self.tombstoned.contains(&id) {
+            return None;
+        }
         self.files.get(id as usize)
+    }
+
+    /// Tombstone a file id: hide it from `get`/`get_path`/lookups and remove it
+    /// from the path map so the same path re-added later receives a fresh id.
+    /// The slot itself is retained so existing ids remain stable.
+    pub fn remove_file_by_id(&mut self, id: u32) {
+        if let Some(f) = self.files.get(id as usize) {
+            let p = f.path.clone();
+            self.path_to_id.remove(&p);
+        }
+        self.tombstoned.insert(id);
+    }
+
+    /// Replace the entry for an existing id with a fresh, unmapped one so a stale
+    /// memory map and cached UTF-8/transcode results are dropped. The id and its
+    /// path are preserved; the next access maps the file fresh. Un-tombstones the
+    /// id if it had been removed. Returns false if `id` is out of range.
+    pub fn refresh_file_by_id(&mut self, id: u32) -> bool {
+        if let Some(f) = self.files.get_mut(id as usize) {
+            let p = f.path.clone();
+            *f = LazyMappedFile::new(&p);
+            // Ensure the path remains resolvable and the id is live again.
+            self.path_to_id.insert(p, id);
+            self.tombstoned.remove(&id);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get the total number of registered files
@@ -479,8 +508,11 @@ impl LazyFileStore {
         self.total_content_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
-    /// Get a file path by ID (always available, no I/O needed)
+    /// Get a file path by ID (always available, no I/O needed; None if tombstoned)
     pub fn get_path(&self, id: u32) -> Option<&Path> {
+        if self.tombstoned.contains(&id) {
+            return None;
+        }
         self.files.get(id as usize).map(|f| f.path.as_path())
     }
 
@@ -502,6 +534,9 @@ impl LazyFileStore {
         // Normalize to forward slashes so callers can use either separator.
         let normalized = suffix.replace('\\', "/");
         self.files.iter().enumerate().find_map(|(id, f)| {
+            if self.tombstoned.contains(&(id as u32)) {
+                return None;
+            }
             let file_path = f.path.to_string_lossy().replace('\\', "/");
             if file_path.ends_with(normalized.as_str()) {
                 Some(id as u32)
@@ -511,9 +546,14 @@ impl LazyFileStore {
         })
     }
 
-    /// Get all file paths (no I/O needed)
+    /// Get all file paths (no I/O needed; excludes tombstoned/removed files)
     pub fn get_all_paths(&self) -> Vec<PathBuf> {
-        self.files.iter().map(|f| f.path.clone()).collect()
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(id, _)| !self.tombstoned.contains(&(*id as u32)))
+            .map(|(_, f)| f.path.clone())
+            .collect()
     }
 
     /// Get the number of files that have been actually mapped
@@ -577,6 +617,7 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
+            tombstoned: std::collections::HashSet::new(),
             mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),
             mmap_safe_limit,

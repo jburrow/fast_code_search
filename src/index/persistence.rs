@@ -4,6 +4,7 @@
 //! Includes file locking for safe concurrent access (exclusive writes, shared reads).
 
 use anyhow::{Context, Result};
+use bincode::Options;
 use fs2::FileExt;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
@@ -72,6 +73,24 @@ pub struct PersistedIndex {
     pub dependency_edges: Vec<(u32, u32)>,
 }
 
+/// Fixed magic header written before the bincode body.
+///
+/// Validated *before* any bincode decoding so a corrupt, truncated, or
+/// foreign file is rejected immediately — never letting a bogus length prefix
+/// drive a multi-gigabyte allocation. The trailing digits are a format version;
+/// bump them on any incompatible on-disk change.
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX01";
+
+/// Build the bincode options used for *both* save and load.
+///
+/// Fixint encoding + little-endian is stable across runs; the two sides must use
+/// identical options. Compatibility with files written before the magic header
+/// existed is intentionally dropped — those fail the magic check and trigger a
+/// clean rebuild via `try_load`.
+fn bincode_opts() -> impl Options {
+    bincode::options().with_fixint_encoding()
+}
+
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
     pub const CURRENT_VERSION: u32 = 3;
@@ -106,8 +125,15 @@ impl PersistedIndex {
         })
     }
 
-    /// Save the index to a file with exclusive lock
+    /// Save the index atomically.
+    ///
+    /// Writes to a sibling temp file (with an exclusive lock), flushes and fsyncs
+    /// it, then renames over the target. This guarantees a reader holding a shared
+    /// lock never observes a truncated file, and a crash mid-write leaves the
+    /// previous index intact (the temp file is simply discarded).
     pub fn save(&self, path: &Path) -> Result<()> {
+        use std::io::Write;
+
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -115,23 +141,56 @@ impl PersistedIndex {
             })?;
         }
 
-        let file = std::fs::File::create(path)
-            .with_context(|| format!("Failed to create index file: {}", path.display()))?;
+        let tmp_path = path.with_extension("bin.tmp");
 
-        // Acquire exclusive lock for writing
-        file.lock_exclusive()
-            .with_context(|| format!("Failed to acquire exclusive lock on: {}", path.display()))?;
+        {
+            let file = std::fs::File::create(&tmp_path).with_context(|| {
+                format!("Failed to create temp index file: {}", tmp_path.display())
+            })?;
 
-        let writer = std::io::BufWriter::new(&file);
-        bincode::serialize_into(writer, self)
-            .with_context(|| format!("Failed to serialize index: {}", path.display()))?;
+            // Acquire exclusive lock for writing
+            file.lock_exclusive().with_context(|| {
+                format!("Failed to acquire exclusive lock on: {}", tmp_path.display())
+            })?;
 
-        // Lock is automatically released when file is dropped
+            let mut writer = std::io::BufWriter::new(&file);
+
+            // Fixed header first, then the bincode body.
+            writer
+                .write_all(INDEX_MAGIC)
+                .with_context(|| format!("Failed to write index header: {}", tmp_path.display()))?;
+            bincode_opts()
+                .serialize_into(&mut writer, self)
+                .with_context(|| format!("Failed to serialize index: {}", tmp_path.display()))?;
+
+            // Flush the BufWriter explicitly so I/O errors (e.g. disk full) surface
+            // here instead of being silently swallowed when the writer is dropped.
+            writer
+                .flush()
+                .with_context(|| format!("Failed to flush index: {}", tmp_path.display()))?;
+            drop(writer);
+            file.sync_all()
+                .with_context(|| format!("Failed to fsync index: {}", tmp_path.display()))?;
+            // Exclusive lock released as `file` drops at end of scope.
+        }
+
+        // Atomic replace. On Windows, rename onto an existing file can fail, so
+        // fall back to remove-then-rename.
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            tracing::debug!(error = %e, "Direct rename failed; retrying after removing target");
+            let _ = std::fs::remove_file(path);
+            std::fs::rename(&tmp_path, path).with_context(|| {
+                format!("Failed to atomically replace index file: {}", path.display())
+            })?;
+        }
+
         Ok(())
     }
 
     /// Load an index from a file with shared lock (allows multiple readers)
     pub fn load(path: &Path) -> Result<Self> {
+        use std::io::Read;
+
         let file = std::fs::File::open(path)
             .with_context(|| format!("Failed to open index file: {}", path.display()))?;
 
@@ -139,8 +198,30 @@ impl PersistedIndex {
         file.lock_shared()
             .with_context(|| format!("Failed to acquire shared lock on: {}", path.display()))?;
 
-        let reader = std::io::BufReader::new(&file);
-        let index: Self = bincode::deserialize_from(reader)
+        // Upper bound for the bincode byte limit: the body can never be larger
+        // than the file itself.
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        let mut reader = std::io::BufReader::new(&file);
+
+        // Validate the fixed header BEFORE decoding the body so a corrupt or
+        // foreign file is rejected without ever allocating from a bogus length.
+        let mut magic = [0u8; INDEX_MAGIC.len()];
+        reader
+            .read_exact(&mut magic)
+            .with_context(|| format!("Failed to read index header: {}", path.display()))?;
+        if magic != *INDEX_MAGIC {
+            anyhow::bail!(
+                "Index header mismatch (corrupt or old format) in {}; the index will be rebuilt.",
+                path.display()
+            );
+        }
+
+        // Decode with a byte limit so a corrupt length prefix returns an Err
+        // instead of aborting the process on a huge allocation.
+        let index: Self = bincode_opts()
+            .with_limit(file_len.max(1))
+            .deserialize_from(&mut reader)
             .with_context(|| format!("Failed to deserialize index: {}", path.display()))?;
 
         // Lock is automatically released when file is dropped
@@ -361,6 +442,86 @@ mod tests {
             .expect("Trigram not found");
         assert!(bitmap.contains(0));
         assert!(bitmap.contains(1));
+    }
+
+    fn sample_index() -> PersistedIndex {
+        let mut trigram_to_docs: FxHashMap<Trigram, RoaringBitmap> = FxHashMap::default();
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.insert(0);
+        trigram_to_docs.insert(Trigram::new([b'h', b'e', b'l']), bitmap);
+        PersistedIndex::new(
+            "fp".to_string(),
+            vec!["/test".to_string()],
+            vec![PersistedFileMetadata {
+                path: PathBuf::from("/test/file.rs"),
+                mtime: 1,
+                size: 1,
+                source_base_path: Some("/test".to_string()),
+            }],
+            &trigram_to_docs,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("create persisted index")
+    }
+
+    #[test]
+    fn test_load_rejects_truncated_file() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let index_path = temp_dir.path().join("index.bin");
+        sample_index().save(&index_path).expect("save");
+
+        // Truncate the file to a few bytes — header partial / body missing.
+        let full = std::fs::read(&index_path).expect("read");
+        std::fs::write(&index_path, &full[..3.min(full.len())]).expect("truncate");
+
+        // Must return Err (not panic / abort), and try_load degrades to None.
+        assert!(PersistedIndex::load(&index_path).is_err());
+        assert!(PersistedIndex::try_load(&index_path).is_none());
+    }
+
+    #[test]
+    fn test_load_rejects_random_bytes() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let index_path = temp_dir.path().join("index.bin");
+
+        // Random/garbage bytes with no valid magic header.
+        std::fs::write(&index_path, vec![0xABu8; 4096]).expect("write garbage");
+
+        assert!(PersistedIndex::load(&index_path).is_err());
+        assert!(PersistedIndex::try_load(&index_path).is_none());
+    }
+
+    #[test]
+    fn test_load_rejects_bogus_length_prefix() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let index_path = temp_dir.path().join("index.bin");
+
+        // Valid magic header followed by a giant length prefix and nothing else.
+        // The byte limit must turn this into an Err rather than a huge allocation.
+        let mut bytes = INDEX_MAGIC.to_vec();
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+        std::fs::write(&index_path, &bytes).expect("write");
+
+        assert!(PersistedIndex::load(&index_path).is_err());
+    }
+
+    #[test]
+    fn test_save_is_atomic_leaves_previous_on_failure() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let index_path = temp_dir.path().join("index.bin");
+
+        // First save succeeds and is loadable.
+        sample_index().save(&index_path).expect("first save");
+        assert!(PersistedIndex::load(&index_path).is_ok());
+
+        // A temp file must not be left behind after a successful save.
+        let tmp = index_path.with_extension("bin.tmp");
+        assert!(!tmp.exists(), "temp file should be cleaned up by rename");
+
+        // Re-saving over an existing index works (covers Windows rename-over path).
+        sample_index().save(&index_path).expect("second save");
+        assert!(PersistedIndex::load(&index_path).is_ok());
     }
 
     #[test]
