@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774632549967,
+  "lastUpdate": 1781126471374,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -8525,6 +8525,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 713079,
             "range": "± 4738",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33a9732ab547a6467d97db613cd8958731eeed13",
+          "message": "Fix/engine and UI improvements (#101)\n\n* fix(index): eliminate mmap UTF-8 UB, guard indexing panics, harden persistence\n\nPhase 1 + 2.3 of the engine improvement plan:\n- Remove from_utf8_unchecked + cached utf8_valid flag in file_store and\n  lazy_file_store; re-validate each read with safe conversions (fixes UB when\n  mmapped/fallback bytes change underneath a cached validity flag).\n- index_file now reads an owned buffer via the process/from_partial pipeline\n  instead of extracting through a live mmap (avoids truncation SIGBUS) and runs\n  the content-safety check before registering the file.\n- Wrap Phase-1 batch processing in catch_unwind; recover poisoned engine locks\n  via into_inner() instead of silently dropping batches.\n- Persistence: 8-byte magic header validated before decode; bincode decoded with\n  a file-size byte limit; atomic save via temp file + fsync + rename.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(index): correct reload id remapping + real incremental updates\n\nPhase 2 of the engine improvement plan:\n- Reload: remap trigram bitmap doc ids onto the compacted ids assigned during\n  load (built from actual add_file/register results), mirroring the symbol/dep\n  remap. Fixes silent result misattribution when any file is stale/removed.\n- Incremental updates: TrigramIndex::remove_document, LazyFileStore tombstone +\n  refresh, DependencyIndex::remove_file. update_file now strips stale data and\n  re-extracts under the same id; remove_file added. Watcher handles Modify(Name)\n  renames; main.rs wires Deleted/Renamed to engine removal.\n- Pipeline robustness: drain straggler files at shutdown, follow_links(false),\n  max_file_size plumbed through process()/engine/stale-files, saturating_sub on\n  elapsed time.\n- Tests: reload-remap round trip and incremental update/remove/rename.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(search): sound regex literals, glob exclusions, case-folding + empty-query guard\n\nPhase 3 of the engine improvement plan:\n- Regex acceleration: extract sound trigram constraints (intersection of\n  per-constraint unions). Alternations union their branch literals instead of\n  picking one 'best' literal, so 'hello|world' no longer drops files containing\n  only one branch; optional/min==0 subexprs add no constraint.\n- Exclusions: PathFilter::expand_pattern adds **/name/** for bare dir names;\n  watcher and stale-file filter now use the glob PathFilter instead of trimmed\n  substring matching (fixes .git excluding .github/.gitignore, Windows paths).\n- Case folding: verification is now Unicode-aware for non-ASCII needles\n  (matches the already-Unicode trigram layer), so über matches ÜBER end-to-end.\n- Empty/whitespace queries early-return instead of scanning the whole corpus.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(web): XSS hardening, grouping path, search race, lifecycle fixes\n\nPhase 4 of the engine/UI plan (web UI):\n- escapeHtml now escapes quotes; removed inline on* handlers (deps badge,\n  popover links, modal close) in favor of addEventListener + dataset, closing\n  an XSS vector via attacker-influenced file paths.\n- group-by-file uses the normalized path only as the map key and displays/fetches\n  the original file_path (fixes lowercased headers and 404s on case-sensitive FS).\n- performSearch aborts the in-flight request (AbortController) and Enter cancels\n  the pending debounce, eliminating stale-result races and double fetches.\n- offline banner re-checks health on WS connect/offline; shared-URL filters now\n  open the visible filter panel; always use the light highlight.js theme; ws->wss\n  under https and protocol-relative semantic probe; rebuilt tailwind.css with the\n  missing dropdown utilities; deleted dead/corrupt common.css and keyword.css.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(web): usability — filter discoverability, error bodies, history, keyboard nav\n\nPhase 5 of the engine/UI plan (web UI usability):\n- Always-visible FILTER toggle so filters can be set before the first search.\n- Surface server error bodies (invalid regex, index-updating) via readErrorBody.\n- submitSearch() records history only on explicit submit (no keystroke prefixes).\n- Progress panel auto-hides 4s after completion (no permanent 100% bar).\n- Keyboard nav: j/k or arrows move result selection, Enter opens, / focuses search.\n- Per-group copy-path button; results count shows truncation (has_more / page-full).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(api/web): JSON errors + Retry-After, ETag 304, lighter hover preview, docs\n\nPhase 6 of the engine/UI plan (API DX + perf):\n- ApiError type: all handlers return consistent JSON { error } bodies; 503s carry\n  Retry-After: 1. Conversion is via From, so handler call sites are unchanged.\n- Static assets use rust_embed's compile-time sha256 for the ETag (no per-request\n  hashing of the multi-MB font) and return 304 on If-None-Match.\n- SearchResponse gains has_more so the UI can show truncation honestly.\n- Hover preview uses the lightweight /api/context endpoint with a 200ms\n  hover-intent delay and a per-(path,line) cache instead of fetching whole files.\n- Docs page documents context param, /api/file|context|dependencies|diagnostics,\n  the JSON-error/Retry-After convention, and total_results/has_more semantics.\n- Cosmetics: drop stray 'relative' on sticky header, hide nav-search <640px,\n  plain mono ranking labels, remove dead searchTimeout.\n- Font subset (6.4) deferred: fonttools unavailable + shared ligature font needs\n  visual verification; documented as a follow-up.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* docs: mark engine/UI improvement plan complete\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* chore: allowlist read-only cargo build/test and node --check\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>\n\n* chore: release v0.9.0\n\nEngine crash/correctness fixes + web UI/API improvements. See CHANGELOG.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-06-10T22:07:34+01:00",
+          "tree_id": "ce2cf771d202134fb8372e001865f4f0937aeea0",
+          "url": "https://github.com/jburrow/fast_code_search/commit/33a9732ab547a6467d97db613cd8958731eeed13"
+        },
+        "date": 1781126470475,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 301283,
+            "range": "± 7737",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 24705,
+            "range": "± 1407",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 491,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 524705,
+            "range": "± 23170",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 24719,
+            "range": "± 1531",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 592,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 970183,
+            "range": "± 13110",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 24671,
+            "range": "± 1396",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 954,
+            "range": "± 51",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 364294,
+            "range": "± 6540",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 617686,
+            "range": "± 12487",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 525664,
+            "range": "± 11173",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 832621,
+            "range": "± 6717",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 525306,
+            "range": "± 12635",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 346205,
+            "range": "± 7619",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 534466,
+            "range": "± 3608",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 727142,
+            "range": "± 4914",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 518530,
+            "range": "± 12572",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 528740,
+            "range": "± 10507",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 254743,
+            "range": "± 3384",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 525764,
+            "range": "± 10350",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 520261,
+            "range": "± 13487",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 519630,
+            "range": "± 6712",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 336806,
+            "range": "± 11828",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 292784,
+            "range": "± 7892",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 4272,
+            "range": "± 179",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 12056894,
+            "range": "± 51827",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 23882316,
+            "range": "± 101840",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 47293300,
+            "range": "± 267532",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 20696339,
+            "range": "± 46024",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 21579085,
+            "range": "± 77755",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 41219239,
+            "range": "± 208994",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 43551683,
+            "range": "± 109534",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 1301391,
+            "range": "± 99344",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3923137,
+            "range": "± 170349",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 7134334,
+            "range": "± 130161",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1973538,
+            "range": "± 27494",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 7800892,
+            "range": "± 18386",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 15603299,
+            "range": "± 446978",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 186333,
+            "range": "± 5915",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 302416,
+            "range": "± 6960",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 451645,
+            "range": "± 6894",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 125925,
+            "range": "± 4350",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 564193,
+            "range": "± 12036",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 1128853,
+            "range": "± 48240",
             "unit": "ns/iter"
           }
         ]
