@@ -24,6 +24,25 @@ function escapeHtml(text) {
 }
 
 /**
+ * Read a useful error message from a non-OK fetch Response.
+ * Handles both JSON error bodies ({ "error": "..." }) and plain-text bodies,
+ * falling back to the status text. Used so server diagnostics (invalid regex,
+ * index-updating, etc.) reach the user instead of a generic "Bad Request".
+ * @param {Response} response
+ * @returns {Promise<string>}
+ */
+async function readErrorBody(response) {
+    let detail = '';
+    try {
+        const body = await response.text();
+        if (body) {
+            try { detail = JSON.parse(body).error || body; } catch { detail = body; }
+        }
+    } catch (e) { /* ignore */ }
+    return (detail || response.statusText || `HTTP ${response.status}`).trim();
+}
+
+/**
  * Format bytes to human-readable string
  * @param {number} bytes - Number of bytes
  * @returns {string} Formatted string (e.g., "1.5 MB")

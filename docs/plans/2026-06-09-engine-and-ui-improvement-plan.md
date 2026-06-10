@@ -269,27 +269,22 @@ Conventions for the implementing agent:
 
 ## Phase 5 — Web UI usability (P2)
 
-- [ ] 5.1 Filter discoverability: the only FILTER toggle lives inside `#results-header`
-  (hidden until first search) — index.html ~503–514. Move/duplicate it next to the
-  REGEX/SYMBOLS toggles so include/exclude/max/context can be set before searching.
-- [ ] 5.2 Surface server error bodies: keyword.js:752 throws `response.statusText`,
-  discarding useful 400 bodies ("Invalid regex pattern: …") and the 503 indexing message.
-  Read `await response.text()` and render it (populateFileView ~530–534 already does).
-- [ ] 5.3 Truncation honesty: server `total_results` == page length (api.rs:299). Add a
-  real total or `has_more` flag server-side; UI shows "50+ shown — raise MAX RESULTS".
-- [ ] 5.4 History pollution: `saveToHistory` fires on every debounced keystroke-search
-  (keyword.js:758) storing prefixes ("per", "perfor", …). Save only on explicit submit
-  (Enter / button / history-select) or after idle.
-- [ ] 5.5 Progress panel: `completed` status keeps a 100% bar forever (keyword.js:320) —
-  hide a few seconds after completion. Also stats flicker to 0 during indexing because
-  `get_stats_from_engine` returns zeros when the write lock is held (api.rs ~732–747) —
-  cache last-known-good stats server-side or skip the update client-side.
-- [ ] 5.6 Keyboard navigation: results list has no keyboard support — add arrow/j-k
-  navigation between hits + Enter to open the file modal; make history-dropdown
-  highlight scroll into view; Escape restores the typed query; consider `/` to focus
-  search.
-- [ ] 5.7 Copy-path + open-in-editor: add a copy button per group header
-  (navigator.clipboard) and an optional `vscode://file/<abs>:<line>` link (config-gated).
+- [x] 5.1 Filter discoverability: added an always-visible FILTER toggle in the main
+  toggle group (next to REGEX/SYMBOLS); both it and the results-bar button share a
+  `.filter-toggle` class wired to open `#filter-panel`.
+- [x] 5.2 Surface server error bodies: added `readErrorBody()` (JSON `error` or plain
+  text); search throws the real server message.
+- [x] 5.3 Truncation honesty (UI): results count shows "N+ RESULTS (raise MAX RESULTS)"
+  when the server sets `has_more` (added in 6.x) or, as a fallback, when the page filled.
+- [x] 5.4 History pollution: `saveToHistory` removed from `performSearch`; new
+  `submitSearch()` records history only on explicit submit (Enter / EXECUTE / nav RUN /
+  history-select).
+- [x] 5.5 Progress panel: `completed` now auto-hides after 4s instead of showing a
+  permanent 100% bar.
+- [x] 5.6 Keyboard navigation: j/k or ↑/↓ move a highlighted result group, Enter opens
+  it, `/` focuses search (ignored while typing or with a modal open).
+- [x] 5.7 Copy-path: per-group-header copy button (navigator.clipboard) with check-mark
+  feedback. (Editor-protocol link deferred — needs a config toggle; not added.)
 
 ---
 
