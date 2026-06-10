@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-10
+
+### Added
+- Real incremental index updates: file modifications, deletions, and renames now
+  update the index in place (`TrigramIndex::remove_document`, file-store tombstone /
+  refresh, dependency-edge removal) instead of leaving stale entries until restart.
+- Watcher now handles rename events (`Modify(Name)`), wiring delete + re-index.
+- Search API returns a `has_more` flag; the UI shows "N+ results (raise MAX RESULTS)".
+- Always-visible FILTER toggle so filters can be set before the first search.
+- Keyboard navigation in results (`j`/`k`/arrows to move, Enter to open, `/` to focus).
+- Per-result copy-path button.
+
+### Changed
+- API errors are now consistent JSON (`{ "error": … }`); 503s include `Retry-After`.
+- Static assets use compile-time content hashes for ETags and honor `If-None-Match`
+  (304), eliminating per-request hashing of large embedded assets.
+- Hover preview uses the lightweight `/api/context` endpoint with a hover-intent
+  delay and per-file cache instead of fetching the whole file.
+- Configured `max_file_size` is honored end-to-end (no longer silently capped at 10 MB).
+- Docs page documents the `context` param and the file/context/dependencies/diagnostics
+  endpoints, the JSON-error/Retry-After convention, and `total_results`/`has_more`.
+
+### Fixed
+- Eliminated memory-map UTF-8 undefined behavior and truncation crashes during
+  indexing (no more `from_utf8_unchecked` over bytes that can change underneath it;
+  single-file indexing reads an owned buffer instead of a live mmap).
+- Guarded all indexing paths against panics and recover from poisoned engine locks
+  instead of silently dropping batches.
+- Hardened persisted-index loading (magic header + allocation-limited decode) and made
+  index saves atomic (temp file + fsync + rename).
+- Fixed silent result misattribution after reload by remapping trigram document IDs
+  onto the compacted IDs assigned when stale/removed files are skipped.
+- Regex acceleration no longer drops matches for alternations / optional literals
+  (e.g. `hello|world` now returns files containing only one branch).
+- Watcher/stale-file exclusions use glob semantics (so `**/.git/**` no longer excludes
+  `.github`/`.gitignore`, and Windows backslash paths match correctly).
+- Case-insensitive verification is Unicode-aware (e.g. `über` matches `ÜBER`); empty /
+  whitespace queries return immediately instead of scanning the whole corpus.
+- Web UI: quote-safe HTML escaping and removal of inline event handlers (XSS hardening);
+  group-by-file uses the original (correctly-cased) path for display and fetches; search
+  requests abort in-flight so stale results can't overwrite newer ones; offline banner
+  tracks server recovery; `wss://` under HTTPS; rebuilt CSS; removed dead styles.
+
 ## [0.8.0] - 2026-03-27
 
 ### Added
