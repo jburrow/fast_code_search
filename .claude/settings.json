@@ -1,6 +1,9 @@
 {
   "permissions": {
     "allow": [
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(node --check *)",
       "Bash(sed -n *)",
       "PowerShell(Get-ChildItem *)",
       "PowerShell(Get-Content *)",
