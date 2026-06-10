@@ -7,8 +7,10 @@
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
     <link rel="stylesheet" href="/material-symbols.css"/>
-    <link rel="stylesheet" href="/highlight-light.min.css" media="(prefers-color-scheme: light)">
-    <link rel="stylesheet" href="/highlight-dark.min.css" media="(prefers-color-scheme: dark)">
+    <!-- The page is a hard-coded light theme (result code is on a white background),
+         so always use the light highlight.js theme. Loading the dark theme under
+         prefers-color-scheme:dark rendered pale tokens on white = unreadable. -->
+    <link rel="stylesheet" href="/highlight-light.min.css">
     <style>
         /* Language badge color variables (from common.css) */
         :root {

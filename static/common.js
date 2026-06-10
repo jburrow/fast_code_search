@@ -3,14 +3,24 @@
 // ============================================
 
 /**
- * Escape HTML to prevent XSS attacks
+ * Escape HTML to prevent XSS attacks.
+ *
+ * Escapes &, <, >, " and ' so the result is safe both as element text AND inside
+ * single- or double-quoted attribute values. The previous textContent/innerHTML
+ * trick did NOT escape quotes, so a file path or query containing a quote could
+ * break out of an attribute (or an inline handler) and inject script. File paths
+ * come from arbitrary indexed repositories, so they are attacker-influenced.
  * @param {string} text - Raw text to escape
  * @returns {string} HTML-safe string
  */
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /**
@@ -56,14 +66,18 @@ function formatElapsed(secs) {
  */
 function debounce(func, wait) {
     let timeout;
-    return function executedFunction(...args) {
+    function executedFunction(...args) {
         const later = () => {
             clearTimeout(timeout);
             func(...args);
         };
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
-    };
+    }
+    // Allow callers to cancel a pending invocation (e.g. when the user presses
+    // Enter and we want to run immediately without the debounced call firing too).
+    executedFunction.cancel = () => clearTimeout(timeout);
+    return executedFunction;
 }
 
 /**
@@ -430,7 +444,10 @@ function highlightMatches(content, query) {
 
 class ProgressWebSocket {
     constructor(options = {}) {
-        this.wsUrl = options.wsUrl || `ws://${location.host}/ws/progress`;
+        // Use wss:// when the page is served over https, otherwise the browser
+        // blocks the (insecure) ws:// connection on an https origin.
+        const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+        this.wsUrl = options.wsUrl || `${wsProto}://${location.host}/ws/progress`;
         this.onUpdate = options.onUpdate || (() => {});
         this.onError = options.onError || console.error;
         this.onConnected = options.onConnected || (() => {});

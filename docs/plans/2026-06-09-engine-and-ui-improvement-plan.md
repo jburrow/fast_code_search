@@ -208,7 +208,11 @@ Conventions for the implementing agent:
 ## Phase 4 — Web UI bugs (P0/P1 within UI)
 
 ### 4.1 XSS: quote-safe escaping + remove inline JS handlers
-- [ ] Files: `static/common.js` (~10–14, ~713–716), `static/keyword.js` (~804–807, ~857–890, ~1069–1090)
+- [x] Files: `static/common.js`, `static/keyword.js`
+  DONE: `escapeHtml` rewritten (replace-based, escapes `& < > " '`). Removed all inline
+  `onmouseenter/onclick` handlers from the deps badge, deps popover links/"more", and the
+  dep-modal close button; wired via `addEventListener` + `dataset`. (diagnostics pages'
+  static `onclick="loadDiagnostics(true)"` left — no interpolated data, not a vector.)
 - `escapeHtml` (textContent/innerHTML trick) does not escape `"` or `'`. File paths and
   queries are interpolated into inline handlers (`onmouseenter="showDepsTooltip(this,'…')"`)
   and attributes (`data-query="…"`, `title="…"`). A path or query containing a quote
@@ -222,7 +226,9 @@ Conventions for the implementing agent:
   quotes); no script execution, paths render correctly, all buttons work.
 
 ### 4.2 Fix group-by-file path normalization (regression from commit 1f4f1d6)
-- [ ] File: `static/keyword.js` (`groupResultsByFile`, ~939–968)
+- [x] File: `static/keyword.js` (`groupResultsByFile`)
+  DONE: normalized string used only as the Map key; group `filePath` now stores the first
+  hit's original `file_path` for display and fetches.
 - The lowercased/slash-normalized group KEY is also stored as the displayed/fetched
   `filePath`: headers show `searchengine.rs` instead of `SearchEngine.rs`, and group-level
   view/deps buttons send the lowercased path to `/api/file`/`/api/dependents` → 404 on
@@ -233,7 +239,10 @@ Conventions for the implementing agent:
 - Accept: mixed-case paths display verbatim; group-header view button works.
 
 ### 4.3 Search race + double-fetch
-- [ ] File: `static/keyword.js` (`performSearch` ~705–935, debounce ~1278, Enter ~1297)
+- [x] File: `static/keyword.js`, `static/common.js`
+  DONE: module-level `_searchAbort` AbortController aborted at the top of `performSearch`;
+  `fetch` passes the signal; `AbortError` is ignored. `debounce` gained a `.cancel()`,
+  called on Enter so the query isn't fetched twice.
 - No AbortController/sequence token: a slow earlier query can overwrite newer results.
   Enter doesn't cancel the pending debounce → same query fetched twice.
 - Do: module-level `AbortController`, abort at top of `performSearch`, pass signal to
@@ -242,27 +251,19 @@ Conventions for the implementing agent:
   for the final query.
 
 ### 4.4 Web UI state/lifecycle fixes (batch)
-- [ ] Offline banner never clears: `checkBackendHealth` runs once at load
-  (keyword.js ~244–263, ~1348). Re-run it from `progressWS.onConnected` /
-  `onServerOffline` so the banner tracks reality.
-- [ ] URL-state shadowing: keyword.js ~133–152 defines a zero-arg `loadStateFromUrl`
-  shadowing the parameterized common.js:586 version; the callback that should open the
-  filter panel for shared URLs (`?q=…&include=…`) never runs — filters apply invisibly.
-  Delete the keyword.js duplicates and use the common.js field-descriptor versions;
-  open `#filter-panel` when filter params are present.
-- [ ] Dark-mode hljs on white background: index.html:10–11 loads `highlight-dark.min.css`
-  on `prefers-color-scheme: dark` but the page is hard-coded light → unreadable code.
-  Drop the dark stylesheet until a real theme exists.
-- [ ] Stale compiled `tailwind.css`: classes used by the history dropdown
-  (index.html:481 `top-full max-h-64 overflow-y-auto shadow-md`, common.js:716 `ml-auto`)
-  are missing from the build → unclipped 450px dropdown. Re-run the Tailwind build; add
-  it to CI/check script so markup and CSS can't drift.
-- [ ] HTTPS: `ws://${location.host}` (common.js:433) → choose `wss:` under https;
-  hard-coded `http://${hostname}:8081` semantic probe (keyword.js:237) → same-protocol +
-  configurable port.
-- [ ] Delete dead/corrupt CSS: `common.css` (corrupt duplicated block ~746–948) and
-  `keyword.css` are linked by NO page; remove them (and `input.css`/`semantic.css` if
-  also unused) to stop misleading contributors.
+- [x] Offline banner: `checkBackendHealth` re-run from `progressWS.onConnected` and
+  `onServerOffline` so the banner tracks server recovery/loss.
+- [x] URL-state shadowing: local `loadStateFromUrl` now opens the VISIBLE `#filter-panel`
+  when filter params are present (was opening the hidden `.advanced-options`); dead
+  `URL_FIELDS` removed and the call site simplified to `loadStateFromUrl()`.
+- [x] Dark-mode hljs: index.html now always loads the light highlight theme.
+- [x] Stale `tailwind.css`: rebuilt via `npm install && npm run build:css`; verified the
+  previously-missing classes (`top-full max-h-64 overflow-y-auto shadow-md ml-auto`) are
+  now present. (CI guard not added — noted as follow-up.)
+- [x] HTTPS: ProgressWebSocket uses `wss:` under https; semantic probe uses the page
+  protocol and a `window.SEMANTIC_PORT` override (default 8081).
+- [x] Deleted dead/corrupt `static/common.css` and `static/keyword.css` (linked by no
+  page). Kept `input.css` (it is the Tailwind build SOURCE) and `semantic.css`.
 
 ---
 

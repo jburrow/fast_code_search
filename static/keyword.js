@@ -142,12 +142,14 @@ function loadStateFromUrl() {
     if (rankModeSelect && params.has('rank')) rankModeSelect.value = params.get('rank');
     if (contextLinesSelect && params.has('context')) contextLinesSelect.value = params.get('context');
 
-    // Auto-expand Options if any non-default values were loaded (regex/symbols are now always visible)
+    // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
+    // so the applied filters are discoverable. The previous code opened the hidden
+    // `.advanced-options` element, so filters from a shared link applied invisibly.
     const hasAdvanced = params.has('include') || params.has('exclude') ||
         params.has('rank') || params.has('max') || params.has('context');
     if (hasAdvanced) {
-        const details = document.querySelector('.advanced-options');
-        if (details) details.open = true;
+        const filterPanel = document.getElementById('filter-panel');
+        if (filterPanel) filterPanel.classList.add('open');
     }
 }
 
@@ -231,10 +233,14 @@ async function checkBackendHealth() {
         searchReadiness.setOffline(true);
     }
 
-    // Check semantic backend for the badge (non-blocking side-info)
+    // Check semantic backend for the badge (non-blocking side-info).
+    // Use the page's own protocol so this works under https (mixed-content
+    // requests to http:// are blocked). The port is overridable via
+    // window.SEMANTIC_PORT for non-default deployments.
     let semanticUp = false;
     try {
-        const resp = await fetch(`http://${hostname}:8081/api/health`, { signal: AbortSignal.timeout(2000) });
+        const semanticPort = window.SEMANTIC_PORT || 8081;
+        const resp = await fetch(`${window.location.protocol}//${hostname}:${semanticPort}/api/health`, { signal: AbortSignal.timeout(2000) });
         semanticUp = resp.ok;
     } catch (e) { /* offline */ }
 
@@ -297,12 +303,17 @@ const progressWS = new ProgressWebSocket({
     onUpdate: updateProgressUI,
     onConnected: () => {
         // WS connected means the server is reachable — clear any offline state
+        // and re-check health so a banner shown at page load (server was down
+        // then) is cleared once the server recovers.
         searchReadiness.setOffline(false);
+        checkBackendHealth();
     },
     onDisconnected: () => {},
     onServerOffline: () => {
-        // Consecutive WS failures — the keyword search server is not running
+        // Consecutive WS failures — the keyword search server is not running.
         searchReadiness.setOffline(true);
+        // Refresh the banner so it reflects the now-offline server.
+        checkBackendHealth();
     },
     onError: (err) => {
         console.error('Progress WebSocket error:', err);
@@ -686,28 +697,22 @@ function getMatchTypeLabel(matchType) {
     }
 }
 
-// URL state field descriptors for keyword search
-const URL_FIELDS = [
-    { param: 'q',       getter: () => queryInput.value.trim(),                      setter: (v) => { queryInput.value = v; },                                         defaultValue: '' },
-    { param: 'max',     getter: () => maxResultsSelect.value,                        setter: (v) => { maxResultsSelect.value = v; },                                   defaultValue: '50' },
-    { param: 'include', getter: () => includeFilterInput?.value.trim() || '',        setter: (v) => { if (includeFilterInput) includeFilterInput.value = v; },         defaultValue: '' },
-    { param: 'exclude', getter: () => excludeFilterInput?.value.trim() || '',        setter: (v) => { if (excludeFilterInput) excludeFilterInput.value = v; },         defaultValue: '' },
-    // Boolean fields use 'true' / '' (empty string) convention: empty string is the
-    // "off" default and is never written to the URL; 'true' appears as ?regex=true.
-    // An unrecognised value such as ?regex=false leaves the checkbox unchecked, which is
-    // intentionally correct behaviour.
-    { param: 'regex',   getter: () => regexModeCheckbox?.checked ? 'true' : '',      setter: (v) => { if (regexModeCheckbox) regexModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
-    { param: 'symbols', getter: () => symbolsModeCheckbox?.checked ? 'true' : '',    setter: (v) => { if (symbolsModeCheckbox) symbolsModeCheckbox.checked = v === 'true'; }, defaultValue: '' },
-    { param: 'rank',    getter: () => rankModeSelect?.value || 'auto',               setter: (v) => { if (rankModeSelect) rankModeSelect.value = v; },                 defaultValue: 'auto' },
-    { param: 'context', getter: () => contextLinesSelect?.value || '0',             setter: (v) => { if (contextLinesSelect) contextLinesSelect.value = v; },         defaultValue: '0' },
-];
+// Tracks the in-flight search so a slow earlier request can be aborted before a
+// newer one renders (prevents stale results overwriting fresh ones).
+let _searchAbort = null;
 
 async function performSearch() {
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
         return;
     }
-    
+
+    // Cancel any in-flight request: whether this call ends up searching or just
+    // clearing results, the previous request must not win a render race.
+    if (_searchAbort) _searchAbort.abort();
+    _searchAbort = new AbortController();
+    const signal = _searchAbort.signal;
+
     const query = queryInput.value.trim();
     const maxResults = parseInt(maxResultsSelect.value, 10);
     const includeFilter = includeFilterInput?.value.trim() || '';
@@ -748,7 +753,7 @@ async function performSearch() {
         if (rankMode !== 'auto') params.set('rank', rankMode);
         if (contextLines > 0) params.set('context', String(contextLines));
         
-        const response = await fetch(`${API_BASE}/api/search?${params}`);
+        const response = await fetch(`${API_BASE}/api/search?${params}`, { signal });
         if (!response.ok) throw new Error(`Search failed: ${response.statusText}`);
 
         const data = await response.json();
@@ -801,10 +806,8 @@ async function performSearch() {
 
             // Dependency badge
             const depBadge = depCount > 0
-                ? `<span style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                    onmouseenter="showDepsTooltip(this,'${escapeHtml(group.filePath)}')"
-                    onmouseleave="hideDepsTooltip()"
-                    onclick="hideDepsTooltipImmediately();showDependents('${escapeHtml(group.filePath)}')">${depCount} deps</span>`
+                ? `<span class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+                    data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</span>`
                 : '';
 
             const hitsHtml = group.hits.map((result, idx) => {
@@ -928,7 +931,22 @@ async function performSearch() {
             btn.addEventListener('mouseleave', hideContextTooltip);
         });
 
+        // Attach dependency-badge handlers via dataset (no inline JS handlers, so
+        // file paths containing quotes can never inject code).
+        resultsContainer.querySelectorAll('.deps-badge').forEach(badge => {
+            const filePath = badge.dataset.filePath;
+            badge.addEventListener('mouseenter', () => showDepsTooltip(badge, filePath));
+            badge.addEventListener('mouseleave', hideDepsTooltip);
+            badge.addEventListener('click', () => {
+                hideDepsTooltipImmediately();
+                showDependents(filePath);
+            });
+        });
+
     } catch (error) {
+        // A superseded request was aborted on purpose — ignore it so the newer
+        // search's results/UI are not clobbered by a stale error.
+        if (error.name === 'AbortError') return;
         console.error('Search error:', error);
         showError('results', error.message);
     }
@@ -948,7 +966,11 @@ function groupResultsByFile(results) {
             groupIndex = groups.length;
             indexByPath.set(key, groupIndex);
             groups.push({
-                filePath: key,
+                // Use the normalized string ONLY as the grouping key. The displayed
+                // and fetched path must be the ORIGINAL file_path — the lowercased
+                // key broke the header display ("searchengine.rs") and made the
+                // group view/deps buttons 404 on case-sensitive systems.
+                filePath: result.file_path,
                 hits: [],
             });
         }
@@ -1060,16 +1082,18 @@ async function showDepsTooltip(badgeEl, filePath) {
 
         const MAX = 8;
 
-        function buildSection(files, label, onMoreClick) {
+        // Data-attribute driven: no interpolated inline handlers. Paths are stored
+        // in data-* attributes (escaped) and read back via dataset, so a path
+        // containing quotes can never break out into executable code.
+        function buildSection(files, label, moreAction) {
             const shown = files.slice(0, MAX);
             const extra = files.length - shown.length;
             const items = shown.map(f => {
                 const name = f.split('/').pop();
-                const escapedPath = f.replace(/'/g, "\\'");
-                return `<li><button type="button" class="deps-popover-link" title="${escapeHtml(f)}" onclick="openDependencyFile('${escapedPath}')">${escapeHtml(name)}</button></li>`;
+                return `<li><button type="button" class="deps-popover-link" title="${escapeHtml(f)}" data-dep-file="${escapeHtml(f)}">${escapeHtml(name)}</button></li>`;
             }).join('');
             const more = extra > 0
-                ? `<span class="deps-more" onclick="${onMoreClick}">…and ${extra} more</span>`
+                ? `<span class="deps-more" data-more-action="${escapeHtml(moreAction)}">…and ${extra} more</span>`
                 : '';
             return `<div class="deps-popover-section">` +
                 `<div class="deps-section-title">${escapeHtml(label)} (${files.length})</div>` +
@@ -1078,22 +1102,28 @@ async function showDepsTooltip(badgeEl, filePath) {
                 `</div>`;
         }
 
-        const fp = filePath.replace(/'/g, "\\'");
-        const dependentsSection = buildSection(
-            depData.files || [],
-            'Imported by',
-            `hideDepsTooltipImmediately();showDependents('${fp}')`
-        );
-        const importsSection = buildSection(
-            imptData.files || [],
-            'Imports',
-            `hideDepsTooltipImmediately();showDependencies('${fp}')`
-        );
+        const dependentsSection = buildSection(depData.files || [], 'Imported by', 'dependents');
+        const importsSection = buildSection(imptData.files || [], 'Imports', 'dependencies');
 
         popover.innerHTML =
             `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
             dependentsSection +
             importsSection;
+
+        // Wire popover links/“more” via delegation using dataset values.
+        popover.querySelectorAll('.deps-popover-link').forEach(link => {
+            link.addEventListener('click', () => openDependencyFile(link.dataset.depFile));
+        });
+        popover.querySelectorAll('.deps-more').forEach(more => {
+            more.addEventListener('click', () => {
+                hideDepsTooltipImmediately();
+                if (more.dataset.moreAction === 'dependencies') {
+                    showDependencies(filePath);
+                } else {
+                    showDependents(filePath);
+                }
+            });
+        });
 
         positionDepsPopover(popover, badgeEl);
     } catch (e) {
@@ -1146,8 +1176,8 @@ function showDependencyModal(title, filePath, files, description) {
     modal.innerHTML = `
         <div style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${title} (${files.length})</h2>
-                <button onclick="closeModal()" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
+                <h2 style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)} (${files.length})</h2>
+                <button class="dep-modal-close" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
             <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
             <p style="color:#494831;font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
@@ -1156,6 +1186,8 @@ function showDependencyModal(title, filePath, files, description) {
     `;
 
     modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    const closeBtn = modal.querySelector('.dep-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
     document.addEventListener('keydown', handleModalEscape);
     document.body.appendChild(modal);
 }
@@ -1296,6 +1328,9 @@ queryInput.addEventListener('keydown', (e) => {
     }
     if (e.key === 'Enter') {
         hideHistoryDropdown();
+        // Cancel the pending debounced call so Enter doesn't fire the same query
+        // twice (~300ms apart).
+        debouncedSearch.cancel();
         performSearch();
     }
 });
@@ -1335,13 +1370,8 @@ searchReadiness.storeDefaultPlaceholder();
 loadSettingsFromStorage();
 
 // Restore state from URL on page load; URL params take precedence over localStorage.
-// Auto-expand filter panel for non-default values.
-loadStateFromUrl(URL_FIELDS, () => {
-    const filterPanel = document.getElementById('filter-panel');
-    if (filterPanel) filterPanel.classList.add('open');
-    const advancedDetails = document.querySelector('.advanced-options');
-    if (advancedDetails) advancedDetails.open = true;
-});
+// loadStateFromUrl() opens the filter panel itself when filter params are present.
+loadStateFromUrl();
 
 // Probe the backend; start the WebSocket only after confirmation.
 // Inputs start enabled (optimistic) — health check disables them only on failure.
