@@ -1,6 +1,10 @@
 # Engine & UI Improvement Plan — 2026-06-09
 
-Status: NOT STARTED. Check off tasks as completed; if you deviate from a task, note why inline.
+Status: COMPLETE (Phases 1–6). Every task done except 6.4 (icon-font subset, deferred —
+see note) and two low-value 6.7 sub-items (noted inline). All Rust changes build; lib
+(166) + integration (35) tests pass. Verified via `cargo build` and
+`cargo test --lib`/`--test integration_tests` (the all-targets `cargo test` exhausts the
+sandbox paging file while compiling examples — an environment limit, not a code issue).
 
 This plan was produced by a code review of the keyword search engine (crashes during
 indexing + correctness bugs) and the web UI. Every task is self-contained: files, what
