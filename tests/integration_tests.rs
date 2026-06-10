@@ -2133,3 +2133,34 @@ async fn test_incremental_update_remove_rename() -> Result<()> {
 
     Ok(())
 }
+
+/// 3.1: regex alternation must return complete results — a file that contains
+/// only one branch of `hello|world` must still be found (regression: the old
+/// single-best-literal pre-filter dropped it).
+#[tokio::test]
+async fn test_regex_alternation_returns_all_branches() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let only_hello = temp.path().join("h.rs");
+    let only_world = temp.path().join("w.rs");
+    std::fs::write(&only_hello, "fn hello_here() {}\n")?;
+    std::fs::write(&only_world, "fn world_here() {}\n")?;
+
+    let mut eng = SearchEngine::new();
+    eng.index_file(&only_hello)?;
+    eng.index_file(&only_world)?;
+
+    let results = eng.search_regex("hello|world", "", "", 50)?;
+    assert!(
+        results.iter().any(|m| m.file_path.ends_with("h.rs")),
+        "must find the file containing only 'hello'"
+    );
+    assert!(
+        results.iter().any(|m| m.file_path.ends_with("w.rs")),
+        "must find the file containing only 'world' (regression)"
+    );
+
+    Ok(())
+}

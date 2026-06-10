@@ -2,12 +2,14 @@
 //!
 //! Uses the notify crate to watch for file changes and trigger re-indexing.
 
+use crate::search::path_filter::PathFilter;
 use anyhow::Result;
 use notify_debouncer_full::{
     new_debouncer, notify::RecursiveMode, DebouncedEvent, Debouncer, RecommendedCache,
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -60,17 +62,20 @@ impl FileWatcher {
     pub fn new(config: WatcherConfig) -> Result<Self> {
         let (tx, rx) = mpsc::channel::<FileChange>();
 
-        // Pre-compile exclude patterns
-        let exclude_patterns: Vec<String> = config
-            .exclude_patterns
-            .iter()
-            .map(|p| p.trim_matches('*').trim_matches('/').to_string())
-            .filter(|p| !p.is_empty())
-            .collect();
+        // Compile exclude patterns into a real glob filter (same semantics as file
+        // discovery). The previous approach trimmed `**/.git/**` down to `.git` and
+        // substring-matched, which wrongly excluded `.github/` and `.gitignore` and
+        // failed entirely on Windows backslash paths.
+        let exclude_filter = Arc::new(
+            PathFilter::exclude_only(&config.exclude_patterns).unwrap_or_else(|e| {
+                warn!("Invalid watcher exclude pattern(s): {}; exclusions disabled", e);
+                PathFilter::default()
+            }),
+        );
 
         // Create the debouncer with event handler
         let handler_tx = tx.clone();
-        let handler_exclude = exclude_patterns.clone();
+        let handler_exclude = Arc::clone(&exclude_filter);
 
         let mut debouncer = new_debouncer(
             config.debounce_duration,
@@ -168,14 +173,14 @@ impl FileWatcher {
 }
 
 /// Process a notify event and convert to FileChange
-fn process_event(event: &DebouncedEvent, exclude_patterns: &[String]) -> Option<FileChange> {
+fn process_event(event: &DebouncedEvent, exclude_filter: &PathFilter) -> Option<FileChange> {
     use notify_debouncer_full::notify::event::ModifyKind;
     use notify_debouncer_full::notify::EventKind;
 
     let paths = &event.paths;
 
     // Skip if all paths match exclude patterns
-    let should_process = paths.iter().any(|path| !should_exclude(path, exclude_patterns));
+    let should_process = paths.iter().any(|path| !should_exclude(path, exclude_filter));
 
     if !should_process {
         return None;
@@ -208,23 +213,20 @@ fn process_event(event: &DebouncedEvent, exclude_patterns: &[String]) -> Option<
             // Use the first non-excluded path that is a regular file.
             paths
                 .iter()
-                .find(|p| !should_exclude(p, exclude_patterns) && p.is_file())
+                .find(|p| !should_exclude(p, exclude_filter) && p.is_file())
                 .map(|p| FileChange::Modified(p.clone()))
         }
         EventKind::Remove(_) => paths
             .iter()
-            .find(|p| !should_exclude(p, exclude_patterns))
+            .find(|p| !should_exclude(p, exclude_filter))
             .map(|p| FileChange::Deleted(p.clone())),
         EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
     }
 }
 
-/// Check if a path should be excluded based on patterns
-pub fn should_exclude(path: &Path, exclude_patterns: &[String]) -> bool {
-    let path_str = path.to_string_lossy();
-    exclude_patterns
-        .iter()
-        .any(|pattern| path_str.contains(pattern))
+/// Check if a path should be excluded using the compiled glob filter.
+pub fn should_exclude(path: &Path, exclude_filter: &PathFilter) -> bool {
+    exclude_filter.is_excluded(&path.to_string_lossy())
 }
 
 #[cfg(test)]
@@ -233,20 +235,48 @@ mod tests {
 
     #[test]
     fn test_should_exclude() {
-        let patterns = vec!["node_modules".to_string(), ".git".to_string()];
+        let filter = PathFilter::exclude_only(&[
+            "**/node_modules/**".to_string(),
+            "**/.git/**".to_string(),
+            "**/target/**".to_string(),
+        ])
+        .unwrap();
 
+        // Files inside excluded directories are excluded.
         assert!(should_exclude(
             Path::new("/project/node_modules/package/index.js"),
-            &patterns
+            &filter
         ));
-        assert!(should_exclude(
-            Path::new("/project/.git/objects/abc"),
-            &patterns
-        ));
+        assert!(should_exclude(Path::new("/project/.git/objects/abc"), &filter));
+
+        // Regression: `.git` must NOT swallow `.github/` or `.gitignore`.
         assert!(!should_exclude(
-            Path::new("/project/src/main.rs"),
-            &patterns
+            Path::new("/project/.github/workflows/ci.yml"),
+            &filter
         ));
+        assert!(!should_exclude(Path::new("/project/.gitignore"), &filter));
+        // Regression: `target` must NOT swallow `targeted.rs`.
+        assert!(!should_exclude(Path::new("/project/src/targeted.rs"), &filter));
+        assert!(!should_exclude(Path::new("/project/src/main.rs"), &filter));
+    }
+
+    #[test]
+    fn test_should_exclude_windows_paths() {
+        let filter = PathFilter::exclude_only(&["**/target/**".to_string()]).unwrap();
+        // Backslash paths must match too (previous substring approach failed here).
+        assert!(should_exclude(
+            Path::new(r"C:\proj\target\debug\app.exe"),
+            &filter
+        ));
+        assert!(!should_exclude(Path::new(r"C:\proj\src\main.rs"), &filter));
+    }
+
+    #[test]
+    fn test_bare_name_exclude_matches_contents() {
+        // A bare directory name (no glob meta) must exclude its contents too.
+        let filter = PathFilter::exclude_only(&["node_modules".to_string()]).unwrap();
+        assert!(filter.is_excluded("/p/node_modules/pkg/index.js"));
+        assert!(!filter.is_excluded("/p/src/main.rs"));
     }
 
     #[test]

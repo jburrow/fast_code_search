@@ -23,6 +23,13 @@ fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;
     }
+    // Non-ASCII needle: use Unicode-aware folding so candidates surfaced by the
+    // (Unicode-lowercased) trigram index are not silently dropped here. The
+    // trigram index lowercases content with `to_lowercase()`, so verification
+    // must fold the same way for non-ASCII text (e.g. `über` vs `ÜBER`).
+    if !needle_lower.is_ascii() {
+        return unicode_ci_find(haystack, needle_lower).is_some();
+    }
     let needle_len = needle_lower.len();
     if haystack.len() < needle_len {
         return false;
@@ -184,6 +191,54 @@ fn find_char_boundary_ceil(s: &str, pos: usize) -> usize {
     p
 }
 
+/// Unicode-aware case-insensitive substring search.
+///
+/// `needle_lower` must already be Unicode-lowercased (as the query is). Folds
+/// each haystack char via `char::to_lowercase()` and matches against the needle,
+/// returning byte offsets into the ORIGINAL `haystack`. A match that would split
+/// a haystack char whose case-fold expands to multiple chars (e.g. `ß` → `ss`) is
+/// rejected so the returned offsets always fall on char boundaries. Only used on
+/// the rare non-ASCII path, so its O(n·m) cost is acceptable.
+fn unicode_ci_find(haystack: &str, needle_lower: &str) -> Option<(usize, usize)> {
+    let needle: Vec<char> = needle_lower.chars().collect();
+    if needle.is_empty() {
+        return Some((0, 0));
+    }
+    for (start, _) in haystack.char_indices() {
+        let mut ni = 0usize;
+        let mut byte_end = start;
+        let mut ok = true;
+        for c in haystack[start..].chars() {
+            if ni == needle.len() {
+                break;
+            }
+            for lc in c.to_lowercase() {
+                if ni == needle.len() {
+                    // c's fold extends past the needle end — would split a char.
+                    ok = false;
+                    break;
+                }
+                if lc != needle[ni] {
+                    ok = false;
+                    break;
+                }
+                ni += 1;
+            }
+            if !ok {
+                break;
+            }
+            byte_end += c.len_utf8();
+            if ni == needle.len() {
+                break;
+            }
+        }
+        if ok && ni == needle.len() {
+            return Some((start, byte_end));
+        }
+    }
+    None
+}
+
 /// Find match position using case-insensitive search
 #[inline]
 fn find_match_position_case_insensitive(
@@ -192,6 +247,11 @@ fn find_match_position_case_insensitive(
 ) -> Option<(usize, usize)> {
     if needle_lower.is_empty() {
         return Some((0, 0));
+    }
+    // Non-ASCII needle: Unicode-aware match returning original-string byte offsets
+    // (see contains_case_insensitive for the rationale).
+    if !needle_lower.is_ascii() {
+        return unicode_ci_find(haystack, needle_lower);
     }
     let needle_len = needle_lower.len();
     if haystack.len() < needle_len {
@@ -1257,6 +1317,20 @@ impl SearchEngine {
         max_results: usize,
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        // Empty / whitespace-only queries match nothing. Without this guard they
+        // fall into the short-query branch, pull in ALL documents, and the empty
+        // needle "matches" every line — a full-corpus scan returning garbage.
+        if query.trim().is_empty() {
+            return (
+                Vec::new(),
+                SearchRankingInfo {
+                    mode: rank_mode,
+                    total_candidates: 0,
+                    candidates_searched: 0,
+                },
+            );
+        }
+
         let query_lower = query.to_lowercase();
         // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
         // all documents so that short terms like `_` or `__` return results.
@@ -1469,6 +1543,18 @@ impl SearchEngine {
         max_results: usize,
         rank_mode: RankMode,
     ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        // Empty / whitespace-only queries match nothing (see search_ranked).
+        if query.trim().is_empty() {
+            return Ok((
+                Vec::new(),
+                SearchRankingInfo {
+                    mode: rank_mode,
+                    total_candidates: 0,
+                    candidates_searched: 0,
+                },
+            ));
+        }
+
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
@@ -1557,6 +1643,34 @@ impl SearchEngine {
     /// * `include_patterns` - Semicolon-delimited glob patterns to include
     /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
     /// * `max_results` - Maximum number of results to return
+    /// Compute candidate documents for a regex from its sound literal constraints.
+    ///
+    /// Returns `None` when the regex has no usable constraints (caller should fall
+    /// back to a full scan). Otherwise returns the intersection across constraints
+    /// of the union of each constraint's per-literal trigram matches.
+    fn regex_candidate_docs(&self, analysis: &RegexAnalysis) -> Option<roaring::RoaringBitmap> {
+        if analysis.constraints.is_empty() {
+            return None;
+        }
+        let mut result: Option<roaring::RoaringBitmap> = None;
+        for group in &analysis.constraints {
+            // Union of trigram matches for the alternatives in this constraint.
+            let mut group_docs = roaring::RoaringBitmap::new();
+            for literal in group {
+                // Trigram index stores lowercased content.
+                group_docs |= self.trigram_index.search(&literal.to_lowercase());
+            }
+            result = Some(match result {
+                Some(acc) => acc & group_docs,
+                None => group_docs,
+            });
+            if result.as_ref().is_some_and(|r| r.is_empty()) {
+                break; // intersection already empty
+            }
+        }
+        result
+    }
+
     #[tracing::instrument(skip(self))]
     pub fn search_regex(
         &self,
@@ -1571,20 +1685,19 @@ impl SearchEngine {
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
-        // Get candidate documents using trigram acceleration if possible
-        let candidate_docs = if analysis.is_accelerated {
-            if let Some(literal) = analysis.best_literal() {
-                // Lowercase the literal since the trigram index stores lowercased content
-                let literal_lower = literal.to_lowercase();
-                tracing::debug!(pattern = %pattern, literal = %literal, "Using trigram acceleration for regex");
-                self.trigram_index.search(&literal_lower)
-            } else {
-                tracing::warn!(pattern = %pattern, "Regex has no usable literals - full scan");
+        // Get candidate documents using trigram acceleration if possible.
+        // The candidate set is the INTERSECTION across constraints, and the UNION
+        // of the trigram matches within each constraint. This keeps alternations
+        // correct (e.g. `hello|world` keeps files that contain only `world`).
+        let candidate_docs = match self.regex_candidate_docs(&analysis) {
+            Some(docs) => {
+                tracing::debug!(pattern = %pattern, "Using trigram acceleration for regex");
+                docs
+            }
+            None => {
+                tracing::warn!(pattern = %pattern, "Regex has no sound literal constraints - full scan");
                 self.trigram_index.all_documents()
             }
-        } else {
-            tracing::warn!(pattern = %pattern, "Regex has no extractable literals >= 3 chars - full scan");
-            self.trigram_index.all_documents()
         };
 
         // Apply path filter
@@ -1653,6 +1766,11 @@ impl SearchEngine {
         exclude_patterns: &str,
         max_results: usize,
     ) -> Result<Vec<SearchMatch>> {
+        // Empty / whitespace-only queries match nothing (see search_ranked).
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
         // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
@@ -3089,6 +3207,39 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_unicode_ci_find_matches_accented() {
+        // Needle already Unicode-lowercased; haystack has uppercase accented form.
+        assert_eq!(unicode_ci_find("ÜBER alles", "über"), Some((0, "Ü".len() + 3)));
+        assert!(unicode_ci_find("der ÜBER mensch", "über").is_some());
+        assert!(unicode_ci_find("nothing here", "über").is_none());
+    }
+
+    #[test]
+    fn test_contains_case_insensitive_unicode() {
+        assert!(contains_case_insensitive("ÜBER", "über"));
+        assert!(contains_case_insensitive("Café", "café"));
+        assert!(!contains_case_insensitive("cafe", "café"));
+    }
+
+    #[test]
+    fn test_empty_query_returns_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("e.txt");
+        std::fs::write(&file_path, "hello world\n").unwrap();
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+
+        assert!(engine.search("", 10).is_empty(), "empty query → no results");
+        assert!(
+            engine.search("   ", 10).is_empty(),
+            "whitespace query → no results"
+        );
+        let (m, info) = engine.search_ranked("  ", 10, RankMode::Auto);
+        assert!(m.is_empty());
+        assert_eq!(info.total_candidates, 0, "must not scan any documents");
+    }
 
     #[test]
     fn test_search_engine() {

@@ -152,7 +152,12 @@ Conventions for the implementing agent:
 ## Phase 3 — Search correctness (P1)
 
 ### 3.1 Regex acceleration drops matches on alternation/optional literals
-- [ ] Files: `src/search/regex_search.rs` (~50–56, ~99–112), consumer `src/search/engine.rs` (~1554–1559)
+- [x] Files: `src/search/regex_search.rs`, consumer `src/search/engine.rs`
+  DONE: analysis now produces sound `constraints` (intersection of per-constraint
+  unions); alternations contribute a union of branch literals (only when every branch
+  has one), optional/`min==0` subexprs contribute nothing. Engine `regex_candidate_docs`
+  intersects the union sets; falls back to full scan when there are no constraints. Unit
+  tests + integration test `test_regex_alternation_returns_all_branches`.
 - Literals from alternation branches and `min == 0` repetitions are treated as REQUIRED
   trigram pre-filters: `hello|world` filters out every file containing only `world`.
 - Do: track requiredness during HIR walk (a literal under an alternation is required only
@@ -162,7 +167,11 @@ Conventions for the implementing agent:
 - Accept: tests for `hello|world`, `(abc)?def`, `(x|y)z` return complete results.
 
 ### 3.2 Watcher/stale-filter exclusions use globs, not substrings
-- [ ] Files: `src/search/watcher.rs` (~64–69, ~177–214), `src/search/background_indexer.rs` (~556–578), `src/search/path_filter.rs` (~35–44)
+- [x] Files: `src/search/watcher.rs`, `src/search/background_indexer.rs`, `src/search/path_filter.rs`
+  DONE: `PathFilter::expand_pattern` adds `**/name/**` for bare directory names; added
+  `is_excluded` + `exclude_only`. Watcher builds a `PathFilter` once and uses it
+  (`should_exclude` now glob-based); stale-file loop uses the same. Tests cover
+  `.github`/`.gitignore` not matched by `.git`, Windows backslash paths, bare names.
 - Patterns are trimmed to bare strings and matched with `contains()`: `**/.git/**`
   becomes `.git`, which excludes `.github/` and `.gitignore` from watching; backslashed
   Windows paths never match multi-component patterns. File discovery uses proper globs
@@ -176,7 +185,13 @@ Conventions for the implementing agent:
   with `/` and `\` separators.
 
 ### 3.3 Case-folding consistency + empty-query guard
-- [ ] File: `src/search/engine.rs` (index side ~437/754; verify side ~22–65, ~189–232; entry points ~1242–1246, ~1455–1461, ~1643–1648)
+- [x] File: `src/search/engine.rs`
+  DONE: empty/whitespace queries early-return in `search_ranked`,
+  `search_with_filter_ranked`, `search_symbols`. Chose to make VERIFICATION
+  Unicode-aware (the trigram layer is already Unicode-consistent on both sides): added
+  `unicode_ci_find`; `contains_case_insensitive` / `find_match_position_case_insensitive`
+  use it for non-ASCII needles, so `über` now matches `ÜBER` end-to-end. ASCII fast path
+  unchanged. Unit tests added.
 - Index-time trigrams use Unicode `to_lowercase()`; search-time verification folds ASCII
   only — `ÜBER` is found as a candidate for `über`, then silently dropped. Separately, an
   empty/whitespace query falls into the short-query branch, gets ALL documents, and the

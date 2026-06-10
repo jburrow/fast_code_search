@@ -28,18 +28,26 @@ pub struct PathFilter {
 }
 
 impl PathFilter {
-    /// Normalize a glob pattern for robust cross-platform matching:
+    /// Expand a user pattern into one or more normalized glob variants:
     /// - Convert backslashes to forward slashes.
-    /// - Prepend `**/` to relative patterns (those not starting with `/` or `**/`)
-    ///   so they match at any depth in both relative and absolute paths.
-    fn normalize_pattern(pattern: &str) -> String {
+    /// - Prepend `**/` to relative patterns so they match at any depth.
+    /// - For a bare name / metachar-free relative path (e.g. `node_modules`,
+    ///   `build`, `src/generated`), also add a `**/<name>/**` variant so it
+    ///   excludes everything *inside* the directory — gitignore directory
+    ///   semantics. Without this, `node_modules` only matched a file literally
+    ///   named `node_modules`, never its contents.
+    fn expand_pattern(pattern: &str) -> Vec<String> {
         let p = pattern.replace('\\', "/");
+        let has_meta = p.contains(['*', '?', '[', ']', '{', '}']);
         if p.starts_with('/') || p.starts_with("**/") || p.contains(':') {
-            // Already absolute-style or catch-all: leave as-is (just normalized slashes)
-            p
+            // Already absolute-style or catch-all: leave as-is (slashes normalized).
+            vec![p]
+        } else if has_meta {
+            // Relative glob like `src/**/*.rs` or `*.rs` — match at any depth.
+            vec![format!("**/{}", p)]
         } else {
-            // Relative pattern like `src/**/*.rs` — make it match at any path depth
-            format!("**/{}", p)
+            // Bare directory/file name — match the entity AND its contents.
+            vec![format!("**/{}", p), format!("**/{}/**", p)]
         }
     }
 
@@ -57,10 +65,11 @@ impl PathFilter {
         } else {
             let mut builder = GlobSetBuilder::new();
             for pattern in include_patterns {
-                let normalized = Self::normalize_pattern(pattern);
-                let glob = Glob::new(&normalized)
-                    .with_context(|| format!("Invalid include glob pattern: {}", pattern))?;
-                builder.add(glob);
+                for normalized in Self::expand_pattern(pattern) {
+                    let glob = Glob::new(&normalized)
+                        .with_context(|| format!("Invalid include glob pattern: {}", pattern))?;
+                    builder.add(glob);
+                }
             }
             Some(builder.build().context("Failed to build include GlobSet")?)
         };
@@ -70,10 +79,11 @@ impl PathFilter {
         } else {
             let mut builder = GlobSetBuilder::new();
             for pattern in exclude_patterns {
-                let normalized = Self::normalize_pattern(pattern);
-                let glob = Glob::new(&normalized)
-                    .with_context(|| format!("Invalid exclude glob pattern: {}", pattern))?;
-                builder.add(glob);
+                for normalized in Self::expand_pattern(pattern) {
+                    let glob = Glob::new(&normalized)
+                        .with_context(|| format!("Invalid exclude glob pattern: {}", pattern))?;
+                    builder.add(glob);
+                }
             }
             Some(builder.build().context("Failed to build exclude GlobSet")?)
         };
@@ -140,6 +150,28 @@ impl PathFilter {
     /// Check if this filter has any patterns (include or exclude).
     pub fn is_empty(&self) -> bool {
         self.include.is_none() && self.exclude.is_none()
+    }
+
+    /// Returns true if the path matches any *exclude* pattern (ignores include
+    /// patterns). Convenience for exclude-only use sites (watcher, stale-file
+    /// filtering) where the question is purely "should this be skipped?".
+    pub fn is_excluded(&self, path: &str) -> bool {
+        match &self.exclude {
+            Some(set) => {
+                let normalized: std::borrow::Cow<str> = if path.contains('\\') {
+                    std::borrow::Cow::Owned(path.replace('\\', "/"))
+                } else {
+                    std::borrow::Cow::Borrowed(path)
+                };
+                set.is_match(normalized.as_ref())
+            }
+            None => false,
+        }
+    }
+
+    /// Build an exclude-only filter from a list of exclude patterns.
+    pub fn exclude_only(exclude_patterns: &[String]) -> Result<Self> {
+        Self::new(&[], exclude_patterns)
     }
 
     /// Filter a set of document IDs based on their paths using a path lookup function.

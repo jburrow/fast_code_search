@@ -550,16 +550,20 @@ fn spawn_discovery_thread(
     already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        // Pre-compile exclude patterns the same way FileDiscoveryIterator does
-        // so that stale files are subject to the same exclusion rules as newly
-        // discovered files. Without this, a file that was indexed before a
-        // "**/target/**" pattern was added would still be sent for re-indexing
-        // when it becomes stale.
-        let compiled_excludes: Vec<String> = exclude_patterns
-            .iter()
-            .map(|p| p.trim_matches('*').trim_matches('/').to_string())
-            .filter(|p| !p.is_empty())
-            .collect();
+        // Compile exclude patterns into the SAME glob filter that
+        // FileDiscoveryIterator uses, so stale files are subject to identical
+        // exclusion rules. The previous trim-and-substring approach diverged
+        // (e.g. it wrongly excluded `.github/` for a `**/.git/**` pattern).
+        let stale_exclude_filter = crate::search::path_filter::PathFilter::exclude_only(
+            &exclude_patterns,
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "Invalid exclude pattern(s) for stale-file filter: {}; exclusions disabled",
+                e
+            );
+            crate::search::path_filter::PathFilter::default()
+        });
 
         // First, send stale files that need re-indexing
         for stale_path in stale_files {
@@ -578,12 +582,8 @@ fn spawn_discovery_thread(
                     continue;
                 }
             }
-            // Apply exclude_patterns before queueing for re-indexing
-            let path_str = stale_path.to_string_lossy();
-            if compiled_excludes
-                .iter()
-                .any(|pattern| path_str.contains(pattern.as_str()))
-            {
+            // Apply exclude_patterns (glob semantics) before queueing for re-indexing
+            if stale_exclude_filter.is_excluded(&stale_path.to_string_lossy()) {
                 tracing::debug!(
                     path = %stale_path.display(),
                     "Skipping stale file that matches an exclude pattern"
