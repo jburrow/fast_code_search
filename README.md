@@ -12,6 +12,12 @@
 
 **[Quick Start](#-quick-start) · [Highlights](#-highlights) · [Why a server?](#-why-an-in-memory-server) · [Benchmarks](#-benchmarks) · [REST API](#-rest-api) · [Docs](#-documentation)**
 
+<br/>
+
+<img src="docs/images/web-ui.png" alt="fast_code_search web UI — grouped, symbol-aware results for 'trigram' returned in 23 ms" width="880"/>
+
+<sub><i>The embedded web UI: grouped results with symbol badges, match highlighting, dependency counts — 23 ms over a live index.</i></sub>
+
 </div>
 
 ---
@@ -729,4 +735,3 @@ cargo run --release --bin fast_code_search_validator -- --json
 ## 📄 License
 
 MIT — See [LICENSE](LICENSE) file.
-
