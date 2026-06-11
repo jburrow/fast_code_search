@@ -1,737 +1,266 @@
 <div align="center">
 
-# 🔍 fast_code_search
+# fast_code_search
 
-### Sub-millisecond code search for 10GB+ codebases — in-memory, trigram-indexed, symbol-aware.
+**An in-memory code search server. Millisecond queries over multi-gigabyte codebases.**
 
 [![CI](https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml/badge.svg)](https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml)
 [![Benchmarks](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml/badge.svg)](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml)
-[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](CHANGELOG.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**[Quick Start](#-quick-start) · [Highlights](#-highlights) · [Why a server?](#-why-an-in-memory-server) · [Benchmarks](#-benchmarks) · [REST API](#-rest-api) · [Docs](#-documentation)**
-
-<br/>
-
-<img src="docs/images/web-ui.png" alt="fast_code_search web UI — grouped, symbol-aware results for 'trigram' returned in 23 ms" width="880"/>
-
-<sub><i>The embedded web UI: grouped results with symbol badges, match highlighting, dependency counts — 23 ms over a live index.</i></sub>
+<img src="docs/images/web-ui.png" alt="The embedded web UI searching a live index" width="820"/>
 
 </div>
 
 ---
 
-> **fast_code_search** keeps your code hot in RAM and answers queries in **~1–5 ms** — even across
-> repositories too large for `grep` to feel instant. It pairs a **trigram inverted index** with
-> **tree-sitter symbol awareness** and an optional **semantic engine**, exposed over **gRPC**, a
-> **REST API**, and an **embedded web UI**.
+fast_code_search is an always-on search server written in Rust. It builds a trigram
+inverted index over your code, enriches it with symbols parsed by tree-sitter, and
+keeps the whole thing hot in memory — so a query that takes `grep` seconds on a large
+tree returns in one to five milliseconds. Results stream over gRPC, a JSON REST API,
+and an embedded web UI.
 
-## ⚡ Quick Start
+It ships two engines:
+
+| Engine | Query style | Backed by | Ports |
+|--------|-------------|-----------|-------|
+| Keyword (primary) | `fn main`, `class.*Handler`, symbol names | Trigram index, tree-sitter ranking | 50051 / 8080 |
+| Semantic (optional) | "retry logic with exponential backoff" | TF-IDF or CodeBERT/UniXcoder embeddings | 50052 / 8081 |
+
+## Quick start
+
+Requires Rust 1.70+ and the Protocol Buffers compiler (`protoc`).
 
 ```bash
-# 1. Build (needs the protobuf compiler — see Prerequisites)
 cargo build --release
 
-# 2. Generate a config and add your code paths
+# Generate a config, then add your project paths to it
 cargo run --release --bin fast_code_search_server -- --init .keyword_config.toml
 
-# 3. Start the server (cargo alias) — then open http://localhost:8080
+# Start the server and open http://localhost:8080
 cargo keyword
 ```
 
+Or query the API directly:
+
 ```bash
-# …or search straight from the REST API:
 curl "http://localhost:8080/api/search?q=fn%20main&max=10"
 ```
 
-<sub>Want natural-language search too? See [Semantic Search](#-semantic-search-engine). Full options are under [Usage](#-usage).</sub>
+`cargo keyword` and `cargo semantic` are aliases defined in [.cargo/config.toml](.cargo/config.toml).
+For the optional semantic engine, see [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
 
-## ✨ Highlights
+## Features
 
-- 🚀 **Sub-millisecond search** — pre-built in-memory index; ~1–5 ms queries on 10 GB+ codebases.
-- 🧩 **Symbol-aware ranking** — tree-sitter extracts functions/classes/types across 18+ languages; definitions get boosted.
-- 🔤 **Trigram + regex** — Roaring-bitmap trigram index with regex acceleration via literal pre-filtering.
-- 🧠 **Optional semantic search** — natural-language queries via TF-IDF or CodeBERT/UniXcoder embeddings.
-- 🔗 **Live dependency graph** — "what imports this file?" plus PageRank-style ranking of heavily-imported files.
-- 👀 **Real-time file watching** — incremental index updates on add/modify/delete/rename.
-- 💾 **Persistent index** — atomic save/load so restarts skip re-indexing.
-- 🌐 **Three ways in** — gRPC streaming, JSON REST API, and an embedded web UI.
+- **Trigram inverted index** over Roaring bitmaps; candidate lookup is a bitmap
+  intersection, independent of corpus size.
+- **Symbol-aware ranking.** tree-sitter parses 12 programming languages (plus JSON,
+  TOML, YAML, HTML, CSS, Markdown); definitions outrank usages.
+- **Dependency graph.** Imports are resolved across the codebase — query "what
+  imports this file", and heavily-imported files rank higher.
+- **Regex search** accelerated by literal pre-filtering: required literals are
+  extracted from the pattern and intersected through the trigram index before the
+  regex runs.
+- **Symbols-only mode** for finding definitions without wading through call sites.
+- **Incremental indexing.** A file watcher applies edits, deletes, and renames to the
+  live index; no rebuild, no restart.
+- **Persistent index.** Atomic save/load with integrity checks — restarts skip
+  re-indexing entirely.
+- **Parallel everything.** Indexing and search fan out across cores via rayon;
+  searches run concurrently under a read lock.
 
-## 🧭 Two Search Engines, One Platform
+### Ranking
 
-fast_code_search provides **two complementary search engines** optimized for different use cases:
+Scores combine a content match with structural signals:
 
-| Engine | Best For | How It Works | Port |
-|--------|----------|--------------|------|
-| **🔍 Keyword Search** | Finding exact code patterns, function calls, variable names | Trigram index + AST-based ranking | 8080 |
-| **🧠 Semantic Search** | Natural language queries like "authentication logic" | TF-IDF or ML embeddings (CodeBERT) | 8081 |
+| Signal | Boost |
+|--------|------|
+| Symbol definition | 3.0× |
+| Exact case-sensitive match | 2.0× |
+| Match at start of line | 1.5× |
+| File in `src/` or `lib/` | 1.5× |
+| Heavily-imported file | `1 + log10(importers) × 0.5` |
+| Long lines | inverse-length penalty |
 
-### 🔍 Keyword Search Engine
+## Why a server instead of a CLI?
 
-The **primary search engine** uses trigram-based indexing with **AST-aware ranking**:
+Tools like ripgrep re-scan files on every invocation; that cost is unbeatable for a
+one-off search and unacceptable when an IDE issues a query per keystroke. fast_code_search
+pays the scan cost once at startup, then answers from memory:
 
-- **Trigram Index**: Splits code into 3-character sequences for O(1) candidate lookup
-- **Tree-sitter Parsing**: Extracts symbols (functions, classes, methods, types, etc.) from 12+ programming languages
-- **Smart Scoring**: Boosts symbol definitions (3x), exact matches (2x), heavily-imported files (PageRank-style)
-- **Regex Support**: Full regex with trigram acceleration for literal substrings
-- **Symbols-Only Mode**: Search only symbol names (functions, classes, methods, types, etc.) plus filename matches
+| Scenario | ripgrep | fast_code_search |
+|----------|---------|------------------|
+| 1 query, Linux kernel (~1 GB) | 80 ms | 3 s index + 5 ms |
+| 100 queries | 8 s | 3.5 s total |
+| 100 queries, 10 GB corpus | ~500 s | ~61 s total |
 
-**Example queries**: `fn main`, `class.*Handler`, `import useState`
+The crossover arrives around 50 queries — roughly one coding session. The always-on
+design is what makes search-as-you-type, live dependency queries, and team-shared
+indexes practical.
 
-### 🧠 Semantic Search Engine
+Use ripgrep for one-off searches; use [Zoekt](https://github.com/sourcegraph/zoekt) if
+you need a disk-resident index. See [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md)
+for a detailed comparison of the architectures, including published benchmark context.
 
-The **optional semantic engine** understands code meaning, not just text patterns:
+## Benchmarks
 
-- **Natural Language**: Query with phrases like "database connection pooling" or "error handling middleware"
-- **Code Chunking**: Splits files into semantic units (functions, classes, modules)
-- **Embedding Models**: TF-IDF (fast, no GPU) or CodeBERT/UniXcoder (better quality)
-- **Similarity Search**: Finds conceptually related code even without keyword matches
+Tracked in CI on every push to `main` ([workflow](../../actions/workflows/benchmark.yml),
+history on `gh-pages`). Representative timings on the synthetic corpus:
 
-**Example queries**: "retry logic with exponential backoff", "validate user input", "websocket message handler"
-
-> 📖 See [Semantic Search README](docs/semantic/SEMANTIC_SEARCH_README.md) for setup instructions.
-
-## 🛠️ Features
-
-### Keyword Search Engine Features
-
-- **Trigram-based inverted index** using Roaring bitmaps for efficient storage and fast lookup
-- **Memory-mapped files** using `memmap2` for optimal memory usage
-- **Symbol awareness** using `tree-sitter` for Rust, Python, JavaScript, TypeScript, Go, C, C++, Java, C#, Ruby, PHP, Bash, and more
-- **Parallel search** using `rayon` for maximum throughput
-- **Index persistence** — save index to disk and reload on restart for faster startup times
-- **File watcher** — incremental indexing monitors filesystem changes in real-time
-- **Symbols-only search** — search only in symbol names (functions, classes, methods, types, etc.) plus filename matches for faster, targeted results
-- **AST-based scoring** that boosts:
-  - Symbol definitions (3.0x)
-  - Primary source directories (src/, lib/) (1.5x)
-  - Exact case-sensitive matches (2.0x)
-  - Matches at the start of lines (1.5x)
-  - Shorter lines (inverse length factor)
-  - **Heavily-imported files** — logarithmic boost based on dependent count (PageRank-style)
-
-### Semantic Search Engine Features
-
-- **Natural language queries** — search by concept, not just keywords
-- **Code-aware chunking** — splits files into functions, classes, and modules
-- **Dual embedding support**:
-  - TF-IDF (default): Fast, no dependencies, good for exact terms
-  - ML models (optional): CodeBERT/UniXcoder for deeper semantic understanding
-- **Model integrity checks** — optional SHA256 verification via `FCS_MODEL_SHA256` or `FCS_MODEL_SHA256_<MODEL>`
-- **Similarity scoring** — ranks results by conceptual relevance
-
-### Shared Infrastructure
-
-- **Dual API access**:
-  - **gRPC API** using `tonic` with streaming results (port 50051/50052)
-  - **REST API** using `axum` with JSON responses (port 8080/8081)
-- **Embedded Web UI** — browser-based search interface with real-time results
-- **Supports 10GB+ codebases** efficiently
-
-## 🏎️ Why an In-Memory Server?
-
-Unlike command-line tools (ripgrep) or disk-based indexes (Zoekt), fast_code_search runs as an **always-on, in-memory server**. This architecture provides unique advantages:
-
-| Advantage | Impact |
-|-----------|--------|
-| **Zero cold-start** | Index always hot in RAM — no disk I/O on first query |
-| **Sub-millisecond search** | Memory access is 100-1000x faster than SSD |
-| **Warm CPU caches** | Repeated queries hit L1/L2 cache |
-| **Live dependency graph** | Track imports across the entire codebase |
-| **Concurrent access** | RwLock allows many simultaneous searches |
-| **Real-time streaming** | gRPC streams results to IDEs as they're found |
-
-### Best For
-
-- **IDE integration** — Sub-10ms latency enables "search as you type"
-- **Repeated queries** — Same patterns searched throughout a coding session
-- **Large codebases** — 10GB+ where per-query scanning takes seconds
-- **Dependency queries** — "What files import this module?"
-- **Team search** — Multiple developers querying the same codebase
-
-### When to Use Other Tools
-
-- **One-off searches**: ripgrep is instant for single searches, no server needed
-- **Disk-constrained**: Zoekt's persistent index survives restarts without rebuild
-- **Planet-scale**: GitHub Code Search scales horizontally across data centers
-
-📖 **See [PRIOR_ART.md](docs/design/PRIOR_ART.md) for a detailed comparison with ripgrep, Zoekt, GitHub Code Search, and improvement roadmap.**
-
-## 🏗️ Architecture
-
-### Keyword Search Engine Components
-
-1. **Trigram Index** (`src/index/trigram.rs`)
-   - Extracts 3-character sequences from text
-   - Uses Roaring bitmaps to efficiently store document sets
-   - Performs fast intersection queries
-
-2. **File Store** (`src/index/file_store.rs`)
-   - Memory-maps files for efficient access
-   - Deduplicates files by canonical path
-   - Supports large codebases without loading everything into RAM
-
-3. **Index Persistence** (`src/index/persistence.rs`)
-   - Save/load index to disk with file locking
-   - Stores config fingerprint for detecting configuration changes
-   - Incremental reconciliation against filesystem on load
-   - Multiple read-only servers can share the same index file
-
-4. **Symbol Extractor** (`src/symbols/extractor.rs`)
-   - Uses tree-sitter parsers for multiple languages
-   - Identifies symbol definitions (functions, classes, methods, types, etc.)
-   - Enhances search results with semantic information
-
-5. **Search Engine** (`src/search/engine.rs`)
-   - Parallel search using rayon
-   - Sophisticated AST-based scoring algorithm
-   - Returns ranked results
-   - Four search methods: text, filtered, regex, and symbols-only
-
-6. **File Watcher** (`src/search/watcher.rs`)
-   - Monitors filesystem for changes using `notify-debouncer-full`
-   - Incrementally updates index on file add/modify/delete
-   - Background processing without blocking searches
-
-7. **gRPC Server** (`src/server/service.rs`)
-   - Streaming search results
-   - Index management
-   - Remote access via gRPC (port 50051)
-
-8. **REST API & Web UI** (`src/web/`)
-   - JSON REST API on port 8080
-   - Embedded browser-based search interface
-   - WebSocket for real-time progress updates
-
-### Semantic Search Engine Components
-
-1. **Semantic Engine** (`src/semantic/engine.rs`)
-   - Manages code chunking and embedding generation
-   - Coordinates indexing and search operations
-
-2. **Code Chunker** (`src/semantic/chunking.rs`)
-   - Splits files into semantic units (functions, classes, modules)
-   - Preserves context for better embeddings
-
-3. **Embeddings** (`src/semantic/embeddings.rs`)
-   - TF-IDF vectorization for fast, dependency-free operation
-   - Optional ML model support via ONNX Runtime
-
-4. **Vector Index** (`src/semantic/vector_index.rs`)
-   - Stores and searches embedding vectors
-   - Cosine similarity scoring
-
-5. **Semantic gRPC Server** (`src/semantic_server/service.rs`)
-   - Streaming semantic search results (port 50052)
-
-6. **Semantic Web UI** (`src/semantic_web/`)
-   - JSON REST API on port 8081
-   - Natural language search interface
-
-## 🔧 Building
-
-### Prerequisites
-
-- Rust 1.70 or later
-- Protocol Buffers compiler (`protoc`)
-
-On Debian/Ubuntu:
-```bash
-sudo apt-get install protobuf-compiler
-```
-
-### Build
+| Benchmark | Corpus | Time |
+|-----------|--------|------|
+| text search, common query | 200 files | ~3.5 ms |
+| text search, rare query | 100 files | ~0.3 ms |
+| text search, no match | 100 files | ~0.1 ms |
+| regex, with literal | 100 files | ~9 ms |
+| regex, no literal (full scan) | 100 files | ~45 ms |
+| indexing | 100 files | ~25 ms |
 
 ```bash
-cargo build --release
+cargo bench                                # all benchmarks
+cargo bench --bench search_benchmark       # search only
+cargo bench --bench persistence_benchmark  # persistence only
 ```
 
-### Semantic Search (Optional)
+## Usage
 
-The semantic search binary enables natural language queries:
+### Configuration
+
+Generate a documented template with `--init`:
 
 ```bash
-# Basic build (TF-IDF embeddings)
-cargo build --release --bin fast_code_search_semantic
-
-# With ML models (CodeBERT/UniXcoder - better quality)
-cargo build --release --bin fast_code_search_semantic --features ml-models
-```
-
-Semantic search runs as a separate server on port 50052 (gRPC) and 8081 (Web UI).
-
-> **Windows users**: The `ml-models` feature requires ONNX Runtime DLL and `ORT_DYLIB_PATH` environment variable. See [Semantic Search README](docs/semantic/SEMANTIC_SEARCH_README.md#building-with-ml-models-optional) for detailed setup instructions.
-
-### Run Tests
-
-```bash
-cargo test
-```
-
-### Documentation Governance
-
-- Instruction-file ownership and anti-drift policy: [Instruction Files Blueprint](docs/INSTRUCTION_FILES_BLUEPRINT.md)
-- Contributor workflow canonical reference: [Development Guide](docs/DEVELOPMENT.md)
-
-## 📦 Usage
-
-### Quick Start
-
-The easiest way to get started is using the cargo aliases:
-
-```bash
-# Generate default config files
-cargo run --release --bin fast_code_search_server -- --init .keyword_config.toml
-cargo run --release --bin fast_code_search_semantic --features ml-models -- --init .semantic_config.toml
-
-# Edit the config files to add your paths
-# Then start the servers using cargo aliases:
-cargo keyword   # Starts keyword search server on port 8080
-cargo semantic  # Starts semantic search server on port 8081
-```
-
-The aliases are defined in `.cargo/config.toml`:
-```toml
-[alias]
-keyword = "run --release --bin fast_code_search_server -- --config .keyword_config.toml"
-semantic = "run --release --bin fast_code_search_semantic --features ml-models -- --config .semantic_config.toml"
-```
-
-### Configuration Files
-
-Generate a config template using `--init`:
-
-```bash
-# Creates a template config file with all options documented
 cargo run --release --bin fast_code_search_server -- --init config.toml
 ```
 
-Example config (`config.toml`):
 ```toml
-# Server settings
-address = "0.0.0.0:50051"
-web_address = "0.0.0.0:8080"
+[server]
+address = "0.0.0.0:50051"      # gRPC
+web_address = "0.0.0.0:8080"   # REST + web UI
+enable_web_ui = true
 
-# Paths to index (required)
-paths = [
-    "/path/to/your/codebase",
-    "/another/project",
-]
+[indexer]
+paths = ["/path/to/codebase"]
+exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**"]  # globs
+max_file_size = 10485760
 
-# File extensions to index (optional, defaults to common source files)
-include_extensions = ["rs", "py", "js", "ts", "go", "java", "c", "cpp", "h"]
-
-# Patterns to exclude (glob patterns matched against full paths)
-exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**"]
-
-# Index persistence (optional)
+# Optional: persist the index across restarts
 index_path = "/var/lib/fast_code_search/index.bin"
 save_after_build = true
+checkpoint_interval_files = 20000   # crash recovery on very large builds
+
+# Optional: watch the filesystem and update the index incrementally
+watch = true
 ```
 
-### Starting the Keyword Search Server
+On hosts with a low `vm.max_map_count` (e.g. RHEL 7), the server detects the limit
+and degrades gracefully to direct reads; see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#memory-allocation-errors-on-rhel7centos7).
 
-```bash
-# Start with default settings
-cargo run --release --bin fast_code_search_server
-
-# Start with a config file
-cargo run --release --bin fast_code_search_server -- --config config.toml
-
-# Generate a template config file
-cargo run --release --bin fast_code_search_server -- --init fast_code_search.toml
-```
-
-The keyword search server starts on:
-- **gRPC**: `0.0.0.0:50051`
-- **Web UI**: `http://localhost:8080`
-
-### Starting the Semantic Search Server
-
-```bash
-# Generate a config file
-cargo run --release --bin fast_code_search_semantic -- --init fast_code_search_semantic.toml
-
-# Start the semantic server
-cargo run --release --bin fast_code_search_semantic -- --config fast_code_search_semantic.toml
-```
-
-The semantic search server starts on:
-- **gRPC**: `0.0.0.0:50052`
-- **Web UI**: `http://localhost:8081`
-
-> 💡 **Tip**: You can run both servers simultaneously for combined keyword + semantic search capabilities.
-
-### CLI Options
+### CLI
 
 ```
 fast_code_search_server [OPTIONS]
 
-Options:
   -c, --config <FILE>       Path to configuration file
-  -a, --address <ADDR>      Server listen address (overrides config)
+  -a, --address <ADDR>      gRPC listen address (overrides config)
   -i, --index <PATH>        Additional paths to index (repeatable)
       --no-auto-index       Skip automatic indexing on startup
-  -v, --verbose             Enable verbose logging
-      --init <FILE>         Generate template configuration file
-  -h, --help                Print help
-  -V, --version             Print version
+      --init <FILE>         Generate a template configuration file
+  -v, --verbose             Verbose logging
 ```
 
-### Configuration File
+### REST API
 
-Create a TOML configuration file (see `--init` to generate a template):
+Served from the web address (default `:8080`). Errors are JSON (`{"error": …}`);
+`503` during index updates carries a `Retry-After` header.
 
-```toml
-[server]
-address = "0.0.0.0:50051"      # gRPC server address
-web_address = "0.0.0.0:8080"   # REST API / Web UI address
-enable_web_ui = true           # Enable embedded Web UI
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/search` | Search the index |
+| `GET /api/stats` | Index statistics |
+| `GET /api/status` | Indexing progress |
+| `GET /api/health` | Health check |
+| `GET /api/file` | Full file content |
+| `GET /api/context` | Lines around a match (`?file=…&line=N&context=K`) |
+| `GET /api/dependents` / `GET /api/dependencies` | Import graph queries |
+| `GET /api/diagnostics` | Index health and self-tests |
+| `WS /ws/progress` | Live indexing progress |
 
-[indexer]
-paths = [                      # Directories to index
-    "/path/to/codebase",
-]
-exclude_patterns = [           # Glob patterns matched against full paths (e.g. **/dir/**)
-    "**/node_modules/**",
-    "**/target/**",
-    "**/.git/**",
-]
-max_file_size = 10485760       # Skip files larger than 10MB
+Search parameters:
 
-# Index persistence (optional)
-index_path = "/var/lib/fast_code_search/index"
-save_after_build = true        # Save after initial indexing
-save_after_updates = 0         # Save after N file updates (0 = disabled)
-checkpoint_interval_files = 0  # Checkpoint every N files during initial build (0 = disabled)
-                               # Recommended: 20000 for very large repos (crash recovery)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `q` | required | Query string |
+| `max` | 50 | Result cap, 1–1000; response sets `has_more` when hit |
+| `regex` | false | Treat the query as a regex |
+| `symbols` | false | Match symbol names only |
+| `include` / `exclude` | — | Semicolon-delimited path globs |
+| `rank` | auto | `auto`, `fast`, or `full` ranking |
+| `context` | 0 | Context lines per match, 0–10 |
 
-# File watcher (optional)
-watch = true                   # Monitor filesystem for changes
+```bash
+curl "http://localhost:8080/api/search?q=fn%20main&regex=true&include=src/**"
 ```
 
-**Note for RHEL7/CentOS7 Users**: The server automatically detects your system's `vm.max_map_count` limit
-and will switch to a direct read fallback (search still works, retrieval is slower) if it would exceed 85% of the limit. To restore full mmap performance:
-- **WITH sudo**: `sudo sysctl -w vm.max_map_count=524288` (recommended for large codebases)
-- **WITHOUT sudo**: Reduce scope with more aggressive `exclude_patterns` and lower `max_file_size`
+The full parameter reference is on the server's own `/docs.html` page.
 
-See [DEPLOYMENT.md](docs/DEPLOYMENT.md#memory-allocation-errors-on-rhel7centos7) for details.
+### gRPC API
 
-### Example Client
-
-See `examples/client.rs` for a complete example. Run it with:
+Streaming search and index management on the gRPC port; the schema lives in
+[proto/](proto/). A minimal client is in [examples/client.rs](examples/client.rs):
 
 ```bash
 cargo run --example client
 ```
 
-### gRPC API
+## Architecture
 
-The service provides two main operations:
+| Component | Source | Role |
+|-----------|--------|------|
+| Trigram index | `src/index/trigram.rs` | Roaring-bitmap postings, intersection queries |
+| File store | `src/index/lazy_file_store.rs` | Lazy memory-mapped file access |
+| Persistence | `src/index/persistence.rs` | Atomic save/load with integrity header |
+| Symbol extractor | `src/symbols/extractor.rs` | tree-sitter parsing across languages |
+| Search engine | `src/search/engine.rs` | Candidate selection, ranking, parallel scan |
+| Background indexer | `src/search/background_indexer.rs` | Two-phase parallel index build |
+| File watcher | `src/search/watcher.rs` | Debounced incremental updates |
+| gRPC server | `src/server/` | Streaming results |
+| REST + web UI | `src/web/` | JSON API, embedded UI, progress WebSocket |
+| Semantic engine | `src/semantic/` | Chunking, embeddings, vector search |
 
-#### Index
+Indexing runs in two phases: a parallel pure-Rust pass (read, transcode, trigram
+extraction) followed by tree-sitter symbol extraction, merged into the engine in
+batches so searches stay responsive during a build. Queries intersect trigram
+bitmaps to find candidates, scan candidates in parallel, then rank.
 
-Index files from one or more directories:
+## Supported languages
 
-```proto
-message IndexRequest {
-  repeated string paths = 1;
-}
+Symbol extraction: Rust, Python, JavaScript, TypeScript, Go, C, C++, Java, C#, Ruby,
+PHP, Bash — plus JSON, TOML, YAML, HTML, CSS, and Markdown. Everything else is still
+indexed and searchable, just without symbol-aware ranking.
 
-message IndexResponse {
-  int32 files_indexed = 1;
-  int64 total_size = 2;
-  string message = 3;
-}
-```
-
-#### Search
-
-Search for a query and stream results:
-
-```proto
-message SearchRequest {
-  string query = 1;
-  int32 max_results = 2;
-  repeated string include_paths = 3;  // Glob patterns for paths to include
-  repeated string exclude_paths = 4;  // Glob patterns for paths to exclude
-  bool is_regex = 5;                  // Treat query as regex pattern
-  bool symbols_only = 6;              // Search only in discovered symbols
-}
-
-message SearchResult {
-  string file_path = 1;
-  string content = 2;
-  int32 line_number = 3;
-  double score = 4;
-  MatchType match_type = 5;
-}
-```
-
-### 🌐 REST API
-
-The REST API is available at `http://localhost:8080` when `enable_web_ui` is true.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/search` | GET | Search the index |
-| `/api/stats` | GET | Get index statistics |
-| `/api/status` | GET | Get indexing progress and status |
-| `/api/health` | GET | Health check |
-| `/api/dependents` | GET | Get files that import a given file |
-| `/api/dependencies` | GET | Get files imported by a given file |
-| `/api/file` | GET | Full UTF-8 content of a file |
-| `/api/context` | GET | A window of lines around a match (`?file=…&line=N&context=K`) |
-| `/api/diagnostics` | GET | Index health, extension breakdown, and self-tests |
-| `/ws/progress` | WS | WebSocket for real-time indexing progress |
-
-Error responses are JSON (`{ "error": … }`); a `503` while the index is updating includes a `Retry-After` header.
-
-#### Search Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `q` | string | required | Query string |
-| `max` | int | 50 | Maximum results (1-1000) |
-| `include` | string | - | Semicolon-delimited glob patterns to include |
-| `exclude` | string | - | Semicolon-delimited glob patterns to exclude |
-| `regex` | bool | false | Treat query as regex pattern |
-| `symbols` | bool | false | Search only in symbol names |
-| `rank` | string | auto | Ranking mode: `auto`, `fast`, or `full` |
-| `context` | int | 0 | Lines of context returned around each match (0–10) |
-
-The response includes `has_more: true` when results were capped at `max` (more matches likely exist).
-
-**Example:**
-```bash
-curl "http://localhost:8080/api/search?q=fn%20main&max=10&regex=true"
-```
-
-### Search Modes (Keyword Engine)
-
-The keyword search engine supports multiple modes:
-
-| Mode | REST Flag | gRPC Flag | Description |
-|------|-----------|-----------|-------------|
-| **Text Search** | (default) | (default) | Full-text search across all file contents |
-| **Regex Search** | `regex=true` | `is_regex=true` | Regular expression pattern matching |
-| **Symbols-Only** | `symbols=true` | `symbols_only=true` | Search only in symbol names plus filename matches |
-
-**Symbols-only search** is ideal when you're looking for definitions rather than usages. It searches the symbol cache (extracted via tree-sitter) and returns only matches where the query appears in a symbol name. Filename matches are included with `line_number` set to 0. This is significantly faster than full-text search when you know you're looking for a definition.
-
-### Semantic Search Mode
-
-For natural language queries like "authentication logic" or "database connection handling", use the semantic search server on port 8081.
-
-The semantic engine excels at:
-- **Conceptual queries**: "error handling with retry" finds related code even without exact matches
-- **Exploratory search**: "how does authentication work" across unfamiliar codebases
-- **Finding related code**: Discover similar implementations across the project
-
-See [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) for detailed documentation.
-
-## 📊 Performance Characteristics
-
-- **Indexing**: Parallel file processing, ~100MB/s on modern hardware
-- **Search**: Sub-millisecond for most queries on 10GB+ codebases
-- **Memory**: Uses memory mapping, so actual RAM usage is much lower than codebase size
-- **Scalability**: Handles 10GB+ of text efficiently
-- **Persistence**: Load pre-built index on restart (no re-indexing needed)
-
-## 🏁 Benchmarks
-
-Benchmarks run on a synthetic corpus using Criterion and are tracked automatically on every push to `main`. View results in the [Benchmarks CI workflow](../../actions/workflows/benchmark.yml) — download the `benchmark-results` artifact for the raw numbers. Historical trends are stored in the `gh-pages` branch under `benchmarks/`.
-
-Run locally with:
+## Development
 
 ```bash
-cargo bench                            # All benchmarks (search + persistence)
-cargo bench --bench search_benchmark   # Search benchmarks only
-cargo bench --bench persistence_benchmark  # Persistence benchmarks only
-```
-
-Representative timings on a synthetic corpus (from CI):
-
-| Benchmark | Corpus Size | Time | Throughput |
-|-----------|-------------|------|------------|
-| text_search/common_query | 50 files | ~0.6 ms | — |
-| text_search/common_query | 100 files | ~1.4 ms | ~7.0 Melem/s |
-| text_search/common_query | 200 files | ~3.5 ms | ~5.7 Melem/s |
-| text_search/rare_query | 100 files | ~0.3 ms | — |
-| text_search/no_match | 100 files | ~0.1 ms | — |
-| regex_search/simple_literal | 100 files | ~9 ms | — |
-| regex_search/no_literal | 100 files | ~45 ms | — |
-| indexing/index_files | 100 files | ~25 ms | — |
-
-*Timings are automatically tracked in CI. See [Benchmarks workflow](../../actions/workflows/benchmark.yml) for the latest results.*
-
-<details>
-<summary><b>📐 Detailed comparison with ripgrep, ag, git grep & GNU grep</b> (click to expand)</summary>
-
-How does fast_code_search compare to industry-standard search tools? Here's a summary based on published benchmarks and architecture analysis:
-
-#### Benchmark Context: Linux Kernel Source (~1GB, ~70,000 files)
-
-| Tool | Query Type | Time | Notes |
-|------|------------|------|-------|
-| **ripgrep** | Simple literal | ~80ms | Stateless, rescans files each query |
-| **ripgrep** | Regex `[A-Z]+_SUSPEND` | ~80ms | SIMD-accelerated literal extraction |
-| **The Silver Searcher (ag)** | Simple literal | ~400-1600ms | Memory-mapped, PCRE-based |
-| **git grep** | Simple literal | ~340ms | Uses git index, avoids directory walk |
-| **GNU grep** | Simple literal | ~500ms | Single-threaded, no filtering |
-| **fast_code_search** | Simple literal | **~1-5ms** | Pre-indexed, in-memory |
-| **fast_code_search** | Regex | **~5-20ms** | Trigram pre-filtering |
-
-#### Benchmark Context: Large Single File (~9-13GB, subtitle corpus)
-
-| Tool | Query | Time | Notes |
-|------|-------|------|-------|
-| **ripgrep** | `Sherlock Holmes` | ~270ms | SIMD memchr, rare byte selection |
-| **ripgrep** | `Sherlock Holmes` (lines) | ~600ms | Line counting adds overhead |
-| **GNU grep** | `Sherlock Holmes` | ~500ms | Boyer-Moore with memchr |
-| **GNU grep** (Unicode) | Case-insensitive | ~4s+ | Unicode handling is expensive |
-| **The Silver Searcher** | With line numbers | ~2.7s | PCRE + memory mapping |
-| **UCG** | With line numbers | ~750ms | PCRE2 JIT compilation |
-
-*Source: [ripgrep benchmark blog](https://burntsushi.net/ripgrep/) by Andrew Gallant*
-
-#### Why fast_code_search Excels at Repeated Queries
-
-The key insight: **amortized cost**. Traditional tools pay per-query costs, while fast_code_search pays once during indexing:
-
-| Scenario | ripgrep (10 queries) | fast_code_search (10 queries) |
-|----------|---------------------|------------------------------|
-| Linux kernel | 10 × 80ms = **800ms** | 1 × 3000ms + 10 × 5ms = **3050ms** |
-| Linux kernel | 100 × 80ms = **8s** | 1 × 3000ms + 100 × 5ms = **3.5s** ✓ |
-| 10GB codebase | 10 × 5s = **50s** | 1 × 60s + 10 × 10ms = **60.1s** |
-| 10GB codebase | 100 × 5s = **500s** | 1 × 60s + 100 × 10ms = **61s** ✓ |
-
-**Crossover point**: fast_code_search becomes faster after ~50 queries on a typical codebase.
-
-#### Feature Comparison
-
-| Feature | ripgrep | ag | git grep | GNU grep | fast_code_search |
-|---------|---------|----|-----------|---------|--------------------|
-| Parallel search | ✓ | ✓ | ✓ | ✗ | ✓ |
-| Pre-built index | ✗ | ✗ | ✗ | ✗ | ✓ |
-| .gitignore support | ✓ | ✓ | ✓ | ✗ | ✓ |
-| Regex support | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Unicode-aware | ✓ | Partial | Partial | Slow | ✓ |
-| Symbol search | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Dependency graph | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Streaming results | Pipe | Pipe | Pipe | Pipe | gRPC |
-| IDE integration | Editor plugins | Editor plugins | Git | Limited | Native API |
-| Cross-platform | ✓ | ✓ | ✓ | ✓ | ✓ |
-
-</details>
-
-📖 **See [PRIOR_ART.md](docs/design/PRIOR_ART.md) for detailed architectural analysis and improvement roadmap.**
-
-## ⚙️ How It Works
-
-1. **Indexing Phase**:
-   - Files are memory-mapped using `memmap2`
-   - Text is split into trigrams (3-character sequences)
-   - Each trigram is mapped to document IDs using Roaring bitmaps
-   - Symbols are extracted using tree-sitter parsers
-
-2. **Search Phase**:
-   - Query is split into trigrams
-   - Roaring bitmap intersection finds candidate documents
-   - Parallel search across candidates using `rayon`
-   - Results are scored based on:
-     - Exact case-sensitive match: **2.0x**
-     - Symbol definitions: **3.0x**
-     - Primary source directories (src/, lib/): **1.5x**
-     - Shorter lines: `1.0 / (1.0 + line_len * 0.01)`
-     - Matches at start of line: **1.5x**
-     - Dependency boost: `1.0 + log10(import_count) * 0.5` — files imported by many others rank higher (PageRank-style)
-
-3. **Result Streaming**:
-   - Top results are streamed via gRPC
-   - Allows incremental display of results
-   - Efficient for large result sets
-
-## 🗂️ Supported Languages
-
-Tree-sitter symbol extraction is supported for:
-
-**Programming Languages:**
-- Rust (`.rs`)
-- Python (`.py`, `.pyi`, `.pyw`)
-- JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`)
-- TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`)
-- Go (`.go`)
-- C (`.c`, `.h`)
-- C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.hh`)
-- Java (`.java`)
-- C# (`.cs`)
-- Ruby (`.rb`, `.rake`, `.gemspec`)
-- PHP (`.php`)
-- Bash (`.sh`, `.bash`, `.zsh`)
-
-**Config & Markup Languages:**
-- JSON (`.json`, `.jsonc`)
-- TOML (`.toml`)
-- YAML (`.yaml`, `.yml`)
-- HTML (`.html`, `.htm`)
-- CSS (`.css`, `.scss`)
-- Markdown (`.md`, `.markdown`)
-
-Other file types are still searchable, just without symbol-awareness.
-
-## 📚 Glossary
-
-<details>
-<summary>Click to expand key terms (trigram, Roaring bitmap, AST, embedding…)</summary>
-
-| Term | Definition |
-|------|------------|
-| **Trigram** | A 3-character sequence extracted from text. For example, "function" produces trigrams: "fun", "unc", "nct", "cti", "tio", "ion". Used as an index key to quickly find candidate files containing a search term. |
-| **Roaring Bitmap** | A compressed data structure for storing sets of integers efficiently. Used to store which document IDs contain each trigram. Supports fast set operations (intersection, union) for combining multiple trigram lookups. |
-| **Memory-mapped file** | A file access technique where the OS maps file contents directly into virtual memory. Allows reading files without explicit I/O calls—the OS handles paging data in/out as needed. Reduces memory usage for large codebases. |
-| **AST (Abstract Syntax Tree)** | A tree representation of source code structure. Used via tree-sitter to identify symbol definitions (functions, classes, methods, types, etc.) for smarter ranking. |
-| **Symbol** | A named code element like a function, class, method, or variable. Extracted using tree-sitter parsing. Symbol matches are boosted 3x in search results. |
-| **TF-IDF** | Term Frequency–Inverse Document Frequency. A text vectorization technique that weights words by how important they are to a document relative to the corpus. Used for semantic search embeddings. |
-| **Embedding** | A vector (array of numbers) representing text in a high-dimensional space where similar meanings are close together. Enables "find similar code" queries. |
-| **gRPC** | Google Remote Procedure Call. A high-performance protocol for server communication. Used for streaming search results to IDE clients. |
-
-</details>
-
-## 📖 Documentation
-
-- [CHANGELOG.md](CHANGELOG.md) — Version history and release notes
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — Development guide
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Deployment guide
-- [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md) — Comparison with ripgrep, Zoekt, etc.
-- [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) — Semantic search setup
-
-## ✅ Validation & Load Testing
-
-A built-in validator binary generates a synthetic corpus and validates the search engine:
-
-```bash
-# Run validation with default settings
-cargo run --release --bin fast_code_search_validator
-
-# Custom corpus size and reproducible seed
-cargo run --release --bin fast_code_search_validator -- --corpus-size 200 --seed 12345
-
-# Include load testing (throughput and latency measurement)
+cargo test                                          # unit + integration tests
+cargo run --release --bin fast_code_search_validator  # synthetic-corpus validation
 cargo run --release --bin fast_code_search_validator -- --load-test --duration 30
-
-# JSON output for CI integration
-cargo run --release --bin fast_code_search_validator -- --json
 ```
 
-**What it validates:**
-- Index completeness (all generated content is findable)
-- Line number accuracy
-- Symbol extraction
-- All query options: basic search, path filters, regex, symbols-only
-- (Optional) Throughput and latency under load
+The validator generates a corpus, verifies index completeness, line numbers, symbol
+extraction, and every query option, and can measure throughput under load (`--json`
+for CI). Contributor workflow: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Instruction-file
+policy: [docs/INSTRUCTION_FILES_BLUEPRINT.md](docs/INSTRUCTION_FILES_BLUEPRINT.md).
 
-## 📄 License
+## Documentation
 
-MIT — See [LICENSE](LICENSE) file.
+- [CHANGELOG.md](CHANGELOG.md) — release notes
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — development guide
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — deployment guide
+- [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md) — ripgrep / Zoekt / GitHub Code Search comparison
+- [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md) — semantic engine setup
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — terminology
+
+## License
+
+MIT — see [LICENSE](LICENSE).
