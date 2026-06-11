@@ -102,8 +102,9 @@ for a detailed comparison of the architectures, including published benchmark co
 
 ## Benchmarks
 
-Tracked in CI on every push to `main` ([workflow](../../actions/workflows/benchmark.yml),
-history on `gh-pages`):
+Tracked in CI on every push to `main` ([workflow](../../actions/workflows/benchmark.yml));
+historical trends are charted at
+**[jburrow.github.io/fast_code_search/dev/bench](https://jburrow.github.io/fast_code_search/dev/bench/)**:
 
 | Benchmark | Corpus | Time |
 |-----------|--------|------|
