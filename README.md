@@ -735,4 +735,3 @@ cargo run --release --bin fast_code_search_validator -- --json
 ## 📄 License
 
 MIT — See [LICENSE](LICENSE) file.
-
