@@ -17,8 +17,8 @@
 fast_code_search is an always-on search server written in Rust. It builds a trigram
 inverted index over your code, enriches it with symbols parsed by tree-sitter, and
 keeps the whole thing hot in memory — so a query that takes `grep` seconds on a large
-tree returns in one to five milliseconds. Results stream over gRPC, a JSON REST API,
-and an embedded web UI.
+tree returns in milliseconds. Results stream over gRPC, a JSON REST API, and an
+embedded web UI.
 
 It ships two engines:
 
@@ -84,19 +84,17 @@ Scores combine a content match with structural signals:
 
 ## Why a server instead of a CLI?
 
-Tools like ripgrep re-scan files on every invocation; that cost is unbeatable for a
-one-off search and unacceptable when an IDE issues a query per keystroke. fast_code_search
-pays the scan cost once at startup, then answers from memory:
+Tools like ripgrep re-scan files on every invocation. That cost is unbeatable for a
+one-off search, and a poor fit when an IDE issues a query per keystroke:
+[ripgrep's published benchmarks](https://burntsushi.net/ripgrep/) put a simple
+literal search over the Linux kernel tree at roughly 80 ms per query, and scans of
+multi-gigabyte corpora take seconds. fast_code_search pays the scan cost once, at
+index build, and answers subsequent queries from memory in microseconds to
+milliseconds (measured numbers below).
 
-| Scenario | ripgrep | fast_code_search |
-|----------|---------|------------------|
-| 1 query, Linux kernel (~1 GB) | 80 ms | 3 s index + 5 ms |
-| 100 queries | 8 s | 3.5 s total |
-| 100 queries, 10 GB corpus | ~500 s | ~61 s total |
-
-The crossover arrives around 50 queries — roughly one coding session. The always-on
-design is what makes search-as-you-type, live dependency queries, and team-shared
-indexes practical.
+The trade is a one-time build plus resident memory in exchange for a per-query cost
+two to three orders of magnitude lower — which is what makes search-as-you-type,
+live dependency queries, and team-shared indexes practical.
 
 Use ripgrep for one-off searches; use [Zoekt](https://github.com/sourcegraph/zoekt) if
 you need a disk-resident index. See [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md)
@@ -105,16 +103,23 @@ for a detailed comparison of the architectures, including published benchmark co
 ## Benchmarks
 
 Tracked in CI on every push to `main` ([workflow](../../actions/workflows/benchmark.yml),
-history on `gh-pages`). Representative timings on the synthetic corpus:
+history on `gh-pages`). Numbers below are from the v0.9.0 run on the synthetic
+benchmark corpus (Criterion, `ubuntu-latest`):
 
 | Benchmark | Corpus | Time |
 |-----------|--------|------|
-| text search, common query | 200 files | ~3.5 ms |
-| text search, rare query | 100 files | ~0.3 ms |
-| text search, no match | 100 files | ~0.1 ms |
-| regex, with literal | 100 files | ~9 ms |
-| regex, no literal (full scan) | 100 files | ~45 ms |
-| indexing | 100 files | ~25 ms |
+| text search, common query | 200 files | 0.93 ms |
+| text search, common query | 100 files | 0.51 ms |
+| text search, rare query | 100 files | 21 µs |
+| text search, no match | 100 files | 0.6 µs |
+| regex, accelerated literal | 100 files | 0.34 ms |
+| regex, alternation | 100 files | 0.60 ms |
+| regex, no literal (full scan) | 100 files | 0.82 ms |
+| index build | 100 files | 44 ms |
+| index save / load | 1000 files | 6.4 ms / 16.5 ms |
+
+Absolute timings vary with hardware and corpus; the workflow tracks trends across
+commits and flags regressions beyond a 2× threshold.
 
 ```bash
 cargo bench                                # all benchmarks
