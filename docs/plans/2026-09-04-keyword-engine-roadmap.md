@@ -543,15 +543,23 @@ Goal: the index after an hour of edits is identical to a fresh build.
 Goal: every query's cost is proportional to `max_results` and the candidate
 set, never to the corpus.
 
-- **3.1 Work budget and deadline.** Thread an `AtomicUsize` budget
+- [x] **3.1 Work budget and deadline.** DONE (commit `bf38ac9`): `SearchLimits`
+  (page, offset, match budget = 8× page min 512, deadline) + `QueryRun`
+  checked per document and per match in every search; `SearchRankingInfo`
+  reports `truncated_by_budget` / `total_matches`. Test
+  `test_match_budget_bounds_work_and_is_reported`. Thread an `AtomicUsize` budget
   (`max_results × k`) and a deadline through the rayon loop in all four search
   entry points; stop scanning a document once the budget is hit; make Full
   mode honour a cap or require explicit opt-in; report `truncated_by_budget`.
   Accept: `rank=full` for `"the"` on a 100 k-file synthetic corpus returns in
   bounded time and memory.
-- **3.2 Eviction O(evicted).** Track the ids with populated fallbacks; drop the
+- [x] **3.2 Eviction O(evicted).** DONE: small files (owned reads) are skipped
+  without a lock; duplicate handler calls removed. Track the ids with populated fallbacks; drop the
   duplicate call from the handlers.
-- **3.3 Regex acceleration.** Lower simple-case `Class` nodes to literals so
+- [x] **3.3 Regex acceleration.** DONE: mandatory-text extraction covers
+  `(?i)` case classes and min≥1 repetitions; 64-entry regex LRU; log demoted.
+  Tests `test_case_insensitive_literal_is_accelerated`,
+  `test_repetition_prefix_is_required`. Lower simple-case `Class` nodes to literals so
   `(?i)needle` is accelerated; include runs from `Repetition{min≥1}`
   prefixes; demote the "no constraints" log to `debug`; small LRU of compiled
   regexes. Accept: `(?i)needle` and `abc+` show `total_candidates` far below
@@ -562,13 +570,20 @@ set, never to the corpus.
   extension/language bitmap) in `FileMetadata` so path filtering is
   allocation-free. Accept: search bench on a 10 k-file corpus improves; no
   per-candidate `String` allocations in the filter path.
-- **3.5 Shared candidate runner.** Extract `run_candidates(candidates,
+- [~] **3.5 Shared candidate runner.** Runner DONE (`run_candidates` is the only
+  path for all four searches). Still open: `RankingWeights`, unifying the two
+  "heavily imported" formulas and the filename boost across modes, and the
+  `engine.rs` split. Extract `run_candidates(candidates,
   rank_mode, budget, per_doc_fn)` used by `search_ranked`,
   `search_with_filter_ranked`, `search_regex`, `search_symbols`; move scoring
   constants into a `RankingWeights` struct with `Default`; unify the two
   "heavily imported" formulas and the filename boost across modes.
   Accept: Fast and Full agree on the top result for a golden fixture corpus.
-- **3.6 Deterministic ordering and pagination.** Tie-break on
+- [x] **3.6 Deterministic ordering and pagination.** DONE: tie-break on
+  `(score, file_id, line)`, `offset` in the engine and `/api/search`
+  (`total_matches`, `truncated_by_budget`, `offset`; `has_more` from the real
+  total). Tests `test_deterministic_order_and_offset_paging`,
+  `test_http_search_offset_paging_and_totals`. Tie-break on
   `(score desc, file_id, line)`; add `offset` (REST) / cursor; return
   `total_matches` when the budget was not hit; replace the `len >= max`
   heuristic. Accept: two identical requests return identical order; page 2
@@ -577,7 +592,10 @@ set, never to the corpus.
   the untruncated line plus a UTF-16 column, and all occurrences on the line;
   document the contract in `docs.html`; keep the old fields for one release.
   (The VS Code provider can then be fixed separately.)
-- **3.8 Symbol search quality.** Do not truncate symbol candidates by base
+- [~] **3.8 Symbol search quality.** Candidates are no longer truncated by base
+  score before matching and the symbol cache is consulted before any read
+  (DONE). Still open: per-line dedupe and exact > prefix > substring / kind
+  weighting. Do not truncate symbol candidates by base
   score before matching; dedupe rows per line; weight exact > prefix >
   substring and by symbol kind.
 
