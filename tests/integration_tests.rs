@@ -2068,6 +2068,111 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 1.8: directory rename and delete events (the watcher reports only
+/// the directory path) must remove every file under the old path and index
+/// every eligible file under the new one. Previously both were silent no-ops.
+#[tokio::test]
+async fn test_directory_rename_and_delete_update_index() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_change, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let old_dir = temp.path().join("old_mod");
+    std::fs::create_dir_all(old_dir.join("nested"))?;
+    std::fs::write(old_dir.join("a.rs"), "fn dir_token_a() {}\n")?;
+    std::fs::write(old_dir.join("b.rs"), "fn dir_token_b() {}\n")?;
+    std::fs::write(old_dir.join("nested/c.rs"), "fn dir_token_c() {}\n")?;
+    let other = temp.path().join("other.rs");
+    std::fs::write(&other, "fn other_token() {}\n")?;
+
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut eng = SearchEngine::new();
+    for p in [
+        old_dir.join("a.rs"),
+        old_dir.join("b.rs"),
+        old_dir.join("nested/c.rs"),
+        other.clone(),
+    ] {
+        eng.index_file(&p)?;
+    }
+    assert_eq!(eng.search("dir_token_c", 10).len(), 1);
+
+    // Rename the directory on disk, then apply the event the watcher emits.
+    let new_dir = temp.path().join("new_mod");
+    std::fs::rename(&old_dir, &new_dir)?;
+    let outcome = apply_change(
+        &mut eng,
+        &FileChange::Renamed {
+            from: old_dir.clone(),
+            to: new_dir.clone(),
+        },
+        &config,
+    );
+    assert_eq!((outcome.removed, outcome.indexed), (3, 3), "{outcome:?}");
+
+    for tok in ["dir_token_a", "dir_token_b", "dir_token_c"] {
+        let hits = eng.search(tok, 10);
+        assert_eq!(hits.len(), 1, "{tok}: {hits:?}");
+        assert!(
+            hits[0].file_path.contains("new_mod") && !hits[0].file_path.contains("old_mod"),
+            "{tok} must resolve under the new directory: {}",
+            hits[0].file_path
+        );
+    }
+    assert_eq!(
+        eng.search("other_token", 10).len(),
+        1,
+        "unrelated file untouched"
+    );
+
+    // Delete the directory; the watcher reports only the directory path.
+    std::fs::remove_dir_all(&new_dir)?;
+    let outcome = apply_change(&mut eng, &FileChange::Deleted(new_dir.clone()), &config);
+    assert_eq!(outcome.removed, 3, "{outcome:?}");
+    for tok in ["dir_token_a", "dir_token_b", "dir_token_c"] {
+        assert!(eng.search(tok, 10).is_empty(), "{tok} must be gone");
+    }
+    assert_eq!(eng.search("other_token", 10).len(), 1);
+    Ok(())
+}
+
+/// Roadmap 1.8 / 2.4: the watcher applies the same eligibility rules as the
+/// initial build. A changed file with a non-included extension is not indexed
+/// and an excluded path is dropped.
+#[tokio::test]
+async fn test_watcher_change_respects_eligibility() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_change, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let log = temp.path().join("run.log");
+    std::fs::write(&log, "log_only_token\n")?;
+    let rs = temp.path().join("keep.rs");
+    std::fs::write(&rs, "fn keep_token() {}\n")?;
+
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        include_extensions: vec!["rs".to_string()],
+        ..Default::default()
+    };
+    let mut eng = SearchEngine::new();
+    let o = apply_change(&mut eng, &FileChange::Modified(log.clone()), &config);
+    assert!(
+        !o.changed(),
+        "non-included extension must not be indexed: {o:?}"
+    );
+    assert!(eng.search("log_only_token", 10).is_empty());
+    let o = apply_change(&mut eng, &FileChange::Modified(rs.clone()), &config);
+    assert_eq!(o.indexed, 1);
+    assert_eq!(eng.search("keep_token", 10).len(), 1);
+    Ok(())
+}
+
 /// Roadmap 1.4: the persisted mtime/size must describe the content that was
 /// indexed, not the on-disk state at save time. A file edited between indexing
 /// and saving must be reported stale on reload (previously the fresh stat was
@@ -2158,7 +2263,8 @@ async fn test_save_after_remove_keeps_ids_consistent() -> Result<()> {
         // Symbols were persisted in the same compacted order.
         let syms = eng2.search_symbols(&format!("unique_token_{i}"), "", "", 10)?;
         assert!(
-            syms.iter().any(|m| m.file_path.ends_with(&format!("file{i}.rs"))),
+            syms.iter()
+                .any(|m| m.file_path.ends_with(&format!("file{i}.rs"))),
             "symbol unique_token_{i} must resolve to file{i}.rs; got {:?}",
             syms.iter().map(|m| &m.file_path).collect::<Vec<_>>()
         );

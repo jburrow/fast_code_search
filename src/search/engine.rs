@@ -2928,7 +2928,7 @@ impl SearchEngine {
         self.file_store.reserve(paths_to_register.len());
         let new_ids = self.file_store.register_files_bulk(&paths_to_register);
         let orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
-            self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
+        self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
 
         // Track content bytes from persisted metadata
         self.file_store.add_content_bytes(total_content_bytes);
@@ -3036,6 +3036,23 @@ impl SearchEngine {
         let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
             return false;
         };
+        self.remove_by_id(id);
+        true
+    }
+
+    /// Remove every indexed file under directory `dir` (for directory delete /
+    /// rename-away events, where the watcher reports only the directory).
+    /// Returns the number of files removed.
+    pub fn remove_files_under(&mut self, dir: &std::path::Path) -> usize {
+        let prefix = canonicalize_lossy(dir);
+        let ids = self.file_store.ids_under(&prefix);
+        for &id in &ids {
+            self.remove_by_id(id);
+        }
+        ids.len()
+    }
+
+    fn remove_by_id(&mut self, id: u32) {
         self.trigram_index.remove_document(id);
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
             slot.clear();
@@ -3045,7 +3062,34 @@ impl SearchEngine {
         }
         self.dependency_index.remove_file(id);
         self.file_store.remove_file_by_id(id);
-        true
+    }
+}
+
+/// Canonicalize a path that may no longer exist (deleted or renamed away):
+/// canonicalize the longest existing ancestor and re-append the remaining
+/// components, so the result is comparable with the canonical paths stored
+/// in the file store.
+pub fn canonicalize_lossy(path: &std::path::Path) -> PathBuf {
+    if let Ok(c) = path.canonicalize() {
+        return c;
+    }
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        if let Ok(c) = cur.canonicalize() {
+            let mut out = c;
+            for comp in tail.iter().rev() {
+                out.push(comp);
+            }
+            return out;
+        }
+        match (cur.file_name(), cur.parent()) {
+            (Some(name), Some(parent)) => {
+                tail.push(name.to_os_string());
+                cur = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
     }
 }
 
@@ -3858,7 +3902,10 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             l1.score,
             l4.score
         );
-        assert!(!l1.is_symbol, "a comment on line 1 is not a symbol definition");
+        assert!(
+            !l1.is_symbol,
+            "a comment on line 1 is not a symbol definition"
+        );
         assert!(
             l5.score > l1.score,
             "definition on line 5 ({:.3}) must outrank the first-line mention ({:.3})",

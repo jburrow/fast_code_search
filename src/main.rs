@@ -3,8 +3,8 @@ use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    create_progress_broadcaster, run_background_indexer, save_after_watcher_shutdown,
-    save_on_watcher_update, BackgroundIndexerConfig, FileChange, FileWatcher, IndexingProgress,
+    apply_change, create_progress_broadcaster, run_background_indexer, save_after_watcher_shutdown,
+    save_on_watcher_update, BackgroundIndexerConfig, FileWatcher, IndexingProgress,
     ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
 };
 use fast_code_search::server;
@@ -264,75 +264,26 @@ async fn main() -> Result<()> {
                             );
                             break;
                         }
-                        match watcher.recv_timeout(std::time::Duration::from_secs(1)) {
-                            Some(FileChange::Modified(path)) => {
-                                tracing::debug!(path = %path.display(), "File modified, updating index");
-                                let update_ok = with_engine_write(&watch_engine, |engine| {
-                                    match engine.update_file(&path) {
-                                        Ok(()) => true,
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                path = %path.display(),
-                                                error = %e,
-                                                "Failed to update file in index"
-                                            );
-                                            false
-                                        }
-                                    }
-                                });
-                                if update_ok {
-                                    watcher_updates_total += 1;
-                                    save_on_watcher_update(
-                                        &watch_indexer_config,
-                                        &watch_engine,
-                                        watcher_updates_total,
-                                    );
-                                }
-                            }
-                            Some(FileChange::Renamed { from, to }) => {
+                        if let Some(change) =
+                            watcher.recv_timeout(std::time::Duration::from_secs(1))
+                        {
+                            tracing::debug!(?change, "Applying file change to index");
+                            let outcome = with_engine_write(&watch_engine, |engine| {
+                                apply_change(engine, &change, &watch_indexer_config)
+                            });
+                            if let Some(outcome) = outcome.filter(|o| o.changed()) {
                                 tracing::debug!(
-                                    from = %from.display(),
-                                    to = %to.display(),
-                                    "File renamed: removing old path and indexing new path"
+                                    indexed = outcome.indexed,
+                                    removed = outcome.removed,
+                                    "File change applied"
                                 );
-                                let update_ok = with_engine_write(&watch_engine, |engine| {
-                                    // Drop the old path's entry, then index the new path.
-                                    engine.remove_file(&from);
-                                    match engine.update_file(&to) {
-                                        Ok(()) => true,
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                path = %to.display(),
-                                                error = %e,
-                                                "Failed to index renamed file"
-                                            );
-                                            false
-                                        }
-                                    }
-                                });
-                                if update_ok {
-                                    watcher_updates_total += 1;
-                                    save_on_watcher_update(
-                                        &watch_indexer_config,
-                                        &watch_engine,
-                                        watcher_updates_total,
-                                    );
-                                }
+                                watcher_updates_total += 1;
+                                save_on_watcher_update(
+                                    &watch_indexer_config,
+                                    &watch_engine,
+                                    watcher_updates_total,
+                                );
                             }
-                            Some(FileChange::Deleted(path)) => {
-                                tracing::debug!(path = %path.display(), "File deleted, removing from index");
-                                let removed =
-                                    with_engine_write(&watch_engine, |engine| engine.remove_file(&path));
-                                if removed {
-                                    watcher_updates_total += 1;
-                                    save_on_watcher_update(
-                                        &watch_indexer_config,
-                                        &watch_engine,
-                                        watcher_updates_total,
-                                    );
-                                }
-                            }
-                            None => {} // recv_timeout returned nothing, loop again
                         }
                     }
                 }
@@ -402,23 +353,23 @@ async fn main() -> Result<()> {
 ///
 /// Recovers from a poisoned lock (a panic elsewhere must not disable the
 /// watcher forever) and catches panics inside `f` so one pathological file
-/// cannot poison the lock for every search. Returns `false` if `f` panicked.
-fn with_engine_write<F>(
+/// cannot poison the lock for every search. Returns `None` if `f` panicked.
+fn with_engine_write<F, R>(
     engine: &std::sync::Arc<std::sync::RwLock<fast_code_search::search::SearchEngine>>,
     f: F,
-) -> bool
+) -> Option<R>
 where
-    F: FnOnce(&mut fast_code_search::search::SearchEngine) -> bool,
+    F: FnOnce(&mut fast_code_search::search::SearchEngine) -> R,
 {
     let mut guard = engine.write().unwrap_or_else(|poisoned| {
         tracing::error!("Search engine lock was poisoned; recovering in file watcher");
         poisoned.into_inner()
     });
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut guard))) {
-        Ok(result) => result,
+        Ok(result) => Some(result),
         Err(_) => {
-            tracing::error!("File watcher update panicked; the file was skipped");
-            false
+            tracing::error!("File watcher update panicked; the change was skipped");
+            None
         }
     }
 }

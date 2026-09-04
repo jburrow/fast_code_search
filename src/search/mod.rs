@@ -1,6 +1,7 @@
 pub mod background_indexer;
 pub mod engine;
 pub mod file_discovery;
+pub mod incremental;
 pub mod path_filter;
 pub mod regex_search;
 pub mod watcher;
@@ -15,6 +16,7 @@ pub use engine::{
     SearchRankingInfo, SearchStats, SharedIndexingProgress,
 };
 pub use file_discovery::{discover_files, FileDiscoveryConfig, FileDiscoveryIterator};
+pub use incremental::{apply_change, ChangeOutcome};
 pub use path_filter::PathFilter;
 pub use regex_search::RegexAnalysis;
 pub use watcher::{FileChange, FileWatcher, WatcherConfig};

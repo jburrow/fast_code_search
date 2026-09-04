@@ -161,6 +161,46 @@ impl FileDiscoveryIterator {
         }
         false
     }
+
+    /// The single eligibility rule set: exclude patterns, include-extension
+    /// whitelist, binary extensions, size cap. Used by the iterator for every
+    /// discovered file and by [`is_eligible`] for watcher events, so the
+    /// initial build and incremental updates can never disagree.
+    fn accepts(&self, path: &Path) -> bool {
+        if self.is_excluded(path) {
+            return false;
+        }
+        if !self.include_extensions.is_empty() {
+            match path.extension() {
+                Some(ext) => {
+                    let ext_lower = ext.to_string_lossy().to_lowercase();
+                    if !self.include_extensions.contains(&ext_lower) {
+                        return false;
+                    }
+                }
+                None => return false, // no extension → skip when filter is active
+            }
+        }
+        if self.has_binary_ext(path) || has_binary_extension(path) {
+            return false;
+        }
+        if self.exceeds_size_limit(path) {
+            tracing::debug!(path = %path.display(), "Skipping file exceeding size limit");
+            return false;
+        }
+        true
+    }
+}
+
+/// Would discovery with `config` index `path`? Same rules as
+/// [`FileDiscoveryIterator`] (exclude patterns, include extensions, binary
+/// extensions, size cap); `config.paths` is ignored.
+pub fn is_eligible(path: &Path, config: &FileDiscoveryConfig) -> bool {
+    let probe = FileDiscoveryIterator::new(&FileDiscoveryConfig {
+        paths: Vec::new(),
+        ..config.clone()
+    });
+    probe.accepts(path)
 }
 
 impl Iterator for FileDiscoveryIterator {
@@ -178,35 +218,7 @@ impl Iterator for FileDiscoveryIterator {
                         continue;
                     }
 
-                    // Skip excluded paths
-                    if self.is_excluded(path) {
-                        continue;
-                    }
-
-                    // Filter by allowed extensions when a whitelist is configured
-                    if !self.include_extensions.is_empty() {
-                        match path.extension() {
-                            Some(ext) => {
-                                let ext_lower = ext.to_string_lossy().to_lowercase();
-                                if !self.include_extensions.contains(&ext_lower) {
-                                    continue;
-                                }
-                            }
-                            None => continue, // no extension → skip when filter is active
-                        }
-                    }
-
-                    // Skip binary files
-                    if self.has_binary_ext(path) || has_binary_extension(path) {
-                        continue;
-                    }
-
-                    // Skip files exceeding size limit
-                    if self.exceeds_size_limit(path) {
-                        tracing::debug!(
-                            path = %path.display(),
-                            "Skipping file exceeding size limit"
-                        );
+                    if !self.accepts(path) {
                         continue;
                     }
 

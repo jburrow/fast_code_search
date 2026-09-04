@@ -546,6 +546,20 @@ impl LazyFileStore {
         })
     }
 
+    /// Ids of all live files whose canonical path is under `prefix`
+    /// (directory semantics: `prefix` must match whole path components).
+    /// Used to apply directory deletes / renames from the watcher.
+    pub fn ids_under(&self, prefix: &Path) -> Vec<u32> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(id, f)| {
+                !self.tombstoned.contains(&(*id as u32)) && f.path.starts_with(prefix)
+            })
+            .map(|(id, _)| id as u32)
+            .collect()
+    }
+
     /// Get all file paths (no I/O needed; excludes tombstoned/removed files)
     pub fn get_all_paths(&self) -> Vec<PathBuf> {
         self.files
