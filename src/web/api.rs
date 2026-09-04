@@ -48,8 +48,13 @@ impl From<(StatusCode, String)> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        let mut resp =
-            (self.status, Json(ErrorResponse { error: self.message })).into_response();
+        let mut resp = (
+            self.status,
+            Json(ErrorResponse {
+                error: self.message,
+            }),
+        )
+            .into_response();
         if self.status == StatusCode::SERVICE_UNAVAILABLE {
             resp.headers_mut().insert(
                 axum::http::header::RETRY_AFTER,
@@ -368,9 +373,7 @@ pub async fn search_handler(
 }
 
 /// Handle stats requests
-pub async fn stats_handler(
-    State(state): State<WebState>,
-) -> Result<Json<StatsResponse>, ApiError> {
+pub async fn stats_handler(State(state): State<WebState>) -> Result<Json<StatsResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = engine.try_read().map_err(|e| match e {
@@ -986,7 +989,7 @@ pub async fn diagnostics_handler(
                 total_bytes: bytes,
             })
             .collect();
-        files_by_extension.sort_by(|a, b| b.count.cmp(&a.count));
+        files_by_extension.sort_by_key(|f| std::cmp::Reverse(f.count));
         files_by_extension.truncate(20); // Top 20 extensions
 
         // Sample random files for display

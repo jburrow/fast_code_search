@@ -173,7 +173,7 @@ impl FileStore {
 
     /// Bulk add files with pre-canonicalized paths in parallel.
     /// This is optimized for loading from persistence where paths are already verified.
-    /// Returns a vector of (index, Result<u32>) pairs for each input path.
+    /// Returns a vector of `(index, Result<u32>)` pairs for each input path.
     pub fn add_files_parallel(&mut self, paths: &[PathBuf]) -> Vec<(usize, Result<u32>)> {
         use rayon::prelude::*;
 

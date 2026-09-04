@@ -68,7 +68,10 @@ impl FileWatcher {
         // failed entirely on Windows backslash paths.
         let exclude_filter = Arc::new(
             PathFilter::exclude_only(&config.exclude_patterns).unwrap_or_else(|e| {
-                warn!("Invalid watcher exclude pattern(s): {}; exclusions disabled", e);
+                warn!(
+                    "Invalid watcher exclude pattern(s): {}; exclusions disabled",
+                    e
+                );
                 PathFilter::default()
             }),
         );
@@ -180,7 +183,9 @@ fn process_event(event: &DebouncedEvent, exclude_filter: &PathFilter) -> Option<
     let paths = &event.paths;
 
     // Skip if all paths match exclude patterns
-    let should_process = paths.iter().any(|path| !should_exclude(path, exclude_filter));
+    let should_process = paths
+        .iter()
+        .any(|path| !should_exclude(path, exclude_filter));
 
     if !should_process {
         return None;
@@ -247,7 +252,10 @@ mod tests {
             Path::new("/project/node_modules/package/index.js"),
             &filter
         ));
-        assert!(should_exclude(Path::new("/project/.git/objects/abc"), &filter));
+        assert!(should_exclude(
+            Path::new("/project/.git/objects/abc"),
+            &filter
+        ));
 
         // Regression: `.git` must NOT swallow `.github/` or `.gitignore`.
         assert!(!should_exclude(
@@ -256,7 +264,10 @@ mod tests {
         ));
         assert!(!should_exclude(Path::new("/project/.gitignore"), &filter));
         // Regression: `target` must NOT swallow `targeted.rs`.
-        assert!(!should_exclude(Path::new("/project/src/targeted.rs"), &filter));
+        assert!(!should_exclude(
+            Path::new("/project/src/targeted.rs"),
+            &filter
+        ));
         assert!(!should_exclude(Path::new("/project/src/main.rs"), &filter));
     }
 

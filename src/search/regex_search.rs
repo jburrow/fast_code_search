@@ -159,7 +159,7 @@ fn alternation_constraint(hir: &Hir) -> Option<Vec<String>> {
 /// `hir` (a single alternation branch), or `None` if no such >= 3-char literal exists.
 fn branch_required_literal(hir: &Hir) -> Option<String> {
     fn consider(best: &mut Option<String>, candidate: &str) {
-        if candidate.len() >= 3 && best.as_ref().map_or(true, |b| candidate.len() > b.len()) {
+        if candidate.len() >= 3 && best.as_ref().is_none_or(|b| candidate.len() > b.len()) {
             *best = Some(candidate.to_string());
         }
     }
@@ -372,7 +372,10 @@ mod tests {
         let a = RegexAnalysis::analyze(r"(get|set)Value").unwrap();
         assert!(a.is_accelerated);
         // Required "Value"
-        assert!(a.constraints.iter().any(|g| g.len() == 1 && g[0] == "Value"));
+        assert!(a
+            .constraints
+            .iter()
+            .any(|g| g.len() == 1 && g[0] == "Value"));
         // Union {get,set}
         assert!(a
             .constraints

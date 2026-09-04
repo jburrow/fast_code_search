@@ -905,7 +905,7 @@ mod tests {
         // (we access internal test API via LazyMappedFile::with_mmap_failure)
         let fallback_files: Vec<LazyMappedFile> = paths
             .iter()
-            .map(|p| LazyMappedFile::with_mmap_failure(p))
+            .map(LazyMappedFile::with_mmap_failure)
             .collect();
 
         // Access all files to populate the Mutex caches

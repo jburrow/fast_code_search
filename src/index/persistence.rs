@@ -150,7 +150,10 @@ impl PersistedIndex {
 
             // Acquire exclusive lock for writing
             file.lock_exclusive().with_context(|| {
-                format!("Failed to acquire exclusive lock on: {}", tmp_path.display())
+                format!(
+                    "Failed to acquire exclusive lock on: {}",
+                    tmp_path.display()
+                )
             })?;
 
             let mut writer = std::io::BufWriter::new(&file);
@@ -180,7 +183,10 @@ impl PersistedIndex {
             tracing::debug!(error = %e, "Direct rename failed; retrying after removing target");
             let _ = std::fs::remove_file(path);
             std::fs::rename(&tmp_path, path).with_context(|| {
-                format!("Failed to atomically replace index file: {}", path.display())
+                format!(
+                    "Failed to atomically replace index file: {}",
+                    path.display()
+                )
             })?;
         }
 
@@ -404,7 +410,7 @@ mod tests {
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
         bitmap.insert(1);
-        trigram_to_docs.insert(Trigram::new([b'h', b'e', b'l']), bitmap);
+        trigram_to_docs.insert(Trigram::new(*b"hel"), bitmap);
 
         let files = vec![PersistedFileMetadata {
             path: PathBuf::from("/test/file.rs"),
@@ -438,7 +444,7 @@ mod tests {
             .restore_trigram_index()
             .expect("Failed to restore trigram index");
         let bitmap = restored
-            .get(&Trigram::new([b'h', b'e', b'l']))
+            .get(&Trigram::new(*b"hel"))
             .expect("Trigram not found");
         assert!(bitmap.contains(0));
         assert!(bitmap.contains(1));
@@ -448,7 +454,7 @@ mod tests {
         let mut trigram_to_docs: FxHashMap<Trigram, RoaringBitmap> = FxHashMap::default();
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
-        trigram_to_docs.insert(Trigram::new([b'h', b'e', b'l']), bitmap);
+        trigram_to_docs.insert(Trigram::new(*b"hel"), bitmap);
         PersistedIndex::new(
             "fp".to_string(),
             vec!["/test".to_string()],

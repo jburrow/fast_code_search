@@ -441,7 +441,11 @@ impl PartialIndexedFile {
     /// hardcoded 10 MB is actually honored instead of being silently capped.
     /// Returns `Some((file, transcoded))` where `transcoded` is `true` when
     /// the file was converted from a non-UTF-8 encoding via `transcode_to_utf8`.
-    pub fn process(path: &Path, transcode_non_utf8: bool, max_file_size: u64) -> Option<(Self, bool)> {
+    pub fn process(
+        path: &Path,
+        transcode_non_utf8: bool,
+        max_file_size: u64,
+    ) -> Option<(Self, bool)> {
         let max_size = if max_file_size == 0 {
             Self::DEFAULT_MAX_FILE_SIZE
         } else {
@@ -1089,8 +1093,8 @@ impl SearchEngine {
         // Fast path: identity mapping (clean reload — nothing stale/removed and no
         // dedupe, so every original id maps to itself and none are missing).
         // Avoids rebuilding every posting list. This is O(files), not O(postings).
-        let is_identity = orig_to_new.len() == persisted_files_len
-            && orig_to_new.iter().all(|(&o, &n)| o == n);
+        let is_identity =
+            orig_to_new.len() == persisted_files_len && orig_to_new.iter().all(|(&o, &n)| o == n);
         if is_identity {
             return map;
         }
@@ -1639,10 +1643,6 @@ impl SearchEngine {
     /// 4. Runs regex matching only on candidate documents
     ///
     /// # Arguments
-    /// * `pattern` - The regex pattern to search for
-    /// * `include_patterns` - Semicolon-delimited glob patterns to include
-    /// * `exclude_patterns` - Semicolon-delimited glob patterns to exclude
-    /// * `max_results` - Maximum number of results to return
     /// Compute candidate documents for a regex from its sound literal constraints.
     ///
     /// Returns `None` when the regex has no usable constraints (caller should fall
@@ -3211,7 +3211,10 @@ mod tests {
     #[test]
     fn test_unicode_ci_find_matches_accented() {
         // Needle already Unicode-lowercased; haystack has uppercase accented form.
-        assert_eq!(unicode_ci_find("ÜBER alles", "über"), Some((0, "Ü".len() + 3)));
+        assert_eq!(
+            unicode_ci_find("ÜBER alles", "über"),
+            Some((0, "Ü".len() + 3))
+        );
         assert!(unicode_ci_find("der ÜBER mensch", "über").is_some());
         assert!(unicode_ci_find("nothing here", "über").is_none());
     }

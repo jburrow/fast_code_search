@@ -2034,8 +2034,10 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
     }
 
     let index_path = temp.path().join("index.bin");
-    let mut config = IndexerConfig::default();
-    config.paths = vec![temp.path().to_string_lossy().to_string()];
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
 
     {
         let mut eng = SearchEngine::new();
@@ -2109,7 +2111,10 @@ async fn test_incremental_update_remove_rename() -> Result<()> {
     );
 
     // Delete b.rs.
-    assert!(eng.remove_file(&b), "remove_file should find and remove b.rs");
+    assert!(
+        eng.remove_file(&b),
+        "remove_file should find and remove b.rs"
+    );
     assert!(
         eng.search("beta_token", 10).is_empty(),
         "deleted file must not match"
