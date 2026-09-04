@@ -522,10 +522,18 @@ Goal: the index after an hour of edits is identical to a fresh build.
   covers stale-sent paths; first unit test in `background_indexer.rs`. `background_indexer.rs:569-621`. Add stale paths to
   the skip set (or don't pre-send them). Accept: `files_indexed` equals the
   number of files on disk after a checkpoint restart.
-- **2.8 Optional `.gitignore`.** Use the `ignore` crate's `WalkBuilder`
+- [x] **2.8 Optional `.gitignore`.** DONE (commit `ddb88d1`): discovery uses the
+  `ignore` crate's walker; `is_gitignored` for single watcher paths;
+  `indexer.respect_gitignore` (default true). Test
+  `test_gitignore_is_respected_and_optional`. Use the `ignore` crate's `WalkBuilder`
   (parallel discovery for free), config flag default on. Accept: a repo with
   `build/` in `.gitignore` and no exclude pattern does not index it.
-- **2.9 Tests.** `background_indexer` unit tests (batch drain, checkpoint
+- [x] **2.9 Tests.** DONE (commit `test: batch pipeline…`): background-indexer
+  unit tests (drain/flush, shutdown flag, poisoned-lock recovery), a
+  search-during-update concurrency test and a real `notify` watcher test.
+  The concurrency test reproduced the retrieval SIGBUS (P1) on its first
+  run, so 6.2 was pulled forward: files ≤ 1 MiB are now served by owned
+  reads and never mapped (commit `5ed8fe4`). `background_indexer` unit tests (batch drain, checkpoint
   cadence, skip set, panic isolation, poison recovery); a concurrency test
   running searches in a loop during `update_file` / batch merge; a real
   `notify` watcher test (create/modify/delete/rename, short debounce).
@@ -645,7 +653,11 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   load; `optimize()` bitmaps before write; one version mechanism; drop
   `serde(default)`; golden-file compatibility test and a v3 fixture that is
   rejected cleanly.
-- **6.2 Retrieval without per-file mmap.** Owned bounded reads for small files
+- [x] **6.2 Retrieval without per-file mmap.** DONE EARLY (commit `5ed8fe4`,
+  during 2.9): `MMAP_THRESHOLD_BYTES` = 1 MiB; small files are read into an
+  owned buffer per access and never mapped, large files keep the mapping.
+  Mmap accounting for the large-file path is still the old code (see index
+  findings P2). Owned bounded reads for small files
   (the overwhelming majority) with mmap only above a threshold, or a segmented
   blob store — removes the SIGBUS exposure and the `max_map_count` ceiling
   together. Own the mmap accounting in `LazyFileStore` if mmap stays.
