@@ -10,6 +10,7 @@ use crate::utils::normalize_path_for_comparison;
 
 /// Telemetry / OpenTelemetry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     /// Enable OpenTelemetry trace export (default: false)
     /// Can be overridden by env var FCS_TRACING_ENABLED or OTEL_SDK_DISABLED
@@ -49,15 +50,16 @@ impl TelemetryConfig {
     /// Apply environment variable overrides.
     /// Env vars take precedence over TOML config values.
     pub fn with_env_overrides(mut self) -> Self {
-        // OTEL_SDK_DISABLED=true → disabled (official OTel convention)
+        // FCS_TRACING_ENABLED overrides the TOML value (project-specific switch)
+        if let Ok(val) = std::env::var("FCS_TRACING_ENABLED") {
+            self.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        // OTEL_SDK_DISABLED=true is the standard kill-switch and is FINAL:
+        // nothing else may re-enable export after it.
         if let Ok(val) = std::env::var("OTEL_SDK_DISABLED") {
             if val.eq_ignore_ascii_case("true") {
                 self.enabled = false;
             }
-        }
-        // FCS_TRACING_ENABLED=false → disabled (project-specific kill-switch)
-        if let Ok(val) = std::env::var("FCS_TRACING_ENABLED") {
-            self.enabled = val.eq_ignore_ascii_case("true") || val == "1";
         }
         if let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
             if !val.is_empty() {
@@ -75,6 +77,7 @@ impl TelemetryConfig {
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -88,6 +91,7 @@ pub struct Config {
 
 /// Server-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Address to bind the gRPC server to
     #[serde(default = "default_address")]
@@ -133,6 +137,7 @@ pub struct ServerConfig {
 
 /// Indexer-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IndexerConfig {
     /// Paths to index on startup
     #[serde(default)]
@@ -554,9 +559,17 @@ service_name = "fast_code_search"
     }
 
     /// Merge CLI overrides into the configuration
-    pub fn with_overrides(mut self, address: Option<String>, extra_paths: Vec<String>) -> Self {
+    pub fn with_overrides(
+        mut self,
+        address: Option<String>,
+        web_address: Option<String>,
+        extra_paths: Vec<String>,
+    ) -> Self {
         if let Some(addr) = address {
             self.server.address = addr;
+        }
+        if let Some(addr) = web_address {
+            self.server.web_address = addr;
         }
 
         // Append extra paths from CLI
@@ -565,11 +578,128 @@ service_name = "fast_code_search"
 
         self
     }
+
+    /// Check the configuration before anything binds or indexes.
+    ///
+    /// Hard errors (unparseable addresses, zero limits, an index_path whose
+    /// directory does not exist) are returned; soft problems (an index path
+    /// that does not exist yet, no paths at all) come back as warnings so
+    /// the caller can log them and continue.
+    pub fn validate(&self) -> Result<Vec<String>> {
+        use std::net::SocketAddr;
+        let mut warnings = Vec::new();
+
+        self.server
+            .address
+            .parse::<SocketAddr>()
+            .with_context(|| format!("server.address is not host:port: {}", self.server.address))?;
+        if self.server.enable_web_ui {
+            self.server
+                .web_address
+                .parse::<SocketAddr>()
+                .with_context(|| {
+                    format!(
+                        "server.web_address is not host:port: {}",
+                        self.server.web_address
+                    )
+                })?;
+            if self.server.web_address == self.server.address {
+                anyhow::bail!(
+                    "server.address and server.web_address are both {}",
+                    self.server.address
+                );
+            }
+        }
+        if self.server.max_concurrent_searches == 0 {
+            anyhow::bail!("server.max_concurrent_searches must be at least 1");
+        }
+        if self.server.request_timeout_secs == 0 {
+            anyhow::bail!("server.request_timeout_secs must be at least 1");
+        }
+        if self.indexer.batch_size == 0 {
+            anyhow::bail!("indexer.batch_size must be at least 1");
+        }
+        if let Some(index_path) = &self.indexer.index_path {
+            let p = Path::new(index_path);
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() && !parent.is_dir() {
+                    anyhow::bail!(
+                        "indexer.index_path directory does not exist: {}",
+                        parent.display()
+                    );
+                }
+            }
+        }
+        if self.indexer.paths.is_empty() {
+            warnings.push("indexer.paths is empty: nothing will be indexed".to_string());
+        }
+        for p in &self.indexer.paths {
+            if !Path::new(p).exists() {
+                warnings.push(format!("indexer.paths entry does not exist (yet): {p}"));
+            }
+        }
+        if self.indexer.save_after_updates > 0 && self.indexer.index_path.is_none() {
+            warnings.push(
+                "indexer.save_after_updates is set but indexer.index_path is not".to_string(),
+            );
+        }
+        Ok(warnings)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Roadmap 4.5: a misspelled key is an error, not a silently ignored
+    /// default; the generated template must parse; validate() catches bad
+    /// addresses and zero limits and warns about missing paths.
+    #[test]
+    fn test_unknown_key_rejected_and_template_parses() {
+        let err = toml::from_str::<Config>("[indexer]\nexlude_patterns = [\"x\"]\n")
+            .expect_err("typo must be rejected");
+        assert!(err.to_string().contains("exlude_patterns"), "{err}");
+
+        let template = Config::generate_template();
+        let cfg: Config = toml::from_str(&template).expect("template must parse");
+        assert_eq!(cfg.server.address, "127.0.0.1:50051");
+    }
+
+    #[test]
+    fn test_validate_reports_errors_and_warnings() {
+        let mut cfg = Config::default();
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("indexer.paths is empty")));
+
+        cfg.server.address = "not-an-address".to_string();
+        assert!(cfg.validate().is_err());
+        cfg.server.address = "127.0.0.1:1".to_string();
+        cfg.server.web_address = "127.0.0.1:1".to_string();
+        assert!(cfg.validate().is_err(), "same port twice");
+        cfg.server.web_address = "127.0.0.1:2".to_string();
+        cfg.indexer.batch_size = 0;
+        assert!(cfg.validate().is_err());
+        cfg.indexer.batch_size = 10;
+        cfg.indexer.index_path = Some("/definitely/not/here/index.bin".to_string());
+        assert!(cfg.validate().is_err());
+        cfg.indexer.index_path = None;
+        cfg.indexer.paths = vec!["/no/such/dir".to_string()];
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings.iter().any(|w| w.contains("does not exist")));
+    }
+
+    #[test]
+    fn test_with_overrides_sets_web_address() {
+        let cfg = Config::default().with_overrides(
+            Some("127.0.0.1:9000".to_string()),
+            Some("127.0.0.1:9001".to_string()),
+            vec![],
+        );
+        assert_eq!(cfg.server.address, "127.0.0.1:9000");
+        assert_eq!(cfg.server.web_address, "127.0.0.1:9001");
+    }
 
     #[test]
     fn test_default_config() {

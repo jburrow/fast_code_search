@@ -3953,9 +3953,9 @@ pub type ProgressBroadcaster = tokio::sync::broadcast::Sender<IndexingProgress>;
 /// Create a new progress broadcaster with reasonable capacity
 /// Returns both the sender (for publishing updates) and receiver (for subscribing)
 pub fn create_progress_broadcaster() -> ProgressBroadcaster {
-    // Buffer 16 messages - clients that fall behind will miss updates
-    // This is fine since they'll get the next update shortly
-    let (tx, _rx) = tokio::sync::broadcast::channel(16);
+    // Buffer 64 messages: a large batch run broadcasts often and every
+    // connected tab consumes at its own pace; lagging clients skip ahead.
+    let (tx, _rx) = tokio::sync::broadcast::channel(64);
     tx
 }
 

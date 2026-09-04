@@ -353,18 +353,28 @@ kubectl logs -f deployment/fast-code-search -n code-search
 
 ### Environment Variables
 
-The server can be configured via environment variables:
+Most settings live in the TOML config (`--init` writes a commented template).
+The environment variables the server actually reads are:
 
 ```bash
-# Server address (default: 0.0.0.0:50051)
-export BIND_ADDRESS="0.0.0.0:50051"
+# Config file to load (checked before ./fast_code_search.toml and the user config dir)
+export FCS_CONFIG="/etc/fast_code_search/config.toml"
 
-# Log level (default: info)
+# Log filter (takes precedence over --verbose)
 export RUST_LOG="debug"
 
-# Maximum concurrent searches
-export MAX_CONCURRENT_SEARCHES="100"
+# OpenTelemetry (standard names) and the project switch
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://collector:4317"
+export OTEL_SERVICE_NAME="fast_code_search"
+export OTEL_SDK_DISABLED="true"        # final: disables export regardless of config
+export FCS_TRACING_ENABLED="true"      # overrides telemetry.enabled in the TOML
 ```
+
+Listen addresses are `server.address` / `server.web_address` in the config or
+`--address` / `--web-address` on the command line; the search concurrency cap is
+`server.max_concurrent_searches` and the request timeout `server.request_timeout_secs`.
+The configuration is validated at startup: unknown keys, unparseable addresses
+and zero limits are errors; a missing index path is a warning.
 
 ### Performance Tuning
 

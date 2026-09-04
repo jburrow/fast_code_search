@@ -509,6 +509,29 @@ async fn test_http_search_offset_paging_and_totals() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 4.8: a malformed query parameter gets the same JSON error
+/// envelope as every other API error, not axum's plain-text rejection.
+#[tokio::test]
+async fn test_http_bad_query_param_is_json_error() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "x"), ("max", "abc")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()?
+        .to_string();
+    assert!(ct.starts_with("application/json"), "{ct}");
+    let body: serde_json::Value = resp.json().await?;
+    assert!(body["error"].as_str().unwrap().contains("max"), "{body}");
+    Ok(())
+}
+
 /// Roadmap 4.4: `/api/ready` reports readiness (200 once an index can
 /// serve), `/metrics` exposes request counters and index gauges in the
 /// Prometheus text format.

@@ -24,9 +24,13 @@ struct Args {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Server listen address (overrides config file)
+    /// gRPC listen address (overrides config file)
     #[arg(short, long, value_name = "ADDR")]
     address: Option<String>,
+
+    /// Web UI / REST listen address (overrides config file)
+    #[arg(long, value_name = "ADDR")]
+    web_address: Option<String>,
 
     /// Additional paths to index (can be repeated, adds to config file paths)
     #[arg(short, long = "index", value_name = "PATH")]
@@ -486,5 +490,14 @@ fn load_config(args: &Args) -> Result<Config> {
     };
 
     // Apply CLI overrides
-    Ok(base_config.with_overrides(args.address.clone(), args.index_paths.clone()))
+    let config = base_config.with_overrides(
+        args.address.clone(),
+        args.web_address.clone(),
+        args.index_paths.clone(),
+    );
+    let warnings = config.validate()?;
+    for w in warnings {
+        tracing::warn!("Config: {w}");
+    }
+    Ok(config)
 }

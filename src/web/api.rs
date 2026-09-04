@@ -65,6 +65,32 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// `axum::extract::Query` whose rejection is the same JSON `{ "error": … }`
+/// envelope every handler error uses (a plain-text 400 from the built-in
+/// extractor was the one inconsistent response on the API).
+pub struct ApiQuery<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiQuery<T>
+where
+    T: serde::de::DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match Query::<T>::from_request_parts(parts, state).await {
+            Ok(Query(v)) => Ok(ApiQuery(v)),
+            Err(rej) => Err(ApiError::from((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid query parameters: {}", rej.body_text()),
+            ))),
+        }
+    }
+}
+
 /// Search query parameters
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
@@ -307,7 +333,7 @@ pub async fn metrics_handler(State(state): State<WebState>) -> impl IntoResponse
 /// Handle search requests
 pub async fn search_handler(
     State(state): State<WebState>,
-    Query(params): Query<SearchQuery>,
+    ApiQuery(params): ApiQuery<SearchQuery>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let query = params.q.trim().to_string();
 
@@ -644,7 +670,7 @@ pub struct DependencyResponse {
 /// Get files that depend on (import) the specified file
 pub async fn dependents_handler(
     State(state): State<WebState>,
-    Query(params): Query<DependencyQuery>,
+    ApiQuery(params): ApiQuery<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
@@ -684,7 +710,7 @@ pub async fn dependents_handler(
 /// Get files that the specified file depends on (imports)
 pub async fn dependencies_handler(
     State(state): State<WebState>,
-    Query(params): Query<DependencyQuery>,
+    ApiQuery(params): ApiQuery<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
@@ -740,7 +766,7 @@ pub struct FileResponse {
 /// Return the full content of a file by path
 pub async fn file_handler(
     State(state): State<WebState>,
-    Query(params): Query<FileQuery>,
+    ApiQuery(params): ApiQuery<FileQuery>,
 ) -> Result<Json<FileResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
@@ -816,7 +842,7 @@ pub struct ContextResponse {
 /// Return a window of lines around a matched line for the hover tooltip
 pub async fn context_handler(
     State(state): State<WebState>,
-    Query(params): Query<ContextQuery>,
+    ApiQuery(params): ApiQuery<ContextQuery>,
 ) -> Result<Json<ContextResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
@@ -951,10 +977,23 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
         let _ = sender.send(Message::Text(json.into())).await;
     }
 
-    // Spawn a task to forward broadcast messages to the WebSocket
+    // Spawn a task to forward broadcast messages to the WebSocket. A ping
+    // every 30 s keeps half-open connections from lingering until TCP
+    // gives up (the client answers pongs automatically).
     let send_task = tokio::spawn(async move {
+        let mut ping = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping.tick().await; // first tick fires immediately; skip it
         loop {
-            match rx.recv().await {
+            let event = tokio::select! {
+                _ = ping.tick() => {
+                    if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                event = rx.recv() => event,
+            };
+            match event {
                 Ok(progress) => {
                     let stats = get_stats_from_engine(&engine);
                     let status_response = progress_to_status(&progress, stats);
@@ -1063,7 +1102,7 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 /// Handle diagnostics requests with self-tests
 pub async fn diagnostics_handler(
     State(state): State<WebState>,
-    Query(params): Query<DiagnosticsQuery>,
+    ApiQuery(params): ApiQuery<DiagnosticsQuery>,
 ) -> Result<Json<KeywordDiagnosticsResponse>, ApiError> {
     let sample_count = params.sample_count.clamp(1, 20);
     let engine = state.engine.clone();

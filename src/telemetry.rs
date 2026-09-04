@@ -42,6 +42,7 @@ pub fn init_telemetry(
         .with_line_number(false);
 
     // Build an env-filter that respects RUST_LOG, falling back to the CLI level
+    let rust_log_set = std::env::var_os("RUST_LOG").is_some_and(|v| !v.is_empty());
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level.to_string()));
 
@@ -87,6 +88,12 @@ pub fn init_telemetry(
             .init();
 
         tracing::info!("OpenTelemetry tracing disabled, console-only logging active");
+    }
+
+    if rust_log_set && log_level == Level::DEBUG {
+        tracing::warn!(
+            "RUST_LOG is set and takes precedence over --verbose; unset it or use RUST_LOG=debug"
+        );
     }
 
     Ok(())
