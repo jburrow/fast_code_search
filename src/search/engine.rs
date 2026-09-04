@@ -423,6 +423,11 @@ pub struct PartialIndexedFile {
     pub filename_stem: String,
     /// Raw file content kept for phase 2 symbol extraction
     pub content: String,
+    /// Whether the content passed the structural tree-sitter safety check.
+    /// `false` means the file is indexed for text search only (no symbols /
+    /// imports) because a >100 KB line or extreme nesting could crash or
+    /// stall the C parsers.
+    pub tree_sitter_safe: bool,
 }
 
 impl PartialIndexedFile {
@@ -479,15 +484,29 @@ impl PartialIndexedFile {
             }
         };
 
-        // Safety check: skip files that could crash tree-sitter or produce garbage trigrams
-        if let Some(reason) = crate::utils::content_safety_check(&content) {
+        // Binary content masquerading as UTF-8 is not indexed at all.
+        if crate::utils::is_binary_content(&content) {
             tracing::debug!(
                 path = %path.display(),
-                reason = reason,
-                "Skipping unsafe file during indexing"
+                "Skipping binary-looking file during indexing"
             );
             return None;
         }
+
+        // Structural checks only gate tree-sitter: a file with a >100 KB line or
+        // extreme nesting (large JSON fixtures, generated code) stays fully
+        // text-searchable but gets no symbol / import extraction.
+        let tree_sitter_safe = match crate::utils::tree_sitter_safety_check(&content) {
+            None => true,
+            Some(reason) => {
+                tracing::debug!(
+                    path = %path.display(),
+                    reason = reason,
+                    "Indexing file for text search only (skipping symbol extraction)"
+                );
+                false
+            }
+        };
 
         let filename_stem = path
             .file_stem()
@@ -516,6 +535,7 @@ impl PartialIndexedFile {
                 trigrams,
                 filename_stem,
                 content,
+                tree_sitter_safe,
             },
             transcoded,
         ))
@@ -550,7 +570,7 @@ impl PreIndexedFile {
     ///   entirely to reduce CPU and memory usage. The filename symbol is always added
     ///   regardless, since it is used for path-based search scoring without tree-sitter.
     pub fn from_partial(partial: PartialIndexedFile, enable_symbols: bool) -> Self {
-        let (mut symbols, imports) = if enable_symbols {
+        let (mut symbols, imports) = if enable_symbols && partial.tree_sitter_safe {
             let extractor = SymbolExtractor::new(&partial.path);
 
             // Extract symbols and imports in a single parse with panic protection.
@@ -3708,6 +3728,35 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             "Exact case match ({:.3}) should score higher than lowercase ({:.3})",
             exact_match.score,
             lower_match.score
+        );
+    }
+
+    /// Roadmap 1.3: a file that fails the tree-sitter structural check (here a
+    /// single 200 KB line) must still be text-searchable; it only loses symbol
+    /// extraction. Previously it was dropped from the whole index.
+    #[test]
+    fn test_long_line_file_is_searchable_without_symbols() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("fixture.json");
+        let mut content = String::from("{\"needle_zq\": \"");
+        content.push_str(&"x".repeat(200_000));
+        content.push_str("\", \"fn\": \"other_fn_name\"}\n");
+        fs::write(&file_path, &content).unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let results = engine.search("needle_zq", 10);
+        assert_eq!(results.len(), 1, "long-line file must be searchable");
+        assert!(results[0].file_path.ends_with("fixture.json"));
+
+        // Only the synthetic FileName symbol exists; nothing was extracted.
+        let syms = engine.symbol_cache.first().cloned().unwrap_or_default();
+        assert!(
+            syms.iter()
+                .all(|s| s.symbol_type == crate::symbols::SymbolType::FileName),
+            "no tree-sitter symbols expected, got {syms:?}"
         );
     }
 

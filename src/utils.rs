@@ -166,17 +166,28 @@ const MAX_SAFE_LINE_LENGTH: usize = 100_000;
 /// Maximum nesting depth heuristic: count of unmatched open brackets in a single scan.
 const MAX_NESTING_DEPTH: usize = 500;
 
-/// Check if file content is safe to pass to tree-sitter and trigram indexing.
+/// Check if file content is safe to pass to tree-sitter *and* to index at all.
 ///
 /// Returns `None` if safe, or `Some(reason)` describing why it's unsafe.
-/// This acts as a gate before any tree-sitter C FFI calls to prevent crashes
-/// from malformed, generated, or binary-masquerading files.
+/// This is the combined gate: binary-masquerading content (which should not
+/// be indexed at all) plus the structural checks in
+/// [`tree_sitter_safety_check`] (which only exclude a file from symbol
+/// extraction). Prefer calling the two halves separately on the indexing
+/// path so that large-line / deeply nested files stay text-searchable.
 pub fn content_safety_check(content: &str) -> Option<&'static str> {
-    // Check for binary content masquerading as valid UTF-8
     if is_binary_content(content) {
         return Some("appears to be binary content");
     }
+    tree_sitter_safety_check(content)
+}
 
+/// Structural checks that make a file unsafe (or pointless) to hand to the
+/// tree-sitter C parsers: extremely long lines and extreme bracket nesting.
+///
+/// Returns `None` if safe, or `Some(reason)`. A file failing this check is
+/// still perfectly valid text and MUST remain in the trigram index; it only
+/// skips symbol/import extraction.
+pub fn tree_sitter_safety_check(content: &str) -> Option<&'static str> {
     // Check for excessively long lines (minified JS/CSS, generated code).
     // Tree-sitter can stack-overflow or spend excessive time on these.
     for line in content.as_bytes().split(|&b| b == b'\n') {
