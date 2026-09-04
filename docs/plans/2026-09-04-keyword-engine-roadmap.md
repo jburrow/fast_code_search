@@ -484,16 +484,25 @@ Goal: the index after an hour of edits is identical to a fresh build.
   watcher update; call a metadata-only finalize after `load_index*`. Accept:
   a watcher-added file gets the filename boost in Fast mode; no
   `all_documents()` recomputation after the first event.
-- **2.3 Canonical roots.** Canonicalise configured paths once in `Config`;
+- [x] **2.3 Canonical roots.** DONE (commit `fcdeace`): `IndexerConfig::
+  canonicalize_paths` in `with_overrides`; `update_file`/`remove_file` use
+  `find_file_id_exact` (canonical, no suffix fallback). Test
+  `test_update_file_uses_canonical_exact_match`. Canonicalise configured paths once in `Config`;
   pass canonical paths to the watcher; remove the suffix fallback from
   `update_file` / `remove_file`. Accept: exact-path lookup hits on every event
   (assert via a counter in tests); no trigram accumulation after 100 updates
   of one file.
-- **2.4 One `FileEligibility`.** Factor `include_extensions`, binary
+- [x] **2.4 One `FileEligibility`.** DONE with 1.8: `FileDiscoveryIterator::
+  accepts` / `file_discovery::is_eligible` are used by discovery and the
+  watcher (gRPC `Index` still walks on its own — see 4.7). Factor `include_extensions`, binary
   extensions, `exclude_files`, size cap and `PathFilter` into one struct used
   by discovery, the watcher and gRPC `Index`. Accept: with
   `include_extensions=["rs"]`, a changed `.log` is not indexed by the watcher.
-- **2.5 Import resolution v2.** `dependencies/mod.rs`. Per-language
+- [x] **2.5 Import resolution v2.** DONE (commit `9b89a29`): per-language
+  resolvers (Rust crate/self/super + `mod.rs`, Python dots/packages/
+  `__init__.py`, JS extensions/`index.*`/`.js`→`.ts`/`@/` aliases), bare names
+  resolve to nothing; extractor gains `import a, b`, re-exports, dynamic
+  `import()`, backtick `require`. Four new tests. `dependencies/mod.rs`. Per-language
   resolvers: Rust `mod foo;` → sibling `foo.rs` / `foo/mod.rs`, `use
   crate::/super::/self::` against the crate root; Python leading dots as
   parent hops, dotted paths as directories, `__init__.py`; JS `index.*`,
@@ -501,11 +510,16 @@ Goal: the index after an hour of edits is identical to a fresh build.
   relative→bare fallback; for bare names prefer the nearest ancestor match.
   Accept: unit tests per language; no edge from `lodash/merge` to a local
   `merge.ts`.
-- **2.6 Stop the import retry storm.** Keep a `filename → waiting importers`
+- [x] **2.6 Stop the import retry storm.** DONE: parked imports keyed by path
+  segment, retried only for stems added in the batch; persisted in the index
+  (format v4 / `FCSIDX02`; old files rebuild). Tests
+  `test_waiting_import_resolves_when_target_appears`,
+  `test_unresolved_imports_survive_reload`. (Bench deferred to 6.5.) Keep a `filename → waiting importers`
   map so a newly indexed file pulls in only its waiters; persist unresolved
   imports in checkpoints; move `canonicalize()` out of the write-locked merge.
   Accept: resolution cost per batch is O(new files), measured in a bench.
-- **2.7 Double-send fix.** `background_indexer.rs:569-621`. Add stale paths to
+- [x] **2.7 Double-send fix.** DONE (commit `5a99885`): `should_skip_discovered`
+  covers stale-sent paths; first unit test in `background_indexer.rs`. `background_indexer.rs:569-621`. Add stale paths to
   the skip set (or don't pre-send them). Accept: `files_indexed` equals the
   number of files on disk after a checkpoint restart.
 - **2.8 Optional `.gitignore`.** Use the `ignore` crate's `WalkBuilder`

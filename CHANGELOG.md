@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   watcher update pushed a duplicate path entry.
 
 ### Changed
+- **Persisted index format v4** (`FCSIDX02`): unresolved imports are stored so a
+  checkpoint restore still gains the edge when the target file is indexed later.
+  Index files written by earlier versions are rebuilt automatically.
+- Import resolution is now per language (Rust crate/module paths, Python
+  relative and package imports, JS/TS extension and `index` probing, `@/`
+  aliases) and no longer guesses a same-named file anywhere in the repo for bare
+  package names; unresolved imports are retried only when a file with a matching
+  name appears instead of after every batch.
+- Watcher events are gathered for 200 ms and applied under one write lock with a
+  single posting-list pass; ranking metadata and the all-documents cache stay
+  current across incremental updates and after a persisted load.
 - **Graceful shutdown**: SIGINT/SIGTERM now stop both servers, stop the indexer
   (persisting a checkpoint), save pending watcher updates, and flush telemetry.
 - **Security defaults**: both listeners bind to `127.0.0.1`; CORS is off unless
