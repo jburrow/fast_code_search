@@ -752,6 +752,15 @@ pub struct SearchEngine {
     file_metadata: Vec<FileMetadata>,
     /// Pending imports to resolve after all files are indexed
     pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
+    /// Imports that could not be resolved yet (target not indexed, or an
+    /// external package). Retried only when a file whose stem matches one of
+    /// the import's path segments is indexed, instead of on every batch.
+    /// Entries are `None` once resolved; `waiting_keys` maps a lowercase
+    /// segment to indices into this Vec.
+    waiting_imports: Vec<Option<(u32, std::path::PathBuf, String)>>,
+    waiting_keys: FxHashMap<String, Vec<usize>>,
+    /// Lowercased stems of files added since the last incremental resolution.
+    recently_added_stems: Vec<String>,
     /// Whether tree-sitter symbol extraction is enabled (default: true)
     pub enable_symbols: bool,
     /// Whether non-UTF-8 files are transcoded during single-file indexing (default: true)
@@ -772,6 +781,9 @@ impl SearchEngine {
             indexed_meta: Vec::new(),
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
+            waiting_imports: Vec::new(),
+            waiting_keys: FxHashMap::default(),
+            recently_added_stems: Vec::new(),
             enable_symbols: true,
             transcode_non_utf8: true,
             max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
@@ -878,6 +890,7 @@ impl SearchEngine {
                 Err(_) => continue,
             };
             self.set_indexed_meta(file_id, pre_indexed.mtime, pre_indexed.size);
+            self.note_added_file(&pre_indexed.path);
 
             // Register file in dependency index
             self.dependency_index
@@ -912,56 +925,31 @@ impl SearchEngine {
     /// 1. Parallel path resolution using rayon (CPU-bound, thread-safe)
     /// 2. Sequential graph insertion (requires &mut self)
     pub fn resolve_imports(&mut self) {
-        let pending = std::mem::take(&mut self.pending_imports);
-
-        if pending.is_empty() {
-            return;
-        }
-
-        // Phase 1: Parallel path resolution - collect (from_id, to_id) pairs
-        // Uses &self on dependency_index (thread-safe read-only methods)
-        let edges: Vec<(u32, u32)> = pending
-            .par_iter()
-            .flat_map(|(file_id, file_path, import_paths)| {
-                import_paths
-                    .par_iter()
-                    .filter_map(|import_path| {
-                        let resolved = self
-                            .dependency_index
-                            .resolve_import_path(file_path, import_path)?;
-                        let to_id = self.dependency_index.get_file_id(&resolved)?;
-                        Some((*file_id, to_id))
-                    })
-                    .collect::<Vec<_>>()
-            })
+        // Everything queued for this batch, plus one final attempt at every
+        // parked import (the last file may have landed without a matching
+        // stem, e.g. a `.d.ts`). Still-unresolved imports stay parked so they
+        // are persisted and retried after a later incremental add.
+        self.resolve_pending_now();
+        let all: Vec<usize> = (0..self.waiting_imports.len())
+            .filter(|&i| self.waiting_imports[i].is_some())
             .collect();
-
-        // Phase 2: Sequential batch insert (requires &mut self)
-        self.dependency_index.add_imports_batch(edges);
+        self.retry_waiting(all);
+        self.recently_added_stems.clear();
+        self.compact_waiting_imports();
     }
 
-    /// Incrementally resolve pending imports that can be resolved now.
-    ///
-    /// This method attempts to resolve imports where the target file is already indexed.
-    /// Unresolved imports remain in the pending queue for later resolution.
-    /// Call this after each batch to distribute import resolution work across the indexing phase.
-    ///
-    /// Returns the number of import edges resolved.
-    pub fn resolve_imports_incremental(&mut self) -> usize {
+    /// Resolve the imports of files added since the last call; park those
+    /// that do not resolve. Returns the number of edges added.
+    fn resolve_pending_now(&mut self) -> usize {
         if self.pending_imports.is_empty() {
             return 0;
         }
-
         let pending = std::mem::take(&mut self.pending_imports);
-
-        // Phase 1: Parallel path resolution - try to resolve each import
-        // Collect resolved edges and unresolved imports separately
         let results: Vec<ImportResolutionResult> = pending
             .into_par_iter()
             .map(|(file_id, file_path, import_paths)| {
                 let mut resolved_edges = Vec::new();
                 let mut unresolved_paths = Vec::new();
-
                 for import_path in import_paths {
                     if let Some(resolved) = self
                         .dependency_index
@@ -972,10 +960,8 @@ impl SearchEngine {
                             continue;
                         }
                     }
-                    // Could not resolve - keep for later
                     unresolved_paths.push(import_path);
                 }
-
                 ImportResolutionResult {
                     file_id,
                     file_path,
@@ -985,37 +971,209 @@ impl SearchEngine {
             })
             .collect();
 
-        // Phase 2: Sequential processing - insert resolved edges and collect unresolved
         let mut all_edges = Vec::new();
         for result in results {
             all_edges.extend(result.resolved_edges);
-
-            // Re-add unresolved imports to pending
-            if !result.unresolved_paths.is_empty() {
-                self.pending_imports.push((
-                    result.file_id,
-                    result.file_path,
-                    result.unresolved_paths,
-                ));
+            for import in result.unresolved_paths {
+                self.park_import(result.file_id, result.file_path.clone(), import);
             }
         }
-
         let edge_count = all_edges.len();
-
-        // Batch insert all resolved edges
         if !all_edges.is_empty() {
             self.dependency_index.add_imports_batch(all_edges);
         }
-
         edge_count
+    }
+
+    /// Incrementally resolve pending imports that can be resolved now.
+    ///
+    /// This method attempts to resolve imports where the target file is already indexed.
+    /// Unresolved imports remain in the pending queue for later resolution.
+    /// Call this after each batch to distribute import resolution work across the indexing phase.
+    ///
+    /// Returns the number of import edges resolved.
+    pub fn resolve_imports_incremental(&mut self) -> usize {
+        // 1. This batch's own imports.
+        let mut edges = self.resolve_pending_now();
+        // 2. Only the parked imports that could now resolve, i.e. whose path
+        //    mentions a stem that was just indexed. Cost is proportional to
+        //    the batch, not to the (ever-growing) set of unresolvable
+        //    stdlib/package imports.
+        let candidates = self.take_retry_candidates();
+        edges += self.retry_waiting(candidates);
+        edges
     }
 
     /// Get the number of pending imports that still need resolution.
     pub fn pending_imports_count(&self) -> usize {
-        self.pending_imports
+        let pending: usize = self
+            .pending_imports
             .iter()
             .map(|(_, _, paths)| paths.len())
-            .sum()
+            .sum();
+        pending + self.waiting_imports_count()
+    }
+
+    /// Imports parked because their target is not (yet) indexed.
+    pub fn waiting_imports_count(&self) -> usize {
+        self.waiting_imports.iter().filter(|e| e.is_some()).count()
+    }
+
+    /// Record that a file with this path was (re)indexed, so imports waiting
+    /// on its name are retried by the next incremental resolution.
+    fn note_added_file(&mut self, path: &Path) {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            self.recently_added_stems.push(stem.to_ascii_lowercase());
+        }
+        // `foo/mod.rs`, `pkg/__init__.py`, `dir/index.ts` are addressed by
+        // their directory name.
+        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+            if matches!(
+                name,
+                "mod.rs"
+                    | "__init__.py"
+                    | "index.ts"
+                    | "index.tsx"
+                    | "index.js"
+                    | "index.jsx"
+                    | "index.mjs"
+                    | "index.cjs"
+            ) {
+                if let Some(dir) = path
+                    .parent()
+                    .and_then(|d| d.file_name())
+                    .and_then(|s| s.to_str())
+                {
+                    self.recently_added_stems.push(dir.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+
+    /// Lowercase path segments of an import string; a parked import is
+    /// retried when a file whose stem equals any of them is indexed.
+    fn import_keys(import: &str) -> Vec<String> {
+        import
+            .split(|c: char| {
+                c == ':'
+                    || c == '/'
+                    || c == '.'
+                    || c == '\\'
+                    || c == '{'
+                    || c == ','
+                    || c == '}'
+                    || c.is_whitespace()
+            })
+            .map(|s| s.trim_end_matches(".rs").trim_end_matches(".py"))
+            .filter(|s| {
+                !s.is_empty() && *s != "*" && *s != "crate" && *s != "super" && *s != "self"
+            })
+            .map(|s| s.to_ascii_lowercase())
+            .collect()
+    }
+
+    /// Park an unresolved import until a file it might refer to appears.
+    fn park_import(&mut self, file_id: u32, path: std::path::PathBuf, import: String) {
+        let keys = Self::import_keys(&import);
+        let idx = self.waiting_imports.len();
+        self.waiting_imports.push(Some((file_id, path, import)));
+        for key in keys {
+            self.waiting_keys.entry(key).or_default().push(idx);
+        }
+    }
+
+    /// Parked imports whose keys match any recently added file stem
+    /// (consumes the stem list). Returns waiting-list indices, deduplicated.
+    fn take_retry_candidates(&mut self) -> Vec<usize> {
+        let stems = std::mem::take(&mut self.recently_added_stems);
+        let mut seen = FxHashSet::default();
+        let mut out = Vec::new();
+        for stem in stems {
+            if let Some(indices) = self.waiting_keys.get(&stem) {
+                for &i in indices {
+                    if self.waiting_imports.get(i).is_some_and(Option::is_some) && seen.insert(i) {
+                        out.push(i);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Try to resolve the given waiting entries; resolved ones are cleared
+    /// and their edges inserted. Returns the number of edges added.
+    fn retry_waiting(&mut self, indices: Vec<usize>) -> usize {
+        if indices.is_empty() {
+            return 0;
+        }
+        let attempts: Vec<(usize, u32, std::path::PathBuf, String)> = indices
+            .into_iter()
+            .filter_map(|i| {
+                self.waiting_imports[i]
+                    .as_ref()
+                    .map(|(id, p, imp)| (i, *id, p.clone(), imp.clone()))
+            })
+            .collect();
+        let results: Vec<(usize, Option<(u32, u32)>)> = attempts
+            .par_iter()
+            .map(|(i, from_id, path, import)| {
+                let edge = self
+                    .dependency_index
+                    .resolve_import_path(path, import)
+                    .and_then(|r| self.dependency_index.get_file_id(&r))
+                    .map(|to| (*from_id, to));
+                (*i, edge)
+            })
+            .collect();
+        let mut edges = Vec::new();
+        for (i, edge) in results {
+            if let Some(e) = edge {
+                edges.push(e);
+                self.waiting_imports[i] = None;
+            }
+        }
+        let n = edges.len();
+        if n > 0 {
+            self.dependency_index.add_imports_batch(edges);
+        }
+        n
+    }
+
+    /// Drop resolved slots and rebuild the key map (call occasionally, e.g.
+    /// at finalize; parked entries are few relative to the file count).
+    fn compact_waiting_imports(&mut self) {
+        if self.waiting_imports.iter().all(Option::is_some) {
+            return;
+        }
+        let live: Vec<(u32, std::path::PathBuf, String)> =
+            self.waiting_imports.drain(..).flatten().collect();
+        self.waiting_keys.clear();
+        for (id, path, import) in live {
+            self.park_import(id, path, import);
+        }
+    }
+
+    /// Imports still waiting, grouped per file, for persistence.
+    pub fn waiting_imports_by_file(&self) -> Vec<(u32, std::path::PathBuf, Vec<String>)> {
+        let mut by_id: FxHashMap<u32, (std::path::PathBuf, Vec<String>)> = FxHashMap::default();
+        for (id, path, import) in self.waiting_imports.iter().flatten() {
+            by_id
+                .entry(*id)
+                .or_insert_with(|| (path.clone(), Vec::new()))
+                .1
+                .push(import.clone());
+        }
+        for (id, path, imports) in &self.pending_imports {
+            by_id
+                .entry(*id)
+                .or_insert_with(|| (path.clone(), Vec::new()))
+                .1
+                .extend(imports.iter().cloned());
+        }
+        by_id
+            .into_iter()
+            .map(|(id, (path, imports))| (id, path, imports))
+            .collect()
     }
 
     /// Release over-allocated backing memory accumulated during incremental batch indexing.
@@ -1213,6 +1371,16 @@ impl SearchEngine {
             })
             .collect();
         self.dependency_index.add_imports_batch(remapped_edges);
+
+        // Re-park imports that were still unresolved at save time (files that
+        // were not restored are stale and will be re-extracted anyway).
+        for (orig_idx, path, imports) in &persisted.pending_imports {
+            if let Some(&new_id) = orig_to_new.get(orig_idx) {
+                for import in imports {
+                    self.park_import(new_id, path.clone(), import.clone());
+                }
+            }
+        }
     }
 
     pub fn rebuild_symbols_and_dependencies_with_progress<F>(
@@ -1230,6 +1398,9 @@ impl SearchEngine {
         // Reset derived state
         self.symbol_cache = vec![Vec::new(); total_files];
         self.pending_imports.clear();
+        self.waiting_imports.clear();
+        self.waiting_keys.clear();
+        self.recently_added_stems.clear();
         self.dependency_index.clear();
 
         // Re-register all files for import resolution
@@ -2503,6 +2674,14 @@ impl SearchEngine {
             &remapped_trigrams
         };
 
+        // Imports still waiting for their target, keyed by position, so a
+        // checkpoint restore can still gain the edge when the target lands.
+        let pending_imports: Vec<(u32, PathBuf, Vec<String>)> = self
+            .waiting_imports_by_file()
+            .into_iter()
+            .filter_map(|(id, path, imports)| Some((*id_to_pos.get(&id)?, path, imports)))
+            .collect();
+
         // Create persisted index with config fingerprint
         let persisted = PersistedIndex::new(
             config.fingerprint(),
@@ -2511,6 +2690,7 @@ impl SearchEngine {
             trigram_map,
             symbols,
             dependency_edges,
+            pending_imports,
         )?;
         persisted.save(path)?;
 
@@ -3008,6 +3188,7 @@ impl SearchEngine {
         // re-register for import resolution.
         self.file_store.refresh_file_by_id(id);
         self.set_indexed_meta(id, pre.mtime, pre.size);
+        self.note_added_file(path);
         self.dependency_index.register_file(id, path);
 
         // Re-add trigrams and symbols under the same id.
@@ -3599,9 +3780,47 @@ mod tests {
         let pending = engine.pending_imports_count();
         assert!(pending > 0, "Expected pending imports");
 
-        // After resolution, pending should be 0 (they're cleared even if unresolved)
+        // After resolution they are *parked* (waiting for a matching file),
+        // not dropped, so a later `sys.py` can still gain the edge. Repeated
+        // resolution does not grow the parked set.
         engine.resolve_imports();
-        assert_eq!(engine.pending_imports_count(), 0);
+        let parked = engine.waiting_imports_count();
+        assert_eq!(parked, pending);
+        engine.resolve_imports();
+        engine.resolve_imports_incremental();
+        assert_eq!(engine.waiting_imports_count(), parked);
+    }
+
+    /// Roadmap 2.6: an import whose target is indexed *later* is parked and
+    /// retried only when a file with a matching name appears; it must then
+    /// produce the edge without rescanning every unresolved import.
+    #[test]
+    fn test_waiting_import_resolves_when_target_appears() {
+        let temp_dir = TempDir::new().unwrap();
+        let main_path = temp_dir.path().join("main.rs");
+        let helper_path = temp_dir.path().join("helper.rs");
+        let unrelated = temp_dir.path().join("zzz.rs");
+        fs::write(&main_path, "mod helper;\nuse std::io;\nfn main() {}\n").unwrap();
+        fs::write(&helper_path, "pub fn help() {}\n").unwrap();
+        fs::write(&unrelated, "pub fn nothing() {}\n").unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&main_path).unwrap(); // helper not indexed yet
+        assert_eq!(engine.resolve_imports_incremental(), 0);
+        assert_eq!(engine.waiting_imports_count(), 2, "helper + std::io parked");
+
+        // An unrelated file must not trigger a retry of parked imports.
+        engine.index_file(&unrelated).unwrap();
+        assert_eq!(engine.resolve_imports_incremental(), 0);
+        assert_eq!(engine.waiting_imports_count(), 2);
+
+        // The target arrives: only the `helper` import is retried and resolves.
+        engine.index_file(&helper_path).unwrap();
+        assert_eq!(engine.resolve_imports_incremental(), 1);
+        assert_eq!(engine.waiting_imports_count(), 1, "std::io stays parked");
+        let helper_id = engine.find_file_id(&helper_path.to_string_lossy()).unwrap();
+        let main_id = engine.find_file_id(&main_path.to_string_lossy()).unwrap();
+        assert_eq!(engine.get_dependents(helper_id), vec![main_id]);
     }
 
     #[test]

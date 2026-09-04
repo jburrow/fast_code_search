@@ -2247,6 +2247,46 @@ async fn test_directory_rename_and_delete_update_index() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 2.6: imports that were still unresolved at save time survive a
+/// checkpoint restore, so a file indexed after the reload still gains its
+/// incoming edge.
+#[tokio::test]
+async fn test_unresolved_imports_survive_reload() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let main_rs = temp.path().join("main.rs");
+    let helper_rs = temp.path().join("helper.rs");
+    std::fs::write(&main_rs, "mod helper;\nfn main() {}\n")?;
+    let index_path = temp.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    {
+        let mut eng = SearchEngine::new();
+        eng.index_file(&main_rs)?;
+        eng.resolve_imports();
+        assert_eq!(eng.waiting_imports_count(), 1);
+        eng.save_index(&index_path, &config)?;
+    }
+
+    let mut eng2 = SearchEngine::new();
+    eng2.load_index_with_reconciliation(&index_path, &config)?;
+    assert_eq!(eng2.waiting_imports_count(), 1, "parked import restored");
+
+    std::fs::write(&helper_rs, "pub fn help() {}\n")?;
+    eng2.index_file(&helper_rs)?;
+    eng2.resolve_imports_incremental();
+    let helper_id = eng2.find_file_id(&helper_rs.to_string_lossy()).unwrap();
+    let main_id = eng2.find_file_id(&main_rs.to_string_lossy()).unwrap();
+    assert_eq!(eng2.get_dependents(helper_id), vec![main_id]);
+    assert_eq!(eng2.waiting_imports_count(), 0);
+    Ok(())
+}
+
 /// Roadmap 2.3: watcher paths are matched by canonical path, never by suffix.
 /// A non-canonical spelling of an indexed file must update it in place (no
 /// duplicate id, no trigram accumulation), and a different file whose path

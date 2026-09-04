@@ -71,6 +71,11 @@ pub struct PersistedIndex {
     /// where indices are positions in the `files` Vec
     #[serde(default)]
     pub dependency_edges: Vec<(u32, u32)>,
+    /// Imports that had not resolved when the index was saved, as
+    /// (file position, importing path, import strings). Restored so the
+    /// edge still appears once the target file is indexed after a reload.
+    /// (Format v4 / magic FCSIDX02.)
+    pub pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
 }
 
 /// Fixed magic header written before the bincode body.
@@ -79,7 +84,7 @@ pub struct PersistedIndex {
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX01";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX02";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -93,7 +98,7 @@ fn bincode_opts() -> impl Options {
 
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
-    pub const CURRENT_VERSION: u32 = 3;
+    pub const CURRENT_VERSION: u32 = 4;
 
     /// Create a new persisted index from the current state
     pub fn new(
@@ -103,6 +108,7 @@ impl PersistedIndex {
         trigram_to_docs: &FxHashMap<Trigram, RoaringBitmap>,
         symbols: Vec<Vec<Symbol>>,
         dependency_edges: Vec<(u32, u32)>,
+        pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
     ) -> Result<Self> {
         let mut serialized_trigrams = HashMap::with_capacity(trigram_to_docs.len());
 
@@ -122,6 +128,7 @@ impl PersistedIndex {
             },
             symbols,
             dependency_edges,
+            pending_imports,
         })
     }
 
@@ -433,6 +440,7 @@ mod tests {
             &trigram_to_docs,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         )
         .expect("Failed to create persisted index");
 
@@ -472,6 +480,7 @@ mod tests {
                 source_base_path: Some("/test".to_string()),
             }],
             &trigram_to_docs,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         )
