@@ -54,8 +54,8 @@ For the optional semantic engine, see [docs/semantic/SEMANTIC_SEARCH_README.md](
 
 - **Trigram inverted index** over Roaring bitmaps; candidate lookup is a bitmap
   intersection, independent of corpus size.
-- **Symbol-aware ranking.** tree-sitter parses 12 programming languages (plus JSON,
-  TOML, YAML, HTML, CSS, Markdown); definitions outrank usages.
+- **Symbol-aware ranking.** tree-sitter parses 12 programming languages using each
+  grammar's own `tags.scm` definitions query; definitions outrank usages.
 - **Dependency graph.** Imports are resolved across the codebase — query "what
   imports this file", and heavily-imported files rank higher.
 - **Regex search** accelerated by literal pre-filtering: required literals are

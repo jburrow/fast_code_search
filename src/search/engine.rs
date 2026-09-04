@@ -895,7 +895,7 @@ impl PreIndexedFile {
     ///   regardless, since it is used for path-based search scoring without tree-sitter.
     pub fn from_partial(partial: PartialIndexedFile, enable_symbols: bool) -> Self {
         let (mut symbols, imports) = if enable_symbols && partial.tree_sitter_safe {
-            let extractor = SymbolExtractor::new(&partial.path);
+            let extractor = SymbolExtractor::new_for_source(&partial.path, Some(&partial.content));
 
             // Extract symbols and imports in a single parse with panic protection.
             // tree-sitter can stack overflow on deeply nested or malformed files.

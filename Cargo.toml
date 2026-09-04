@@ -41,13 +41,6 @@ tree-sitter-c-sharp = "0.23"
 tree-sitter-ruby = "0.23"
 tree-sitter-php = "0.24"
 tree-sitter-bash = "0.23"
-# Language grammars - config and markup
-tree-sitter-json = "0.24"
-tree-sitter-toml-ng = "0.7"
-tree-sitter-yaml = "0.7"
-tree-sitter-html = "0.23"
-tree-sitter-css = "0.23"
-tree-sitter-md = "0.5"
 tonic = "0.14"
 tonic-prost = "0.14"
 tonic-health = "0.14" # standard gRPC health service
