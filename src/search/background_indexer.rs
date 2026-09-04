@@ -36,6 +36,11 @@ pub struct BackgroundIndexerConfig {
 
     /// Broadcast channel for WebSocket progress updates.
     pub progress_tx: ProgressBroadcaster,
+
+    /// Set by the server on SIGINT/SIGTERM. The indexer stops discovering and
+    /// batching as soon as it observes this, then falls through to its normal
+    /// finalize + save so a partial checkpoint is persisted before exit.
+    pub shutdown: Arc<AtomicBool>,
 }
 
 /// Helper to update progress and broadcast to WebSocket clients.
@@ -168,6 +173,7 @@ pub fn run(config: BackgroundIndexerConfig) {
         engine: index_engine,
         progress: index_progress,
         progress_tx: index_progress_tx,
+        shutdown,
     } = config;
 
     let total_start = Instant::now();
@@ -277,7 +283,14 @@ pub fn run(config: BackgroundIndexerConfig) {
         &index_progress_tx,
         loaded_from_persistence,
         already_indexed_files,
+        &shutdown,
     );
+    if shutdown.load(Ordering::Acquire) {
+        info!(
+            files_indexed = total_indexed,
+            "Indexing interrupted by shutdown; saving what was indexed as a checkpoint"
+        );
+    }
 
     // Final import resolution
     finalize_imports(&index_engine, &index_progress, &index_progress_tx);
@@ -455,6 +468,7 @@ fn run_indexing_pipeline(
     index_progress_tx: &ProgressBroadcaster,
     loaded_from_persistence: bool,
     already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
+    shutdown: &Arc<AtomicBool>,
 ) -> (usize, usize, usize) {
     let (tx, rx) = mpsc::sync_channel::<PathBuf>(CHANNEL_BUFFER);
 
@@ -490,6 +504,7 @@ fn run_indexing_pipeline(
         index_progress.clone(),
         index_progress_tx.clone(),
         already_indexed_files,
+        shutdown.clone(),
     );
 
     // Update status and pre-seed files_discovered to match the atomic offset so
@@ -515,6 +530,7 @@ fn run_indexing_pipeline(
         index_progress_tx,
         indexer_config,
         loaded_from_persistence,
+        shutdown,
     );
 
     // Wait for discovery thread; log if it panicked
@@ -548,6 +564,7 @@ fn spawn_discovery_thread(
     discovery_progress: SharedIndexingProgress,
     discovery_progress_tx: ProgressBroadcaster,
     already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
+    shutdown: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // Compile exclude patterns into the SAME glob filter that
@@ -567,6 +584,9 @@ fn spawn_discovery_thread(
 
         // First, send stale files that need re-indexing
         for stale_path in stale_files {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             if !stale_path.exists() {
                 continue;
             }
@@ -608,6 +628,9 @@ fn spawn_discovery_thread(
         };
 
         for path in FileDiscoveryIterator::new(&discovery_config) {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             // Skip files already validly indexed from a checkpoint.  We try
             // both the original path and its canonicalized form to match
             // however the file_store stored the path.
@@ -654,6 +677,7 @@ fn process_batches(
     index_progress_tx: &ProgressBroadcaster,
     indexer_config: &IndexerConfig,
     loaded_from_persistence: bool,
+    shutdown: &Arc<AtomicBool>,
 ) -> (usize, usize) {
     let batch_size = indexer_config.batch_size.max(1);
     let mut batch: Vec<PathBuf> = Vec::with_capacity(batch_size);
@@ -665,6 +689,11 @@ fn process_batches(
     let mut last_checkpoint_indexed = 0usize;
 
     loop {
+        if shutdown.load(Ordering::Acquire) {
+            // Stop pulling work; whatever is already in `batch` is indexed by
+            // the flush below so the checkpoint is as complete as possible.
+            break;
+        }
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(path) => {
                 batch.push(path);
@@ -992,6 +1021,29 @@ pub fn save_on_watcher_update(
         // Watcher updates increment by 1, so is_multiple_of is exact here.
         save_index_if_needed(indexer_config, engine, true, total_updates, 0);
     }
+}
+
+/// Save the index on shutdown if any watcher updates were applied since the
+/// last periodic save. Called by the watcher thread after it observes the
+/// shutdown flag so edits made while the server ran are not lost.
+pub fn save_after_watcher_shutdown(
+    indexer_config: &IndexerConfig,
+    engine: &Arc<RwLock<SearchEngine>>,
+    total_updates: usize,
+) {
+    if total_updates == 0 {
+        return;
+    }
+    let already_saved = indexer_config.save_after_updates > 0
+        && total_updates.is_multiple_of(indexer_config.save_after_updates);
+    if already_saved {
+        return;
+    }
+    info!(
+        updates = total_updates,
+        "Shutdown: saving index with pending watcher updates"
+    );
+    save_index_if_needed(indexer_config, engine, true, total_updates, 0);
 }
 
 /// Save the index to disk if configured and appropriate.

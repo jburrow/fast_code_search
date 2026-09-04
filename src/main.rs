@@ -1,11 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    create_progress_broadcaster, run_background_indexer, save_on_watcher_update,
-    BackgroundIndexerConfig, FileChange, FileWatcher, IndexingProgress, ProgressBroadcaster,
-    SharedIndexingProgress, WatcherConfig,
+    create_progress_broadcaster, run_background_indexer, save_after_watcher_shutdown,
+    save_on_watcher_update, BackgroundIndexerConfig, FileChange, FileWatcher, IndexingProgress,
+    ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
@@ -132,6 +132,23 @@ async fn main() -> Result<()> {
     // Create broadcast channel for WebSocket progress updates
     let progress_tx: ProgressBroadcaster = create_progress_broadcaster();
 
+    // Shutdown coordination: SIGINT/SIGTERM flips the flag (observed by the
+    // indexer and watcher threads) and the watch channel (observed by both
+    // servers' graceful-shutdown futures).
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown.store(true, std::sync::atomic::Ordering::Release);
+            let _ = shutdown_tx.send(true);
+        });
+    }
+    let mut web_handle: Option<tokio::task::JoinHandle<()>> = None;
+    let mut indexer_handle: Option<std::thread::JoinHandle<()>> = None;
+    let mut watcher_handle: Option<std::thread::JoinHandle<()>> = None;
+
     // Start web server first if enabled (so UI is available during indexing)
     if config.server.enable_web_ui {
         let web_addr = config.server.web_address.clone();
@@ -156,24 +173,22 @@ async fn main() -> Result<()> {
 
         info!(web_address = %web_addr, "Starting Web UI server");
 
-        tokio::spawn(async move {
+        // Bind here (not inside the task) so a port conflict is fatal instead
+        // of leaving a half-alive server with no REST API.
+        let listener = tokio::net::TcpListener::bind(&web_addr)
+            .await
+            .with_context(|| format!("Failed to bind Web UI server to {web_addr}"))?;
+        info!(address = %web_addr, "Web UI available at http://{}", web_addr);
+        let web_shutdown_rx = shutdown_rx.clone();
+        web_handle = Some(tokio::spawn(async move {
             let router = web::create_router(web_engine, web_progress, web_progress_tx, static_dir);
-            let listener = match tokio::net::TcpListener::bind(&web_addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!(
-                        address = %web_addr,
-                        error = %e,
-                        "Failed to bind Web UI server to address"
-                    );
-                    return;
-                }
-            };
-            info!(address = %web_addr, "Web UI available at http://{}", web_addr);
-            if let Err(e) = axum::serve(listener, router).await {
+            if let Err(e) = axum::serve(listener, router)
+                .with_graceful_shutdown(wait_for_shutdown(web_shutdown_rx))
+                .await
+            {
                 tracing::error!(error = %e, "Web UI server stopped unexpectedly");
             }
-        });
+        }));
     }
 
     // Start background indexing if enabled
@@ -184,14 +199,16 @@ async fn main() -> Result<()> {
         let index_progress_tx = progress_tx.clone();
         info!("Starting background indexing");
 
-        std::thread::spawn(move || {
+        let index_shutdown = shutdown.clone();
+        indexer_handle = Some(std::thread::spawn(move || {
             run_background_indexer(BackgroundIndexerConfig {
                 indexer_config,
                 engine: index_engine,
                 progress: index_progress,
                 progress_tx: index_progress_tx,
+                shutdown: index_shutdown,
             });
-        });
+        }));
     } else if args.no_auto_index {
         info!("Auto-indexing disabled via --no-auto-index flag");
     } else {
@@ -211,7 +228,8 @@ async fn main() -> Result<()> {
         let watch_indexer_config = config.indexer.clone();
         info!("Starting file watcher for incremental indexing");
 
-        std::thread::spawn(move || {
+        let watch_shutdown = shutdown.clone();
+        watcher_handle = Some(std::thread::spawn(move || {
             let watcher_config = WatcherConfig {
                 paths: watch_paths,
                 exclude_patterns: watch_exclude,
@@ -222,6 +240,15 @@ async fn main() -> Result<()> {
                     info!("File watcher started");
                     let mut watcher_updates_total: usize = 0;
                     loop {
+                        if watch_shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                            info!("File watcher stopping for shutdown");
+                            save_after_watcher_shutdown(
+                                &watch_indexer_config,
+                                &watch_engine,
+                                watcher_updates_total,
+                            );
+                            break;
+                        }
                         match watcher.recv_timeout(std::time::Duration::from_secs(1)) {
                             Some(FileChange::Modified(path)) => {
                                 tracing::debug!(path = %path.display(), "File modified, updating index");
@@ -304,7 +331,7 @@ async fn main() -> Result<()> {
                     );
                 }
             }
-        });
+        }));
     }
 
     // Create gRPC service with shared engine
@@ -314,16 +341,78 @@ async fn main() -> Result<()> {
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");
     info!("Ready to accept connections");
 
-    Server::builder()
+    let serve_result = Server::builder()
         .trace_fn(|_| tracing::info_span!("grpc"))
         .add_service(search_service)
-        .serve(addr)
-        .await?;
+        .serve_with_shutdown(addr, wait_for_shutdown(shutdown_rx.clone()))
+        .await;
+
+    // Whether we got here via a signal or a server error, make sure every
+    // background thread sees the flag, then wait for them so the final index
+    // save completes before the process exits.
+    shutdown.store(true, std::sync::atomic::Ordering::Release);
+    info!("Shutting down: waiting for web server, indexer and watcher to finish");
+    if let Some(h) = web_handle {
+        let _ = h.await;
+    }
+    let join_threads = tokio::task::spawn_blocking(move || {
+        if let Some(h) = indexer_handle {
+            if h.join().is_err() {
+                tracing::error!("Background indexer thread panicked during shutdown");
+            }
+        }
+        if let Some(h) = watcher_handle {
+            if h.join().is_err() {
+                tracing::error!("File watcher thread panicked during shutdown");
+            }
+        }
+    });
+    let _ = join_threads.await;
 
     // Flush pending OTel spans on shutdown
     telemetry::shutdown_telemetry();
+    info!("Shutdown complete");
 
+    serve_result?;
     Ok(())
+}
+
+/// Resolve when SIGINT (Ctrl+C) or, on Unix, SIGTERM is received.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "Failed to install Ctrl+C handler");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => info!("Received Ctrl+C, shutting down"),
+        _ = terminate => info!("Received SIGTERM, shutting down"),
+    }
+}
+
+/// Resolve once the shutdown watch channel is set (or its sender is gone).
+async fn wait_for_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
+    while !*rx.borrow() {
+        if rx.changed().await.is_err() {
+            break;
+        }
+    }
 }
 
 fn load_config(args: &Args) -> Result<Config> {
