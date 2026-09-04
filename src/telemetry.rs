@@ -8,12 +8,17 @@
 //! structs (loaded from TOML), with standard OTel environment variable overrides.
 
 use anyhow::{Context, Result};
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
+use std::sync::OnceLock;
 use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+/// The provider we built, kept so shutdown can flush it (the 0.28+ SDK has
+/// no global shutdown hook).
+static PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
 /// Initialize the tracing subscriber with an optional OpenTelemetry OTLP layer.
 ///
@@ -55,17 +60,19 @@ pub fn init_telemetry(
             .context("Failed to build OTLP span exporter")?;
 
         let provider = SdkTracerProvider::builder()
-            .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-            .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
-                "service.name",
-                service_name.to_owned(),
-            )]))
+            .with_batch_exporter(exporter)
+            .with_resource(
+                Resource::builder()
+                    .with_service_name(service_name.to_owned())
+                    .build(),
+            )
             .build();
 
         let tracer = provider.tracer(service_name.to_owned());
 
-        // Register the provider globally so shutdown can flush it
-        opentelemetry::global::set_tracer_provider(provider);
+        // Register globally and keep a handle for shutdown.
+        opentelemetry::global::set_tracer_provider(provider.clone());
+        let _ = PROVIDER.set(provider);
 
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
@@ -99,11 +106,15 @@ pub fn init_telemetry(
     Ok(())
 }
 
-/// Flush pending spans and shut down the global tracer provider.
+/// Flush pending spans and shut down the tracer provider.
 ///
 /// Call this during graceful shutdown (e.g. after receiving Ctrl-C) to ensure
 /// all in-flight spans are exported before the process exits.
 pub fn shutdown_telemetry() {
-    opentelemetry::global::shutdown_tracer_provider();
+    if let Some(provider) = PROVIDER.get() {
+        if let Err(e) = provider.shutdown() {
+            tracing::warn!(error = %e, "OpenTelemetry tracer provider shutdown reported an error");
+        }
+    }
     tracing::info!("OpenTelemetry tracer provider shut down");
 }
