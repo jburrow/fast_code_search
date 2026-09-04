@@ -25,6 +25,9 @@ pub struct DependencyIndex {
     path_to_id: HashMap<PathBuf, u32>,
     /// Inverted index: filename -> list of full paths (for fast non-relative import lookup)
     filename_to_paths: HashMap<String, Vec<PathBuf>>,
+    /// Reverse of `path_to_id`, so removal and re-registration are O(1)
+    /// instead of a full scan (and so `filename_to_paths` can be pruned).
+    id_to_path: FxHashMap<u32, PathBuf>,
 }
 
 impl DependencyIndex {
@@ -32,7 +35,11 @@ impl DependencyIndex {
         Self::default()
     }
 
-    /// Register a file path with its ID for import resolution
+    /// Register a file path with its ID for import resolution.
+    ///
+    /// Re-registering an id (the watcher's update path) is idempotent: the
+    /// previous path mapping for that id is dropped first, so repeated edits
+    /// of one file never accumulate duplicate `filename_to_paths` entries.
     pub fn register_file(&mut self, file_id: u32, path: &Path) {
         // Store normalized path for matching
         let stored_path = if let Ok(canonical) = path.canonicalize() {
@@ -42,6 +49,13 @@ impl DependencyIndex {
             path.to_path_buf()
         };
 
+        if let Some(previous) = self.id_to_path.get(&file_id) {
+            if *previous == stored_path {
+                return; // already registered under exactly this path
+            }
+            self.unregister_path_lookups(file_id);
+        }
+
         // Add to filename inverted index for fast non-relative lookups
         if let Some(filename) = stored_path.file_name().and_then(|s| s.to_str()) {
             self.filename_to_paths
@@ -50,7 +64,24 @@ impl DependencyIndex {
                 .push(stored_path.clone());
         }
 
-        self.path_to_id.insert(stored_path, file_id);
+        self.path_to_id.insert(stored_path.clone(), file_id);
+        self.id_to_path.insert(file_id, stored_path);
+    }
+
+    /// Drop `file_id` from `path_to_id`, `id_to_path` and `filename_to_paths`.
+    fn unregister_path_lookups(&mut self, file_id: u32) {
+        let Some(path) = self.id_to_path.remove(&file_id) else {
+            return;
+        };
+        self.path_to_id.remove(&path);
+        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+            if let Some(paths) = self.filename_to_paths.get_mut(filename) {
+                paths.retain(|p| *p != path);
+                if paths.is_empty() {
+                    self.filename_to_paths.remove(filename);
+                }
+            }
+        }
     }
 
     /// Add an import relationship: `from_file` imports `to_file`
@@ -232,15 +263,10 @@ impl DependencyIndex {
         }
         self.import_counts.remove(&file_id);
 
-        // Remove from path lookups so the id is no longer resolvable.
-        self.path_to_id.retain(|_, &mut v| v != file_id);
-        for paths in self.filename_to_paths.values_mut() {
-            // We don't know the exact path here; drop any path mapping to this id
-            // is handled via path_to_id above. filename_to_paths may retain a
-            // stale path, but resolution always re-checks path_to_id, so a stale
-            // filename entry can never resolve to a removed id.
-            let _ = paths;
-        }
+        // Remove from path lookups so the id is no longer resolvable (O(1)
+        // via id_to_path; also prunes the filename index so a removed path
+        // can never be picked as a bare-name resolution candidate).
+        self.unregister_path_lookups(file_id);
     }
 
     /// Clear all dependency information
@@ -250,12 +276,44 @@ impl DependencyIndex {
         self.import_counts.clear();
         self.path_to_id.clear();
         self.filename_to_paths.clear();
+        self.id_to_path.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Roadmap 1.11: re-registering an id (watcher update path) must not
+    /// accumulate duplicate filename entries, and removal must prune every
+    /// lookup so the path cannot resolve afterwards.
+    #[test]
+    fn test_reregister_and_remove_keep_lookups_bounded() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let a = temp.path().join("util.py");
+        let b = temp.path().join("main.py");
+        std::fs::write(&a, "x = 1\n").unwrap();
+        std::fs::write(&b, "import util\n").unwrap();
+
+        let mut idx = DependencyIndex::new();
+        idx.register_file(1, &b);
+        for _ in 0..1000 {
+            idx.register_file(0, &a);
+        }
+        assert_eq!(idx.filename_to_paths["util.py"].len(), 1);
+        assert_eq!(idx.path_to_id.len(), 2);
+
+        // Resolvable while present ...
+        assert_eq!(idx.add_import_from_path(1, &b, "util"), Some(0));
+        assert_eq!(idx.get_import_count(0), 1);
+
+        // ... and fully gone after removal.
+        idx.remove_file(0);
+        assert!(!idx.filename_to_paths.contains_key("util.py"));
+        assert_eq!(idx.path_to_id.len(), 1);
+        assert_eq!(idx.get_import_count(0), 0);
+        assert_eq!(idx.add_import_from_path(1, &b, "util"), None);
+    }
 
     #[test]
     fn test_add_import() {
