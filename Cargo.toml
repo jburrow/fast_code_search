@@ -11,7 +11,7 @@ documentation = "https://docs.rs/fast_code_search"
 readme = "README.md"
 keywords = ["search", "code-search", "trigram", "grpc", "indexing"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**"]
+exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**", "onnxruntime/**", "node_modules/**", "vscode-extension/**", "docs/**", ".agents/**", "static/fonts/**"]
 default-run = "fast_code_search_server"
 
 [lib]
