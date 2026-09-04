@@ -365,32 +365,56 @@ Goal: a clean, reproducible tree and a green CI before touching engine code.
 
 Goal: no path in the shipped binary produces wrong results or loses data.
 
-- **1.1 Persist tombstones correctly (P0).** `engine.rs:2337-2411`,
+- [x] **1.1 Persist tombstones correctly (P0).** DONE (commit `0c743cc`):
+  `save_index` now builds live-id → position while compacting the file table
+  and remaps symbols, dependency edges and (only when something was removed)
+  the trigram bitmaps through it; regression test
+  `test_save_after_remove_keeps_ids_consistent`. `engine.rs:2337-2411`,
   `persistence.rs`. At save time build `old_id → position` from the compacted
   file list and remap trigram bitmaps, `symbols` and `dependency_edges` through
   it (reuse `remap_trigram_bitmaps`); or persist an `alive` bitmap so position
   equals id. Accept: index 4 files, `remove_file` #1, save, reload — each
   remaining unique token resolves to its own file (the throwaway test used for
   this review fails today with tokens 2 and 3 returning nothing).
-- **1.2 Line-0 boost.** `engine.rs:2150`, `1985`. Filter
+- [x] **1.2 Line-0 boost.** DONE (commit `935cd4f`): FileName excluded from
+  `symbol_def_lines` in both per-document paths; test
+  `test_first_line_does_not_get_definition_boost` fails without the fix.
+  `engine.rs:2150`, `1985`. Filter
   `SymbolType::FileName` out of `symbol_def_lines` in both the scored and regex
   paths. Accept: a file with a plain mention on line 1 and a definition on line
   5 ranks line 5 first.
-- **1.3 Safety gate scope.** `engine.rs:479`, `utils.rs:175`. Apply
+- [x] **1.3 Safety gate scope.** DONE (commit `c7121fa`): `content_safety_check`
+  split into the binary check (still skips the file) and
+  `tree_sitter_safety_check` (sets `tree_sitter_safe` on the partial file;
+  extraction skipped, trigrams kept); test
+  `test_long_line_file_is_searchable_without_symbols`. `engine.rs:479`, `utils.rs:175`. Apply
   `content_safety_check` to tree-sitter only; keep the file in the trigram
   index; skip the check when `enable_symbols=false`. Accept: a 200 KB single-
   line JSON file is searchable and has no symbols.
-- **1.4 Record mtime/size at read time.** Add both to `PartialIndexedFile` /
+- [x] **1.4 Record mtime/size at read time.** DONE (commit `db73972`):
+  captured in `PartialIndexedFile::process`, carried on `PreIndexedFile`,
+  kept per id in `SearchEngine::indexed_meta` (seeded from persisted metadata
+  on all three load paths), used by `save_index`; test
+  `test_edit_between_index_and_save_is_detected_as_stale`. Add both to `PartialIndexedFile` /
   `PreIndexedFile`, store per file, and have `save_index` persist those.
   Accept: edit a file between `index_file` and `save_index`; on reload it is
   reported stale.
-- **1.5 Symbol positions.** `extractor.rs`. Take `line`/`column` from the
+- [x] **1.5 Symbol positions.** DONE (commit `97f00eb`): all arms take the
+  name node's position; `.tsx` → `LANGUAGE_TSX`; added `method_definition`,
+  arrow/function-expression `variable_declarator`, generator functions,
+  `abstract_class_declaration`, `internal_module`; three new tests including
+  the first line/column assertions. `extractor.rs`. Take `line`/`column` from the
   `name` child, not the declaration node; parse `.tsx` with `LANGUAGE_TSX`;
   add `method_definition` and `variable_declarator` + arrow/function
   expression for JS/TS. Accept: tests asserting line numbers for Java
   `@Override`, TS decorator, C multi-line signature; a `.tsx` React component
   yields its symbols.
-- **1.6 Graceful shutdown.** `main.rs`. `serve_with_shutdown(ctrl_c/SIGTERM)`
+- [x] **1.6 Graceful shutdown.** DONE (commit see git log `feat(server):
+  graceful shutdown`): signal task + AtomicBool + watch channel; tonic
+  `serve_with_shutdown`, axum `with_graceful_shutdown`; indexer discovery and
+  batch loops stop on the flag and still finalize + save; watcher saves
+  pending updates on exit; main joins everything; web bind is fatal. Verified
+  manually end to end (SIGTERM → save → restart finds the edit). `main.rs`. `serve_with_shutdown(ctrl_c/SIGTERM)`
   for tonic, `with_graceful_shutdown` for axum, an `AtomicBool` the indexer
   polls between batches, final `save_index` if dirty, `shutdown_telemetry()`.
   Make web bind failure fatal. Accept: SIGTERM mid-watch leaves a loadable
