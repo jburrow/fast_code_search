@@ -1993,9 +1993,12 @@ impl SearchEngine {
 
         // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
         // Most files have <100 symbols, linear scan is faster than hash overhead
+        // The synthetic FileName symbol lives at line 0 and must NOT count as a
+        // definition line, otherwise every match on the first line of every
+        // file gets the definition boost.
         let symbol_def_lines: Vec<usize> = symbols
             .iter()
-            .filter(|s| s.is_definition)
+            .filter(|s| s.is_definition && s.symbol_type != SymbolType::FileName)
             .map(|s| s.line)
             .collect();
 
@@ -2158,9 +2161,12 @@ impl SearchEngine {
 
         // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
         // Most files have <100 symbols, linear scan is faster than hash overhead
+        // The synthetic FileName symbol lives at line 0 and must NOT count as a
+        // definition line, otherwise every match on the first line of every
+        // file gets the definition boost.
         let symbol_def_lines: Vec<usize> = symbols
             .iter()
-            .filter(|s| s.is_definition)
+            .filter(|s| s.is_definition && s.symbol_type != SymbolType::FileName)
             .map(|s| s.line)
             .collect();
 
@@ -3702,6 +3708,49 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             "Exact case match ({:.3}) should score higher than lowercase ({:.3})",
             exact_match.score,
             lower_match.score
+        );
+    }
+
+    /// Roadmap 1.2: the synthetic FileName symbol sits at line 0 and must not
+    /// make every first-line match look like a symbol definition. Two identical
+    /// non-definition lines (line 1 and line 4) must score identically, and a
+    /// real definition further down must still outrank a plain first-line
+    /// mention.
+    #[test]
+    fn test_first_line_does_not_get_definition_boost() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("boost.rs");
+        fs::write(
+            &file_path,
+            "// widget_thing mention\n\n\n// widget_thing mention\nfn widget_thing() {}\n",
+        )
+        .unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let results = engine.search("widget_thing", 10);
+        let by_line = |n: usize| {
+            results
+                .iter()
+                .find(|r| r.line_number == n)
+                .unwrap_or_else(|| panic!("no match on line {n}: {results:?}"))
+        };
+        let (l1, l4, l5) = (by_line(1), by_line(4), by_line(5));
+
+        assert!(
+            (l1.score - l4.score).abs() < 1e-9,
+            "identical plain lines must score identically (line1={:.3}, line4={:.3})",
+            l1.score,
+            l4.score
+        );
+        assert!(!l1.is_symbol, "a comment on line 1 is not a symbol definition");
+        assert!(
+            l5.score > l1.score,
+            "definition on line 5 ({:.3}) must outrank the first-line mention ({:.3})",
+            l5.score,
+            l1.score
         );
     }
 
