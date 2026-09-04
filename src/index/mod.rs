@@ -1,9 +1,7 @@
-pub mod file_store;
 pub mod lazy_file_store;
 pub mod persistence;
 pub mod trigram;
 
-pub use file_store::{FileStore, MappedFile};
 pub use lazy_file_store::{LazyFileStore, LazyMappedFile};
 pub use persistence::{PersistedFileMetadata, PersistedIndex};
 pub use trigram::{
