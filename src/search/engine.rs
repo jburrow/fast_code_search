@@ -428,6 +428,10 @@ pub struct PartialIndexedFile {
     /// imports) because a >100 KB line or extreme nesting could crash or
     /// stall the C parsers.
     pub tree_sitter_safe: bool,
+    /// Modification time (seconds since epoch) of the file *as read*.
+    pub mtime: u64,
+    /// Size in bytes of the file *as read*.
+    pub size: u64,
 }
 
 impl PartialIndexedFile {
@@ -460,6 +464,10 @@ impl PartialIndexedFile {
         if metadata.len() > max_size {
             return None;
         }
+        // Capture what we are about to read so persistence records the indexed
+        // content's identity, not the on-disk state at save time.
+        let size = metadata.len();
+        let mtime = crate::index::persistence::mtime_secs_of(&metadata);
 
         let raw_bytes = std::fs::read(path).ok()?;
         // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
@@ -536,6 +544,8 @@ impl PartialIndexedFile {
                 filename_stem,
                 content,
                 tree_sitter_safe,
+                mtime,
+                size,
             },
             transcoded,
         ))
@@ -553,6 +563,10 @@ pub struct PreIndexedFile {
     pub symbols: Vec<Symbol>,
     /// Extracted import paths
     pub imports: Vec<String>,
+    /// Modification time (seconds since epoch) of the content that was indexed
+    pub mtime: u64,
+    /// Size in bytes of the content that was indexed
+    pub size: u64,
 }
 
 impl PreIndexedFile {
@@ -607,6 +621,8 @@ impl PreIndexedFile {
             trigrams: partial.trigrams,
             symbols,
             imports: imports.into_iter().map(|i| i.path).collect(),
+            mtime: partial.mtime,
+            size: partial.size,
         }
     }
 }
@@ -729,6 +745,9 @@ pub struct SearchEngine {
     pub trigram_index: TrigramIndex,
     pub dependency_index: DependencyIndex,
     symbol_cache: Vec<Vec<Symbol>>,
+    /// (mtime secs, size) of each file's content *as indexed*, by file id.
+    /// `(0, 0)` means unknown (fall back to a stat at save time).
+    indexed_meta: Vec<(u64, u64)>,
     /// Pre-computed file metadata for fast ranking
     file_metadata: Vec<FileMetadata>,
     /// Pending imports to resolve after all files are indexed
@@ -750,6 +769,7 @@ impl SearchEngine {
             trigram_index: TrigramIndex::new(),
             dependency_index: DependencyIndex::new(),
             symbol_cache: Vec::new(),
+            indexed_meta: Vec::new(),
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
             enable_symbols: true,
@@ -857,6 +877,7 @@ impl SearchEngine {
                 Ok(id) => id,
                 Err(_) => continue,
             };
+            self.set_indexed_meta(file_id, pre_indexed.mtime, pre_indexed.size);
 
             // Register file in dependency index
             self.dependency_index
@@ -1083,6 +1104,32 @@ impl SearchEngine {
     /// (e.g. it was deleted between the staleness check and registration).
     /// Failed registrations are dropped from the map so their trigrams, symbols,
     /// and dependency edges are discarded rather than aliased onto another file.
+    /// Record the (mtime, size) of the content just indexed under `id`.
+    fn set_indexed_meta(&mut self, id: u32, mtime: u64, size: u64) {
+        let idx = id as usize;
+        if self.indexed_meta.len() <= idx {
+            self.indexed_meta.resize(idx + 1, (0, 0));
+        }
+        self.indexed_meta[idx] = (mtime, size);
+    }
+
+    /// After reload, the persisted (mtime, size) of each still-valid file is
+    /// the identity of the content whose trigrams were restored; carry it
+    /// forward so the next save does not re-stat.
+    fn seed_indexed_meta_from_persisted(
+        &mut self,
+        valid_file_indices: &[usize],
+        new_ids: &[u32],
+        persisted: &crate::index::PersistedIndex,
+    ) {
+        for (&idx, &id) in valid_file_indices.iter().zip(new_ids.iter()) {
+            if id != u32::MAX {
+                let m = &persisted.files[idx];
+                self.set_indexed_meta(id, m.mtime, m.size);
+            }
+        }
+    }
+
     fn build_orig_to_new_map(
         valid_file_indices: &[usize],
         new_ids: &[u32],
@@ -2394,7 +2441,17 @@ impl SearchEngine {
             if let Some(mapped_file) = self.file_store.get(id) {
                 id_to_pos.insert(id, files.len() as u32);
                 live_ids.push(id);
-                let mtime = get_mtime(&mapped_file.path).unwrap_or(0);
+                // Prefer the identity recorded when the content was read; only
+                // stat as a fallback for ids with no record.
+                let recorded = self
+                    .indexed_meta
+                    .get(id as usize)
+                    .copied()
+                    .filter(|&(m, sz)| m != 0 || sz != 0);
+                let mtime = match recorded {
+                    Some((m, _)) => m,
+                    None => get_mtime(&mapped_file.path).unwrap_or(0),
+                };
 
                 // Determine which base path this file belongs to
                 let source_base = config
@@ -2413,11 +2470,14 @@ impl SearchEngine {
 
                 // Use len_if_mapped() to avoid triggering lazy loading during save
                 // If file isn't mapped yet, get size from filesystem
-                let size = mapped_file.len_if_mapped().unwrap_or_else(|| {
-                    std::fs::metadata(&mapped_file.path)
-                        .map(|m| m.len() as usize)
-                        .unwrap_or(0)
-                });
+                let size = match recorded {
+                    Some((_, sz)) => sz as usize,
+                    None => mapped_file.len_if_mapped().unwrap_or_else(|| {
+                        std::fs::metadata(&mapped_file.path)
+                            .map(|m| m.len() as usize)
+                            .unwrap_or(0)
+                    }),
+                };
 
                 files.push(PersistedFileMetadata {
                     path: mapped_file.path.clone(),
@@ -2546,6 +2606,7 @@ impl SearchEngine {
                 }
             }
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
+            self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
 
             // Restore the trigram index and remap its doc ids onto the new ids.
             let trigram_map = persisted.restore_trigram_index()?;
@@ -2721,6 +2782,7 @@ impl SearchEngine {
             // Register all files instantly (no I/O, just storing paths)
             let new_ids = self.file_store.register_files_bulk(&paths_to_register);
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
+            self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
 
             // Track content bytes from persisted metadata
             self.file_store.add_content_bytes(total_content_bytes);
@@ -2866,6 +2928,7 @@ impl SearchEngine {
         self.file_store.reserve(paths_to_register.len());
         let new_ids = self.file_store.register_files_bulk(&paths_to_register);
         let orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
+            self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
 
         // Track content bytes from persisted metadata
         self.file_store.add_content_bytes(total_content_bytes);
@@ -2943,6 +3006,7 @@ impl SearchEngine {
         // Refresh the store entry so the stale mapping + caches are discarded, and
         // re-register for import resolution.
         self.file_store.refresh_file_by_id(id);
+        self.set_indexed_meta(id, pre.mtime, pre.size);
         self.dependency_index.register_file(id, path);
 
         // Re-add trigrams and symbols under the same id.

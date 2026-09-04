@@ -323,13 +323,20 @@ impl PersistedIndex {
 pub fn get_mtime(path: &Path) -> Result<u64> {
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("Failed to get metadata for: {}", path.display()))?;
-    let mtime = metadata
+    Ok(mtime_secs_of(&metadata))
+}
+
+/// Modification time in whole seconds since the Unix epoch, as stored in the
+/// persisted index (0 if unavailable). Use this on metadata obtained *at read
+/// time* so the persisted value describes the content that was actually
+/// indexed, not whatever is on disk when the index is saved.
+pub fn mtime_secs_of(metadata: &std::fs::Metadata) -> u64 {
+    metadata
         .modified()
-        .with_context(|| format!("Failed to get mtime for: {}", path.display()))?;
-    Ok(mtime
-        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
-        .unwrap_or(0))
+        .unwrap_or(0)
 }
 
 /// Check if a file is stale (modified since indexing)

@@ -2068,6 +2068,44 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 1.4: the persisted mtime/size must describe the content that was
+/// indexed, not the on-disk state at save time. A file edited between indexing
+/// and saving must be reported stale on reload (previously the fresh stat was
+/// persisted alongside the old trigrams and the edit was never detected).
+#[tokio::test]
+async fn test_edit_between_index_and_save_is_detected_as_stale() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let file = temp.path().join("edited.rs");
+    std::fs::write(&file, "fn before_token() {}\n")?;
+    let index_path = temp.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+
+    {
+        let mut eng = SearchEngine::new();
+        eng.index_file(&file)?;
+        // Edit AFTER indexing, BEFORE saving (different size so the check does
+        // not depend on second-granularity mtimes).
+        std::fs::write(&file, "fn after_token_with_longer_name() {}\n")?;
+        eng.save_index(&index_path, &config)?;
+    }
+
+    let mut eng2 = SearchEngine::new();
+    let result = eng2.load_index_with_reconciliation(&index_path, &config)?;
+    assert!(
+        result.stale_files.iter().any(|p| p.ends_with("edited.rs")),
+        "edited file must be reported stale; got stale={:?}",
+        result.stale_files
+    );
+    Ok(())
+}
+
 /// Roadmap 1.1 (P0): saving after `remove_file` must persist a consistent
 /// index. The file table is compacted over tombstones, so trigram bitmaps,
 /// symbols and dependency edges must be remapped onto positions; otherwise
