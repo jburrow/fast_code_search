@@ -190,8 +190,15 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Failed to bind Web UI server to {web_addr}"))?;
         info!(address = %web_addr, "Web UI available at http://{}", web_addr);
         let web_shutdown_rx = shutdown_rx.clone();
+        let cors_origins = config.server.cors_origins.clone();
         web_handle = Some(tokio::spawn(async move {
-            let router = web::create_router(web_engine, web_progress, web_progress_tx, static_dir);
+            let router = web::create_router_with_cors(
+                web_engine,
+                web_progress,
+                web_progress_tx,
+                static_dir,
+                &cors_origins,
+            );
             if let Err(e) = axum::serve(listener, router)
                 .with_graceful_shutdown(wait_for_shutdown(web_shutdown_rx))
                 .await
@@ -307,7 +314,9 @@ async fn main() -> Result<()> {
     }
 
     // Create gRPC service with shared engine
-    let search_service = server::create_server_with_engine(shared_engine.clone());
+    let index_roots: Vec<PathBuf> = config.indexer.paths.iter().map(PathBuf::from).collect();
+    let search_service =
+        server::create_server_with_engine_scoped(shared_engine.clone(), index_roots);
 
     info!(version = env!("CARGO_PKG_VERSION"), address = %addr, "Fast Code Search Server starting");
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");

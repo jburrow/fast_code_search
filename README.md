@@ -82,6 +82,14 @@ Scores combine a content match with structural signals:
 | Heavily-imported file | `1 + log10(importers) × 0.5` |
 | Long lines | inverse-length penalty |
 
+## Network exposure
+
+The server has no authentication: the REST API returns full file contents and
+the gRPC `Index` RPC indexes paths on request (restricted to the configured
+`paths`). Both listeners therefore bind to loopback by default. Bind to
+`0.0.0.0` only on a trusted network, and list explicit `cors_origins` if a page
+on another origin needs to call the API (the embedded UI does not).
+
 ## Why a server instead of a CLI?
 
 Tools like ripgrep re-scan files on every invocation. That cost is unbeatable for a
@@ -147,8 +155,8 @@ cargo run --release --bin fast_code_search_server -- --init config.toml
 
 ```toml
 [server]
-address = "0.0.0.0:50051"      # gRPC
-web_address = "0.0.0.0:8080"   # REST + web UI
+address = "127.0.0.1:50051"    # gRPC
+web_address = "127.0.0.1:8080" # REST + web UI
 enable_web_ui = true
 
 [indexer]

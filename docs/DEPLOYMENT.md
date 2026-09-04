@@ -26,7 +26,7 @@ cargo build --release
 ./target/release/fast_code_search_server
 ```
 
-3. The server will listen on `0.0.0.0:50051`
+3. The server will listen on `127.0.0.1:50051` (loopback; set `address = "0.0.0.0:50051"` in the config to expose it)
 
 ### Testing the Deployment
 

@@ -290,6 +290,53 @@ async fn test_grpc_index_request() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 1.10: the shipped server scopes the gRPC `Index` RPC to the
+/// configured index roots, so a network client cannot index (and then read
+/// back through /api/file) arbitrary host paths.
+#[tokio::test]
+async fn test_grpc_index_rejects_paths_outside_scope() -> Result<()> {
+    use fast_code_search::server::create_server_with_engine_scoped;
+
+    let inside = TempDir::new()?;
+    let outside = TempDir::new()?;
+    std::fs::write(inside.path().join("in.rs"), "fn inside_scope() {}\n")?;
+    std::fs::write(outside.path().join("out.rs"), "fn outside_scope() {}\n")?;
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let service =
+        create_server_with_engine_scoped(engine.clone(), vec![inside.path().to_path_buf()]);
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(service)
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .await
+            .expect("gRPC server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut client = CodeSearchClient::connect(format!("http://{addr}")).await?;
+
+    let err = client
+        .index(IndexRequest {
+            paths: vec![outside.path().to_string_lossy().to_string()],
+        })
+        .await
+        .expect_err("out-of-scope path must be rejected");
+    assert_eq!(err.code(), tonic::Code::PermissionDenied, "{err:?}");
+    assert!(engine.read().unwrap().search("outside_scope", 5).is_empty());
+
+    let ok = client
+        .index(IndexRequest {
+            paths: vec![inside.path().to_string_lossy().to_string()],
+        })
+        .await?
+        .into_inner();
+    assert_eq!(ok.files_indexed, 1);
+    assert_eq!(engine.read().unwrap().search("inside_scope", 5).len(), 1);
+    Ok(())
+}
+
 // =============================================================================
 // HTTP/REST Tests
 // =============================================================================
@@ -342,7 +389,10 @@ async fn test_http_context_caps_window_and_survives_overflow() -> Result<()> {
         .await?
         .json()
         .await?;
-    let file = body["results"][0]["file_path"].as_str().unwrap().to_string();
+    let file = body["results"][0]["file_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let response = client
         .get(format!("{}/api/context", ctx.http_url))

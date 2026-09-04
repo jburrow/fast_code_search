@@ -34,17 +34,27 @@ pub struct WebState {
     pub static_dir: Option<PathBuf>,
 }
 
-/// Create the web router with all routes
+/// Create the web router with all routes and no cross-origin access
+/// (same-origin only, which is all the embedded UI needs).
 pub fn create_router(
     engine: AppState,
     progress: SharedIndexingProgress,
     progress_tx: ProgressBroadcaster,
     static_dir: Option<PathBuf>,
 ) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    create_router_with_cors(engine, progress, progress_tx, static_dir, &[])
+}
+
+/// Create the web router, allowing cross-origin API access from
+/// `cors_origins` (`"*"` = any origin; empty = same-origin only).
+pub fn create_router_with_cors(
+    engine: AppState,
+    progress: SharedIndexingProgress,
+    progress_tx: ProgressBroadcaster,
+    static_dir: Option<PathBuf>,
+    cors_origins: &[String],
+) -> Router {
+    let cors = build_cors_layer(cors_origins);
 
     let state = WebState {
         engine,
@@ -53,7 +63,7 @@ pub fn create_router(
         static_dir,
     };
 
-    Router::new()
+    let router = Router::new()
         // API routes
         .route("/api/search", get(api::search_handler))
         .route("/api/stats", get(api::stats_handler))
@@ -68,10 +78,50 @@ pub fn create_router(
         .route("/ws/progress", get(api::ws_progress_handler))
         // Static files
         .route("/", get(index_handler))
-        .route("/{*file}", get(static_handler))
-        .layer(cors)
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .route("/{*file}", get(static_handler));
+    let router = match cors {
+        Some(cors) => router.layer(cors),
+        None => router,
+    };
+    router.layer(TraceLayer::new_for_http()).with_state(state)
+}
+
+/// Translate the configured origin list into a CORS layer. Invalid origin
+/// strings are logged and skipped; an empty (or all-invalid) list yields no
+/// layer at all, i.e. browsers refuse cross-origin reads.
+fn build_cors_layer(cors_origins: &[String]) -> Option<CorsLayer> {
+    if cors_origins.is_empty() {
+        return None;
+    }
+    if cors_origins.iter().any(|o| o == "*") {
+        tracing::warn!("CORS: allowing any origin to read the API (cors_origins = [\"*\"])");
+        return Some(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
+    }
+    let origins: Vec<header::HeaderValue> = cors_origins
+        .iter()
+        .filter_map(|o| match header::HeaderValue::from_str(o) {
+            Ok(v) => Some(v),
+            Err(_) => {
+                tracing::warn!(origin = %o, "CORS: ignoring invalid origin");
+                None
+            }
+        })
+        .collect();
+    if origins.is_empty() {
+        return None;
+    }
+    tracing::info!(origins = ?cors_origins, "CORS: allowing listed origins");
+    Some(
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(Any)
+            .allow_headers(Any),
+    )
 }
 
 /// Serve index.html

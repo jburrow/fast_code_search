@@ -101,6 +101,15 @@ pub struct ServerConfig {
     #[serde(default = "default_enable_web_ui")]
     pub enable_web_ui: bool,
 
+    /// Origins allowed to call the REST API cross-origin (CORS).
+    ///
+    /// Empty (the default) sends no CORS headers, so only same-origin pages
+    /// (the embedded web UI) can read API responses. List explicit origins
+    /// such as `"http://localhost:3000"`, or `"*"` to allow any origin. The
+    /// API serves full source files, so keep this tight.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+
     /// Serve static UI files from this directory instead of the embedded assets.
     ///
     /// When set, the web server reads HTML/CSS/JS files directly from disk on
@@ -192,12 +201,15 @@ pub struct IndexerConfig {
     pub enable_symbols: bool,
 }
 
+// Both servers bind to loopback by default: there is no authentication, the
+// REST API serves full file contents and the gRPC Index RPC indexes paths on
+// request. Exposing them on a network is an explicit choice (`0.0.0.0:…`).
 fn default_address() -> String {
-    "0.0.0.0:50051".to_string()
+    "127.0.0.1:50051".to_string()
 }
 
 fn default_web_address() -> String {
-    "0.0.0.0:8080".to_string()
+    "127.0.0.1:8080".to_string()
 }
 
 fn default_enable_web_ui() -> bool {
@@ -235,6 +247,7 @@ impl Default for ServerConfig {
             address: default_address(),
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
+            cors_origins: Vec::new(),
             static_dir: None,
         }
     }
@@ -369,14 +382,20 @@ impl Config {
 # Generated template - customize as needed
 
 [server]
-# Address to bind the gRPC server to
-address = "0.0.0.0:50051"
+# Address to bind the gRPC server to.
+# Loopback by default: the server has no authentication and serves full file
+# contents. Use "0.0.0.0:50051" only on a trusted network.
+address = "127.0.0.1:50051"
 
-# Address to bind the HTTP/Web UI server to
-web_address = "0.0.0.0:8080"
+# Address to bind the HTTP/Web UI server to (same caveat as above)
+web_address = "127.0.0.1:8080"
 
 # Enable the web UI and REST API (default: true)
 enable_web_ui = true
+
+# Origins allowed to call the REST API from another site (CORS).
+# Empty (default) = same-origin only, which is all the embedded UI needs.
+# cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
@@ -505,7 +524,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.server.address, "0.0.0.0:50051");
+        assert_eq!(config.server.address, "127.0.0.1:50051");
         assert!(config.indexer.paths.is_empty());
         assert!(!config.indexer.exclude_patterns.is_empty());
     }

@@ -21,18 +21,41 @@ use search_proto::{
 
 pub struct CodeSearchService {
     engine: Arc<RwLock<SearchEngine>>,
+    /// When set, the `Index` RPC only accepts paths under one of these
+    /// (canonical) roots. `None` means unrestricted (library/test use).
+    allowed_index_roots: Option<Vec<std::path::PathBuf>>,
 }
 
 impl CodeSearchService {
     pub fn new() -> Self {
         Self {
             engine: Arc::new(RwLock::new(SearchEngine::new())),
+            allowed_index_roots: None,
         }
     }
 
     /// Create a service with an existing shared engine
     pub fn with_engine(engine: Arc<RwLock<SearchEngine>>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            allowed_index_roots: None,
+        }
+    }
+
+    /// Like [`Self::with_engine`], but the `Index` RPC only accepts paths under
+    /// `roots` (canonicalized here; non-existent roots are kept as given).
+    pub fn with_engine_scoped(
+        engine: Arc<RwLock<SearchEngine>>,
+        roots: Vec<std::path::PathBuf>,
+    ) -> Self {
+        let roots = roots
+            .into_iter()
+            .map(|r| crate::search::engine::canonicalize_lossy(&r))
+            .collect();
+        Self {
+            engine,
+            allowed_index_roots: Some(roots),
+        }
     }
 
     /// Get the shared engine reference
@@ -322,6 +345,22 @@ impl CodeSearch for CodeSearchService {
         info!(paths = ?req.paths, "Received index request");
         let start = Instant::now();
 
+        // Scope check: a network client must not be able to index (and then
+        // read back via /api/file) arbitrary paths on the host.
+        if let Some(roots) = &self.allowed_index_roots {
+            for path in &req.paths {
+                let canonical = std::path::Path::new(path)
+                    .canonicalize()
+                    .map_err(|e| Status::invalid_argument(format!("Cannot index {path}: {e}")))?;
+                if !roots.iter().any(|root| canonical.starts_with(root)) {
+                    warn!(path = %path, "Rejected index request outside configured roots");
+                    return Err(Status::permission_denied(format!(
+                        "{path} is outside the configured index paths"
+                    )));
+                }
+            }
+        }
+
         // Move the blocking write-lock acquisition and directory walk onto a
         // dedicated blocking thread.  Calling .write() (which may block
         // indefinitely while the background indexer holds the write lock) or
@@ -344,7 +383,7 @@ impl CodeSearch for CodeSearchService {
             for path in &req.paths {
                 // Walk the directory and index all files
                 for entry in WalkDir::new(path)
-                    .follow_links(true)
+                    .follow_links(false)
                     .into_iter()
                     .filter_map(|e| e.ok())
                 {
@@ -422,4 +461,12 @@ pub fn create_server_with_engine(
     engine: Arc<RwLock<SearchEngine>>,
 ) -> CodeSearchServer<CodeSearchService> {
     CodeSearchServer::new(CodeSearchService::with_engine(engine))
+}
+
+/// Create a gRPC server whose `Index` RPC is restricted to `roots`.
+pub fn create_server_with_engine_scoped(
+    engine: Arc<RwLock<SearchEngine>>,
+    roots: Vec<std::path::PathBuf>,
+) -> CodeSearchServer<CodeSearchService> {
+    CodeSearchServer::new(CodeSearchService::with_engine_scoped(engine, roots))
 }
