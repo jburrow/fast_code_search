@@ -1099,6 +1099,17 @@ impl SearchEngine {
             return map;
         }
 
+        Self::remap_trigram_bitmaps_ref(&map, orig_to_new)
+    }
+
+    /// Borrowing form of [`Self::remap_trigram_bitmaps`]: always builds a new
+    /// map with every doc id translated through `orig_to_new`, dropping ids
+    /// with no mapping and trigrams whose postings become empty. Used both on
+    /// load (persisted position -> live id) and on save (live id -> position).
+    fn remap_trigram_bitmaps_ref(
+        map: &rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap>,
+        orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
+    ) -> rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> {
         let mut out: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> =
             rustc_hash::FxHashMap::default();
         for (trigram, bitmap) in map {
@@ -1109,7 +1120,7 @@ impl SearchEngine {
                 }
             }
             if !remapped.is_empty() {
-                out.insert(trigram, remapped);
+                out.insert(*trigram, remapped);
             }
         }
         out
@@ -2342,10 +2353,21 @@ impl SearchEngine {
         use crate::index::persistence::get_mtime;
         use crate::index::{PersistedFileMetadata, PersistedIndex};
 
-        // Collect file metadata with source base path tracking
+        // Collect file metadata with source base path tracking.
+        //
+        // `files` is *compacted*: tombstoned (removed) ids are skipped, so a
+        // file's position in `files` is not its live id once anything has been
+        // removed. Everything else persisted (trigram bitmaps, symbols, edges)
+        // must therefore be remapped from live id -> position, otherwise reload
+        // attributes every file after a tombstone to the wrong path.
+        let total_ids = self.file_store.len() as u32;
         let mut files = Vec::new();
-        for id in 0..self.file_store.len() as u32 {
+        let mut live_ids: Vec<u32> = Vec::new();
+        let mut id_to_pos: FxHashMap<u32, u32> = FxHashMap::default();
+        for id in 0..total_ids {
             if let Some(mapped_file) = self.file_store.get(id) {
+                id_to_pos.insert(id, files.len() as u32);
+                live_ids.push(id);
                 let mtime = get_mtime(&mapped_file.path).unwrap_or(0);
 
                 // Determine which base path this file belongs to
@@ -2380,20 +2402,44 @@ impl SearchEngine {
             }
         }
 
-        // Collect per-file symbol caches (parallel to files Vec)
-        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = (0..self.file_store.len())
-            .map(|id| self.symbol_cache.get(id).cloned().unwrap_or_default())
+        // Collect per-file symbol caches (parallel to the compacted files Vec)
+        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = live_ids
+            .iter()
+            .map(|&id| {
+                self.symbol_cache
+                    .get(id as usize)
+                    .cloned()
+                    .unwrap_or_default()
+            })
             .collect();
 
-        // Collect resolved dependency edges
-        let dependency_edges = self.dependency_index.get_all_edges();
+        // Collect resolved dependency edges, remapped onto positions; edges that
+        // touch a removed file are dropped.
+        let dependency_edges: Vec<(u32, u32)> = self
+            .dependency_index
+            .get_all_edges()
+            .into_iter()
+            .filter_map(|(from, to)| Some((*id_to_pos.get(&from)?, *id_to_pos.get(&to)?)))
+            .collect();
+
+        // Trigram bitmaps: borrow as-is when ids are already dense (no
+        // tombstones), otherwise build a remapped copy keyed by position.
+        let is_identity = live_ids.len() as u32 == total_ids;
+        let remapped_trigrams;
+        let trigram_map: &FxHashMap<Trigram, roaring::RoaringBitmap> = if is_identity {
+            self.trigram_index.get_trigram_map()
+        } else {
+            remapped_trigrams =
+                Self::remap_trigram_bitmaps_ref(self.trigram_index.get_trigram_map(), &id_to_pos);
+            &remapped_trigrams
+        };
 
         // Create persisted index with config fingerprint
         let persisted = PersistedIndex::new(
             config.fingerprint(),
             config.paths.clone(),
             files,
-            self.trigram_index.get_trigram_map(),
+            trigram_map,
             symbols,
             dependency_edges,
         )?;

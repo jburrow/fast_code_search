@@ -2068,6 +2068,69 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 1.1 (P0): saving after `remove_file` must persist a consistent
+/// index. The file table is compacted over tombstones, so trigram bitmaps,
+/// symbols and dependency edges must be remapped onto positions; otherwise
+/// every file after the removed one is misattributed (or lost) on reload.
+#[tokio::test]
+async fn test_save_after_remove_keeps_ids_consistent() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mut paths = Vec::new();
+    for i in 0..4 {
+        let p = temp.path().join(format!("file{}.rs", i));
+        std::fs::write(&p, format!("fn unique_token_{i}() {{ let x = {i}; }}\n"))?;
+        paths.push(p);
+    }
+    let index_path = temp.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+
+    {
+        let mut eng = SearchEngine::new();
+        for p in &paths {
+            eng.index_file(p)?;
+        }
+        // Remove the middle file (id 1) the way the watcher does, then save.
+        assert!(eng.remove_file(&paths[1]));
+        std::fs::remove_file(&paths[1])?;
+        eng.save_index(&index_path, &config)?;
+    }
+
+    let mut eng2 = SearchEngine::new();
+    eng2.load_index_with_reconciliation(&index_path, &config)?;
+
+    for i in [0usize, 2, 3] {
+        let results = eng2.search(&format!("unique_token_{i}"), 10);
+        let got: Vec<&str> = results.iter().map(|m| m.file_path.as_str()).collect();
+        assert_eq!(
+            got.len(),
+            1,
+            "token {i} must hit exactly one file after reload; got {got:?}"
+        );
+        assert!(
+            got[0].ends_with(&format!("file{i}.rs")),
+            "token {i} must map to file{i}.rs after reload; got {got:?}"
+        );
+        // Symbols were persisted in the same compacted order.
+        let syms = eng2.search_symbols(&format!("unique_token_{i}"), "", "", 10)?;
+        assert!(
+            syms.iter().any(|m| m.file_path.ends_with(&format!("file{i}.rs"))),
+            "symbol unique_token_{i} must resolve to file{i}.rs; got {:?}",
+            syms.iter().map(|m| &m.file_path).collect::<Vec<_>>()
+        );
+    }
+    // The removed file must not come back.
+    assert!(eng2.search("unique_token_1", 10).is_empty());
+
+    Ok(())
+}
+
 /// 2.2: Modifying, deleting, and renaming files updates the index so searches
 /// reflect only the current on-disk content.
 #[tokio::test]
