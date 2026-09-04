@@ -319,33 +319,35 @@ pub async fn search_handler(
                 })?
         };
 
+        // Context lines: each file is read and split ONCE per request (the
+        // result already carries the file id — no path lookup, no per-result
+        // re-read when many hits come from one file).
+        let mut line_cache: std::collections::HashMap<u32, Option<Vec<String>>> =
+            std::collections::HashMap::new();
         let results: Vec<SearchResultJson> = matches
             .into_iter()
             .map(|m| {
-                // Fetch context lines from the file store when requested
-                let (ctx_lines, ctx_start) = if context_lines > 0 {
-                    if let Some(file_id) = engine.find_file_id(&m.file_path) {
-                        if let Some(mapped) = engine.file_store.get(file_id) {
-                            if let Ok(content) = mapped.as_str() {
-                                let all_lines: Vec<&str> = content.lines().collect();
-                                let total = all_lines.len();
-                                let match_idx =
-                                    m.line_number.saturating_sub(1).min(total.saturating_sub(1));
-                                let start_idx = match_idx.saturating_sub(context_lines);
-                                let end_idx = (match_idx + context_lines + 1).min(total);
-                                let lines: Vec<String> = all_lines[start_idx..end_idx]
-                                    .iter()
-                                    .map(|l| l.to_string())
-                                    .collect();
-                                (Some(lines), Some(start_idx + 1))
-                            } else {
-                                (None, None)
-                            }
-                        } else {
-                            (None, None)
+                let (ctx_lines, ctx_start) = if context_lines > 0 && m.line_number > 0 {
+                    let lines = line_cache.entry(m.file_id).or_insert_with(|| {
+                        engine.file_store.get(m.file_id).and_then(|f| {
+                            f.as_str()
+                                .ok()
+                                .map(|c| c.lines().map(str::to_string).collect())
+                        })
+                    });
+                    match lines {
+                        Some(all_lines) => {
+                            let total = all_lines.len();
+                            let match_idx =
+                                m.line_number.saturating_sub(1).min(total.saturating_sub(1));
+                            let start_idx = match_idx.saturating_sub(context_lines);
+                            let end_idx = (match_idx + context_lines + 1).min(total);
+                            (
+                                Some(all_lines[start_idx..end_idx].to_vec()),
+                                Some(start_idx + 1),
+                            )
                         }
-                    } else {
-                        (None, None)
+                        None => (None, None),
                     }
                 } else {
                     (None, None)

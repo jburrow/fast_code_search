@@ -2828,15 +2828,48 @@ impl SearchEngine {
     /// Suffix matching uses `ends_with` to avoid false positives from substring
     /// matches (e.g. looking for `"bar.rs"` will NOT match `"bar_extra.rs"`).
     pub fn find_file_id(&self, path: &str) -> Option<u32> {
-        // 1. Exact path match (O(1))
-        if let Some(id) = self
-            .file_store
-            .find_by_exact_path(std::path::Path::new(path))
-        {
+        // 1. Exact path match (O(1)), then its canonical form.
+        if let Some(id) = self.find_file_id_exact(std::path::Path::new(path)) {
             return Some(id);
         }
-        // 2. Suffix / partial-path match (O(n))
+        // 2. Display path (`<root name>/<relative>`, what search results and
+        //    the UI round-trip) reversed onto its root: still O(roots), no
+        //    per-file work, and unambiguous when two roots share a suffix.
+        if let Some(id) = self.find_by_display_path(path) {
+            return Some(id);
+        }
+        // 3. Suffix / partial-path match (O(n)) as a last resort.
         self.file_store.find_by_path_suffix(path)
+    }
+
+    /// Reverse [`Self::make_display_path`]: `project/src/main.rs` ->
+    /// `<root ending in project>/src/main.rs`, looked up exactly.
+    fn find_by_display_path(&self, display: &str) -> Option<u32> {
+        let display = display.replace('\\', "/");
+        for root in &self.root_paths {
+            let Some(root_name) = root.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let rest = if display == root_name {
+                ""
+            } else if let Some(rest) = display
+                .strip_prefix(root_name)
+                .and_then(|r| r.strip_prefix('/'))
+            {
+                rest
+            } else {
+                continue;
+            };
+            let candidate = if rest.is_empty() {
+                root.clone()
+            } else {
+                root.join(rest)
+            };
+            if let Some(id) = self.find_file_id_exact(&candidate) {
+                return Some(id);
+            }
+        }
+        None
     }
 
     /// Save the index to a file for persistence

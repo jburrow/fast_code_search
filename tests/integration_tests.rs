@@ -2498,6 +2498,46 @@ async fn test_unresolved_imports_survive_reload() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 4.1: display paths (what results and the UI round-trip) resolve
+/// through their root without a per-file scan, and unambiguously when two
+/// roots contain the same relative path.
+#[tokio::test]
+async fn test_find_file_id_by_display_path_across_roots() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let root_a = temp.path().join("alpha");
+    let root_b = temp.path().join("beta");
+    for r in [&root_a, &root_b] {
+        std::fs::create_dir_all(r.join("src"))?;
+    }
+    std::fs::write(root_a.join("src/main.rs"), "fn in_alpha() {}\n")?;
+    std::fs::write(root_b.join("src/main.rs"), "fn in_beta() {}\n")?;
+
+    let mut eng = SearchEngine::new();
+    eng.add_root_path(&root_a);
+    eng.add_root_path(&root_b);
+    eng.index_file(root_a.join("src/main.rs"))?;
+    eng.index_file(root_b.join("src/main.rs"))?;
+
+    let a = eng
+        .find_file_id("alpha/src/main.rs")
+        .expect("alpha display path");
+    let b = eng
+        .find_file_id("beta/src/main.rs")
+        .expect("beta display path");
+    assert_ne!(a, b);
+    assert_eq!(eng.get_file_path(a).as_deref(), Some("alpha/src/main.rs"));
+    assert_eq!(eng.get_file_path(b).as_deref(), Some("beta/src/main.rs"));
+    // Search results round-trip to the right file.
+    let hit = &eng.search("in_beta", 5)[0];
+    assert_eq!(eng.find_file_id(&hit.file_path), Some(b));
+    // Unknown display path under a known root is not found (no suffix guess).
+    assert_eq!(eng.find_file_id("beta/src/missing.rs"), None);
+    Ok(())
+}
+
 /// Roadmap 2.3: watcher paths are matched by canonical path, never by suffix.
 /// A non-canonical spelling of an indexed file must update it in place (no
 /// duplicate id, no trigram accumulation), and a different file whose path
