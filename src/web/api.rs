@@ -247,6 +247,13 @@ pub struct StatusResponse {
     pub total_content_bytes: u64,
 }
 
+/// Cached, per-generation part of the diagnostics response.
+#[derive(Debug, Clone)]
+pub struct DiagnosticsCache {
+    pub generation: u64,
+    pub files_by_extension: Vec<ExtensionBreakdown>,
+}
+
 /// Readiness: 200 once the index can serve results (a build/reconcile has
 /// completed, or an index is loaded and no build is running), 503 otherwise.
 /// `/api/health` stays a pure liveness check.
@@ -1105,7 +1112,10 @@ pub async fn diagnostics_handler(
     ApiQuery(params): ApiQuery<DiagnosticsQuery>,
 ) -> Result<Json<KeywordDiagnosticsResponse>, ApiError> {
     let sample_count = params.sample_count.clamp(1, 20);
+    let force_refresh = params.force_refresh;
     let engine = state.engine.clone();
+    let indexer_config = state.indexer_config.clone();
+    let diagnostics_cache = state.diagnostics_cache.clone();
 
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Use try_read to avoid blocking when a write lock is held during indexing.
@@ -1114,59 +1124,91 @@ pub async fn diagnostics_handler(
         // Get basic stats
         let stats = engine.get_stats();
 
-        // Build extension breakdown
-        let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
-        let mut all_file_paths: Vec<(u32, String)> = Vec::new();
-
-        for file_id in 0..engine.file_store.len() as u32 {
-            if let Some(mapped_file) = engine.file_store.get(file_id) {
-                let path_str = mapped_file.path.to_string_lossy().to_string();
-                all_file_paths.push((file_id, path_str.clone()));
-
-                let ext = mapped_file
-                    .path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("(none)")
-                    .to_lowercase();
-
-                let entry = ext_map.entry(ext).or_insert((0, 0));
-                entry.0 += 1;
-                // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
-                entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
-            }
-        }
-
-        // Convert to sorted extension breakdown
-        let mut files_by_extension: Vec<ExtensionBreakdown> = ext_map
-            .into_iter()
-            .map(|(ext, (count, bytes))| ExtensionBreakdown {
-                extension: ext,
-                count,
-                total_bytes: bytes,
-            })
-            .collect();
-        files_by_extension.sort_by_key(|f| std::cmp::Reverse(f.count));
-        files_by_extension.truncate(20); // Top 20 extensions
-
-        // Sample random files for display
-        let mut rng = rand::rng();
-        let sample_count_actual = sample_count.min(all_file_paths.len());
-        let sampled: Vec<&(u32, String)> = all_file_paths
-            .choose_multiple(&mut rng, sample_count_actual)
-            .collect();
-        let sample_files: Vec<String> = sampled.into_iter().map(|(_, p)| p.clone()).collect();
-
-        // Get config summary from progress state if available (we don't have direct config access here)
-        // For now, provide a minimal config summary
-        let config = ConfigSummary {
-            indexed_paths: vec!["(see server configuration)".to_string()],
-            include_extensions: vec![],
-            exclude_patterns: vec![],
-            max_file_size_bytes: 10 * 1024 * 1024, // default
-            index_path: None,
-            watch_enabled: false,
+        // Extension breakdown: an O(files) walk, cached per engine generation
+        // (every mutation bumps it) unless the client forces a refresh.
+        let generation = engine.generation();
+        let cached = if force_refresh {
+            None
+        } else {
+            diagnostics_cache
+                .lock()
+                .ok()
+                .and_then(|c| c.as_ref().filter(|c| c.generation == generation).cloned())
         };
+        let files_by_extension = match cached {
+            Some(c) => c.files_by_extension,
+            None => {
+                let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
+                for file_id in 0..engine.file_store.len() as u32 {
+                    if let Some(mapped_file) = engine.file_store.get(file_id) {
+                        let ext = mapped_file
+                            .path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("(none)")
+                            .to_lowercase();
+                        let entry = ext_map.entry(ext).or_insert((0, 0));
+                        entry.0 += 1;
+                        // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
+                        entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
+                    }
+                }
+                let mut v: Vec<ExtensionBreakdown> = ext_map
+                    .into_iter()
+                    .map(|(ext, (count, bytes))| ExtensionBreakdown {
+                        extension: ext,
+                        count,
+                        total_bytes: bytes,
+                    })
+                    .collect();
+                v.sort_by_key(|f| std::cmp::Reverse(f.count));
+                v.truncate(20); // Top 20 extensions
+                if let Ok(mut c) = diagnostics_cache.lock() {
+                    *c = Some(DiagnosticsCache {
+                        generation,
+                        files_by_extension: v.clone(),
+                    });
+                }
+                v
+            }
+        };
+
+        // Sample by id first; only the sampled files get a path String.
+        let mut rng = rand::rng();
+        let live_ids: Vec<u32> = (0..engine.file_store.len() as u32)
+            .filter(|&id| engine.file_store.get(id).is_some())
+            .collect();
+        let path_of = |id: u32| -> String {
+            engine
+                .file_store
+                .get(id)
+                .map(|f| f.path.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+        let sample_count_actual = sample_count.min(live_ids.len());
+        let sample_files: Vec<String> = live_ids
+            .choose_multiple(&mut rng, sample_count_actual)
+            .map(|&id| path_of(id))
+            .collect();
+        // Small pool for the self-tests below (they pick from it at random).
+        let all_file_paths: Vec<(u32, String)> = live_ids
+            .choose_multiple(&mut rng, 32.min(live_ids.len()))
+            .map(|&id| (id, path_of(id)))
+            .collect();
+
+        // Real configuration when the router was built by the server; the
+        // embedded/test router has none.
+        let config = indexer_config
+            .as_deref()
+            .map(ConfigSummary::from)
+            .unwrap_or_else(|| ConfigSummary {
+                indexed_paths: vec!["(not available: router built without config)".to_string()],
+                include_extensions: vec![],
+                exclude_patterns: vec![],
+                max_file_size_bytes: 0,
+                index_path: None,
+                watch_enabled: false,
+            });
 
         // Run self-tests
         let mut self_tests = Vec::new();

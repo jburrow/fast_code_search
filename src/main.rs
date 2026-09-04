@@ -194,7 +194,8 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Failed to bind Web UI server to {web_addr}"))?;
         info!(address = %web_addr, "Web UI available at http://{}", web_addr);
         let web_shutdown_rx = shutdown_rx.clone();
-        let router_options = web::RouterOptions::from(&config.server);
+        let mut router_options = web::RouterOptions::from(&config.server);
+        router_options.indexer_config = Some(config.indexer.clone());
         web_handle = Some(tokio::spawn(async move {
             let router = web::create_router_with_options(
                 web_engine,
@@ -338,9 +339,8 @@ async fn main() -> Result<()> {
     }
 
     // Create gRPC service with shared engine
-    let index_roots: Vec<PathBuf> = config.indexer.paths.iter().map(PathBuf::from).collect();
     let search_service =
-        server::create_server_with_engine_scoped(shared_engine.clone(), index_roots);
+        server::create_server_with_engine_config(shared_engine.clone(), &config.indexer);
 
     info!(version = env!("CARGO_PKG_VERSION"), address = %addr, "Fast Code Search Server starting");
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");

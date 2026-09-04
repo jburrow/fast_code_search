@@ -1089,6 +1089,9 @@ pub struct SearchEngine {
     recently_added_stems: Vec<String>,
     /// Recently compiled regexes (search-as-you-type resends the same pattern).
     regex_cache: std::sync::Mutex<RegexCache>,
+    /// Bumped on every mutation (batch merge, update, removal, load) so
+    /// derived views (diagnostics breakdowns) can be cached per generation.
+    generation: u64,
     /// Whether tree-sitter symbol extraction is enabled (default: true)
     pub enable_symbols: bool,
     /// Whether non-UTF-8 files are transcoded during single-file indexing (default: true)
@@ -1113,6 +1116,7 @@ impl SearchEngine {
             waiting_keys: FxHashMap::default(),
             recently_added_stems: Vec::new(),
             regex_cache: std::sync::Mutex::new(RegexCache::new(64)),
+            generation: 0,
             enable_symbols: true,
             transcode_non_utf8: true,
             max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
@@ -1211,6 +1215,7 @@ impl SearchEngine {
     /// Returns the number of files successfully indexed.
     pub fn index_batch(&mut self, batch: Vec<PreIndexedFile>) -> usize {
         let mut count = 0;
+        self.generation += 1;
 
         for pre_indexed in batch {
             // Add file to store - this also memory-maps it
@@ -1543,6 +1548,7 @@ impl SearchEngine {
         // Pre-compute file metadata for fast ranking
         // This enables ranking by file-level signals without reading file content
         self.compute_all_file_metadata();
+        self.generation += 1;
 
         tracing::info!(
             num_files = self.file_store.len(),
@@ -3112,6 +3118,7 @@ impl SearchEngine {
         // loaded index ranks by id order until the background finalize runs.
 
         self.compute_all_file_metadata();
+        self.generation += 1;
 
         tracing::info!(
             path = %path.display(),
@@ -3334,6 +3341,7 @@ impl SearchEngine {
         // loaded index ranks by id order until the background finalize runs.
 
         self.compute_all_file_metadata();
+        self.generation += 1;
 
         tracing::info!(
             path = %path.display(),
@@ -3440,6 +3448,7 @@ impl SearchEngine {
         // loaded index ranks by id order until the background finalize runs.
 
         self.compute_all_file_metadata();
+        self.generation += 1;
 
         tracing::info!(
             path = %path.display(),
@@ -3507,7 +3516,13 @@ impl SearchEngine {
 
         // Keep fast-mode ranking signals current for the touched file.
         self.refresh_file_metadata(id);
+        self.generation += 1;
         Ok(())
+    }
+
+    /// Monotonic mutation counter (see the `generation` field).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Remove a file from the index entirely (for delete / rename-away events).
@@ -3580,6 +3595,7 @@ impl SearchEngine {
     /// Everything except the trigram postings: symbols, metadata, dependency
     /// edges and the store slot (tombstoned so the id is never reused).
     fn forget_id(&mut self, id: u32) {
+        self.generation += 1;
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
             slot.clear();
         }

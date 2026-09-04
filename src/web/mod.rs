@@ -37,6 +37,11 @@ pub struct WebState {
     pub search_permits: Arc<tokio::sync::Semaphore>,
     /// Request counters and latency histogram for `/metrics`.
     pub metrics: Arc<metrics::Metrics>,
+    /// The indexer configuration, for `/api/diagnostics` (None in embedded /
+    /// test routers).
+    pub indexer_config: Option<Arc<crate::config::IndexerConfig>>,
+    /// Extension breakdown cached per engine generation.
+    pub diagnostics_cache: Arc<std::sync::Mutex<Option<api::DiagnosticsCache>>>,
 }
 
 /// Knobs for [`create_router_with_options`].
@@ -51,6 +56,8 @@ pub struct RouterOptions {
     /// Maximum request body size in bytes (the API is GET-only; this just
     /// closes the door on oversized bodies).
     pub body_limit: usize,
+    /// Indexer configuration to report on `/api/diagnostics`.
+    pub indexer_config: Option<crate::config::IndexerConfig>,
 }
 
 impl Default for RouterOptions {
@@ -60,6 +67,7 @@ impl Default for RouterOptions {
             max_concurrent_searches: 64,
             request_timeout: std::time::Duration::from_secs(30),
             body_limit: 64 * 1024,
+            indexer_config: None,
         }
     }
 }
@@ -119,6 +127,8 @@ pub fn create_router_with_options(
         static_dir,
         search_permits: Arc::new(tokio::sync::Semaphore::new(opts.max_concurrent_searches)),
         metrics: Arc::new(metrics::Metrics::new()),
+        indexer_config: opts.indexer_config.clone().map(Arc::new),
+        diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
     };
 
     let router = Router::new()

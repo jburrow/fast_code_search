@@ -370,16 +370,27 @@ async fn test_grpc_index_request() -> Result<()> {
 async fn test_grpc_index_rejects_paths_outside_scope() -> Result<()> {
     use fast_code_search::server::create_server_with_engine_scoped;
 
+    use fast_code_search::config::IndexerConfig;
     let inside = TempDir::new()?;
     let outside = TempDir::new()?;
     std::fs::write(inside.path().join("in.rs"), "fn inside_scope() {}\n")?;
+    std::fs::create_dir_all(inside.path().join("node_modules"))?;
+    std::fs::write(
+        inside.path().join("node_modules/dep.rs"),
+        "fn excluded_by_pattern() {}\n",
+    )?;
     std::fs::write(outside.path().join("out.rs"), "fn outside_scope() {}\n")?;
 
     let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
+    let config = IndexerConfig {
+        paths: vec![inside.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
     let service =
-        create_server_with_engine_scoped(engine.clone(), vec![inside.path().to_path_buf()]);
+        fast_code_search::server::create_server_with_engine_config(engine.clone(), &config);
+    let _ = create_server_with_engine_scoped; // still exported for library users
     tokio::spawn(async move {
         Server::builder()
             .add_service(service)
@@ -405,8 +416,16 @@ async fn test_grpc_index_rejects_paths_outside_scope() -> Result<()> {
         })
         .await?
         .into_inner();
-    assert_eq!(ok.files_indexed, 1);
+    assert_eq!(
+        ok.files_indexed, 1,
+        "node_modules is excluded by the default patterns"
+    );
     assert_eq!(engine.read().unwrap().search("inside_scope", 5).len(), 1);
+    assert!(engine
+        .read()
+        .unwrap()
+        .search("excluded_by_pattern", 5)
+        .is_empty());
     Ok(())
 }
 
