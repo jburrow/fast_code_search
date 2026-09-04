@@ -214,6 +214,31 @@ fn symbol_type_for(capture_kind: &str, node: tree_sitter::Node) -> SymbolType {
     }
 }
 
+/// Tags queries also describe *references* (`@reference.call` on every call
+/// expression, `@doc` comments, ...). Those patterns match far more nodes
+/// than the definitions do and we ignore them, so switch them off once at
+/// compile time: only patterns that capture some `@definition.*` stay.
+fn disable_non_definition_patterns(query: &mut tree_sitter::Query) {
+    let names = query.capture_names().to_vec();
+    let definition_captures: Vec<usize> = names
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.starts_with("definition."))
+        .map(|(i, _)| i)
+        .collect();
+    for pattern in 0..query.pattern_count() {
+        let quantifiers = query.capture_quantifiers(pattern);
+        let defines = definition_captures.iter().any(|&c| {
+            quantifiers
+                .get(c)
+                .is_some_and(|q| *q != tree_sitter::CaptureQuantifier::Zero)
+        });
+        if !defines {
+            query.disable_pattern(pattern);
+        }
+    }
+}
+
 /// Compile-once registry of the grammars' `tags.scm` queries.
 fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree_sitter::Query> {
     use std::sync::OnceLock;
@@ -222,7 +247,10 @@ fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree
             static $cell: OnceLock<Option<tree_sitter::Query>> = OnceLock::new();
             $cell
                 .get_or_init(|| match tree_sitter::Query::new(&$lang.into(), $src) {
-                    Ok(q) => Some(q),
+                    Ok(mut q) => {
+                        disable_non_definition_patterns(&mut q);
+                        Some(q)
+                    }
                     Err(e) => {
                         tracing::warn!(error = %e, "tags query failed to compile; using walker only");
                         None
