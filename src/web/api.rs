@@ -5,7 +5,7 @@ use crate::diagnostics::{
     self, ConfigSummary, DiagnosticsQuery, ExtensionBreakdown, HealthStatus,
     KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
 };
-use crate::search::{IndexingStatus, RankMode};
+use crate::search::{IndexingStatus, RankMode, SearchEngine};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -230,16 +230,7 @@ pub async fn search_handler(
 
         // Use try_read to avoid blocking when a write lock is held during indexing.
         // Blocking here would cause threads to pile up and exhaust the thread pool.
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         // Choose search method based on flags
         let (matches, ranking_info) = if symbols_only {
@@ -376,16 +367,7 @@ pub async fn search_handler(
 pub async fn stats_handler(State(state): State<WebState>) -> Result<Json<StatsResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let stats = engine.get_stats();
 
@@ -513,16 +495,7 @@ pub async fn dependents_handler(
 ) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -562,16 +535,7 @@ pub async fn dependencies_handler(
 ) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -627,16 +591,7 @@ pub async fn file_handler(
 ) -> Result<Json<FileResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -712,16 +667,7 @@ pub async fn context_handler(
 ) -> Result<Json<ContextResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -802,6 +748,28 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
 }
 
 /// Handle a WebSocket connection for progress updates
+/// Acquire the engine read lock without blocking a worker thread.
+///
+/// `WouldBlock` (a writer holds the lock during indexing) becomes a 503 with
+/// `Retry-After`. A *poisoned* lock is recovered rather than turned into a
+/// permanent 500: every indexing path is wrapped in `catch_unwind`, so poison
+/// only means some other thread panicked, not that the index is unusable.
+fn try_read_engine(
+    engine: &std::sync::RwLock<SearchEngine>,
+) -> Result<std::sync::RwLockReadGuard<'_, SearchEngine>, (StatusCode, String)> {
+    match engine.try_read() {
+        Ok(guard) => Ok(guard),
+        Err(std::sync::TryLockError::WouldBlock) => Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Index is currently being updated, please try again shortly".to_string(),
+        )),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            tracing::error!("Search engine lock was poisoned; recovering for read");
+            Ok(poisoned.into_inner())
+        }
+    }
+}
+
 async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -943,16 +911,7 @@ pub async fn diagnostics_handler(
 
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Use try_read to avoid blocking when a write lock is held during indexing.
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         // Get basic stats
         let stats = engine.get_stats();

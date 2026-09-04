@@ -235,14 +235,18 @@ impl CodeSearch for CodeSearchService {
         let engine_arc = std::sync::Arc::clone(&self.engine);
         let matches = tokio::task::spawn_blocking(move || {
             // Use try_read to avoid blocking when a write lock is held during indexing.
-            let engine = engine_arc.try_read().map_err(|e| match e {
-                std::sync::TryLockError::WouldBlock => {
-                    Status::unavailable("Index is currently being updated, please retry shortly")
+            let engine = match engine_arc.try_read() {
+                Ok(guard) => guard,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    return Err(Status::unavailable(
+                        "Index is currently being updated, please retry shortly",
+                    ));
                 }
-                std::sync::TryLockError::Poisoned(e) => {
-                    Status::internal(format!("Lock error: {}", e))
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    warn!("Search engine lock was poisoned; recovering for search");
+                    poisoned.into_inner()
                 }
-            })?;
+            };
 
             // Choose search method based on flags
             let matches = if symbols_only {

@@ -119,6 +119,16 @@ async fn main() -> Result<()> {
 
     let addr = config.server.address.parse()?;
 
+    // Build the global rayon pool up front with 8 MB stacks. tree-sitter
+    // recursion runs on this pool during indexing; if a search (par_iter) got
+    // there first it would install the default 2 MB stacks instead.
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .stack_size(8 * 1024 * 1024)
+        .build_global()
+    {
+        tracing::warn!(error = %e, "Global rayon pool already initialized");
+    }
+
     // Create shared engine (empty initially, will be indexed in background)
     // Using RwLock allows concurrent read access during searches while only blocking for writes (indexing)
     let shared_engine = std::sync::Arc::new(std::sync::RwLock::new(
@@ -229,7 +239,12 @@ async fn main() -> Result<()> {
         info!("Starting file watcher for incremental indexing");
 
         let watch_shutdown = shutdown.clone();
-        watcher_handle = Some(std::thread::spawn(move || {
+        // Same 8 MB stack as the rayon workers: update_file runs tree-sitter on
+        // this thread, and a stack overflow is an abort, not a panic.
+        let watcher_thread = std::thread::Builder::new()
+            .name("file-watcher".into())
+            .stack_size(8 * 1024 * 1024);
+        let spawned = watcher_thread.spawn(move || {
             let watcher_config = WatcherConfig {
                 paths: watch_paths,
                 exclude_patterns: watch_exclude,
@@ -252,17 +267,19 @@ async fn main() -> Result<()> {
                         match watcher.recv_timeout(std::time::Duration::from_secs(1)) {
                             Some(FileChange::Modified(path)) => {
                                 tracing::debug!(path = %path.display(), "File modified, updating index");
-                                let mut update_ok = false;
-                                if let Ok(mut engine) = watch_engine.write() {
+                                let update_ok = with_engine_write(&watch_engine, |engine| {
                                     match engine.update_file(&path) {
-                                        Ok(()) => update_ok = true,
-                                        Err(e) => tracing::warn!(
-                                            path = %path.display(),
-                                            error = %e,
-                                            "Failed to update file in index"
-                                        ),
+                                        Ok(()) => true,
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                path = %path.display(),
+                                                error = %e,
+                                                "Failed to update file in index"
+                                            );
+                                            false
+                                        }
                                     }
-                                }
+                                });
                                 if update_ok {
                                     watcher_updates_total += 1;
                                     save_on_watcher_update(
@@ -278,19 +295,21 @@ async fn main() -> Result<()> {
                                     to = %to.display(),
                                     "File renamed: removing old path and indexing new path"
                                 );
-                                let mut update_ok = false;
-                                if let Ok(mut engine) = watch_engine.write() {
+                                let update_ok = with_engine_write(&watch_engine, |engine| {
                                     // Drop the old path's entry, then index the new path.
                                     engine.remove_file(&from);
                                     match engine.update_file(&to) {
-                                        Ok(()) => update_ok = true,
-                                        Err(e) => tracing::warn!(
-                                            path = %to.display(),
-                                            error = %e,
-                                            "Failed to index renamed file"
-                                        ),
+                                        Ok(()) => true,
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                path = %to.display(),
+                                                error = %e,
+                                                "Failed to index renamed file"
+                                            );
+                                            false
+                                        }
                                     }
-                                }
+                                });
                                 if update_ok {
                                     watcher_updates_total += 1;
                                     save_on_watcher_update(
@@ -302,10 +321,8 @@ async fn main() -> Result<()> {
                             }
                             Some(FileChange::Deleted(path)) => {
                                 tracing::debug!(path = %path.display(), "File deleted, removing from index");
-                                let mut removed = false;
-                                if let Ok(mut engine) = watch_engine.write() {
-                                    removed = engine.remove_file(&path);
-                                }
+                                let removed =
+                                    with_engine_write(&watch_engine, |engine| engine.remove_file(&path));
                                 if removed {
                                     watcher_updates_total += 1;
                                     save_on_watcher_update(
@@ -331,7 +348,11 @@ async fn main() -> Result<()> {
                     );
                 }
             }
-        }));
+        });
+        match spawned {
+            Ok(h) => watcher_handle = Some(h),
+            Err(e) => tracing::error!(error = %e, "Failed to spawn file watcher thread"),
+        }
     }
 
     // Create gRPC service with shared engine
@@ -375,6 +396,31 @@ async fn main() -> Result<()> {
 
     serve_result?;
     Ok(())
+}
+
+/// Run `f` under the engine write lock from the watcher thread.
+///
+/// Recovers from a poisoned lock (a panic elsewhere must not disable the
+/// watcher forever) and catches panics inside `f` so one pathological file
+/// cannot poison the lock for every search. Returns `false` if `f` panicked.
+fn with_engine_write<F>(
+    engine: &std::sync::Arc<std::sync::RwLock<fast_code_search::search::SearchEngine>>,
+    f: F,
+) -> bool
+where
+    F: FnOnce(&mut fast_code_search::search::SearchEngine) -> bool,
+{
+    let mut guard = engine.write().unwrap_or_else(|poisoned| {
+        tracing::error!("Search engine lock was poisoned; recovering in file watcher");
+        poisoned.into_inner()
+    });
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut guard))) {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::error!("File watcher update panicked; the file was skipped");
+            false
+        }
+    }
 }
 
 /// Resolve when SIGINT (Ctrl+C) or, on Unix, SIGTERM is received.
