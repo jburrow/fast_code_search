@@ -713,7 +713,11 @@ set, never to the corpus.
 
 Goal: make the README's "multi-gigabyte" claim true and measured.
 
-- **6.1 Persistence format v4.** Sectioned, mmap-able layout: header (magic,
+- [~] **6.1 Persistence format v4.** PARTIAL (commit `b573c5f`): nanosecond mtimes, byte-encoded
+  paths, run-optimized bitmaps, magic FCSIDX03 / v5 with an older-magic
+  rejection test. Still open: the sectioned mmap-able layout (lazy load, no
+  double materialization) and a golden-file fixture.
+  Original text: Sectioned, mmap-able layout: header (magic,
   version, CRC), file table (paths as bytes, nanosecond mtime, size), trigram
   directory, bitmap region. Lazy load; no double materialisation on save or
   load; `optimize()` bitmaps before write; one version mechanism; drop
@@ -759,16 +763,19 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
 
 Each of these needs only the candidate-set plumbing that Phase 3 creates:
 
-- Case-sensitive toggle (case-sensitive verify path; candidates unchanged).
-- Whole-word (`\b` check post-match).
-- Multi-term AND: intersect per-term trigram bitmaps, then require all terms
-  on the line or in the file.
-- `file:` / `lang:` / `-term` syntax parsed into `PathFilter` plus exclusion
-  terms.
-- Multi-line regex (`\n`, `(?s)`) via whole-content matching with line
+- [x] Case-sensitive toggle — DONE (`case:yes` / `case=true`; exact `memmem`
+  verification, candidates from the lowercased index).
+- [x] Whole-word — DONE (`word:yes` / `word=true`; boundary check that
+  understands multi-byte letters).
+- [x] Multi-term AND — DONE (intersection of per-term trigram sets; all
+  terms must be in the file, lines matching any term are returned).
+- [x] `file:` / `lang:` / `-term` syntax — DONE (`search::query_syntax`,
+  merged with the explicit include/exclude parameters; REST and gRPC).
+- [ ] Multi-line regex (`\n`, `(?s)`) via whole-content matching with line
   resolution.
-- Symbol-reference results (`SYMBOL_REFERENCE`) once `tags.scm` provides
-  reference captures.
+- [ ] Symbol-reference results (`SYMBOL_REFERENCE`): the tags queries carry
+  `@reference.*` captures (currently disabled for speed), so this is now a
+  matter of capturing and persisting them.
 
 ### Cross-cutting: structure and documentation (spread across phases)
 

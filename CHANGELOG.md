@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full line) and `match_column` (0-based character column) on REST and gRPC.
 
 ### Added
+- Query syntax for plain-text searches: `"quoted phrases"`, several AND-ed
+  terms, `-term`, `file:` / `-file:`, `lang:` / `-lang:`, `case:yes`,
+  `word:yes` (REST `case` / `word` parameters and gRPC `case_sensitive` /
+  `whole_word` override the in-query switches).
 - `/api/ready` (readiness, distinct from `/api/health` liveness), `/metrics`
   (Prometheus text: search counters by outcome, latency histogram, index gauges)
   and the standard `grpc.health.v1` service.
