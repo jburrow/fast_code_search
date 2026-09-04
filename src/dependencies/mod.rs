@@ -113,52 +113,258 @@ impl DependencyIndex {
         Some(to_file_id)
     }
 
-    /// Resolve an import path relative to the importing file.
-    /// This method is thread-safe and only requires &self.
+    /// Resolve an import path to an indexed file, using the *importing* file's
+    /// language (by extension) to pick the resolution rules.
+    ///
+    /// Only structural resolutions are attempted: Rust module paths against
+    /// the crate root / module directory, Python relative and package
+    /// imports, JS/TS relative paths (with extension and `index` probing) and
+    /// `@/`-style source-root aliases. Bare package names (`react`, `os`,
+    /// `serde`) resolve to `None`; there is deliberately no "any file with that
+    /// name anywhere in the repo" fallback, which produced false edges that
+    /// inflated the "heavily imported" ranking boost on unrelated files.
+    ///
+    /// This method is thread-safe and only requires `&self`.
     pub fn resolve_import_path(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
-        let parent = from_file.parent()?;
+        let ext = from_file
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "rs" => self.resolve_rust(from_file, import_path),
+            "py" | "pyi" | "pyw" => self.resolve_python(from_file, import_path),
+            "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" => {
+                self.resolve_js(from_file, import_path)
+            }
+            _ => None,
+        }
+    }
 
-        // Handle relative imports
-        if import_path.starts_with('.') {
-            let resolved = parent.join(import_path);
-            // Try with common extensions
-            for ext in &["", ".rs", ".py", ".js", ".ts", ".jsx", ".tsx"] {
-                let with_ext = if ext.is_empty() {
-                    resolved.clone()
-                } else {
-                    resolved.with_extension(&ext[1..])
-                };
-                if let Ok(canonical) = with_ext.canonicalize() {
-                    if self.path_to_id.contains_key(&canonical) {
-                        return Some(canonical);
+    /// Is `candidate` an indexed file? Compares the canonical form (the
+    /// store's key) and falls back to the path as given for non-canonical
+    /// registrations.
+    fn indexed(&self, candidate: &Path) -> Option<PathBuf> {
+        if self.path_to_id.contains_key(candidate) {
+            return Some(candidate.to_path_buf());
+        }
+        let canonical = candidate.canonicalize().ok()?;
+        if self.path_to_id.contains_key(&canonical) {
+            return Some(canonical);
+        }
+        None
+    }
+
+    // ---------------------------------------------------------------- Rust
+
+    /// Directory that holds the *child modules* of `file`: `foo/` for
+    /// `foo.rs`, the containing directory for `mod.rs` / `lib.rs` / `main.rs`
+    /// (and any other crate-root style file such as `build.rs` or a bin).
+    fn rust_module_dir(file: &Path) -> Option<PathBuf> {
+        let parent = file.parent()?;
+        let stem = file.file_stem()?.to_str()?;
+        Some(match stem {
+            "mod" | "lib" | "main" => parent.to_path_buf(),
+            _ => parent.join(stem),
+        })
+    }
+
+    /// `src/` of the nearest enclosing crate (directory with `Cargo.toml`),
+    /// falling back to the file's own directory.
+    fn rust_crate_src(file: &Path) -> PathBuf {
+        let mut dir = file.parent();
+        while let Some(d) = dir {
+            if d.join("Cargo.toml").is_file() {
+                let src = d.join("src");
+                return if src.is_dir() { src } else { d.to_path_buf() };
+            }
+            dir = d.parent();
+        }
+        file.parent().map(Path::to_path_buf).unwrap_or_default()
+    }
+
+    fn resolve_rust(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
+        // `use a::b::{c, d};` / `use a::*;` -> drop the group / glob tail.
+        let cleaned = import_path
+            .split('{')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches("::")
+            .trim_end_matches('*')
+            .trim_end_matches("::");
+        // `use x as y` -> x
+        let cleaned = cleaned.split_whitespace().next().unwrap_or("");
+        let mut segments: Vec<&str> = cleaned
+            .split("::")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return None;
+        }
+
+        // Base directory the remaining segments are resolved against.
+        let base = match segments[0] {
+            "crate" => {
+                segments.remove(0);
+                Self::rust_crate_src(from_file)
+            }
+            "self" => {
+                segments.remove(0);
+                Self::rust_module_dir(from_file)?
+            }
+            "super" => {
+                let mut dir = Self::rust_module_dir(from_file)?;
+                while segments.first() == Some(&"super") {
+                    segments.remove(0);
+                    dir = dir.parent()?.to_path_buf();
+                }
+                dir
+            }
+            // `mod foo;` or `use foo::bar` naming a sibling module — or an
+            // external crate, which simply fails to resolve below.
+            _ => Self::rust_module_dir(from_file)?,
+        };
+        if segments.is_empty() {
+            // `use crate;` / `use super::*;` etc. — the module file itself.
+            let candidates = [base.join("mod.rs"), base.with_extension("rs")];
+            return candidates.iter().find_map(|c| self.indexed(c));
+        }
+        // Try the longest module prefix first: `crate::a::b::Item` is the
+        // file `a/b.rs` (or `a/b/mod.rs`); `Item` is a symbol, not a file.
+        for k in (1..=segments.len()).rev() {
+            let mut dir = base.clone();
+            for seg in &segments[..k - 1] {
+                dir.push(seg);
+            }
+            let last = segments[k - 1];
+            let as_file = dir.join(format!("{last}.rs"));
+            let as_mod = dir.join(last).join("mod.rs");
+            if let Some(p) = self.indexed(&as_file).or_else(|| self.indexed(&as_mod)) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    // -------------------------------------------------------------- Python
+
+    fn resolve_python(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
+        let dots = import_path.chars().take_while(|&c| c == '.').count();
+        let rest = &import_path[dots..];
+        let segments: Vec<&str> = rest.split('.').filter(|s| !s.is_empty()).collect();
+        let dir = from_file.parent()?;
+
+        if dots > 0 {
+            // `.foo` = sibling package/module, `..foo` = parent package, ...
+            let mut base = dir.to_path_buf();
+            for _ in 1..dots {
+                base = base.parent()?.to_path_buf();
+            }
+            return self.python_candidates(&base, &segments);
+        }
+
+        // Absolute import: the nearest enclosing directory (walking up a
+        // bounded number of levels) that contains the package/module wins.
+        // Stdlib and site-packages names find nothing and resolve to None.
+        let mut base = Some(dir);
+        for _ in 0..8 {
+            let Some(b) = base else { break };
+            if let Some(found) = self.python_candidates(b, &segments) {
+                return Some(found);
+            }
+            base = b.parent();
+        }
+        None
+    }
+
+    /// `a.b.c` under `base` -> `a/b/c.py`, `a/b/c/__init__.py`, and for
+    /// `from a.b import name` where `name` is a symbol, `a/b.py` / `a/b/__init__.py`.
+    fn python_candidates(&self, base: &Path, segments: &[&str]) -> Option<PathBuf> {
+        if segments.is_empty() {
+            return self.indexed(&base.join("__init__.py"));
+        }
+        for k in (1..=segments.len()).rev() {
+            let mut dir = base.to_path_buf();
+            for seg in &segments[..k - 1] {
+                dir.push(seg);
+            }
+            let last = segments[k - 1];
+            let as_module = dir.join(format!("{last}.py"));
+            let as_package = dir.join(last).join("__init__.py");
+            if let Some(p) = self
+                .indexed(&as_module)
+                .or_else(|| self.indexed(&as_package))
+            {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    // --------------------------------------------------------------- JS/TS
+
+    const JS_EXTENSIONS: [&'static str; 10] = [
+        "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "d.ts", "json",
+    ];
+
+    fn resolve_js(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
+        let dir = from_file.parent()?;
+        let spec = import_path.trim();
+        if spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".." {
+            return self.js_candidates(&dir.join(spec));
+        }
+        // Source-root aliases (`@/x`, `~/x`): nearest ancestor with a
+        // package.json or tsconfig.json, then `src/x` or `x` under it.
+        if let Some(rest) = spec.strip_prefix("@/").or_else(|| spec.strip_prefix("~/")) {
+            let mut d = Some(dir);
+            while let Some(root) = d {
+                if root.join("package.json").is_file() || root.join("tsconfig.json").is_file() {
+                    return self
+                        .js_candidates(&root.join("src").join(rest))
+                        .or_else(|| self.js_candidates(&root.join(rest)));
+                }
+                d = root.parent();
+            }
+            return None;
+        }
+        // Bare package specifiers (`react`, `lodash/merge`, `@scope/pkg`) are
+        // external: never guess a same-named local file.
+        None
+    }
+
+    /// Probe `p`, `p.<ext>`, `p` with `.js` swapped for `.ts`/`.tsx`, and
+    /// `p/index.<ext>`.
+    fn js_candidates(&self, p: &Path) -> Option<PathBuf> {
+        if p.extension().is_some() {
+            if let Some(found) = self.indexed(p) {
+                return Some(found);
+            }
+            // TS convention: `import './foo.js'` refers to `foo.ts` on disk.
+            if let Some(stem) = p.to_str().and_then(|s| {
+                s.strip_suffix(".js")
+                    .or_else(|| s.strip_suffix(".jsx"))
+                    .or_else(|| s.strip_suffix(".mjs"))
+            }) {
+                for ext in ["ts", "tsx", "mts"] {
+                    if let Some(found) = self.indexed(Path::new(&format!("{stem}.{ext}"))) {
+                        return Some(found);
                     }
                 }
             }
         }
-
-        // For non-relative imports, use the filename inverted index (O(1) lookup)
-        // instead of scanning all paths (O(n))
-        let import_filename = Path::new(import_path)
-            .file_name()
-            .and_then(|s| s.to_str())?;
-
-        // Try exact filename match first
-        if let Some(paths) = self.filename_to_paths.get(import_filename) {
-            if let Some(path) = paths.first() {
-                return Some(path.clone());
+        let base = p.to_str()?;
+        for ext in Self::JS_EXTENSIONS {
+            if let Some(found) = self.indexed(Path::new(&format!("{base}.{ext}"))) {
+                return Some(found);
             }
         }
-
-        // Try with common extensions appended
-        for ext in &[".rs", ".py", ".js", ".ts", ".jsx", ".tsx"] {
-            let with_ext = format!("{}{}", import_filename, ext);
-            if let Some(paths) = self.filename_to_paths.get(&with_ext) {
-                if let Some(path) = paths.first() {
-                    return Some(path.clone());
-                }
+        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+            if let Some(found) = self.indexed(&p.join(format!("index.{ext}"))) {
+                return Some(found);
             }
         }
-
         None
     }
 
@@ -283,6 +489,182 @@ impl DependencyIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn setup(files: &[(&str, &str)]) -> (tempfile::TempDir, DependencyIndex) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut idx = DependencyIndex::new();
+        for (i, (rel, body)) in files.iter().enumerate() {
+            let p = temp.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+            idx.register_file(i as u32, &p);
+        }
+        (temp, idx)
+    }
+
+    fn id_of(temp: &tempfile::TempDir, idx: &DependencyIndex, rel: &str) -> Option<u32> {
+        idx.get_file_id(&temp.path().join(rel).canonicalize().unwrap())
+    }
+
+    /// Roadmap 2.5: Rust `use crate::…`, `super::`, `self::` and `mod foo;`
+    /// resolve against the crate root / module directory; `foo/mod.rs` is
+    /// tried; external crates resolve to nothing.
+    #[test]
+    fn test_resolve_rust_module_paths() {
+        let (temp, idx) = setup(&[
+            ("Cargo.toml", "[package]\n"),
+            ("src/main.rs", "mod net; mod util;\n"),
+            ("src/util.rs", ""),
+            ("src/net/mod.rs", "mod tcp;\n"),
+            (
+                "src/net/tcp.rs",
+                "use super::udp; use crate::util::helper;\n",
+            ),
+            ("src/net/udp.rs", ""),
+            ("other/util.rs", "// decoy with the same name\n"),
+        ]);
+        let f = |rel: &str| temp.path().join(rel);
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&f(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(r("src/main.rs", "util"), id_of(&temp, &idx, "src/util.rs"));
+        assert_eq!(
+            r("src/main.rs", "net"),
+            id_of(&temp, &idx, "src/net/mod.rs")
+        );
+        assert_eq!(
+            r("src/net/mod.rs", "tcp"),
+            id_of(&temp, &idx, "src/net/tcp.rs")
+        );
+        assert_eq!(
+            r("src/net/tcp.rs", "super::udp"),
+            id_of(&temp, &idx, "src/net/udp.rs")
+        );
+        assert_eq!(
+            r("src/net/tcp.rs", "crate::util::helper"),
+            id_of(&temp, &idx, "src/util.rs"),
+            "crate:: path with a trailing symbol segment"
+        );
+        assert_eq!(
+            r("src/net/tcp.rs", "crate::net::{tcp, udp}"),
+            id_of(&temp, &idx, "src/net/mod.rs")
+        );
+        assert_eq!(
+            r("src/net/tcp.rs", "serde::Deserialize"),
+            None,
+            "external crate"
+        );
+        assert_eq!(r("src/net/tcp.rs", "std::collections::HashMap"), None);
+        // The decoy `other/util.rs` must never be picked for `mod util;`.
+        assert_ne!(
+            r("src/main.rs", "util"),
+            id_of(&temp, &idx, "other/util.rs")
+        );
+    }
+
+    /// Roadmap 2.5: Python relative imports walk parent packages, dotted
+    /// imports are directories, packages resolve to `__init__.py`, and
+    /// stdlib names resolve to nothing.
+    #[test]
+    fn test_resolve_python_imports() {
+        let (temp, idx) = setup(&[
+            ("pkg/__init__.py", ""),
+            ("pkg/core.py", ""),
+            ("pkg/sub/__init__.py", ""),
+            (
+                "pkg/sub/leaf.py",
+                "from ..core import x; from . import sibling; import pkg.core\n",
+            ),
+            ("pkg/sub/sibling.py", ""),
+            (
+                "scripts/run.py",
+                "import pkg.sub.leaf; from pkg import core\n",
+            ),
+        ]);
+        let f = |rel: &str| temp.path().join(rel);
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&f(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("pkg/sub/leaf.py", "..core"),
+            id_of(&temp, &idx, "pkg/core.py")
+        );
+        assert_eq!(
+            r("pkg/sub/leaf.py", ".sibling"),
+            id_of(&temp, &idx, "pkg/sub/sibling.py")
+        );
+        assert_eq!(
+            r("pkg/sub/leaf.py", "."),
+            id_of(&temp, &idx, "pkg/sub/__init__.py")
+        );
+        assert_eq!(
+            r("pkg/sub/leaf.py", "pkg.core"),
+            id_of(&temp, &idx, "pkg/core.py")
+        );
+        assert_eq!(
+            r("scripts/run.py", "pkg.sub.leaf"),
+            id_of(&temp, &idx, "pkg/sub/leaf.py")
+        );
+        assert_eq!(
+            r("scripts/run.py", "pkg.sub"),
+            id_of(&temp, &idx, "pkg/sub/__init__.py")
+        );
+        assert_eq!(
+            r("scripts/run.py", "pkg"),
+            id_of(&temp, &idx, "pkg/__init__.py")
+        );
+        assert_eq!(r("scripts/run.py", "os"), None, "stdlib");
+        assert_eq!(r("scripts/run.py", "os.path"), None);
+    }
+
+    /// Roadmap 2.5: JS/TS relative imports probe extensions, `.js` -> `.ts`,
+    /// and `index.*`; `@/` aliases resolve against the package root; bare
+    /// package names never bind to a same-named local file.
+    #[test]
+    fn test_resolve_js_imports() {
+        let (temp, idx) = setup(&[
+            ("package.json", "{}"),
+            ("src/app.tsx", ""),
+            ("src/util/index.ts", ""),
+            ("src/util/merge.ts", ""),
+            ("src/lib/helpers.ts", ""),
+            ("src/components/Button.tsx", ""),
+        ]);
+        let f = |rel: &str| temp.path().join(rel);
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&f(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("src/app.tsx", "./util"),
+            id_of(&temp, &idx, "src/util/index.ts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./util/merge"),
+            id_of(&temp, &idx, "src/util/merge.ts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./lib/helpers.js"),
+            id_of(&temp, &idx, "src/lib/helpers.ts")
+        );
+        assert_eq!(
+            r("src/components/Button.tsx", "../lib/helpers"),
+            id_of(&temp, &idx, "src/lib/helpers.ts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "@/components/Button"),
+            id_of(&temp, &idx, "src/components/Button.tsx")
+        );
+        assert_eq!(r("src/app.tsx", "react"), None, "bare package");
+        assert_eq!(
+            r("src/app.tsx", "lodash/merge"),
+            None,
+            "must not bind to the local merge.ts"
+        );
+        assert_eq!(r("src/app.tsx", "./missing"), None);
+    }
 
     /// Roadmap 1.11: re-registering an id (watcher update path) must not
     /// accumulate duplicate filename entries, and removal must prune every

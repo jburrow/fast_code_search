@@ -690,7 +690,38 @@ impl SymbolExtractor {
 
             for child in current.children(&mut cursor) {
                 match child.kind() {
-                    "import_statement" | "import_from_statement" => {
+                    // `import a, b as c` — one `name` field per imported module
+                    // (a `dotted_name` or an `aliased_import` wrapping one).
+                    "import_statement" => {
+                        let mut import_cursor = child.walk();
+                        let mut found = false;
+                        for part in child.children_by_field_name("name", &mut import_cursor) {
+                            let module_node = if part.kind() == "aliased_import" {
+                                part.child_by_field_name("name")
+                            } else {
+                                Some(part)
+                            };
+                            if let Some(module_node) = module_node {
+                                found = true;
+                                imports.push(ImportStatement {
+                                    path: source[module_node.byte_range()].to_string(),
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Python,
+                                });
+                            }
+                        }
+                        if !found {
+                            let text = &source[child.byte_range()];
+                            if let Some(path) = Self::parse_python_import_text(text) {
+                                imports.push(ImportStatement {
+                                    path,
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Python,
+                                });
+                            }
+                        }
+                    }
+                    "import_from_statement" => {
                         // Get the module name from the import
                         if let Some(module_node) = child.child_by_field_name("module_name") {
                             let module = &source[module_node.byte_range()];
@@ -752,12 +783,12 @@ impl SymbolExtractor {
 
             for child in current.children(&mut cursor) {
                 match child.kind() {
-                    "import_statement" => {
-                        // import { foo } from './bar'
+                    // `import x from './bar'` and re-exports `export { x } from './bar'`
+                    // (barrel index files) both carry a `source` field.
+                    "import_statement" | "export_statement" => {
                         if let Some(source_node) = child.child_by_field_name("source") {
                             let path = &source[source_node.byte_range()];
-                            // Remove quotes
-                            let path = path.trim_matches(|c| c == '"' || c == '\'');
+                            let path = path.trim_matches(|c| c == '"' || c == '\'' || c == '`');
                             imports.push(ImportStatement {
                                 path: path.to_string(),
                                 line: child.start_position().row,
@@ -766,16 +797,17 @@ impl SymbolExtractor {
                         }
                     }
                     "call_expression" => {
-                        // require('./foo')
+                        // require('./foo') and dynamic import('./foo')
                         if let Some(func_node) = child.child_by_field_name("function") {
                             let func_name = &source[func_node.byte_range()];
-                            if func_name == "require" {
+                            if func_name == "require" || func_name == "import" {
                                 if let Some(args_node) = child.child_by_field_name("arguments") {
                                     let args_text = &source[args_node.byte_range()];
                                     let path = args_text
                                         .trim_matches(|c| c == '(' || c == ')')
-                                        .trim_matches(|c| c == '"' || c == '\'');
-                                    if !path.is_empty() {
+                                        .trim()
+                                        .trim_matches(|c| c == '"' || c == '\'' || c == '`');
+                                    if !path.is_empty() && !path.contains("${") {
                                         imports.push(ImportStatement {
                                             path: path.to_string(),
                                             line: child.start_position().row,
@@ -1025,6 +1057,33 @@ const { a, b } = obj;
             (1, 7),
             "Rust fn line/col from name node: {f:?}"
         );
+    }
+
+    /// Roadmap 2.5: import extraction covers `import a, b as c`, re-exports,
+    /// dynamic `import()` and backtick `require`.
+    #[test]
+    fn test_python_and_js_import_extraction() {
+        let py = "import os, sys as system\nfrom .rel import thing\nfrom pkg.mod import x\n";
+        let imports = SymbolExtractor::new(Path::new("a.py"))
+            .extract_imports(py)
+            .unwrap();
+        let paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths, vec!["os", "sys", ".rel", "pkg.mod"], "{paths:?}");
+
+        let js = concat!(
+            "import a from './a';\n",
+            "export { b } from './b';\n",
+            "export * from './c';\n",
+            "const d = require(`./d`);\n",
+            "const e = await import('./e');\n",
+            "const bad = require(`./${name}`);\n",
+        );
+        let imports = SymbolExtractor::new(Path::new("index.js"))
+            .extract_imports(js)
+            .unwrap();
+        let mut paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["./a", "./b", "./c", "./d", "./e"], "{paths:?}");
     }
 
     #[test]
