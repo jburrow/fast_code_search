@@ -42,7 +42,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every result carries `line_match_start` / `line_match_end` (byte offsets into
   the full line) and `match_column` (0-based character column) on REST and gRPC.
 
+### Added
+- `/api/ready` (readiness, distinct from `/api/health` liveness), `/metrics`
+  (Prometheus text: search counters by outcome, latency histogram, index gauges)
+  and the standard `grpc.health.v1` service.
+- Config: `server.cors_origins`, `server.max_concurrent_searches`,
+  `server.request_timeout_secs`, `indexer.respect_gitignore`; `--web-address`.
+- gRPC `SearchRequest.offset` / `rank` / `deadline_ms`; results carry
+  `dependency_count`.
+
 ### Changed
+- Unknown config keys are rejected and the configuration is validated at
+  startup (addresses, limits, index path directory); `OTEL_SDK_DISABLED=true` can
+  no longer be overridden.
+- REST requests time out (default 30 s), bodies are capped, and searches beyond
+  `max_concurrent_searches` get 503 + Retry-After instead of queueing; gRPC has
+  a per-request timeout and per-connection concurrency limit.
+- gRPC `max_results = 0` now means the default page of 50 (was clamped to 1); the
+  `Index` RPC applies the indexer's eligibility rules and no longer holds the
+  engine lock for its whole walk.
+- `/api/diagnostics` reports the real indexer configuration and caches its
+  extension breakdown per index generation; malformed query parameters return the
+  JSON error envelope; display paths resolve through their root instead of a
+  per-file suffix scan.
 - Every query's work is bounded by a match budget (8× the page, minimum 512) and
   an optional deadline; `rank=full` no longer materializes every match of every
   candidate before truncating.

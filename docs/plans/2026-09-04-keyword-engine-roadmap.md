@@ -635,21 +635,38 @@ set, never to the corpus.
   `/metrics` (Prometheus text, hand-rendered). Test `test_http_ready_and_metrics`. `/api/ready` (200 only when the index is
   loaded or the build completed), `tonic-health`, Prometheus `/metrics`
   (search latency histogram, results, 503s, index size, file count).
-- **4.5 Config hygiene.** `#[serde(deny_unknown_fields)]`, `Config::validate()`
+- [x] **4.5 Config hygiene.** DONE (commit `488befb`): `deny_unknown_fields`,
+  `Config::validate()` at startup, `--web-address`, `OTEL_SDK_DISABLED` final,
+  RUST_LOG-overrides-verbose warning, DEPLOYMENT.md env vars corrected. Three
+  config tests.
+  Original text: `#[serde(deny_unknown_fields)]`, `Config::validate()`
   (paths exist, addresses parse, `batch_size > 0`, `index_path` parent
   writable), `--web-address`; fix or remove the phantom env vars in
   DEPLOYMENT.md; `-v` sets the default filter and logs when `RUST_LOG`
   overrides it; `OTEL_SDK_DISABLED=true` is final.
-- **4.6 Diagnostics.** Plumb `IndexerConfig` into `WebState`; use
+- [x] **4.6 Diagnostics.** DONE: `RouterOptions.indexer_config` →
+  `ConfigSummary::from`; breakdown cached per engine generation; sampling by
+  id. Test `test_http_diagnostics_reports_real_config`.
+  Original text: Plumb `IndexerConfig` into `WebState`; use
   `ConfigSummary::from`; cache the extension breakdown per index generation;
   honour `force_refresh`.
-- **4.7 gRPC `Index`.** If kept, route through the background indexer and
+- [x] **4.7 gRPC `Index`.** DONE: kept, but discovery runs without the lock
+  with the indexer's eligibility rules and merges per batch under a short
+  write lock; dead `create_server*` / `new_with_indexing` removed.
+  Original text: If kept, route through the background indexer and
   return a job id; otherwise delete it together with `new_with_indexing` and
   `create_server*`.
-- **4.8 Telemetry.** Record the instrumented fields; give the tonic span a
+- [x] **4.8 Telemetry.** DONE: span fields recorded, tonic span carries the
+  path, `ApiQuery` JSON rejections, WebSocket ping + 64-slot buffer. Test
+  `test_http_bad_query_param_is_json_error`.
+  Original text: Record the instrumented fields; give the tonic span a
   method name; JSON envelope for axum `Query` rejections; WebSocket ping and a
   larger broadcast buffer.
-- **4.9 Tests.** `/api/file`, `/api/context` (incl. overflow), `/ws/progress`,
+- [x] **4.9 Tests.** DONE across 4.1–4.8 (paging/totals, context overflow, bad
+  regex 400, concurrency 503, ready/metrics, gRPC defaults and scope, config
+  precedence/unknown keys, diagnostics config). No explicit CORS-header or
+  `/ws/progress` test yet.
+  Original text: `/api/file`, `/api/context` (incl. overflow), `/ws/progress`,
   `context=`, `rank=`, 400 JSON for bad regex, 503 + `Retry-After` under a
   held write lock, CORS, gRPC default `max_results`, gRPC `Index` scope
   rejection, config precedence and unknown keys.
