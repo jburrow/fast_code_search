@@ -551,6 +551,63 @@ async fn test_http_bad_query_param_is_json_error() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 4.6/4.9: `/api/diagnostics` reports the configured paths when
+/// the router was built with a config, and `force_refresh` is accepted.
+#[tokio::test]
+async fn test_http_diagnostics_reports_real_config() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+
+    let temp = TempDir::new()?;
+    std::fs::write(temp.path().join("d.rs"), "fn diag_token() {}\n")?;
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    engine
+        .write()
+        .unwrap()
+        .index_file(temp.path().join("d.rs"))?;
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let opts = RouterOptions {
+        indexer_config: Some(IndexerConfig {
+            paths: vec![temp.path().to_string_lossy().to_string()],
+            watch: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let client = reqwest::Client::new();
+    for force in ["false", "true"] {
+        let resp = client
+            .get(format!("http://{addr}/api/diagnostics"))
+            .query(&[("force_refresh", force), ("sample_count", "3")])
+            .send()
+            .await?;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await?;
+        let paths = body["config"]["indexed_paths"].as_array().unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0]
+            .as_str()
+            .unwrap()
+            .contains(&*temp.path().to_string_lossy()));
+        assert_eq!(body["config"]["watch_enabled"], true);
+        assert_eq!(body["index"]["num_files"].as_u64().unwrap(), 1);
+        let exts = body["index"]["files_by_extension"].as_array().unwrap();
+        assert!(exts.iter().any(|e| e["extension"] == "rs"), "{body}");
+    }
+    Ok(())
+}
+
 /// Roadmap 4.4: `/api/ready` reports readiness (200 once an index can
 /// serve), `/metrics` exposes request counters and index gauges in the
 /// Prometheus text format.
