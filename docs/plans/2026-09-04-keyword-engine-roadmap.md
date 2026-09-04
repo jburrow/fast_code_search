@@ -607,21 +607,32 @@ set, never to the corpus.
 
 ### Phase 4 — Serving layer and operability → 0.12 (1–2 weeks)
 
-- **4.1 Fix path lookup.** `engine.rs:2324-2334`. Make `find_file_id` reverse
+- [x] **4.1 Fix path lookup.** DONE (commit `801c9c3`): `find_by_display_path`
+  reverses the root prefix (O(roots)); context lines use the result's file id
+  and one read per file per request. Test
+  `test_find_file_id_by_display_path_across_roots`. `engine.rs:2324-2334`. Make `find_file_id` reverse
   `make_display_path` (strip root name, rejoin canonical root) so display paths
   hit the O(1) map; in `search_handler` resolve each file once and split lines
   once. Accept: `/api/file` on a 1 M-file synthetic index does no per-file
   allocation.
-- **4.2 Contract alignment.** Proto: `max_results == 0` → 50; add `rank`,
+- [x] **4.2 Contract alignment.** DONE (commit `3883377`): gRPC default page
+  50, `offset`/`rank`/`deadline_ms`, `dependency_count`, recorded span fields;
+  REST already honours `rank` for regex and reports ranking info everywhere
+  (Phase 3). `case_sensitive`/`whole_word` arrive with Phase 7;
+  `SYMBOL_REFERENCE` documented as reserved. Test
+  `test_grpc_search_defaults_offset_and_fields`. Proto: `max_results == 0` → 50; add `rank`,
   `context_lines`, `offset`, `case_sensitive`, `whole_word`, `deadline_ms`,
   `has_more`, `elapsed_ms`, `dependency_count`; drop or implement
   `SYMBOL_REFERENCE`; stream results from inside `spawn_blocking`. REST:
   honour `rank` for regex/symbols; always return `rank_mode` and
   `candidates_searched`. One documented contract for both.
-- **4.3 Limits.** `TimeoutLayer`, `RequestBodyLimitLayer`, a `Semaphore`
+- [x] **4.3 Limits.** DONE: REST timeout + body limit layers, search
+  semaphore (`server.max_concurrent_searches`), tonic timeout and
+  per-connection concurrency limit. Test `test_http_search_concurrency_limit`. `TimeoutLayer`, `RequestBodyLimitLayer`, a `Semaphore`
   around search (the documented `MAX_CONCURRENT_SEARCHES`), tonic `.timeout()`
   and `.concurrency_limit_per_connection()`.
-- **4.4 Readiness and metrics.** `/api/ready` (200 only when the index is
+- [x] **4.4 Readiness and metrics.** DONE: `/api/ready`, `grpc.health.v1`,
+  `/metrics` (Prometheus text, hand-rendered). Test `test_http_ready_and_metrics`. `/api/ready` (200 only when the index is
   loaded or the build completed), `tonic-health`, Prometheus `/metrics`
   (search latency histogram, results, 503s, index size, file count).
 - **4.5 Config hygiene.** `#[serde(deny_unknown_fields)]`, `Config::validate()`
