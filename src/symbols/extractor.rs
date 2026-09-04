@@ -78,7 +78,9 @@ impl SymbolExtractor {
             "rs" => Some(tree_sitter_rust::LANGUAGE),
             "py" | "pyi" | "pyw" => Some(tree_sitter_python::LANGUAGE),
             "js" | "jsx" | "mjs" | "cjs" => Some(tree_sitter_javascript::LANGUAGE),
-            "ts" | "tsx" | "mts" | "cts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            "ts" | "mts" | "cts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            // JSX is not valid TypeScript; .tsx needs the dedicated grammar.
+            "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX),
             "go" => Some(tree_sitter_go::LANGUAGE),
             "c" | "h" => Some(tree_sitter_c::LANGUAGE),
             "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Some(tree_sitter_cpp::LANGUAGE),
@@ -146,15 +148,14 @@ impl SymbolExtractor {
                         if let Some(name_node) = name_opt {
                             // For C/C++, the declarator might be a function_declarator
                             // We need to find the actual identifier
-                            let name_text = if name_node.kind() == "function_declarator" {
-                                name_node
-                                    .child_by_field_name("declarator")
-                                    .map(|n| &source[n.byte_range()])
+                            let ident_node = if name_node.kind() == "function_declarator" {
+                                name_node.child_by_field_name("declarator")
                             } else {
-                                Some(&source[name_node.byte_range()])
+                                Some(name_node)
                             };
-                            if let Some(name) = name_text {
-                                let start = child.start_position();
+                            if let Some(ident) = ident_node {
+                                let name = &source[ident.byte_range()];
+                                let start = ident.start_position();
                                 symbols.push(Symbol {
                                     name: name.to_string(),
                                     symbol_type: SymbolType::Function,
@@ -169,10 +170,84 @@ impl SymbolExtractor {
                     "method_declaration" | "method" | "singleton_method" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Method,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // JS/TS class members: methods, getters/setters, constructors
+                    "method_definition" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = name_node.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Method,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // JS/TS: `const Foo = () => …` / `const foo = function () {}` —
+                    // the dominant modern function form (React components, handlers).
+                    // Only plain identifier names (not destructuring patterns).
+                    "variable_declarator" => {
+                        let is_fn_value = child
+                            .child_by_field_name("value")
+                            .map(|v| {
+                                matches!(
+                                    v.kind(),
+                                    "arrow_function"
+                                        | "function_expression"
+                                        | "function"
+                                        | "generator_function"
+                                )
+                            })
+                            .unwrap_or(false);
+                        if is_fn_value {
+                            if let Some(name_node) = child.child_by_field_name("name") {
+                                if name_node.kind() == "identifier" {
+                                    let name = &source[name_node.byte_range()];
+                                    let start = name_node.start_position();
+                                    symbols.push(Symbol {
+                                        name: name.to_string(),
+                                        symbol_type: SymbolType::Function,
+                                        line: start.row,
+                                        column: start.column,
+                                        is_definition: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    // JS: `function* gen() {}`
+                    "generator_function_declaration" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = name_node.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Function,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                    // TS: `abstract class X {}` and `namespace X {}` / `module X {}`
+                    "abstract_class_declaration" | "internal_module" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = name_node.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Class,
                                 line: start.row,
                                 column: start.column,
                                 is_definition: true,
@@ -183,7 +258,7 @@ impl SymbolExtractor {
                     "constructor_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Method,
@@ -197,7 +272,7 @@ impl SymbolExtractor {
                     "property_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Method,
@@ -211,7 +286,7 @@ impl SymbolExtractor {
                     "class_declaration" | "class_definition" | "class" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Class,
@@ -225,7 +300,7 @@ impl SymbolExtractor {
                     "module" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Class,
@@ -239,7 +314,7 @@ impl SymbolExtractor {
                     "impl_item" => {
                         if let Some(type_node) = child.child_by_field_name("type") {
                             let name = &source[type_node.byte_range()];
-                            let start = child.start_position();
+                            let start = type_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Class,
@@ -253,7 +328,7 @@ impl SymbolExtractor {
                     "interface_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Interface,
@@ -267,7 +342,7 @@ impl SymbolExtractor {
                     "type_alias_declaration" | "type_item" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Type,
@@ -281,7 +356,7 @@ impl SymbolExtractor {
                     "enum_declaration" | "enum_item" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Enum,
@@ -295,7 +370,7 @@ impl SymbolExtractor {
                     "record_declaration" | "record_struct_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Class,
@@ -309,7 +384,7 @@ impl SymbolExtractor {
                     "trait_item" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Trait,
@@ -323,7 +398,7 @@ impl SymbolExtractor {
                     "trait_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Trait,
@@ -337,7 +412,7 @@ impl SymbolExtractor {
                     "struct_item" | "struct_declaration" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Struct,
@@ -351,7 +426,7 @@ impl SymbolExtractor {
                     "const_item" | "static_item" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Constant,
@@ -368,7 +443,7 @@ impl SymbolExtractor {
                             if type_child.kind() == "type_spec" {
                                 if let Some(name_node) = type_child.child_by_field_name("name") {
                                     let name = &source[name_node.byte_range()];
-                                    let start = type_child.start_position();
+                                    let start = name_node.start_position();
                                     let symbol_type = if let Some(type_node) =
                                         type_child.child_by_field_name("type")
                                     {
@@ -398,7 +473,7 @@ impl SymbolExtractor {
                             if spec.kind() == "const_spec" || spec.kind() == "var_spec" {
                                 if let Some(name_node) = spec.child_by_field_name("name") {
                                     let name = &source[name_node.byte_range()];
-                                    let start = spec.start_position();
+                                    let start = name_node.start_position();
                                     let symbol_type = if child.kind() == "const_declaration" {
                                         SymbolType::Constant
                                     } else {
@@ -419,7 +494,7 @@ impl SymbolExtractor {
                     "struct_specifier" | "union_specifier" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Struct,
@@ -433,7 +508,7 @@ impl SymbolExtractor {
                     "enum_specifier" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Enum,
@@ -447,7 +522,7 @@ impl SymbolExtractor {
                     "class_specifier" | "namespace_definition" => {
                         if let Some(name_node) = child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Class,
@@ -805,6 +880,150 @@ function processUser(user: User): void {
                 .iter()
                 .any(|s| s.name == "processUser" && s.symbol_type == SymbolType::Function),
             "Should find processUser function"
+        );
+    }
+
+    /// Roadmap 1.5: `.tsx` must be parsed with the TSX grammar (JSX is not
+    /// valid TypeScript), and modern JS/TS function forms must be captured:
+    /// class methods, arrow-function consts, abstract classes, namespaces.
+    #[test]
+    fn test_tsx_react_component_extraction() {
+        let source = r#"
+import React from "react";
+
+export const Button = ({ label }: { label: string }) => {
+    return <button className="btn">{label}</button>;
+};
+
+export function Card(props: { title: string }) {
+    return <div><h1>{props.title}</h1></div>;
+}
+
+class Widget extends React.Component {
+    render() {
+        return <span />;
+    }
+    handleClick = () => {};
+}
+
+abstract class Shape {
+    abstract area(): number;
+}
+
+namespace Util {
+    export const helper = function () { return 1; };
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("App.tsx"));
+        let symbols = extractor.extract(source).unwrap();
+        let has =
+            |n: &str, t: SymbolType| symbols.iter().any(|s| s.name == n && s.symbol_type == t);
+
+        assert!(
+            has("Button", SymbolType::Function),
+            "arrow const: {symbols:?}"
+        );
+        assert!(has("Card", SymbolType::Function), "function with JSX body");
+        assert!(has("Widget", SymbolType::Class), "class");
+        assert!(has("render", SymbolType::Method), "method_definition");
+        assert!(has("Shape", SymbolType::Class), "abstract class");
+        assert!(has("Util", SymbolType::Class), "namespace");
+        assert!(
+            has("helper", SymbolType::Function),
+            "function expression const"
+        );
+        // A component body with JSX would have become ERROR nodes under the
+        // TypeScript grammar; `Card` being found with its correct line proves
+        // the TSX grammar parsed it.
+        let card = symbols.iter().find(|s| s.name == "Card").unwrap();
+        assert_eq!(card.line, 7, "Card is on (0-based) line 7");
+    }
+
+    /// Roadmap 1.5: plain JavaScript method and arrow-function coverage.
+    #[test]
+    fn test_javascript_methods_and_arrows() {
+        let source = r#"
+class Store {
+    constructor() { this.items = []; }
+    add(item) { this.items.push(item); }
+    get size() { return this.items.length; }
+    static create() { return new Store(); }
+}
+const onClick = (e) => e.preventDefault();
+const legacy = function (x) { return x; };
+function* ids() { yield 1; }
+const { a, b } = obj;
+"#;
+        let extractor = SymbolExtractor::new(Path::new("store.js"));
+        let symbols = extractor.extract(source).unwrap();
+        let has =
+            |n: &str, t: SymbolType| symbols.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("Store", SymbolType::Class));
+        assert!(has("constructor", SymbolType::Method));
+        assert!(has("add", SymbolType::Method));
+        assert!(has("size", SymbolType::Method), "getter");
+        assert!(has("create", SymbolType::Method), "static method");
+        assert!(has("onClick", SymbolType::Function), "arrow const");
+        assert!(
+            has("legacy", SymbolType::Function),
+            "function-expression const"
+        );
+        assert!(has("ids", SymbolType::Function), "generator");
+        assert!(
+            !symbols.iter().any(|s| s.name == "a" || s.name == "b"),
+            "destructuring patterns are not symbols"
+        );
+    }
+
+    /// Roadmap 1.5: `line`/`column` must come from the *name* node. Annotations,
+    /// decorators, modifiers and multi-line return types precede the name and
+    /// previously shifted every such symbol to the wrong line (and the
+    /// definition boost with it).
+    #[test]
+    fn test_symbol_line_is_name_line() {
+        // Java: @Override on its own line above the method name.
+        let java = "class A {\n    @Override\n    public String toString() {\n        return \"\";\n    }\n}\n";
+        let syms = SymbolExtractor::new(Path::new("A.java"))
+            .extract(java)
+            .unwrap();
+        let m = syms
+            .iter()
+            .find(|s| s.name == "toString")
+            .expect("toString");
+        assert_eq!(
+            (m.line, m.column),
+            (2, 18),
+            "Java method line/col from name node: {m:?}"
+        );
+
+        // TypeScript: decorator line above the class name.
+        let ts = "@Component({})\nexport class AppRoot {\n}\n";
+        let syms = SymbolExtractor::new(Path::new("app.ts"))
+            .extract(ts)
+            .unwrap();
+        let c = syms.iter().find(|s| s.name == "AppRoot").expect("AppRoot");
+        assert_eq!(c.line, 1, "TS decorated class line from name node: {c:?}");
+
+        // C: return type on its own line above the function name.
+        let c_src = "static int\nadd(int a, int b)\n{\n    return a + b;\n}\n";
+        let syms = SymbolExtractor::new(Path::new("m.c"))
+            .extract(c_src)
+            .unwrap();
+        let f = syms.iter().find(|s| s.name == "add").expect("add");
+        assert_eq!(
+            (f.line, f.column),
+            (1, 0),
+            "C function line/col from name node: {f:?}"
+        );
+
+        // Rust: attribute above a function.
+        let rs = "#[inline]\npub fn fast() {}\n";
+        let syms = SymbolExtractor::new(Path::new("x.rs")).extract(rs).unwrap();
+        let f = syms.iter().find(|s| s.name == "fast").expect("fast");
+        assert_eq!(
+            (f.line, f.column),
+            (1, 7),
+            "Rust fn line/col from name node: {f:?}"
         );
     }
 
