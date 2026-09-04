@@ -333,7 +333,12 @@ impl IndexerConfig {
         );
 
         // Generate MD5 hash
-        format!("{:x}", md5::compute(config_str.as_bytes()))
+        // FxHasher is a documented, deterministic algorithm (unlike
+        // DefaultHasher), so the fingerprint is stable across runs and builds.
+        use std::hash::Hasher as _;
+        let mut h = rustc_hash::FxHasher::default();
+        h.write(config_str.as_bytes());
+        format!("{:016x}", h.finish())
     }
 
     /// Check if a file path is explicitly excluded via `exclude_files`.

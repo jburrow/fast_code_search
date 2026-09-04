@@ -57,7 +57,6 @@ bincode = "1.3"
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
-glob = "0.3"
 globset = "0.4"
 regex = "1.11"
 regex-syntax = "0.8"
@@ -67,16 +66,15 @@ opentelemetry = { version = "0.27", features = ["trace"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"] }
 opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace"] }
 tracing-opentelemetry = "0.28"
-sysinfo = "0.33"
+sysinfo = "0.39"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = { version = "0.3", features = ["sink"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"
 mime_guess = "2"
-md5 = "0.8"
 notify-debouncer-full = "0.7"
-ndarray = "0.15"                                                                # For vector operations in semantic search
-hnsw_rs = "0.3"                                                                 # HNSW for approximate nearest neighbor search
+ndarray = { version = "0.15", optional = true } # semantic: vector operations
+hnsw_rs = { version = "0.3", optional = true }  # semantic: approximate nearest neighbour search
 fs2 = "0.4"
 chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
 rand = "0.9"                                                                    # For random file sampling in self-tests
@@ -87,7 +85,7 @@ ort = { version = "2.0.0-rc.10", optional = true, default-features = false, feat
     "load-dynamic",
 ] } # ONNX Runtime for ML model inference (rc.10 works with ONNX Runtime 1.18-1.22)
 tokenizers = { version = "0.22", optional = true } # HuggingFace tokenizers for text encoding
-sha2 = "0.10" # Checksum verification for model downloads
+sha2 = { version = "0.10", optional = true } # semantic: checksum verification for model downloads
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "json",
@@ -96,11 +94,11 @@ reqwest = { version = "0.12", default-features = false, features = [
 
 [features]
 default = []
-ml-models = [
-    "ort",
-    "tokenizers",
-    "reqwest",
-] # Enable ML model support (requires ONNX Runtime)
+# The optional semantic engine (TF-IDF, vector index, its gRPC/web servers).
+# Off by default so the keyword server builds without ndarray/hnsw.
+semantic = ["ndarray", "hnsw_rs", "sha2"]
+# Semantic engine with ONNX embedding models (requires ONNX Runtime at run time).
+ml-models = ["semantic", "ort", "tokenizers", "reqwest"]
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = [
@@ -109,7 +107,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
 ] } # HTTP client for integration tests (rustls: no system OpenSSL needed)
 tokio-stream = { version = "0.1", features = ["net"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 dhat = "0.3"
 
 [[bench]]
@@ -130,6 +128,16 @@ path = "src/main.rs"
 [[bin]]
 name = "fast_code_search_semantic"
 path = "src/bin/fast_code_search_semantic.rs"
+required-features = ["semantic"]
+
+[[example]]
+name = "semantic_grpc_client"
+required-features = ["semantic"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
 
 [[bin]]
 name = "fast_code_search_validator"

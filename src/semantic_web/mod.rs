@@ -104,7 +104,14 @@ fn serve_static_file(path: &str, static_dir: Option<&std::path::Path>) -> Respon
             let mime = mime_guess::from_path(path).first_or_octet_stream();
 
             // Use ETag based on content hash for proper cache invalidation
-            let etag = format!("\"{:x}\"", md5::compute(&content.data));
+            // Compile-time content hash from rust-embed (no per-request hashing).
+            let hash: String = content
+                .metadata
+                .sha256_hash()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let etag = format!("\"{hash}\"");
 
             Response::builder()
                 .status(StatusCode::OK)

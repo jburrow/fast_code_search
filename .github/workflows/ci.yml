@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Run tests (semantic feature)
+        run: cargo test --verbose --features semantic --lib
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -68,6 +71,11 @@ jobs:
         run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+      - name: cargo-deny (advisories, licenses, sources)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses sources
 
   msrv:
     name: MSRV (1.89)

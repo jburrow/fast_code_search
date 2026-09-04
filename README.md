@@ -48,7 +48,9 @@ curl "http://localhost:8080/api/search?q=fn%20main&max=10"
 ```
 
 `cargo keyword` and `cargo semantic` are aliases defined in [.cargo/config.toml](.cargo/config.toml).
-For the optional semantic engine, see [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
+The semantic engine is behind the `semantic` Cargo feature (`ml-models` implies it), so the
+default build is the keyword server only; see
+[docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
 
 ## Features
 
