@@ -29,7 +29,7 @@ It ships two engines:
 
 ## Quick start
 
-Requires Rust 1.70+ and the Protocol Buffers compiler (`protoc`).
+Requires Rust 1.89+ and the Protocol Buffers compiler (`protoc`).
 
 ```bash
 cargo build --release

@@ -17,7 +17,7 @@ This guide provides detailed information for developers working on fast_code_sea
 ### System Requirements
 
 - **OS**: Linux, macOS, or Windows (native or WSL2)
-- **Rust**: 1.70 or later
+- **Rust**: 1.89 or later (see `rust-toolchain.toml`)
 - **Memory**: 4GB minimum, 8GB recommended
 - **Disk**: 2GB for dependencies and build artifacts
 
@@ -37,7 +37,7 @@ brew install protobuf
 
 # Verify installation
 protoc --version  # Should be 3.x or later
-rustc --version   # Should be 1.70 or later
+rustc --version   # Should be 1.89 or later
 ```
 
 ### Recommended Development Tools

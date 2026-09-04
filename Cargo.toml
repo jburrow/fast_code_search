@@ -2,6 +2,7 @@
 name = "fast_code_search"
 version = "0.9.0"
 edition = "2021"
+rust-version = "1.89"
 authors = ["James Burrow"]
 description = "High-performance, in-memory code search service with trigram indexing and symbol awareness"
 license = "MIT"
@@ -92,10 +93,11 @@ ort = { version = "2.0.0-rc.10", optional = true, default-features = false, feat
 ] } # ONNX Runtime for ML model inference (rc.10 works with ONNX Runtime 1.18-1.22)
 tokenizers = { version = "0.22", optional = true } # HuggingFace tokenizers for text encoding
 sha2 = "0.10" # Checksum verification for model downloads
-reqwest = { version = "0.12", features = [
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
     "json",
     "blocking",
-], optional = true } # HTTP client for model downloads
+], optional = true } # HTTP client for model downloads (rustls: no system OpenSSL needed)
 
 [features]
 default = []
@@ -106,12 +108,11 @@ ml-models = [
 ] # Enable ML model support (requires ONNX Runtime)
 
 [dev-dependencies]
-tempfile = "3"
-reqwest = { version = "0.12", features = [
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
     "json",
     "blocking",
-] } # Also used for model downloads in production
-tokio-test = "0.4"
+] } # HTTP client for integration tests (rustls: no system OpenSSL needed)
 tokio-stream = { version = "0.1", features = ["net"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 dhat = "0.3"
