@@ -325,6 +325,63 @@ async fn test_http_search_finds_results() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 1.9: `/api/context` must cap the window and never overflow.
+/// `context=usize::MAX` used to compute `match_idx + context + 1` (a panic in
+/// debug builds, a wrapped index in release) and could otherwise return the
+/// whole file through the "lightweight" endpoint.
+#[tokio::test]
+async fn test_http_context_caps_window_and_survives_overflow() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+
+    // Discover an indexed file path via search.
+    let body: serde_json::Value = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "TestStruct")])
+        .send()
+        .await?
+        .json()
+        .await?;
+    let file = body["results"][0]["file_path"].as_str().unwrap().to_string();
+
+    let response = client
+        .get(format!("{}/api/context", ctx.http_url))
+        .query(&[
+            ("file", file.as_str()),
+            ("line", "1"),
+            ("context", &usize::MAX.to_string()),
+        ])
+        .send()
+        .await?;
+    assert_eq!(response.status(), 200, "overflowing context must not fail");
+    let body: serde_json::Value = response.json().await?;
+    let n = body["lines"].as_array().unwrap().len();
+    assert!(n <= 401, "window must be capped (got {n} lines)");
+    assert_eq!(body["start_line"].as_u64().unwrap(), 1);
+    Ok(())
+}
+
+/// Roadmap 1.9: a pathological regex is rejected at compile time by the
+/// configured size limit and surfaces as a 400 JSON error, not a multi-hundred
+/// megabyte compilation on the search thread.
+#[tokio::test]
+async fn test_http_regex_size_limit_returns_400() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "(a{1000}){1000}"), ("regex", "true")])
+        .send()
+        .await?;
+    assert_eq!(response.status(), 400, "oversized regex must be rejected");
+    let body: serde_json::Value = response.json().await?;
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("regex"),
+        "error body should mention the regex: {body}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_http_search_empty_query() -> Result<()> {
     let ctx = setup_test_server().await?;

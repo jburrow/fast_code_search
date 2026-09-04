@@ -101,6 +101,10 @@ fn default_max_results() -> usize {
 /// Capped to avoid returning excessively large payloads for dense result sets.
 const MAX_CONTEXT_LINES: usize = 10;
 
+/// Maximum lines of context on each side for `/api/context` (hover preview /
+/// "show more" windows). Larger windows should use `/api/file`.
+const MAX_CONTEXT_WINDOW_LINES: usize = 200;
+
 /// Search result for JSON response
 #[derive(Debug, Serialize)]
 pub struct SearchResultJson {
@@ -693,10 +697,16 @@ pub async fn context_handler(
         let all_lines: Vec<&str> = content.lines().collect();
         let total = all_lines.len();
 
-        // line is 1-based; clamp to valid range
+        // line is 1-based; clamp to valid range. The window is capped so a
+        // client cannot pull an entire file through the "lightweight" endpoint
+        // (or overflow usize with context=usize::MAX).
+        let context = params.context.min(MAX_CONTEXT_WINDOW_LINES);
         let match_idx = params.line.saturating_sub(1).min(total.saturating_sub(1));
-        let start_idx = match_idx.saturating_sub(params.context);
-        let end_idx = (match_idx + params.context + 1).min(total);
+        let start_idx = match_idx.saturating_sub(context);
+        let end_idx = match_idx
+            .saturating_add(context)
+            .saturating_add(1)
+            .min(total);
 
         let lines: Vec<String> = all_lines[start_idx..end_idx]
             .iter()

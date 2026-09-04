@@ -6,6 +6,14 @@
 
 use anyhow::{Context, Result};
 use regex::Regex;
+
+/// Compiled-program size cap for user regexes (bytes). Patterns such as
+/// `(a{1000}){1000}` would otherwise compile into hundreds of megabytes; the
+/// `regex` crate rejects anything over this limit at build time, which the
+/// API surfaces as a 400.
+const REGEX_SIZE_LIMIT: usize = 4 * 1024 * 1024;
+/// Per-thread lazy DFA cache cap (bytes).
+const REGEX_DFA_SIZE_LIMIT: usize = 2 * 1024 * 1024;
 use regex_syntax::hir::{Hir, HirKind, Literal};
 
 /// Result of analyzing a regex pattern for trigram acceleration.
@@ -40,8 +48,11 @@ impl RegexAnalysis {
     /// # Returns
     /// A `RegexAnalysis` containing the compiled regex and extracted literals.
     pub fn analyze(pattern: &str) -> Result<Self> {
-        let regex =
-            Regex::new(pattern).with_context(|| format!("Invalid regex pattern: {}", pattern))?;
+        let regex = regex::RegexBuilder::new(pattern)
+            .size_limit(REGEX_SIZE_LIMIT)
+            .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
+            .build()
+            .with_context(|| format!("Invalid regex pattern: {}", pattern))?;
 
         let (literals, constraints) = match regex_syntax::parse(pattern) {
             Ok(hir) => (extract_literals_from_hir(&hir), extract_constraints(&hir)),
