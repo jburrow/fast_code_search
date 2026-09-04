@@ -46,18 +46,70 @@ pub fn extract_trigrams(text: &str) -> Vec<Trigram> {
 /// More efficient than extracting to Vec and then deduplicating.
 #[inline]
 pub fn extract_unique_trigrams(text: &str) -> FxHashSet<Trigram> {
-    let bytes = text.as_bytes();
-    let len = bytes.len().saturating_sub(2);
-    let mut trigrams = FxHashSet::with_capacity_and_hasher(
-        len.min(MAX_INITIAL_TRIGRAM_CAPACITY),
-        Default::default(),
-    );
+    unique_trigrams_folded(text.as_bytes(), false)
+}
 
-    for i in 0..len {
-        trigrams.insert(Trigram([bytes[i], bytes[i + 1], bytes[i + 2]]));
+/// Unique trigrams of `text` **lowercased the way the index expects**
+/// (`str::to_lowercase`), without materializing a lowercase copy of the
+/// whole buffer when the text is ASCII (the overwhelmingly common case:
+/// the fold happens per byte during extraction). Non-ASCII text still goes
+/// through `to_lowercase()` so multi-byte case mappings match the query
+/// side exactly.
+pub fn extract_unique_trigrams_lowercase(text: &str) -> FxHashSet<Trigram> {
+    if text.is_ascii() {
+        unique_trigrams_folded(text.as_bytes(), true)
+    } else {
+        unique_trigrams_folded(text.to_lowercase().as_bytes(), false)
     }
+}
 
-    trigrams
+// 2^24 bits (2 MiB) per thread: one bit per possible trigram. Deduping
+// through a bitset costs one test-and-set per byte instead of a hash
+// insert per byte; only the bits actually set are cleared afterwards, so a
+// small file pays only for its own trigrams.
+thread_local! {
+    static TRIGRAM_BITSET: std::cell::RefCell<Vec<u64>> =
+        std::cell::RefCell::new(vec![0u64; (1usize << 24) / 64]);
+}
+
+#[inline]
+fn unique_trigrams_folded(bytes: &[u8], ascii_fold: bool) -> FxHashSet<Trigram> {
+    let len = bytes.len().saturating_sub(2);
+    if len == 0 {
+        return FxHashSet::default();
+    }
+    TRIGRAM_BITSET.with(|cell| {
+        let mut bits = cell.borrow_mut();
+        let mut unique: Vec<Trigram> = Vec::with_capacity(len.min(MAX_INITIAL_TRIGRAM_CAPACITY));
+        let fold = |b: u8| {
+            if ascii_fold {
+                b.to_ascii_lowercase()
+            } else {
+                b
+            }
+        };
+        let mut b0 = fold(bytes[0]);
+        let mut b1 = fold(bytes[1]);
+        for &raw in &bytes[2..] {
+            let b2 = fold(raw);
+            let key = ((b0 as usize) << 16) | ((b1 as usize) << 8) | b2 as usize;
+            let (word, bit) = (key >> 6, 1u64 << (key & 63));
+            if bits[word] & bit == 0 {
+                bits[word] |= bit;
+                unique.push(Trigram([b0, b1, b2]));
+            }
+            b0 = b1;
+            b1 = b2;
+        }
+        // Reset only what we touched.
+        for t in &unique {
+            let key = ((t.0[0] as usize) << 16) | ((t.0[1] as usize) << 8) | t.0[2] as usize;
+            bits[key >> 6] &= !(1u64 << (key & 63));
+        }
+        let mut set = FxHashSet::with_capacity_and_hasher(unique.len(), Default::default());
+        set.extend(unique);
+        set
+    })
 }
 
 /// Inverted index mapping trigrams to document IDs using roaring bitmaps
@@ -246,6 +298,37 @@ impl TrigramIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Roadmap 6.4: the bitset/fold extractor must equal the reference
+    /// (hash-set over `to_lowercase()`), for ASCII and non-ASCII input, and
+    /// leave the thread-local bitset clean between calls.
+    #[test]
+    fn test_lowercase_extraction_matches_reference() {
+        let reference = |t: &str| -> Vec<Trigram> {
+            let lower = t.to_lowercase();
+            let mut v: Vec<Trigram> = extract_unique_trigrams(&lower).into_iter().collect();
+            v.sort_by_key(|t| t.0);
+            v
+        };
+        for text in [
+            "Hello, World! HELLO again.",
+            "ÜBER über Straße",
+            "ab",
+            "",
+            "aaaa\nAAAA",
+        ] {
+            let mut got: Vec<Trigram> = extract_unique_trigrams_lowercase(text)
+                .into_iter()
+                .collect();
+            got.sort_by_key(|t| t.0);
+            assert_eq!(got, reference(text), "{text:?}");
+        }
+        // Second call must not see stale bits from the first.
+        let a = extract_unique_trigrams_lowercase("abcdef");
+        let b = extract_unique_trigrams_lowercase("abcdef");
+        assert_eq!(a.len(), 4);
+        assert_eq!(a, b);
+    }
 
     /// Roadmap 2.1/2.2: bulk removal strips ids in one pass and keeps the
     /// all-documents cache correct instead of invalidating it.

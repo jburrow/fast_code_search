@@ -1,5 +1,5 @@
 use crate::dependencies::DependencyIndex;
-use crate::index::{extract_unique_trigrams, LazyFileStore, Trigram, TrigramIndex};
+use crate::index::{extract_unique_trigrams_lowercase, LazyFileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
 use crate::search::ranking::{FileScoreWeights, RankingWeights};
 use crate::search::regex_search::RegexAnalysis;
@@ -844,8 +844,10 @@ impl PartialIndexedFile {
         // The old approach prepended the stem with triple newlines to avoid spurious
         // cross-boundary trigrams; separating extraction is equivalent — no boundary
         // trigrams are generated at all, which is strictly better.
-        let mut trigrams = extract_unique_trigrams(&filename_stem.to_lowercase());
-        trigrams.extend(extract_unique_trigrams(&content.to_lowercase()));
+        // Filename stem + content, lowercased the way queries are (no
+        // whole-buffer lowercase copy for ASCII content).
+        let mut trigrams = extract_unique_trigrams_lowercase(&filename_stem);
+        trigrams.extend(extract_unique_trigrams_lowercase(&content));
 
         Some((
             PartialIndexedFile {
