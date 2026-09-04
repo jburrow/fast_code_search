@@ -209,6 +209,13 @@ impl TrigramIndex {
             }
             self.all_docs_cache = Some(all_docs);
         }
+        // Run-length encode dense posting lists: ubiquitous trigrams (spaces,
+        // "the", newline+indent) cover nearly every document and shrink from
+        // an 8 KB bitmap container per 65k docs to a few bytes, on disk and
+        // in memory. Cheap; a no-op for lists that are already optimal.
+        for docs in self.trigram_to_docs.values_mut() {
+            docs.optimize();
+        }
         // Release over-allocated hash-map bucket slots accumulated during incremental inserts.
         // FxHashMap doubles capacity on rehash; after bulk load the table may be ~50% empty.
         self.trigram_to_docs.shrink_to_fit();
