@@ -30,6 +30,10 @@ pub struct FileDiscoveryConfig {
 
     /// Additional binary extensions to skip (merged with default list).
     pub extra_binary_extensions: Vec<String>,
+
+    /// Honour `.gitignore` / `.ignore` files (and `.git/info/exclude`) found
+    /// under each root, in addition to `exclude_patterns`. Default `true`.
+    pub respect_gitignore: bool,
 }
 
 impl Default for FileDiscoveryConfig {
@@ -40,6 +44,7 @@ impl Default for FileDiscoveryConfig {
             include_extensions: Vec::new(),
             max_file_size: Some(10 * 1024 * 1024), // 10MB
             extra_binary_extensions: Vec::new(),
+            respect_gitignore: true,
         }
     }
 }
@@ -69,10 +74,20 @@ impl FileDiscoveryConfig {
     }
 }
 
+/// One directory walk: plain `walkdir`, or the `ignore` crate's walker which
+/// applies `.gitignore` rules as it descends.
+enum Walker {
+    Plain(walkdir::IntoIter),
+    Ignore(ignore::Walk),
+}
+
 /// Iterator over discovered files matching the configuration criteria.
 pub struct FileDiscoveryIterator {
-    /// Stack of walkdir iterators (one per path).
-    walkers: Vec<walkdir::IntoIter>,
+    /// Stack of directory walkers (one per path).
+    walkers: Vec<Walker>,
+
+    /// Whether single-path eligibility checks consult `.gitignore` files.
+    respect_gitignore: bool,
 
     /// Compiled exclude glob filter.
     exclude_filter: PathFilter,
@@ -90,22 +105,37 @@ pub struct FileDiscoveryIterator {
 impl FileDiscoveryIterator {
     /// Create a new file discovery iterator from the given configuration.
     pub fn new(config: &FileDiscoveryConfig) -> Self {
-        let walkers: Vec<walkdir::IntoIter> = config
+        let walkers: Vec<Walker> = config
             .paths
             .iter()
             .filter_map(|path_str| {
                 let path = Path::new(path_str);
-                if path.exists() {
-                    // Do NOT follow symlinks: following them duplicates files when a
-                    // link points inside the same root (the same file indexed under
-                    // two paths -> duplicate search results) and can pull in trees
-                    // outside the requested roots. This matches the default of most
-                    // code-search tools (e.g. ripgrep).
-                    Some(WalkDir::new(path).follow_links(false).into_iter())
-                } else {
+                if !path.exists() {
                     tracing::warn!(path = %path_str, "Path does not exist, skipping");
-                    None
+                    return None;
                 }
+                // Do NOT follow symlinks: following them duplicates files when a
+                // link points inside the same root (the same file indexed under
+                // two paths -> duplicate search results) and can pull in trees
+                // outside the requested roots. This matches the default of most
+                // code-search tools (e.g. ripgrep).
+                Some(if config.respect_gitignore {
+                    Walker::Ignore(
+                        ignore::WalkBuilder::new(path)
+                            .follow_links(false)
+                            // Keep hidden files: exclusions are the user's call
+                            // via exclude_patterns (".git" is in the defaults).
+                            .hidden(false)
+                            .git_ignore(true)
+                            .git_exclude(true)
+                            .git_global(false)
+                            .ignore(true)
+                            .parents(true)
+                            .build(),
+                    )
+                } else {
+                    Walker::Plain(WalkDir::new(path).follow_links(false).into_iter())
+                })
             })
             .collect();
 
@@ -120,6 +150,7 @@ impl FileDiscoveryIterator {
 
         Self {
             walkers,
+            respect_gitignore: config.respect_gitignore,
             exclude_filter,
             include_extensions: config
                 .include_extensions
@@ -200,6 +231,9 @@ pub fn is_eligible(path: &Path, config: &FileDiscoveryConfig) -> bool {
         paths: Vec::new(),
         ..config.clone()
     });
+    if probe.respect_gitignore && is_gitignored(path) {
+        return false;
+    }
     probe.accepts(path)
 }
 
@@ -209,20 +243,29 @@ impl Iterator for FileDiscoveryIterator {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(walker) = self.walkers.last_mut() {
             // Try to get the next entry from the current walker
-            match walker.next() {
-                Some(Ok(entry)) => {
-                    let path = entry.path();
-
+            let next: Option<Result<(PathBuf, bool), String>> = match walker {
+                Walker::Plain(w) => w.next().map(|r| {
+                    r.map(|e| (e.path().to_path_buf(), e.file_type().is_file()))
+                        .map_err(|e| e.to_string())
+                }),
+                Walker::Ignore(w) => w.next().map(|r| {
+                    r.map(|e| {
+                        let is_file = e.file_type().is_some_and(|t| t.is_file());
+                        (e.into_path(), is_file)
+                    })
+                    .map_err(|e| e.to_string())
+                }),
+            };
+            match next {
+                Some(Ok((path, is_file))) => {
                     // Skip non-files
-                    if !entry.file_type().is_file() {
+                    if !is_file {
                         continue;
                     }
-
-                    if !self.accepts(path) {
+                    if !self.accepts(&path) {
                         continue;
                     }
-
-                    return Some(path.to_path_buf());
+                    return Some(path);
                 }
                 Some(Err(e)) => {
                     tracing::debug!(error = %e, "Error walking directory");
@@ -239,6 +282,46 @@ impl Iterator for FileDiscoveryIterator {
     }
 }
 
+/// Is `path` ignored by a `.gitignore` / `.ignore` file in one of its
+/// ancestor directories (nearest wins, like git)? Used for single watcher
+/// paths, where there is no directory walk to consult. Ancestors above the
+/// first directory containing `.git` are not consulted.
+pub fn is_gitignored(path: &Path) -> bool {
+    let mut dirs: Vec<&Path> = Vec::new();
+    let mut cur = path.parent();
+    while let Some(d) = cur {
+        dirs.push(d);
+        if d.join(".git").exists() {
+            break;
+        }
+        cur = d.parent();
+    }
+    // Check from the file's own directory outwards; the nearest explicit
+    // decision (ignore or whitelist) wins.
+    for dir in dirs {
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
+        let mut any = false;
+        for name in [".gitignore", ".ignore"] {
+            let f = dir.join(name);
+            if f.is_file() {
+                builder.add(f);
+                any = true;
+            }
+        }
+        if !any {
+            continue;
+        }
+        if let Ok(gi) = builder.build() {
+            match gi.matched_path_or_any_parents(path, false) {
+                ignore::Match::Ignore(_) => return true,
+                ignore::Match::Whitelist(_) => return false,
+                ignore::Match::None => {}
+            }
+        }
+    }
+    false
+}
+
 /// Convenience function to discover files from paths with exclude patterns.
 pub fn discover_files(paths: &[String], exclude_patterns: &[String]) -> FileDiscoveryIterator {
     let config = FileDiscoveryConfig::new(paths.to_vec(), exclude_patterns.to_vec());
@@ -253,6 +336,65 @@ pub fn discover_files_with_config(config: &FileDiscoveryConfig) -> FileDiscovery
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Roadmap 2.8: `.gitignore` is honoured by discovery and by the single
+    /// path check the watcher uses, and can be switched off.
+    #[test]
+    fn test_gitignore_is_respected_and_optional() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("build")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join(".gitignore"), "build/\n*.log\n!keep.log\n").unwrap();
+        std::fs::write(root.join("build/gen.rs"), "fn gen() {}").unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("src/debug.log"), "noise").unwrap();
+        std::fs::write(root.join("src/keep.log"), "kept").unwrap();
+
+        let names = |cfg: &FileDiscoveryConfig| -> Vec<String> {
+            let mut v: Vec<String> = FileDiscoveryIterator::new(cfg)
+                .map(|p| {
+                    p.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let on = FileDiscoveryConfig {
+            paths: vec![root.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            names(&on),
+            vec![".gitignore", "src/keep.log", "src/main.rs"]
+        );
+
+        let off = FileDiscoveryConfig {
+            respect_gitignore: false,
+            ..on.clone()
+        };
+        assert_eq!(
+            names(&off),
+            vec![
+                ".gitignore",
+                "build/gen.rs",
+                "src/debug.log",
+                "src/keep.log",
+                "src/main.rs"
+            ]
+        );
+
+        // Single-path checks (watcher) agree with the walk.
+        assert!(!is_eligible(&root.join("build/gen.rs"), &on));
+        assert!(!is_eligible(&root.join("src/debug.log"), &on));
+        assert!(is_eligible(&root.join("src/keep.log"), &on));
+        assert!(is_eligible(&root.join("src/main.rs"), &on));
+        assert!(is_eligible(&root.join("build/gen.rs"), &off));
+    }
     use std::fs;
     use tempfile::TempDir;
 

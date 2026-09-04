@@ -141,6 +141,7 @@ fn index_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) ->
             exclude_patterns: config.exclude_patterns.clone(),
             include_extensions: config.include_extensions.clone(),
             max_file_size: Some(effective_max_size(config)),
+            respect_gitignore: config.respect_gitignore,
             ..Default::default()
         };
         let mut indexed = 0;
@@ -210,6 +211,7 @@ pub fn is_eligible_file(path: &Path, config: &IndexerConfig) -> bool {
         exclude_patterns: config.exclude_patterns.clone(),
         include_extensions: config.include_extensions.clone(),
         max_file_size: Some(effective_max_size(config)),
+        respect_gitignore: config.respect_gitignore,
         ..Default::default()
     };
     crate::search::file_discovery::is_eligible(path, &discovery)

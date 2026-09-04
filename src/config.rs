@@ -137,6 +137,10 @@ pub struct IndexerConfig {
     #[serde(default = "default_exclude_patterns")]
     pub exclude_patterns: Vec<String>,
 
+    /// Honour `.gitignore` / `.ignore` files under the indexed paths (default true).
+    #[serde(default = "default_true")]
+    pub respect_gitignore: bool,
+
     /// Maximum file size to index in bytes (default 10MB)
     #[serde(default = "default_max_file_size")]
     pub max_file_size: u64,
@@ -259,6 +263,7 @@ impl Default for IndexerConfig {
             paths: Vec::new(),
             include_extensions: Vec::new(),
             exclude_patterns: default_exclude_patterns(),
+            respect_gitignore: true,
             max_file_size: default_max_file_size(),
             index_path: None,
             watch: false,
@@ -427,6 +432,9 @@ paths = [
     # "C:/code/another-project",
     # "/home/user/projects/my-app",
 ]
+
+# Honour .gitignore / .ignore files under the indexed paths (default: true)
+# respect_gitignore = true
 
 # File extensions to include (empty = all text files)
 # Uncomment and customize to limit indexed file types

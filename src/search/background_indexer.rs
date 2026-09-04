@@ -498,6 +498,7 @@ fn run_indexing_pipeline(
         indexer_config.exclude_patterns.clone(),
         indexer_config.include_extensions.clone(),
         indexer_config.max_file_size,
+        indexer_config.respect_gitignore,
         tx,
         files_discovered.clone(),
         discovery_done.clone(),
@@ -558,6 +559,7 @@ fn spawn_discovery_thread(
     exclude_patterns: Vec<String>,
     include_extensions: Vec<String>,
     max_file_size: u64,
+    respect_gitignore: bool,
     tx: SyncSender<PathBuf>,
     files_discovered: Arc<AtomicUsize>,
     discovery_done: Arc<AtomicBool>,
@@ -632,6 +634,7 @@ fn spawn_discovery_thread(
             exclude_patterns,
             include_extensions,
             max_file_size: Some(max_file_size),
+            respect_gitignore,
             ..Default::default()
         };
 
