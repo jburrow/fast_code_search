@@ -419,30 +419,50 @@ Goal: no path in the shipped binary produces wrong results or loses data.
   polls between batches, final `save_index` if dirty, `shutdown_telemetry()`.
   Make web bind failure fatal. Accept: SIGTERM mid-watch leaves a loadable
   index containing the last edit.
-- **1.7 Writer-path safety.** `main.rs:582-661`. Wrap `update_file` /
+- [x] **1.7 Writer-path safety.** DONE: `with_engine_write` (poison recovery +
+  `catch_unwind`) on the watcher path, 8 MB watcher stack, rayon pool built
+  eagerly in `main`, REST `try_read_engine` and gRPC search recover from
+  poison instead of a permanent 500. `main.rs:582-661`. Wrap `update_file` /
   `remove_file` in `catch_unwind`; run the watcher loop on a thread with an
   explicit 8 MB stack; recover from poison via `into_inner()` in `main.rs` and
   `api.rs` (or move the engine to `parking_lot::RwLock`); build the rayon pool
   eagerly in `main` before spawning anything. Accept: a file whose processing
   panics on the watcher path is logged and skipped; searches keep working.
-- **1.8 Directory events.** `watcher.rs:194-199`, `main.rs:616-648`. On
+- [x] **1.8 Directory events.** DONE: `search::incremental::apply_change`
+  handles file *and* directory paths (`remove_files_under` + discovery over a
+  renamed-in directory) and applies the build's eligibility rules via a shared
+  `FileDiscoveryIterator::accepts` (this also completes the watcher half of
+  2.4). Tests: `test_directory_rename_and_delete_update_index`,
+  `test_watcher_change_respects_eligibility`; verified against the live
+  server too. `watcher.rs:194-199`, `main.rs:616-648`. On
   `Renamed{from,to}` / `Deleted(p)` with no file id, remove every store entry
   with that path prefix; if `to` is a directory, run discovery over it.
   Accept: integration test renaming a directory of three files.
-- **1.9 Input caps.** `api.rs:682-750`. Cap `/api/context` `context` and use
+- [x] **1.9 Input caps.** DONE: `/api/context` capped at 200 lines a side with
+  saturating arithmetic; user regexes built with `size_limit` 4 MB /
+  `dfa_size_limit` 2 MB (pathological pattern → 400). Two HTTP tests. `api.rs:682-750`. Cap `/api/context` `context` and use
   `saturating_add`; add `RegexBuilder::size_limit`. Accept:
   `context=usize::MAX` returns 400, not a panic.
-- **1.10 Trust boundary defaults.** `config.rs:195-201`, `web/mod.rs:44-47`,
+- [x] **1.10 Trust boundary defaults.** DONE: loopback defaults,
+  `server.cors_origins` (empty = same-origin), gRPC `Index` scoped to the
+  configured roots via `create_server_with_engine_scoped` and no symlink
+  following, README "Network exposure" section. Test
+  `test_grpc_index_rejects_paths_outside_scope`. `config.rs:195-201`, `web/mod.rs:44-47`,
   `service.rs:319-403`. Default both binds to `127.0.0.1`; CORS opt-in via
   `server.cors_origins`; gate gRPC `Index` behind `is_path_in_scope` (or remove
   it); document the local-only model in README and DEPLOYMENT. Accept: gRPC
   `Index(["/"])` is rejected; cross-origin fetch fails by default.
-- **1.11 Dependency graph bookkeeping.** `dependencies/mod.rs:236-243,50`. Make
+- [x] **1.11 Dependency graph bookkeeping.** DONE: `id_to_path` makes
+  re-registration idempotent and removal O(1), pruning `filename_to_paths`.
+  Test `test_reregister_and_remove_keep_lookups_bounded`. `dependencies/mod.rs:236-243,50`. Make
   `remove_file` actually remove from `filename_to_paths`; dedupe on
   re-register; keep an `id → path` map so removal is O(1). Accept: 1000
   update cycles on one file leave one entry.
 
 Exit: 0.9.1 tagged with regression tests for 1.1, 1.2, 1.3, 1.4, 1.5, 1.8.
+**Phase 1 code complete** (all 11 tasks, each with a test or a manual
+verification noted above). Tagging 0.9.1 is left to the maintainer; the
+CHANGELOG `[Unreleased]` section lists the changes.
 
 ### Phase 2 — Incremental index integrity → 0.10 (2–3 weeks)
 

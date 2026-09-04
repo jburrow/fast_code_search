@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Persisted index corruption after a file removal**: `save_index` compacted the
+  file table over tombstoned ids but wrote trigram bitmaps, symbols and dependency
+  edges keyed by live id, so every file after a removed one was misattributed or
+  lost on reload. Ids are now remapped at save time.
+- Every match on line 1 of every file received the 3× symbol-definition boost
+  (the synthetic filename symbol at line 0 counted as a definition line).
+- Files with a line over 100 KB or extreme nesting were dropped from the whole
+  index; they are now text-searchable and only skip symbol extraction.
+- The persisted mtime/size described the on-disk state at *save* time, so a
+  file edited during a long build was never detected as stale. Both are now
+  captured when the content is read.
+- Symbols: `.tsx` is parsed with the TSX grammar; JS/TS class methods,
+  `const f = () => …`, generator functions, abstract classes and namespaces are
+  extracted; symbol line/column now come from the name node (Java `@Override`,
+  decorators, attributes and multi-line C signatures reported the wrong line).
+- Directory rename/delete events were silent no-ops in the watcher; every file
+  under the old path stayed indexed. The watcher now also applies the same
+  eligibility rules as the initial build (include extensions, excludes, size).
+- A panic on the watcher path poisoned the engine lock and turned every search
+  into a 500 until restart; the watcher path is now panic-guarded, runs on an
+  8 MB stack, and the REST/gRPC readers recover from a poisoned lock.
+- `/api/context` no longer overflows on a huge `context` value and is capped at
+  200 lines each side; user regexes have an explicit compile-size limit.
+- `DependencyIndex::remove_file` never pruned the filename index and every
+  watcher update pushed a duplicate path entry.
+
+### Changed
+- **Graceful shutdown**: SIGINT/SIGTERM now stop both servers, stop the indexer
+  (persisting a checkpoint), save pending watcher updates, and flush telemetry.
+- **Security defaults**: both listeners bind to `127.0.0.1`; CORS is off unless
+  `server.cors_origins` is set; the gRPC `Index` RPC only accepts paths under the
+  configured `indexer.paths` and no longer follows symlinks; a web-UI bind
+  failure is fatal instead of silently leaving the server without a REST API.
+- Minimum supported Rust is 1.89 (was documented as 1.70); the toolchain is
+  pinned via `rust-toolchain.toml`; `reqwest` uses rustls so builds and tests no
+  longer need system OpenSSL.
+- CI lints all targets and features, checks docs, has an MSRV job, and releases
+  are gated on tests; the VS Code extension publishes on `ext-v*` tags only.
+
+### Repository
+- `.gitattributes` normalises line endings; the corrupted `.gitignore` is
+  repaired; `onnxruntime/` and the `test_corpus` gitlinks are no longer tracked.
+
 ## [0.9.0] - 2026-06-10
 
 ### Added
