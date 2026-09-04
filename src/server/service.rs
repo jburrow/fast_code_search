@@ -322,6 +322,9 @@ impl CodeSearch for CodeSearchService {
                     match_type: match_type as i32,
                     match_start: m.match_start as i32,
                     match_end: m.match_end as i32,
+                    line_match_start: m.line_match_start as i32,
+                    line_match_end: m.line_match_end as i32,
+                    match_column: m.match_column as i32,
                     content_truncated: m.content_truncated,
                 };
 

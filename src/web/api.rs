@@ -128,6 +128,14 @@ pub struct SearchResultJson {
     pub match_end: usize,
     /// Whether content was truncated from original line
     pub content_truncated: bool,
+    /// Byte offset of the match start within the FULL line (not the possibly
+    /// truncated `content`); within the display path for filename hits.
+    pub line_match_start: usize,
+    /// Byte offset of the match end within the full line.
+    pub line_match_end: usize,
+    /// 0-based character column of the match start within the full line
+    /// (use this to place an editor cursor).
+    pub match_column: usize,
     pub score: f64,
     pub match_type: &'static str,
     pub dependency_count: u32,
@@ -350,6 +358,9 @@ pub async fn search_handler(
                     match_start: m.match_start,
                     match_end: m.match_end,
                     content_truncated: m.content_truncated,
+                    line_match_start: m.line_match_start,
+                    line_match_end: m.line_match_end,
+                    match_column: m.match_column,
                     score: m.score,
                     match_type: if m.is_symbol {
                         "SYMBOL_DEFINITION"

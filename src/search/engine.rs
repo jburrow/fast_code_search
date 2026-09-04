@@ -291,6 +291,12 @@ fn find_match_position_case_insensitive(
     None
 }
 
+/// 0-based character column of `byte_offset` within `line`.
+#[inline]
+fn char_column(line: &str, byte_offset: usize) -> usize {
+    line[..byte_offset.min(line.len())].chars().count()
+}
+
 /// Per-document symbol lookups built lazily on the first match of a scan.
 struct SymbolLineMaps<'a> {
     def_lines: Vec<usize>,
@@ -504,6 +510,14 @@ pub struct SearchMatch {
     pub match_end: usize,
     /// Whether the content was truncated from the original line
     pub content_truncated: bool,
+    /// Byte offset of the match start within the FULL (untruncated) line.
+    /// For filename hits (`line_number == 0`) this is within the display path.
+    pub line_match_start: usize,
+    /// Byte offset of the match end within the full line.
+    pub line_match_end: usize,
+    /// 0-based character (Unicode scalar) column of the match start within
+    /// the full line — what editors want for cursor placement.
+    pub match_column: usize,
     pub score: f64,
     pub is_symbol: bool,
     pub dependency_count: u32,
@@ -2357,6 +2371,7 @@ impl SearchEngine {
                 let display = display_path.clone();
                 let (match_start, match_end) =
                     find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
+                let match_column = char_column(&display, match_start);
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: display_path.clone(),
@@ -2365,6 +2380,9 @@ impl SearchEngine {
                     match_start,
                     match_end,
                     content_truncated: false,
+                    line_match_start: match_start,
+                    line_match_end: match_end,
+                    match_column,
                     score: 3.0 * dependency_boost,
                     is_symbol: true,
                     dependency_count,
@@ -2420,6 +2438,9 @@ impl SearchEngine {
                 match_start: truncated.match_start,
                 match_end: truncated.match_end,
                 content_truncated: truncated.was_truncated,
+                line_match_start: match_start,
+                line_match_end: match_end,
+                match_column: char_column(line, match_start),
                 score,
                 is_symbol: true,
                 dependency_count,
@@ -2550,6 +2571,9 @@ impl SearchEngine {
                     match_start: truncated.match_start,
                     match_end: truncated.match_end,
                     content_truncated: truncated.was_truncated,
+                    line_match_start: m.start(),
+                    line_match_end: m.end(),
+                    match_column: char_column(line, m.start()),
                     score,
                     is_symbol,
                     dependency_count,
@@ -2571,6 +2595,7 @@ impl SearchEngine {
                     .find(&display)
                     .map(|m| (m.start(), m.end()))
                     .unwrap_or((0, 0));
+                let match_column = char_column(&display, match_start);
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
@@ -2579,6 +2604,9 @@ impl SearchEngine {
                     match_start,
                     match_end,
                     content_truncated: false,
+                    line_match_start: match_start,
+                    line_match_end: match_end,
+                    match_column,
                     score: 3.0 * dependency_boost,
                     is_symbol: true,
                     dependency_count,
@@ -2680,6 +2708,9 @@ impl SearchEngine {
                     match_start: truncated.match_start,
                     match_end: truncated.match_end,
                     content_truncated: truncated.was_truncated,
+                    line_match_start: match_start,
+                    line_match_end: match_end,
+                    match_column: char_column(line, match_start),
                     score,
                     is_symbol,
                     dependency_count,
@@ -2722,6 +2753,7 @@ impl SearchEngine {
                 let display = path_ref.clone();
                 let (match_start, match_end) =
                     find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
+                let match_column = char_column(&display, match_start);
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
@@ -2730,6 +2762,9 @@ impl SearchEngine {
                     match_start,
                     match_end,
                     content_truncated: false,
+                    line_match_start: match_start,
+                    line_match_end: match_end,
+                    match_column,
                     score: 3.0 * dependency_boost, // Symbol def boost (3×) for filename matches
                     is_symbol: true,
                     dependency_count,
@@ -4370,6 +4405,35 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             exact_match.score,
             lower_match.score
         );
+    }
+
+    /// Roadmap 3.7: results carry offsets into the FULL line and a character
+    /// column, independent of content truncation and multi-byte prefixes.
+    #[test]
+    fn test_match_offsets_refer_to_full_line() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("offsets.rs");
+        // 600 bytes of prefix (truncation window is 500), then a multi-byte
+        // char, then the needle.
+        let prefix = "x".repeat(600);
+        let line = format!("{prefix}é offsets_needle();");
+        fs::write(&file_path, format!("{line}\n")).unwrap();
+
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let hits = engine.search("offsets_needle", 5);
+        assert_eq!(hits.len(), 1);
+        let m = &hits[0];
+        assert!(m.content_truncated);
+        let expected_byte = line.find("offsets_needle").unwrap();
+        assert_eq!(m.line_match_start, expected_byte);
+        assert_eq!(m.line_match_end, expected_byte + "offsets_needle".len());
+        // 600 x's + 'é' + ' ' = 602 characters before the match.
+        assert_eq!(m.match_column, 602);
+        // The truncated-content offsets still index `content` correctly.
+        assert_eq!(&m.content[m.match_start..m.match_end], "offsets_needle");
     }
 
     /// Roadmap 3.4: the whole-buffer ASCII scan must agree exactly with the

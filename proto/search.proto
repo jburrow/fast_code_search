@@ -25,6 +25,9 @@ message SearchResult {
   int32 match_start = 6;       // Start position of match in content
   int32 match_end = 7;         // End position of match in content
   bool content_truncated = 8;  // Whether content was truncated from original line
+  int32 line_match_start = 9;  // Byte offset of match start within the FULL line
+  int32 line_match_end = 10;   // Byte offset of match end within the full line
+  int32 match_column = 11;     // 0-based character column of match start in the full line
 }
 
 enum MatchType {

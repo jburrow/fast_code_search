@@ -338,6 +338,14 @@
                     <td>0</td>
                     <td>Lines of context returned before and after each match (0-10)</td>
                 </tr>
+                <tr>
+                    <td><code>offset</code></td>
+                    <td>Results to skip before the returned page (default 0); ordering is deterministic</td>
+                </tr>
+                <tr>
+                    <td><code>timeout_ms</code></td>
+                    <td>Stop scanning after this many milliseconds and return the best matches so far (0 = no deadline; capped at 30000)</td>
+                </tr>
             </table>
             <p><strong>Note:</strong> <code>rank</code> applies to text searches only. Regex and symbols-only queries
                 use internal fast ranking and omit ranking metadata in the response.</p>
@@ -364,6 +372,10 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
       "line_number": 42,
       "match_start": 0,
       "match_end": 5,
+      "content_truncated": false,
+      "line_match_start": 0,
+      "line_match_end": 5,
+      "match_column": 0,
       "score": 12.5,
       "match_type": "SYMBOL_DEFINITION",
       "dependency_count": 8
@@ -371,16 +383,32 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
   ],
   "query": "parse",
   "total_results": 1,
+  "offset": 0,
+  "total_matches": 1,
   "has_more": false,
+  "truncated_by_budget": false,
   "elapsed_ms": 23.4,
   "rank_mode": "fast",
-    "total_candidates": 15000,
-    "candidates_searched": 2000
+  "total_candidates": 15000,
+  "candidates_searched": 2000
 }</code></pre>
-            <p><strong>Note:</strong> <code>total_results</code> is the number of results in this
-                response (the returned page), not the total number of matches in the index.
-                <code>has_more</code> is <code>true</code> when the result set was capped at
-                <code>max</code>, indicating more matches likely exist — raise <code>max</code> to see them.</p>
+            <p><strong>Match positions:</strong> <code>match_start</code>/<code>match_end</code> are
+                byte offsets into <code>content</code>, which may be a truncated window of a long
+                line (<code>content_truncated</code>). <code>line_match_start</code>/
+                <code>line_match_end</code> are byte offsets into the <em>full</em> line, and
+                <code>match_column</code> is the 0-based character column of the match start —
+                use those to place an editor cursor or highlight in the real file. For filename
+                hits (<code>line_number</code> = 0) the offsets refer to the display path.</p>
+            <p><strong>Paging and totals:</strong> results are ordered deterministically
+                (score, then file, then line), so <code>offset</code> pages are stable:
+                <code>?q=…&amp;max=50&amp;offset=50</code> is page two. <code>total_results</code>
+                is the length of this page; <code>total_matches</code> is the number of matches
+                across all searched files, when the search ran to completion. Each query has a
+                match budget (and an optional <code>timeout_ms</code>, capped at 30 s); when either
+                stops the scan early, <code>truncated_by_budget</code> is <code>true</code>,
+                <code>total_matches</code> is omitted and <code>has_more</code> is
+                <code>true</code>. Otherwise <code>has_more</code> means
+                <code>offset + total_results &lt; total_matches</code>.</p>
 
             <h2>Path Filter Patterns</h2>
             <p>Use glob patterns to filter which files are searched:</p>
