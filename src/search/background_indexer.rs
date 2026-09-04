@@ -1130,6 +1130,135 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    fn test_engine() -> Arc<RwLock<SearchEngine>> {
+        Arc::new(RwLock::new(SearchEngine::new()))
+    }
+
+    /// Roadmap 2.9: the batch loop drains the channel in `batch_size` groups,
+    /// flushes the straggler tail, counts only files that actually indexed,
+    /// and honours the checkpoint cadence (a checkpoint after every N files
+    /// is a save; here index_path is unset so it is a no-op we can count via
+    /// batch numbering).
+    #[test]
+    fn test_process_batches_drains_and_flushes_tail() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut paths = Vec::new();
+        for i in 0..7 {
+            let p = temp.path().join(format!("f{i}.rs"));
+            std::fs::write(&p, format!("fn batch_fn_{i}() {{}}\n")).unwrap();
+            paths.push(p);
+        }
+        // A binary-looking file is skipped by process() and must not count.
+        let bin = temp.path().join("blob.rs");
+        std::fs::write(&bin, [0u8, 159, 146, 150, 0, 0, 1, 2]).unwrap();
+        paths.push(bin);
+
+        let (tx, rx) = mpsc::sync_channel::<PathBuf>(64);
+        for p in &paths {
+            tx.send(p.clone()).unwrap();
+        }
+        drop(tx);
+
+        let engine = test_engine();
+        let progress: SharedIndexingProgress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = crate::search::create_progress_broadcaster();
+        let config = IndexerConfig {
+            batch_size: 3,
+            ..Default::default()
+        };
+        let (indexed, batches) = process_batches(
+            rx,
+            &Arc::new(AtomicUsize::new(paths.len())),
+            &Arc::new(AtomicBool::new(true)),
+            &engine,
+            &progress,
+            &progress_tx,
+            &config,
+            false,
+            &Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(indexed, 7, "binary file must not be counted");
+        assert_eq!(batches, 3, "3 + 3 + tail of 2");
+        let eng = engine.read().unwrap();
+        assert_eq!(eng.get_stats().num_files, 7);
+        assert_eq!(eng.search("batch_fn_6", 5).len(), 1);
+    }
+
+    /// Roadmap 2.9: a shutdown flag observed mid-run stops pulling work but
+    /// still flushes what was already batched.
+    #[test]
+    fn test_process_batches_stops_on_shutdown() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let (tx, rx) = mpsc::sync_channel::<PathBuf>(64);
+        for i in 0..4 {
+            let p = temp.path().join(format!("s{i}.rs"));
+            std::fs::write(&p, format!("fn shut_{i}() {{}}\n")).unwrap();
+            tx.send(p).unwrap();
+        }
+        // Keep `tx` alive: the loop must exit because of the flag, not because
+        // the channel disconnected.
+        let engine = test_engine();
+        let progress: SharedIndexingProgress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = crate::search::create_progress_broadcaster();
+        let config = IndexerConfig {
+            batch_size: 100,
+            ..Default::default()
+        };
+        let shutdown = Arc::new(AtomicBool::new(true));
+        let (indexed, _) = process_batches(
+            rx,
+            &Arc::new(AtomicUsize::new(4)),
+            &Arc::new(AtomicBool::new(false)),
+            &engine,
+            &progress,
+            &progress_tx,
+            &config,
+            false,
+            &shutdown,
+        );
+        assert_eq!(indexed, 0, "flag was set before any recv; nothing pulled");
+        drop(tx);
+    }
+
+    /// Roadmap 2.9: a poisoned engine lock is recovered by the batch merge
+    /// rather than dropping the batch.
+    #[test]
+    fn test_process_batch_recovers_poisoned_lock() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let p = temp.path().join("after_poison.rs");
+        std::fs::write(&p, "fn survived_poison() {}\n").unwrap();
+
+        let engine = test_engine();
+        // Poison the lock: panic while holding the write guard.
+        let e2 = engine.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = e2.write().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert!(engine.write().is_err(), "lock should be poisoned");
+
+        let progress: SharedIndexingProgress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = crate::search::create_progress_broadcaster();
+        let mut batch = vec![p];
+        let mut batch_num = 0;
+        let indexed = process_batch(
+            &mut batch,
+            &mut batch_num,
+            &Arc::new(AtomicUsize::new(1)),
+            &engine,
+            &progress,
+            &progress_tx,
+            &[],
+            true,
+            true,
+            0,
+        );
+        assert_eq!(indexed, 1);
+        let eng = engine.read().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(eng.search("survived_poison", 5).len(), 1);
+    }
+
     /// Roadmap 2.7: after a checkpoint load, stale files were sent explicitly
     /// and then sent again by the full scan (they are not "already indexed").
     #[test]

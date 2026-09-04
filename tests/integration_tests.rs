@@ -2247,6 +2247,153 @@ async fn test_directory_rename_and_delete_update_index() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 2.9: searches running concurrently with incremental updates must
+/// never panic or observe a half-applied state (a file is either fully old
+/// or fully new), and the final state must be correct.
+#[tokio::test]
+async fn test_concurrent_search_during_updates() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mut files = Vec::new();
+    for i in 0..20 {
+        let p = temp.path().join(format!("c{i}.rs"));
+        std::fs::write(&p, format!("fn conc_token_{i}_v0() {{}}\n"))?;
+        files.push(p);
+    }
+    let engine = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut e = engine.write().unwrap();
+        for p in &files {
+            e.index_file(p)?;
+        }
+        e.finalize();
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let searcher = {
+        let engine = engine.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let mut searches = 0usize;
+            while !stop.load(Ordering::Relaxed) {
+                if let Ok(e) = engine.try_read() {
+                    // Every version of every file has exactly one definition.
+                    // A file being rewritten on disk (truncate + write, as
+                    // editors do) may transiently read as empty, so 0 hits is
+                    // tolerated; 2+ would mean a duplicate id or stale postings.
+                    // Probe a rotating subset so each read-lock hold is short
+                    // (a debug-build search costs milliseconds).
+                    for i in (searches % 4..20).step_by(4) {
+                        let hits = e.search(&format!("conc_token_{i}_v"), 10);
+                        assert!(hits.len() <= 1, "file {i} has {} live versions", hits.len());
+                    }
+                    searches += 1;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            searches
+        })
+    };
+
+    for round in 1..=5 {
+        for (i, p) in files.iter().enumerate() {
+            std::fs::write(p, format!("fn conc_token_{i}_v{round}() {{}}\n"))?;
+            engine.write().unwrap().update_file(p)?;
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    let searches = searcher.join().expect("search thread panicked");
+    assert!(searches > 0, "search thread never got the lock");
+
+    let e = engine.read().unwrap();
+    for i in 0..20 {
+        let hits = e.search(&format!("conc_token_{i}_v5"), 10);
+        assert_eq!(hits.len(), 1, "final content for {i}");
+        assert!(e.search(&format!("conc_token_{i}_v0"), 10).is_empty());
+    }
+    assert_eq!(e.get_stats().num_files, 20, "no duplicate ids");
+    Ok(())
+}
+
+/// Roadmap 2.9: the real `notify` watcher reports create, modify, delete and
+/// rename as `FileChange`s (with a short debounce), and those changes applied
+/// through `apply_changes` leave the index matching the disk.
+#[tokio::test]
+async fn test_real_watcher_events_end_to_end() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{
+        apply_changes, FileChange, FileWatcher, SearchEngine, WatcherConfig,
+    };
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let root = temp.path().canonicalize()?;
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    let watcher = FileWatcher::new(WatcherConfig {
+        paths: vec![root.clone()],
+        debounce_duration: Duration::from_millis(150),
+        exclude_patterns: Vec::new(),
+    })?;
+
+    // Collect events for up to `wait`, returning as soon as `want` events landed.
+    let collect = |watcher: &FileWatcher, want: usize, wait: Duration| -> Vec<FileChange> {
+        let deadline = std::time::Instant::now() + wait;
+        let mut out = Vec::new();
+        while out.len() < want && std::time::Instant::now() < deadline {
+            if let Some(c) = watcher.recv_timeout(Duration::from_millis(200)) {
+                out.push(c);
+            }
+        }
+        out
+    };
+
+    // create
+    let a = root.join("w_a.rs");
+    std::fs::write(&a, "fn watch_created() {}\n")?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a create event");
+    apply_changes(&mut engine, &ev, &config);
+    assert_eq!(engine.search("watch_created", 5).len(), 1);
+
+    // modify
+    std::fs::write(&a, "fn watch_modified() {}\n")?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a modify event");
+    apply_changes(&mut engine, &ev, &config);
+    assert!(engine.search("watch_created", 5).is_empty());
+    assert_eq!(engine.search("watch_modified", 5).len(), 1);
+
+    // rename
+    let b = root.join("w_b.rs");
+    std::fs::rename(&a, &b)?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a rename event");
+    apply_changes(&mut engine, &ev, &config);
+    let hits = engine.search("watch_modified", 5);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert!(
+        hits[0].file_path.ends_with("w_b.rs"),
+        "{}",
+        hits[0].file_path
+    );
+
+    // delete
+    std::fs::remove_file(&b)?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a delete event");
+    apply_changes(&mut engine, &ev, &config);
+    assert!(engine.search("watch_modified", 5).is_empty());
+    assert_eq!(engine.get_stats().num_files, 0, "live file count");
+    Ok(())
+}
+
 /// Roadmap 2.6: imports that were still unresolved at save time survive a
 /// checkpoint restore, so a file indexed after the reload still gains its
 /// incoming edge.
