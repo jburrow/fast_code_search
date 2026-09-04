@@ -468,12 +468,18 @@ CHANGELOG `[Unreleased]` section lists the changes.
 
 Goal: the index after an hour of edits is identical to a fresh build.
 
-- **2.1 Batch watcher events.** Drain the channel for up to ~200 ms, dedupe
+- [x] **2.1 Batch watcher events.** DONE (commit `9c521e1`): 200 ms gather
+  window in `main.rs`, `incremental::apply_changes` coalesces per path and
+  removes all doomed ids with one `TrigramIndex::remove_documents` pass.
+  Test `test_apply_changes_batches_and_coalesces`. Drain the channel for up to ~200 ms, dedupe
   by path, apply removals with **one** pass over the trigram map using a
   `RoaringBitmap` of doomed ids, re-index the modified set through
   `process_batch`. Accept: a `git checkout` touching 2000 files takes one
   write-lock window, not 2000.
-- **2.2 `finalize_incremental(ids)`.** Recompute `all_docs_cache` and
+- [x] **2.2 `finalize_incremental(ids)`.** DONE (same commit): the all-docs cache
+  is updated in place on add/remove; `refresh_file_metadata` after
+  `update_file` and for files whose in-edges changed; `compute_all_file_metadata`
+  after every persisted load. Test `test_remove_documents_bulk_keeps_cache_warm`. Recompute `all_docs_cache` and
   `FileMetadata` for touched files (and in-edge targets) after every batch and
   watcher update; call a metadata-only finalize after `load_index*`. Accept:
   a watcher-added file gets the filename boost in Fast mode; no
