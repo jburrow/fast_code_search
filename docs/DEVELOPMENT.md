@@ -49,8 +49,8 @@ rustup component add clippy rustfmt
 # Install cargo-watch for auto-rebuild on file changes
 cargo install cargo-watch
 
-# Install cargo-tree to visualize dependencies
-cargo install cargo-tree
+# cargo-deny checks advisories/licenses (CI runs it too)
+cargo install cargo-deny
 ```
 
 ### IDE Setup
@@ -68,29 +68,49 @@ Install these extensions:
 
 ```
 fast_code_search/
-├── proto/                      # Protocol buffer definitions
-│   └── search.proto           # gRPC service definition
+├── proto/
+│   ├── search.proto            # keyword gRPC service (Search, Index) + grpc.health.v1
+│   └── semantic_search.proto   # semantic engine service (feature "semantic")
 ├── src/
-│   ├── lib.rs                 # Library entry point
-│   ├── main.rs                # Server binary entry point
-│   ├── index/                 # Indexing layer
-│   │   ├── mod.rs
-│   │   ├── trigram.rs         # Trigram extraction and bitmap index
-│   │   └── file_store.rs      # Memory-mapped file storage
-│   ├── search/                # Search engine
-│   │   ├── mod.rs
-│   │   └── engine.rs          # Parallel search with scoring
-│   ├── symbols/               # Symbol extraction
-│   │   ├── mod.rs
-│   │   └── extractor.rs       # Tree-sitter integration
-│   └── server/                # gRPC server
-│       ├── mod.rs
-│       └── service.rs         # Service implementation
-├── examples/
-│   └── client.rs              # Example gRPC client
-├── build.rs                   # Build script for protobuf compilation
-├── Cargo.toml                 # Dependencies and project metadata
-└── README.md                  # User-facing documentation
+│   ├── lib.rs                  # module tree; semantic* modules are cfg(feature = "semantic")
+│   ├── main.rs                 # keyword server binary: config, servers, indexer, watcher, shutdown
+│   ├── config.rs               # TOML config (deny_unknown_fields), validation, CLI overrides
+│   ├── telemetry.rs            # tracing subscriber + optional OTLP export
+│   ├── index/
+│   │   ├── trigram.rs          # trigram extraction (bitset dedupe, per-byte fold) + Roaring index
+│   │   ├── lazy_file_store.rs  # file table: small files by owned reads, large files mmapped
+│   │   └── persistence.rs      # atomic save/load (magic + version), staleness checks
+│   ├── search/
+│   │   ├── engine/
+│   │   │   ├── mod.rs          # SearchEngine: indexing, incremental update, import resolution
+│   │   │   ├── query.rs        # run_candidates (budget/deadline/paging), per-document scans
+│   │   │   ├── text.rs         # matching/scoring helpers (line hits, word bounds, truncation)
+│   │   │   ├── persist.rs      # save_index, load_index*, reconciliation, symbol rebuild
+│   │   │   ├── progress.rs     # IndexingProgress / status types, broadcaster
+│   │   │   └── tests.rs
+│   │   ├── background_indexer.rs # two-phase batch build, checkpoints, shutdown flag
+│   │   ├── incremental.rs      # apply watcher changes (files and directories) to the engine
+│   │   ├── watcher.rs          # notify-based file watcher
+│   │   ├── file_discovery.rs   # walk (walkdir / ignore crate), eligibility rules
+│   │   ├── path_filter.rs      # include/exclude globs
+│   │   ├── query_syntax.rs     # file:/lang:/-term/case:/word: parsing
+│   │   ├── ranking.rs          # RankingWeights / FileScoreWeights
+│   │   └── regex_search.rs     # regex -> trigram constraints
+│   ├── symbols/
+│   │   ├── extractor.rs        # tree-sitter: tags.scm queries + supplementary walker, imports
+│   │   └── queries/            # vendored tags queries (C#)
+│   ├── dependencies/mod.rs     # import graph, per-language import resolution
+│   ├── server/service.rs       # gRPC CodeSearch service
+│   ├── web/                    # axum REST API, web UI assets, metrics
+│   ├── diagnostics/            # /api/diagnostics types and self-tests
+│   ├── utils.rs                # transcoding, binary detection, system limits
+│   └── bin/                    # fast_code_search_semantic (feature), fast_code_search_validator
+├── static/                     # embedded web UI (Tailwind build in tailwind.css)
+├── tests/integration_tests.rs  # end-to-end gRPC + HTTP tests on ephemeral ports
+├── benches/                    # criterion benchmarks (search, persistence)
+├── docs/                       # this guide, deployment, design notes, plans, archive
+├── build.rs                    # protobuf compilation
+└── Cargo.toml
 ```
 
 ## Building and Testing
@@ -166,104 +186,86 @@ cargo +nightly udeps
 
 ### Indexing Pipeline
 
-1. **File Discovery**: `walkdir` traverses directory trees
-2. **Memory Mapping**: `memmap2` creates memory-mapped views of files
-3. **Trigram Extraction**: Text split into overlapping 3-character sequences
-4. **Bitmap Indexing**: Roaring bitmaps store document sets for each trigram
-5. **Symbol Parsing**: Tree-sitter extracts symbol definitions (functions, classes, methods, types, etc.)
+1. **Discovery** (`file_discovery.rs`): a `walkdir` or, with `respect_gitignore`,
+   an `ignore` walk applies exclude patterns, include extensions, binary and size
+   rules. The same rules (`is_eligible`) gate watcher events.
+2. **Phase 1, parallel (rayon)**: `PartialIndexedFile::process` reads each file
+   into an owned buffer (never through a live mmap), records its mtime/size,
+   transcodes non-UTF-8, runs the structural safety check (which only disables
+   symbol extraction) and extracts trigrams.
+3. **Phase 2, parallel**: `PreIndexedFile::from_partial` runs tree-sitter (tags
+   query + walker) under `catch_unwind`.
+4. **Merge, under the engine write lock**: `index_batch` registers files,
+   inserts postings, stores symbols, queues imports; unresolved imports are
+   parked and retried only when a file with a matching name appears.
+5. **Checkpoints and final save**: atomic temp+fsync+rename, format v5.
 
 ### Search Pipeline
 
-1. **Query Processing**: Query split into trigrams
-2. **Candidate Selection**: Bitmap intersection finds matching documents
-3. **Parallel Search**: Rayon distributes line-by-line search across threads
-4. **Scoring**: Multi-factor scoring ranks results
-5. **Result Streaming**: Top results streamed via gRPC
+1. **Parse** (`query_syntax.rs`): terms, `-term`, `file:`/`lang:` globs, `case:`/`word:`.
+2. **Candidates**: intersection of each term's trigram bitmaps (index is lowercase),
+   then the path filter (precomputed display paths, no allocation).
+3. **`run_candidates`** (`engine/query.rs`): fast vs full mode, fast-mode ordering by
+   file metadata, parallel per-document scans under a `QueryRun` (match budget +
+   deadline), deterministic sort (score, file id, line) and offset paging.
+4. **Per document** (`engine/text.rs`): whole-buffer scan (memmem / memchr2 /
+   Unicode fold) resolving line bounds only at hits, lazy symbol maps, scoring.
+5. **Serve**: REST (`/api/search`) and gRPC report ranking info, totals and
+   truncation; every result carries full-line offsets and a character column.
 
 ### Key Data Structures
 
-#### Trigram Index
-```rust
-HashMap<Trigram, RoaringBitmap>
-```
-- Maps each trigram to a bitmap of document IDs
-- Roaring bitmaps provide O(n) intersection where n = # of matching docs
+- `TrigramIndex`: `FxHashMap<Trigram, RoaringBitmap>` (run-optimised in `finalize`),
+  plus an all-documents cache kept warm across incremental updates.
+- `LazyFileStore`: `Vec<LazyMappedFile>` addressed by file id; files ≤ 1 MiB are
+  read into owned buffers per access, larger ones are memory-mapped; removed ids
+  are tombstoned so ids stay stable.
+- `DependencyIndex`: bidirectional import graph with cached dependent counts and
+  per-language resolution (Rust module paths, Python packages, JS/TS extensions
+  and `index.*`).
+- `FileMetadata`: per-file fast-ranking score, lowercase stem, display path.
 
-#### File Store
-```rust
-Vec<MappedFile>
-```
-- Array-indexed storage for O(1) document lookup
-- Memory-mapped files avoid loading entire files into RAM
+### Scoring
 
-#### Dependency Index
-```rust
-struct DependencyIndex {
-    imports: HashMap<u32, HashSet<u32>>,      // file → files it imports
-    imported_by: HashMap<u32, HashSet<u32>>,  // file → files that import it
-    import_counts: HashMap<u32, u32>,         // cached dependent counts
-}
-```
-- Bidirectional import graph built from tree-sitter extracted imports
-- Enables PageRank-style scoring: heavily-imported files rank higher
-
-### Scoring Algorithm
-
-Search results are ranked using a multiplicative scoring formula:
+All weights live in `src/search/ranking.rs` (`RankingWeights`, `FileScoreWeights`).
+Line-level score:
 
 ```
-score = base_score * case_boost * symbol_boost * path_boost * line_len_factor * position_boost * dependency_boost
+score = exact_case(2.0) * symbol_definition(3.0) * src_lib_dir(1.5)
+      * line_start(1.5) * line_length_factor * dependency_boost
+line_length_factor = max(1 / (1 + ln(1 + len/100)), 0.3)
+dependency_boost   = 1 + log10(dependents) * 0.5
 ```
 
-| Factor | Condition | Multiplier |
-|--------|-----------|------------|
-| `case_boost` | Exact case-sensitive match | 2.0x |
-| `symbol_boost` | Line contains a symbol definition | 3.0x |
-| `path_boost` | File in `/src/` or `/lib/` directory | 1.5x |
-| `line_len_factor` | Shorter lines preferred | `1.0 / (1.0 + len * 0.01)` |
-| `position_boost` | Match at start of line | 1.5x |
-| `dependency_boost` | File imported by N other files | `1.0 + log10(N) * 0.5` |
-
-**Example**: A class definition in `src/models.py` imported by 100 files:
-- symbol_boost: 3.0x
-- path_boost: 1.5x  
-- dependency_boost: `1.0 + log10(100) * 0.5 = 2.0x`
-- Combined: **9.0x** base score (before other factors)
-
-This ensures that **definitions rank above usages** and **core modules rank above consumers**.
+File-level (fast-mode ordering only, never in a result score): additive
+`base + src/lib + extension + log2(symbols) + log2(dependents)`, ×0.7 for
+test/example paths, ×5 when the query matches the file stem. Symbol search adds
+exact (2.0) > prefix (1.5) > substring and a small penalty for variables.
 
 ### Threading Model
 
-- **Indexing**: Single-threaded (I/O bound)
-- **Search**: Parallel via rayon (CPU bound)
-- **gRPC Server**: Tokio async runtime (I/O bound)
+- **Indexing**: discovery on its own thread; phases 1–2 on the global rayon pool
+  (8 MB stacks for tree-sitter, built in `main`); merges under the engine
+  `RwLock` write lock.
+- **Search**: REST/gRPC handlers `spawn_blocking`, take `try_read` (503 +
+  `Retry-After` while a writer holds the lock), and scan candidates with rayon.
+- **Watcher**: one thread (8 MB stack), gathers events for 200 ms and applies
+  them under one write lock via `incremental::apply_changes`.
+- **Servers**: tokio; graceful shutdown on SIGINT/SIGTERM saves the index.
 
 ## Development Workflow
 
 ### Adding a New Language for Symbol Extraction
 
-1. Add dependency to `Cargo.toml`:
-```toml
-tree-sitter-<language> = "0.20"
-```
-
-2. Update `src/symbols/extractor.rs`:
-```rust
-fn language_for_file(path: &Path) -> Option<Language> {
-    match extension {
-        "cpp" | "cc" => Some(tree_sitter_cpp::language()),
-        // ... existing cases
-    }
-}
-```
-
-3. Add test:
-```rust
-#[test]
-fn test_cpp_function_extraction() {
-    // ...
-}
-```
+1. Add the grammar crate to `Cargo.toml` (e.g. `tree-sitter-kotlin = "0.x"`).
+2. Map its extensions in `SymbolExtractor::language_for_extension`
+   (`src/symbols/extractor.rs`) and, if the crate exports a `TAGS_QUERY`, add it to
+   `tags_query_for`. If it does not, vendor the grammar's `queries/tags.scm` under
+   `src/symbols/queries/` (see the C# entry) or rely on the supplementary walker
+   (`visit_definition_node`) for its node kinds.
+3. Add the extension to `lang_globs` in `src/search/query_syntax.rs`.
+4. Add a test in `extractor.rs` that asserts names **and** line numbers, and an
+   import-resolution rule in `src/dependencies/mod.rs` if the language has imports.
 
 ### Modifying the gRPC API
 
@@ -299,21 +301,19 @@ rust-lldb target/debug/fast_code_search_server
 
 ### Logging
 
-Add logging to your code:
+The crate uses `tracing` (not `log`/`env_logger`):
 
 ```rust
-// In Cargo.toml dependencies
-env_logger = "0.10"
-log = "0.4"
+use tracing::{debug, info, warn};
 
-// In code
-use log::{info, debug, error};
-
-debug!("Processing document {}", doc_id);
-info!("Indexed {} files", count);
+debug!(doc_id, "Processing document");
+info!(count, "Indexed files");
 ```
 
-Run with logging:
+`RUST_LOG` controls the filter and takes precedence over `--verbose`; the server
+warns when both are set. Optional OTLP export is configured in `[telemetry]`
+(`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`; `OTEL_SDK_DISABLED=true` is final).
+
 ```bash
 RUST_LOG=debug cargo run --bin fast_code_search_server
 ```
@@ -364,25 +364,16 @@ ms_print massif.out.<pid>
 
 ### Benchmarking
 
-Create benchmarks in `benches/` directory:
+Criterion benchmarks live in `benches/` (`search_benchmark.rs`,
+`persistence_benchmark.rs`) and run in CI on every push to `main`, with trends
+published to GitHub Pages. They use a small synthetic corpus, so they measure
+fixed overhead well and large-corpus behaviour poorly (roadmap 6.5).
 
-```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
-fn trigram_benchmark(c: &mut Criterion) {
-    c.bench_function("trigram extraction", |b| {
-        b.iter(|| extract_trigrams(black_box("some text")))
-    });
-}
-
-criterion_group!(benches, trigram_benchmark);
-criterion_main!(benches);
-```
-
-Run benchmarks:
 ```bash
-cargo bench
+cargo bench --bench search_benchmark -- indexing
 ```
+
+Use `std::hint::black_box`, not `criterion::black_box`.
 
 ## Release Process
 
@@ -432,8 +423,8 @@ Each release includes platform-specific archives:
 
 | Platform | Archive |
 |----------|---------|
-| Linux x86_64 | `fast_code_search-v{VERSION}-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux ARM64 | `fast_code_search-v{VERSION}-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux x86_64 (glibc) | `fast_code_search-v{VERSION}-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux x86_64 (musl, static) | `fast_code_search-v{VERSION}-x86_64-unknown-linux-musl.tar.gz` |
 | macOS x86_64 | `fast_code_search-v{VERSION}-x86_64-apple-darwin.tar.gz` |
 | macOS ARM64 | `fast_code_search-v{VERSION}-aarch64-apple-darwin.tar.gz` |
 | Windows x86_64 | `fast_code_search-v{VERSION}-x86_64-pc-windows-msvc.zip` |

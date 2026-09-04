@@ -1,7 +1,9 @@
 # Keyword Engine Roadmap — 2026-09-04
 
-Status: IN PROGRESS on branch `keyword-roadmap`. Tasks are ticked `[x]` with a
-DONE note as they land; each task is one commit. Produced from a full read of the keyword engine at v0.9.0 (commit
+Status: IMPLEMENTED on branch `keyword-roadmap` (2026-09-04). Tasks are ticked
+`[x]` (done) or `[~]` (partial) with a DONE note; each task is one commit.
+Open: 6.1 sectioned layout, 6.3 memory diet, 6.5 real-corpus benchmarks,
+multi-line regex and symbol references (Phase 7), the load-path merge. Produced from a full read of the keyword engine at v0.9.0 (commit
 `241d01a`), verified by building and running the suite on Linux (Rust 1.98.1):
 lib 166 passed, integration 35 passed, benches compile, clippy 3 warnings,
 `cargo fmt --check` 13 hunks in 6 files.
@@ -779,17 +781,18 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
 
 ### Cross-cutting: structure and documentation (spread across phases)
 
-- Split `engine.rs` (4234 lines) into `search/{query,ranking,indexing,
-  reconcile,display,progress}.rs` and move persistence/reconciliation into
-  `index/`; target ≤ 1200 lines for the query module. Do this in Phase 3.5
-  when the shared runner lands, not before Phase 1 (keeps hotfix diffs small).
-- Delete dead code: `index/file_store.rs`, `load_index` and
-  `load_index_with_reconciliation` (make them thin wrappers or remove),
-  `service.rs` `create_*`, the 13 uncalled `pub fn`s, `RegexAnalysis::literals`.
-- Rewrite `docs/DEVELOPMENT.md` against the code; archive `docs/REVIEW.md` and
-  the completed 2026-06-09 plan under `docs/archive/`; refresh
-  `CONTRIBUTING.md`; add `PULL_REQUEST_TEMPLATE.md`, `CODEOWNERS`,
-  `SECURITY.md`, Dependabot.
+- [x] Split `engine.rs` — DONE: `search/engine/{mod,query,text,persist,progress,
+  tests}.rs` (mod.rs 1.4k lines; query 1.1k). `search/ranking.rs` holds the
+  weights. Persistence stayed under `engine/persist.rs` rather than `index/`.
+- [~] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
+  `new_with_indexing`, `RegexAnalysis::literals`. Still open: the three load
+  paths (`load_index`, `load_index_with_reconciliation`,
+  `load_index_with_progress`) remain separate functions, and the remaining
+  uncalled `pub fn`s have not been pruned.
+- [x] Docs — DONE: `DEVELOPMENT.md` rewritten against the code (module tree,
+  pipelines, threading, scoring, logging, adding a language, release targets);
+  `REVIEW.md` and the June plan archived; `CONTRIBUTING.md` refreshed;
+  `PULL_REQUEST_TEMPLATE.md`, `CODEOWNERS`, `SECURITY.md`, Dependabot added.
 
 ---
 
