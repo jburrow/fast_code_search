@@ -542,6 +542,43 @@ impl QueryRun {
     }
 }
 
+/// Tiny LRU of compiled regex analyses keyed by pattern.
+struct RegexCache {
+    capacity: usize,
+    order: std::collections::VecDeque<String>,
+    entries: FxHashMap<String, std::sync::Arc<RegexAnalysis>>,
+}
+
+impl RegexCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            order: std::collections::VecDeque::new(),
+            entries: FxHashMap::default(),
+        }
+    }
+
+    fn get(&mut self, pattern: &str) -> Option<std::sync::Arc<RegexAnalysis>> {
+        let hit = self.entries.get(pattern)?.clone();
+        if let Some(pos) = self.order.iter().position(|p| p == pattern) {
+            let key = self.order.remove(pos).expect("position is valid");
+            self.order.push_back(key);
+        }
+        Some(hit)
+    }
+
+    fn put(&mut self, pattern: &str, analysis: std::sync::Arc<RegexAnalysis>) {
+        if self.entries.insert(pattern.to_string(), analysis).is_none() {
+            self.order.push_back(pattern.to_string());
+        }
+        while self.order.len() > self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+    }
+}
+
 /// Result of attempting to resolve imports for a single file.
 /// Used internally by resolve_imports_incremental.
 struct ImportResolutionResult {
@@ -901,6 +938,8 @@ pub struct SearchEngine {
     waiting_keys: FxHashMap<String, Vec<usize>>,
     /// Lowercased stems of files added since the last incremental resolution.
     recently_added_stems: Vec<String>,
+    /// Recently compiled regexes (search-as-you-type resends the same pattern).
+    regex_cache: std::sync::Mutex<RegexCache>,
     /// Whether tree-sitter symbol extraction is enabled (default: true)
     pub enable_symbols: bool,
     /// Whether non-UTF-8 files are transcoded during single-file indexing (default: true)
@@ -924,6 +963,7 @@ impl SearchEngine {
             waiting_imports: Vec::new(),
             waiting_keys: FxHashMap::default(),
             recently_added_stems: Vec::new(),
+            regex_cache: std::sync::Mutex::new(RegexCache::new(64)),
             enable_symbols: true,
             transcode_non_utf8: true,
             max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
@@ -1958,6 +1998,20 @@ impl SearchEngine {
     /// 4. Runs regex matching only on candidate documents
     ///
     /// # Arguments
+    /// Compile (or fetch from the small LRU) the analysis for `pattern`.
+    fn cached_regex(&self, pattern: &str) -> Result<std::sync::Arc<RegexAnalysis>> {
+        if let Ok(mut cache) = self.regex_cache.lock() {
+            if let Some(a) = cache.get(pattern) {
+                return Ok(a);
+            }
+        }
+        let analysis = std::sync::Arc::new(RegexAnalysis::analyze(pattern)?);
+        if let Ok(mut cache) = self.regex_cache.lock() {
+            cache.put(pattern, analysis.clone());
+        }
+        Ok(analysis)
+    }
+
     /// Compute candidate documents for a regex from its sound literal constraints.
     ///
     /// Returns `None` when the regex has no usable constraints (caller should fall
@@ -2013,7 +2067,7 @@ impl SearchEngine {
         limits: SearchLimits,
         rank_mode: RankMode,
     ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
-        let analysis = RegexAnalysis::analyze(pattern)?;
+        let analysis = self.cached_regex(pattern)?;
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
         // The candidate set is the INTERSECTION across constraints, and the UNION
