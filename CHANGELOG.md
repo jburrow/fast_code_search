@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dependency_count`.
 
 ### Changed
+- Symbols are extracted with each grammar's own `tags.scm` query (name-node
+  positions, upstream-maintained coverage), supplemented by the previous walker;
+  new symbol kinds Module, Macro, Field and Property; C++ `.h` headers are
+  detected; JSON/TOML/YAML/HTML/CSS/Markdown are no longer parsed; parses are
+  capped at 2 s.
 - Unknown config keys are rejected and the configuration is validated at
   startup (addresses, limits, index path directory); `OTEL_SDK_DISABLED=true` can
   no longer be overridden.

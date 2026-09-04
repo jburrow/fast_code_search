@@ -673,24 +673,38 @@ set, never to the corpus.
 
 ### Phase 5 — Symbols and dependencies v2 → 0.13 (2–3 weeks)
 
-- **5.1 Migrate to tree-sitter `tags.scm` queries** per language
+- [x] **5.1 Migrate to tree-sitter `tags.scm` queries** DONE: each grammar's `TAGS_QUERY` (C# vendored) drives extraction;
+  walker supplements; merged on (name, line).
+  Original text: per language
   (definition/name captures). This replaces the 13-language `match` with
   colliding kind names, gives correct name positions for free, isolates each
   grammar's mapping for testing, and makes adding a language a data change.
-- **5.2 Kinds.** Add Property, Field, Macro, Namespace, TypeAlias; stop typing
+- [x] **5.2 Kinds.** DONE: Module/Macro/Field/Property kinds; C# properties are Property;
+  impl-block duplicates are deduped per line by symbol search.
+  Original text: Add Property, Field, Macro, Namespace, TypeAlias; stop typing
   C# properties as `Method`; dedupe `impl_item` against the struct/enum of the
   same name.
-- **5.3 Coverage.** Rust trait method signatures, `macro_rules!`, `union`,
+- [x] **5.3 Coverage.** DONE: trait signatures, macros, unions, modules, Python module
+  constants (via tags), Go aliases, C typedefs (tags), C++ in-class
+  declarations, C# namespaces/delegates, declarator unwrapping,
+  case-insensitive extensions, `.h` C++ heuristic.
+  Original text: Rust trait method signatures, `macro_rules!`, `union`,
   `mod`; Python module-level assignments and `import a, b`; Go `type_alias`;
   C `typedef`/prototypes; C++ in-class declarations; C# namespaces/delegates;
   correct C/C++ reference and pointer declarators; case-insensitive extension
   match; `.h` heuristic (C++ if the file contains `class`/`namespace`/
   `template`).
-- **5.4 Stop parsing config/markup grammars** until captures exist (then add
+- [x] **5.4 Stop parsing config/markup grammars** DONE: markup grammars removed from the extractor and from Cargo.toml.
+  Original text: until captures exist (then add
   cheap ones: Markdown headings, JSON/TOML/YAML top-level keys).
-- **5.5 Parser reuse.** Thread-local `Parser` per language; single
+- [x] **5.5 Parser reuse.** DONE: thread-local parser, 2 s parse timeout via `ParseOptions`
+  (single-cursor traversal not needed with the query path).
+  Original text: Thread-local `Parser` per language; single
   `TreeCursor` traversal; a parse timeout via `parse_with_options`.
-- **5.6 Tests.** One symbol test per language asserting names **and** lines,
+- [x] **5.6 Tests.** DONE: Python/C/.h/kinds tests with line assertions added to the
+  existing per-language tests (resolver tests landed in 2.5). Golden
+  dependency-count fixture not added.
+  Original text: One symbol test per language asserting names **and** lines,
   including Python, plain JS, C, `.h`, `.tsx`; `DependencyIndex` tests for
   `resolve_import_path` across languages and `remove_file`→`register_file`
   cycles; a golden dependency-count fixture.
