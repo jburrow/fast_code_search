@@ -189,9 +189,11 @@ impl LazyMappedFile {
     /// Call this (or `LazyFileStore::evict_all_fallbacks`) after each search
     /// request completes to prevent unbounded heap growth in long-running servers.
     pub fn evict_fallback(&self) {
-        // Fast path: if mmap is already successfully established, the fallback
-        // cache is never populated, so there is nothing to evict.
-        if matches!(self.mmap.get(), Some(Ok(_))) {
+        // Fast paths (no lock): small files are never cached (owned reads),
+        // and a successfully mapped file never populates the fallback cache.
+        if self.size_class.load(Ordering::Relaxed) == SIZE_CLASS_SMALL
+            || matches!(self.mmap.get(), Some(Ok(_)))
+        {
             return;
         }
         match self.content_fallback.lock() {

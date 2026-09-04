@@ -12,8 +12,8 @@ pub use background_indexer::{
 };
 pub use engine::{
     create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase,
-    PartialIndexedFile, PreIndexedFile, ProgressBroadcaster, RankMode, SearchEngine, SearchMatch,
-    SearchRankingInfo, SearchStats, SharedIndexingProgress,
+    PartialIndexedFile, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine,
+    SearchLimits, SearchMatch, SearchRankingInfo, SearchStats, SharedIndexingProgress,
 };
 pub use file_discovery::{discover_files, FileDiscoveryConfig, FileDiscoveryIterator};
 pub use incremental::{apply_change, apply_changes, ChangeOutcome};

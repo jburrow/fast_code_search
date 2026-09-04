@@ -400,6 +400,146 @@ pub struct SearchRankingInfo {
     pub total_candidates: usize,
     /// Number of candidates actually searched (read from disk)
     pub candidates_searched: usize,
+    /// True when the match budget or deadline stopped the search early, so
+    /// the result set is a *sample* of the best matches among those seen.
+    pub truncated_by_budget: bool,
+    /// Total matches found across all searched candidates (before paging),
+    /// or `None` when the search was truncated by the budget.
+    pub total_matches: Option<usize>,
+}
+
+impl SearchRankingInfo {
+    fn empty(mode: RankMode) -> Self {
+        Self {
+            mode,
+            total_candidates: 0,
+            candidates_searched: 0,
+            truncated_by_budget: false,
+            total_matches: Some(0),
+        }
+    }
+}
+
+/// Limits that bound the work a single query may do.
+///
+/// `match_budget` caps the number of matches materialized across all
+/// documents (each costs a `String`); once it is exhausted no further
+/// documents are opened. `deadline` stops the scan at a wall-clock time.
+/// Both are reported through [`SearchRankingInfo::truncated_by_budget`].
+#[derive(Debug, Clone, Copy)]
+pub struct SearchLimits {
+    /// Page size.
+    pub max_results: usize,
+    /// Results to skip (for paging); the ordering is deterministic.
+    pub offset: usize,
+    /// Maximum matches to materialize before stopping.
+    pub match_budget: usize,
+    /// Wall-clock deadline for the scan.
+    pub deadline: Option<std::time::Instant>,
+}
+
+impl SearchLimits {
+    /// Default budget multiplier: enough headroom above the requested page
+    /// (plus offset) that ranking still sees a broad sample.
+    const BUDGET_MULTIPLIER: usize = 8;
+    /// Never budget fewer matches than this, so tiny pages still rank well.
+    const MIN_BUDGET: usize = 512;
+
+    /// Limits for a page of `max_results` with the default budget.
+    pub fn new(max_results: usize) -> Self {
+        let max_results = max_results.max(1);
+        Self {
+            max_results,
+            offset: 0,
+            match_budget: (max_results * Self::BUDGET_MULTIPLIER).max(Self::MIN_BUDGET),
+            deadline: None,
+        }
+    }
+
+    /// Skip the first `offset` results (the budget grows to cover the page).
+    pub fn with_offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self.match_budget = self
+            .match_budget
+            .max(((offset + self.max_results) * Self::BUDGET_MULTIPLIER).max(Self::MIN_BUDGET));
+        self
+    }
+
+    /// Override the match budget (`usize::MAX` = unbounded, the old behaviour).
+    pub fn with_match_budget(mut self, budget: usize) -> Self {
+        self.match_budget = budget.max(1);
+        self
+    }
+
+    /// Stop scanning at `deadline`.
+    pub fn with_deadline(mut self, deadline: std::time::Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Stop scanning after `dur` from now.
+    pub fn with_timeout(self, dur: std::time::Duration) -> Self {
+        self.with_deadline(std::time::Instant::now() + dur)
+    }
+}
+
+/// Shared per-query state consulted by every worker: remaining match budget
+/// and deadline. Cheap enough to check per document and per match.
+pub struct QueryRun {
+    remaining: std::sync::atomic::AtomicUsize,
+    deadline: Option<std::time::Instant>,
+    truncated: std::sync::atomic::AtomicBool,
+}
+
+impl QueryRun {
+    fn new(limits: &SearchLimits) -> Self {
+        Self {
+            remaining: std::sync::atomic::AtomicUsize::new(limits.match_budget),
+            deadline: limits.deadline,
+            truncated: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// True once the budget is spent or the deadline passed; callers must
+    /// not open further documents.
+    pub fn exhausted(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.remaining.load(Relaxed) == 0 {
+            self.truncated.store(true, Relaxed);
+            return true;
+        }
+        if let Some(d) = self.deadline {
+            if std::time::Instant::now() >= d {
+                self.truncated.store(true, Relaxed);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Reserve one unit of budget for a match. Returns `false` (and marks
+    /// the run truncated) when none is left; the caller stops scanning.
+    pub fn take_match(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mut cur = self.remaining.load(Relaxed);
+        loop {
+            if cur == 0 {
+                self.truncated.store(true, Relaxed);
+                return false;
+            }
+            match self
+                .remaining
+                .compare_exchange_weak(cur, cur - 1, Relaxed, Relaxed)
+            {
+                Ok(_) => return true,
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+
+    fn was_truncated(&self) -> bool {
+        self.truncated.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// Result of attempting to resolve imports for a single file.
@@ -1557,177 +1697,159 @@ impl SearchEngine {
         // fall into the short-query branch, pull in ALL documents, and the empty
         // needle "matches" every line — a full-corpus scan returning garbage.
         if query.trim().is_empty() {
-            return (
-                Vec::new(),
-                SearchRankingInfo {
-                    mode: rank_mode,
-                    total_candidates: 0,
-                    candidates_searched: 0,
-                },
-            );
+            return (Vec::new(), SearchRankingInfo::empty(rank_mode));
         }
 
+        self.search_ranked_with_limits(query, SearchLimits::new(max_results), rank_mode)
+    }
+
+    /// [`Self::search_ranked`] with explicit limits (budget, deadline, offset).
+    pub fn search_ranked_with_limits(
+        &self,
+        query: &str,
+        limits: SearchLimits,
+        rank_mode: RankMode,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        if query.trim().is_empty() {
+            return (Vec::new(), SearchRankingInfo::empty(rank_mode));
+        }
         let query_lower = query.to_lowercase();
-        // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
-        // all documents so that short terms like `_` or `__` return results.
-        let candidate_docs = if query_lower.len() >= 3 {
-            self.trigram_index.search(&query_lower)
+        let candidate_docs = self.text_candidates(&query_lower);
+        self.run_text_query(query, &query_lower, candidate_docs, limits, rank_mode)
+    }
+
+    /// Candidate documents for a plain-text query. Queries shorter than 3
+    /// bytes produce no trigrams; fall back to all documents so short terms
+    /// like `_` or `__` still return results.
+    fn text_candidates(&self, query_lower: &str) -> roaring::RoaringBitmap {
+        if query_lower.len() >= 3 {
+            self.trigram_index.search(query_lower)
         } else {
             self.trigram_index.all_documents()
-        };
-        let total_candidates = candidate_docs.len() as usize;
+        }
+    }
 
-        // Determine effective ranking mode
+    /// Shared body of the plain-text searches (with or without a path filter).
+    fn run_text_query(
+        &self,
+        query: &str,
+        query_lower: &str,
+        candidates: roaring::RoaringBitmap,
+        limits: SearchLimits,
+        rank_mode: RankMode,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        self.run_candidates(
+            candidates,
+            rank_mode,
+            limits,
+            |meta| meta.query_score(query_lower),
+            |doc_id, run| self.search_in_document_scored(doc_id, query, query_lower, run),
+        )
+    }
+
+    /// The one place every search goes through: picks fast vs full ranking,
+    /// orders candidates for fast mode, runs `per_doc` in parallel under the
+    /// budget/deadline, then orders and pages the results deterministically.
+    ///
+    /// `fast_score` ranks candidate files by metadata alone (no I/O) when fast
+    /// mode limits how many files are opened.
+    fn run_candidates<S, F>(
+        &self,
+        candidates: roaring::RoaringBitmap,
+        rank_mode: RankMode,
+        limits: SearchLimits,
+        fast_score: S,
+        per_doc: F,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo)
+    where
+        S: Fn(&FileMetadata) -> f32,
+        F: Fn(u32, &QueryRun) -> Option<Vec<SearchMatch>> + Sync,
+    {
+        let total_candidates = candidates.len() as usize;
         let use_fast = match rank_mode {
             RankMode::Fast => true,
             RankMode::Full => false,
             RankMode::Auto => total_candidates > Self::FAST_RANKING_THRESHOLD,
         };
-
         let effective_mode = if use_fast {
             RankMode::Fast
         } else {
             RankMode::Full
         };
 
-        if use_fast && !self.file_metadata.is_empty() {
-            // Fast ranking: score by file metadata, read only top N
-            let matches = self.search_fast_ranked_with_query(
-                query,
-                &query_lower,
-                &candidate_docs,
-                max_results,
-            );
-            self.file_store.evict_all_fallbacks();
-            let info = SearchRankingInfo {
-                mode: effective_mode,
-                total_candidates,
-                candidates_searched: Self::FAST_RANKING_TOP_N.min(total_candidates),
-            };
-            (matches, info)
-        } else if use_fast {
-            // Fast ranking requested but file metadata is unavailable (e.g. freshly
-            // loaded index). Fall back to reading a capped number of candidates to
-            // avoid OOM when the candidate set is very large.
-            let capped: roaring::RoaringBitmap = candidate_docs
+        let doc_ids: Vec<u32> = if use_fast && !self.file_metadata.is_empty() {
+            // Fast ranking: order by file metadata (no reads), open the top N.
+            let mut scored: Vec<(u32, f32)> = candidates
+                .iter()
+                .map(|id| (id, fast_score(self.get_file_metadata(id))))
+                .collect();
+            scored.sort_unstable_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            scored
                 .iter()
                 .take(Self::FAST_RANKING_TOP_N)
-                .collect();
-            let candidates_searched = capped.len() as usize;
-            let matches =
-                self.search_full_ranked_with_query(query, &query_lower, &capped, max_results);
-            self.file_store.evict_all_fallbacks();
-            let info = SearchRankingInfo {
-                mode: effective_mode,
-                total_candidates,
-                candidates_searched,
-            };
-            (matches, info)
+                .map(|(id, _)| *id)
+                .collect()
+        } else if use_fast {
+            // Fast ranking requested but no metadata yet (freshly loaded index):
+            // cap the number of files opened rather than reading everything.
+            candidates.iter().take(Self::FAST_RANKING_TOP_N).collect()
         } else {
-            // Full ranking: read all candidates
-            let matches = self.search_full_ranked_with_query(
-                query,
-                &query_lower,
-                &candidate_docs,
-                max_results,
-            );
-            self.file_store.evict_all_fallbacks();
-            let info = SearchRankingInfo {
-                mode: effective_mode,
-                total_candidates,
-                candidates_searched: total_candidates,
-            };
-            (matches, info)
-        }
-    }
+            candidates.iter().collect()
+        };
+        let candidates_searched = doc_ids.len();
 
-    /// Fast ranking with original query for exact-match scoring.
-    ///
-    /// `original_query` is passed to line-level scoring for case-sensitive match boost.
-    /// `query_lower` is used for case-insensitive matching and file-level scoring.
-    fn search_fast_ranked_with_query(
-        &self,
-        original_query: &str,
-        query_lower: &str,
-        candidate_docs: &roaring::RoaringBitmap,
-        max_results: usize,
-    ) -> Vec<SearchMatch> {
-        // Score all candidates by file metadata (no file reads, no allocations)
-        let mut scored_candidates: Vec<(u32, f32)> = candidate_docs
-            .iter()
-            .map(|doc_id| {
-                let meta = self.get_file_metadata(doc_id);
-                let score = meta.query_score(query_lower);
-                (doc_id, score)
-            })
-            .collect();
-
-        scored_candidates
-            .sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let top_n = Self::FAST_RANKING_TOP_N.min(scored_candidates.len());
-        let top_candidates: Vec<u32> = scored_candidates[..top_n]
-            .iter()
-            .map(|(id, _)| *id)
-            .collect();
-
-        let mut matches: Vec<SearchMatch> = top_candidates
-            .par_iter()
-            .filter_map(|&doc_id| {
-                self.search_in_document_scored(doc_id, original_query, query_lower)
-            })
-            .flatten()
-            .collect();
-
-        self.sort_and_truncate(&mut matches, max_results);
-        matches
-    }
-
-    /// Full ranking with original query for exact-match scoring.
-    ///
-    /// `original_query` is passed to line-level scoring for case-sensitive match boost.
-    /// `query_lower` is used for case-insensitive matching.
-    fn search_full_ranked_with_query(
-        &self,
-        original_query: &str,
-        query_lower: &str,
-        candidate_docs: &roaring::RoaringBitmap,
-        max_results: usize,
-    ) -> Vec<SearchMatch> {
-        let doc_ids: Vec<u32> = candidate_docs.iter().collect();
-
+        let run = QueryRun::new(&limits);
         let mut matches: Vec<SearchMatch> = doc_ids
             .par_iter()
             .filter_map(|&doc_id| {
-                self.search_in_document_scored(doc_id, original_query, query_lower)
+                if run.exhausted() {
+                    return None;
+                }
+                per_doc(doc_id, &run)
             })
             .flatten()
             .collect();
+        let found = matches.len();
+        Self::sort_and_page(&mut matches, &limits);
+        self.file_store.evict_all_fallbacks();
 
-        self.sort_and_truncate(&mut matches, max_results);
-        matches
+        let truncated = run.was_truncated();
+        (
+            matches,
+            SearchRankingInfo {
+                mode: effective_mode,
+                total_candidates,
+                candidates_searched,
+                truncated_by_budget: truncated,
+                total_matches: if truncated { None } else { Some(found) },
+            },
+        )
     }
 
-    /// Helper to sort matches by score and truncate to max_results
-    fn sort_and_truncate(&self, matches: &mut Vec<SearchMatch>, max_results: usize) {
-        if matches.len() > max_results {
-            matches.select_nth_unstable_by(max_results, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            matches.truncate(max_results);
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        } else {
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+    /// Deterministic ordering — score desc, then file id, then line — and
+    /// paging by `offset`/`max_results`. Ties no longer reorder run to run,
+    /// so page N+1 never repeats or skips a result from page N.
+    fn sort_and_page(matches: &mut Vec<SearchMatch>, limits: &SearchLimits) {
+        let cmp = |a: &SearchMatch, b: &SearchMatch| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.file_id.cmp(&b.file_id))
+                .then_with(|| a.line_number.cmp(&b.line_number))
+        };
+        let keep = limits.offset.saturating_add(limits.max_results);
+        if matches.len() > keep {
+            matches.select_nth_unstable_by(keep, cmp);
+            matches.truncate(keep);
+        }
+        matches.sort_unstable_by(cmp);
+        if limits.offset > 0 {
+            let drop = limits.offset.min(matches.len());
+            matches.drain(..drop);
         }
     }
 
@@ -1781,89 +1903,50 @@ impl SearchEngine {
     ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
         // Empty / whitespace-only queries match nothing (see search_ranked).
         if query.trim().is_empty() {
-            return Ok((
-                Vec::new(),
-                SearchRankingInfo {
-                    mode: rank_mode,
-                    total_candidates: 0,
-                    candidates_searched: 0,
-                },
-            ));
+            return Ok((Vec::new(), SearchRankingInfo::empty(rank_mode)));
         }
 
-        // Build path filter from patterns
+        self.search_with_filter_ranked_limits(
+            query,
+            include_patterns,
+            exclude_patterns,
+            SearchLimits::new(max_results),
+            rank_mode,
+        )
+    }
+
+    /// [`Self::search_with_filter_ranked`] with explicit limits.
+    pub fn search_with_filter_ranked_limits(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+        rank_mode: RankMode,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        if query.trim().is_empty() {
+            return Ok((Vec::new(), SearchRankingInfo::empty(rank_mode)));
+        }
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
-
         let query_lower = query.to_lowercase();
-        // Queries shorter than 3 bytes produce no trigrams; fall back to scanning
-        // all documents so that short terms like `_` or `__` return results.
-        let candidate_docs = if query_lower.len() >= 3 {
-            self.trigram_index.search(&query_lower)
-        } else {
-            self.trigram_index.all_documents()
-        };
+        let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
+        Ok(self.run_text_query(query, &query_lower, candidates, limits, rank_mode))
+    }
 
-        // Apply path filter
-        let filtered_docs = if path_filter.is_empty() {
-            candidate_docs
-        } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store
-                    .get(doc_id)
-                    .map(|f| self.make_display_path(&f.path))
-            })
-        };
-
-        let total_candidates = filtered_docs.len() as usize;
-
-        // Determine ranking mode
-        let use_fast = match rank_mode {
-            RankMode::Fast => true,
-            RankMode::Full => false,
-            RankMode::Auto => total_candidates > Self::FAST_RANKING_THRESHOLD,
-        };
-
-        let effective_mode = if use_fast {
-            RankMode::Fast
-        } else {
-            RankMode::Full
-        };
-
-        let (matches, candidates_searched) = if use_fast && !self.file_metadata.is_empty() {
-            let m = self.search_fast_ranked_with_query(
-                query,
-                &query_lower,
-                &filtered_docs,
-                max_results,
-            );
-            (m, Self::FAST_RANKING_TOP_N.min(total_candidates))
-        } else if use_fast {
-            // Fast ranking requested but file metadata is unavailable. Cap candidates
-            // to FAST_RANKING_TOP_N to prevent OOM on very large candidate sets.
-            let capped: roaring::RoaringBitmap = filtered_docs
-                .iter()
-                .take(Self::FAST_RANKING_TOP_N)
-                .collect();
-            let candidates_searched = capped.len() as usize;
-            let m = self.search_full_ranked_with_query(query, &query_lower, &capped, max_results);
-            (m, candidates_searched)
-        } else {
-            let m = self.search_full_ranked_with_query(
-                query,
-                &query_lower,
-                &filtered_docs,
-                max_results,
-            );
-            (m, total_candidates)
-        };
-
-        let info = SearchRankingInfo {
-            mode: effective_mode,
-            total_candidates,
-            candidates_searched,
-        };
-
-        Ok((matches, info))
+    /// Narrow a candidate set by include/exclude globs on display paths.
+    fn apply_path_filter(
+        &self,
+        candidates: roaring::RoaringBitmap,
+        path_filter: &PathFilter,
+    ) -> roaring::RoaringBitmap {
+        if path_filter.is_empty() {
+            return candidates;
+        }
+        path_filter.filter_documents_with(&candidates, |doc_id| {
+            self.file_store
+                .get(doc_id)
+                .map(|f| self.make_display_path(&f.path))
+        })
     }
 
     /// Search using a regex pattern with trigram acceleration.
@@ -1911,13 +1994,28 @@ impl SearchEngine {
         exclude_patterns: &str,
         max_results: usize,
     ) -> Result<Vec<SearchMatch>> {
-        // Analyze the regex pattern
-        let analysis = RegexAnalysis::analyze(pattern)?;
+        let (m, _) = self.search_regex_with_limits(
+            pattern,
+            include_patterns,
+            exclude_patterns,
+            SearchLimits::new(max_results),
+            RankMode::Auto,
+        )?;
+        Ok(m)
+    }
 
-        // Build path filter from patterns
+    /// [`Self::search_regex`] with explicit limits and ranking mode.
+    pub fn search_regex_with_limits(
+        &self,
+        pattern: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+        rank_mode: RankMode,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        let analysis = RegexAnalysis::analyze(pattern)?;
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
 
-        // Get candidate documents using trigram acceleration if possible.
         // The candidate set is the INTERSECTION across constraints, and the UNION
         // of the trigram matches within each constraint. This keeps alternations
         // correct (e.g. `hello|world` keeps files that contain only `world`).
@@ -1927,55 +2025,19 @@ impl SearchEngine {
                 docs
             }
             None => {
-                tracing::warn!(pattern = %pattern, "Regex has no sound literal constraints - full scan");
+                tracing::debug!(pattern = %pattern, "Regex has no sound literal constraints - full scan");
                 self.trigram_index.all_documents()
             }
         };
-
-        // Apply path filter
-        let filtered_docs = if path_filter.is_empty() {
-            candidate_docs
-        } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store
-                    .get(doc_id)
-                    .map(|f| self.make_display_path(&f.path))
-            })
-        };
-
-        let total_candidates = filtered_docs.len() as usize;
-        let use_fast =
-            total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
-
-        let doc_ids: Vec<u32> = if use_fast {
-            // Fast ranking: sort by file score, take top N
-            let mut scored: Vec<(u32, f32)> = filtered_docs
-                .iter()
-                .map(|id| (id, self.get_file_metadata(id).base_score))
-                .collect();
-            scored.sort_unstable_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            scored
-                .iter()
-                .take(Self::FAST_RANKING_TOP_N)
-                .map(|(id, _)| *id)
-                .collect()
-        } else {
-            filtered_docs.iter().collect()
-        };
-
-        // Search with regex
+        let candidates = self.apply_path_filter(candidate_docs, &path_filter);
         let regex = &analysis.regex;
-        let mut matches: Vec<SearchMatch> = doc_ids
-            .par_iter()
-            .filter_map(|&doc_id| self.search_in_document_regex(doc_id, regex))
-            .flatten()
-            .collect();
-
-        self.sort_and_truncate(&mut matches, max_results);
-        self.file_store.evict_all_fallbacks();
-        Ok(matches)
+        Ok(self.run_candidates(
+            candidates,
+            rank_mode,
+            limits,
+            |meta| meta.base_score,
+            |doc_id, run| self.search_in_document_regex(doc_id, regex, run),
+        ))
     }
 
     /// Search only in discovered symbols (functions, classes, methods, types, etc.).
@@ -1998,69 +2060,41 @@ impl SearchEngine {
         exclude_patterns: &str,
         max_results: usize,
     ) -> Result<Vec<SearchMatch>> {
-        // Empty / whitespace-only queries match nothing (see search_ranked).
+        let (m, _) = self.search_symbols_with_limits(
+            query,
+            include_patterns,
+            exclude_patterns,
+            SearchLimits::new(max_results),
+        )?;
+        Ok(m)
+    }
+
+    /// [`Self::search_symbols`] with explicit limits.
+    ///
+    /// Symbol search never truncates the candidate set by file score before
+    /// matching: a document is only *opened* when one of its cached symbol
+    /// names matches, so scanning every candidate's symbol cache is cheap and
+    /// an exact symbol in a low-scoring file is never excluded.
+    pub fn search_symbols_with_limits(
+        &self,
+        query: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
         if query.trim().is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
         }
-
-        // Build path filter from patterns
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
-
-        // Pre-compute lowercase query ONCE
         let query_lower = query.to_lowercase();
-
-        // Use trigram index to narrow candidates if the query is long enough for trigrams (>= 3 chars).
-        // This avoids scanning every file when the trigram index can pre-filter.
-        let candidate_docs = if query_lower.len() >= 3 {
-            self.trigram_index.search(&query_lower)
-        } else {
-            // Query too short for trigrams — fall back to all documents
-            self.trigram_index.all_documents()
-        };
-
-        // Apply path filter if it has any patterns
-        let filtered_docs = if path_filter.is_empty() {
-            candidate_docs
-        } else {
-            path_filter.filter_documents_with(&candidate_docs, |doc_id| {
-                self.file_store
-                    .get(doc_id)
-                    .map(|f| self.make_display_path(&f.path))
-            })
-        };
-
-        let total_candidates = filtered_docs.len() as usize;
-        let use_fast =
-            total_candidates > Self::FAST_RANKING_THRESHOLD && !self.file_metadata.is_empty();
-
-        let doc_ids: Vec<u32> = if use_fast {
-            // Fast ranking: sort by file score (prioritize files with more symbols)
-            let mut scored: Vec<(u32, f32)> = filtered_docs
-                .iter()
-                .map(|id| (id, self.get_file_metadata(id).base_score))
-                .collect();
-            scored.sort_unstable_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            scored
-                .iter()
-                .take(Self::FAST_RANKING_TOP_N)
-                .map(|(id, _)| *id)
-                .collect()
-        } else {
-            filtered_docs.iter().collect()
-        };
-
-        // Search symbols in parallel
-        let mut matches: Vec<SearchMatch> = doc_ids
-            .par_iter()
-            .filter_map(|&doc_id| self.search_symbols_in_document(doc_id, query, &query_lower))
-            .flatten()
-            .collect();
-
-        self.sort_and_truncate(&mut matches, max_results);
-        self.file_store.evict_all_fallbacks();
-        Ok(matches)
+        let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
+        Ok(self.run_candidates(
+            candidates,
+            RankMode::Full,
+            limits,
+            |meta| meta.base_score,
+            |doc_id, run| self.search_symbols_in_document(doc_id, query, &query_lower, run),
+        ))
     }
 
     /// Search for symbols matching the query in a document.
@@ -2070,22 +2104,21 @@ impl SearchEngine {
         doc_id: u32,
         original_query: &str,
         query_lower: &str,
+        run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
-        let file = self.file_store.get(doc_id)?;
-        let content = file.as_str().ok()?;
-
-        // Get symbols for this file
+        // Consult the symbol cache BEFORE touching file content: most
+        // candidates have no matching symbol and must cost no I/O.
         let symbols = self.symbol_cache.get(doc_id as usize)?;
-
-        // Find symbols matching the query
         let matching_symbols: Vec<&Symbol> = symbols
             .iter()
             .filter(|s| contains_case_insensitive(&s.name, query_lower))
             .collect();
-
         if matching_symbols.is_empty() {
             return None;
         }
+
+        let file = self.file_store.get(doc_id)?;
+        let content = file.as_str().ok()?;
 
         // Get dependency count for this file
         let dependency_count = self.dependency_index.get_import_count(doc_id);
@@ -2113,6 +2146,9 @@ impl SearchEngine {
         let mut matches = Vec::with_capacity(matching_symbols.len());
 
         for symbol in matching_symbols {
+            if !run.take_match() {
+                break;
+            }
             // FileName symbols are synthetic (not from file content) — show the file path
             if symbol.symbol_type == SymbolType::FileName {
                 let display = display_path.clone();
@@ -2195,7 +2231,12 @@ impl SearchEngine {
     }
 
     /// Search in a document using regex matching
-    fn search_in_document_regex(&self, doc_id: u32, regex: &Regex) -> Option<Vec<SearchMatch>> {
+    fn search_in_document_regex(
+        &self,
+        doc_id: u32,
+        regex: &Regex,
+        run: &QueryRun,
+    ) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
 
@@ -2261,6 +2302,9 @@ impl SearchEngine {
                 break;
             }
             if let Some(m) = regex.find(line) {
+                if !run.take_match() {
+                    break;
+                }
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = display_path.get_or_insert_with(|| {
                     let raw = file.path.to_string_lossy().into_owned();
@@ -2356,6 +2400,7 @@ impl SearchEngine {
         doc_id: u32,
         original_query: &str,
         query_lower: &str,
+        run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
@@ -2435,6 +2480,9 @@ impl SearchEngine {
             if let Some((match_start, match_end)) =
                 find_match_position_case_insensitive(line, query_lower)
             {
+                if !run.take_match() {
+                    break;
+                }
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = display_path.get_or_insert_with(|| {
                     let raw = file.path.to_string_lossy().into_owned();
@@ -4150,6 +4198,109 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             exact_match.score,
             lower_match.score
         );
+    }
+
+    /// Roadmap 3.1: a query's work is bounded by the match budget; the
+    /// result reports the truncation and omits the total. With an unbounded
+    /// budget the total is exact.
+    #[test]
+    fn test_match_budget_bounds_work_and_is_reported() {
+        let temp_dir = TempDir::new().unwrap();
+        for f in 0..40 {
+            let body: String = (0..30)
+                .map(|l| format!("let budget_needle_{f}_{l} = 1;\n"))
+                .collect();
+            fs::write(temp_dir.path().join(format!("b{f}.rs")), body).unwrap();
+        }
+        let mut engine = SearchEngine::new();
+        for f in 0..40 {
+            engine
+                .index_file(temp_dir.path().join(format!("b{f}.rs")))
+                .unwrap();
+        }
+        engine.finalize();
+
+        // 1200 matching lines exist. A budget of 100 must stop early.
+        let limits = SearchLimits::new(10).with_match_budget(100);
+        let (hits, info) =
+            engine.search_ranked_with_limits("budget_needle", limits, RankMode::Full);
+        assert_eq!(hits.len(), 10);
+        assert!(info.truncated_by_budget, "{info:?}");
+        assert_eq!(info.total_matches, None);
+
+        // Unbounded: exact total, not truncated.
+        let limits = SearchLimits::new(10).with_match_budget(usize::MAX);
+        let (hits, info) =
+            engine.search_ranked_with_limits("budget_needle", limits, RankMode::Full);
+        assert_eq!(hits.len(), 10);
+        assert!(!info.truncated_by_budget);
+        assert_eq!(info.total_matches, Some(1200));
+
+        // An already-expired deadline stops the scan immediately.
+        let limits = SearchLimits::new(10)
+            .with_match_budget(usize::MAX)
+            .with_deadline(std::time::Instant::now() - std::time::Duration::from_millis(1));
+        let (_hits, info) =
+            engine.search_ranked_with_limits("budget_needle", limits, RankMode::Full);
+        assert!(info.truncated_by_budget, "deadline must mark truncation");
+    }
+
+    /// Roadmap 3.6: ordering is deterministic under ties and paging with
+    /// `offset` walks the same ordering without repeats or gaps.
+    #[test]
+    fn test_deterministic_order_and_offset_paging() {
+        let temp_dir = TempDir::new().unwrap();
+        // 12 identical files -> 12 tied matches per query.
+        for f in 0..12 {
+            fs::write(
+                temp_dir.path().join(format!("tie{f:02}.rs")),
+                "fn tied_needle() {}\n",
+            )
+            .unwrap();
+        }
+        let mut engine = SearchEngine::new();
+        for f in 0..12 {
+            engine
+                .index_file(temp_dir.path().join(format!("tie{f:02}.rs")))
+                .unwrap();
+        }
+        engine.finalize();
+
+        let key = |m: &SearchMatch| (m.file_path.clone(), m.line_number);
+        let full: Vec<_> = engine
+            .search_ranked_with_limits("tied_needle", SearchLimits::new(100), RankMode::Full)
+            .0
+            .iter()
+            .map(key)
+            .collect();
+        assert_eq!(full.len(), 12);
+        for _ in 0..5 {
+            let again: Vec<_> = engine
+                .search_ranked_with_limits("tied_needle", SearchLimits::new(100), RankMode::Full)
+                .0
+                .iter()
+                .map(key)
+                .collect();
+            assert_eq!(again, full, "order must be identical run to run");
+        }
+
+        let mut paged = Vec::new();
+        for page in 0..3 {
+            let (hits, info) = engine.search_ranked_with_limits(
+                "tied_needle",
+                SearchLimits::new(5).with_offset(page * 5),
+                RankMode::Full,
+            );
+            assert_eq!(info.total_matches, Some(12));
+            paged.extend(hits.iter().map(key));
+        }
+        assert_eq!(paged, full, "pages must tile the full ordering");
+        let (past_end, _) = engine.search_ranked_with_limits(
+            "tied_needle",
+            SearchLimits::new(5).with_offset(50),
+            RankMode::Full,
+        );
+        assert!(past_end.is_empty());
     }
 
     /// Roadmap 1.3: a file that fails the tree-sitter structural check (here a

@@ -5,7 +5,7 @@ use crate::diagnostics::{
     self, ConfigSummary, DiagnosticsQuery, ExtensionBreakdown, HealthStatus,
     KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
 };
-use crate::search::{IndexingStatus, RankMode, SearchEngine};
+use crate::search::{IndexingStatus, RankMode, SearchEngine, SearchLimits};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -91,11 +91,22 @@ pub struct SearchQuery {
     /// Number of context lines to return before and after each match (default: 0)
     #[serde(default)]
     context: usize,
+    /// Results to skip before the returned page (default: 0). Ordering is
+    /// deterministic, so `offset=max` returns the next page.
+    #[serde(default)]
+    offset: usize,
+    /// Stop scanning after this many milliseconds and return the best
+    /// matches seen so far (0 = no deadline; capped server-side).
+    #[serde(default)]
+    timeout_ms: u64,
 }
 
 fn default_max_results() -> usize {
     50
 }
+
+/// Upper bound for a client-requested search deadline.
+const MAX_SEARCH_TIMEOUT_MS: u64 = 30_000;
 
 /// Maximum number of context lines allowed per match.
 /// Capped to avoid returning excessively large payloads for dense result sets.
@@ -134,9 +145,18 @@ pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
     pub query: String,
     pub total_results: usize,
-    /// True when the result set was capped at `max` (more matches likely exist).
-    /// `total_results` reflects the returned page length, not the full match count.
+    /// True when more results exist beyond this page: either `total_matches`
+    /// exceeds `offset + total_results`, or the search stopped early on its
+    /// match budget / deadline (`truncated_by_budget`).
     pub has_more: bool,
+    /// Offset that was applied to this page.
+    pub offset: usize,
+    /// Total matches found across all searched files (before paging), when
+    /// the search ran to completion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_matches: Option<usize>,
+    /// True when the match budget or deadline stopped the scan early.
+    pub truncated_by_budget: bool,
     /// Time taken by the search in milliseconds
     pub elapsed_ms: f64,
     /// Ranking mode used: "auto", "fast", or "full"
@@ -206,6 +226,9 @@ pub async fn search_handler(
             query: String::new(),
             total_results: 0,
             has_more: false,
+            offset: 0,
+            total_matches: Some(0),
+            truncated_by_budget: false,
             elapsed_ms: 0.0,
             rank_mode: None,
             total_candidates: None,
@@ -214,6 +237,13 @@ pub async fn search_handler(
     }
 
     let max_results = params.max.clamp(1, 1000);
+    let offset = params.offset;
+    let mut limits = SearchLimits::new(max_results).with_offset(offset);
+    if params.timeout_ms > 0 {
+        limits = limits.with_timeout(std::time::Duration::from_millis(
+            params.timeout_ms.min(MAX_SEARCH_TIMEOUT_MS),
+        ));
+    }
     let include_patterns = params.include;
     let exclude_patterns = params.exclude;
     let is_regex = params.regex;
@@ -236,41 +266,41 @@ pub async fn search_handler(
         // Blocking here would cause threads to pile up and exhaust the thread pool.
         let engine = try_read_engine(&engine)?;
 
-        // Choose search method based on flags
+        // Choose search method based on flags. Every mode reports ranking
+        // info (regex/symbols included) and honours the limits.
         let (matches, ranking_info) = if symbols_only {
-            // Search only in discovered symbols
-            let m = engine
-                .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+            engine
+                .search_symbols_with_limits(&query, &include_patterns, &exclude_patterns, limits)
                 .map_err(|e| {
                     (
                         StatusCode::BAD_REQUEST,
                         format!("Invalid filter pattern: {}", e),
                     )
-                })?;
-            (m, None)
+                })?
         } else if is_regex {
-            // Use regex search with optional path filtering
-            let m = engine
-                .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
+            engine
+                .search_regex_with_limits(
+                    &query,
+                    &include_patterns,
+                    &exclude_patterns,
+                    limits,
+                    rank_mode,
+                )
                 .map_err(|e| {
                     (
                         StatusCode::BAD_REQUEST,
                         format!("Invalid regex pattern: {}", e),
                     )
-                })?;
-            (m, None)
+                })?
         } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-            // Plain text search with ranking
-            let (m, info) = engine.search_ranked(&query, max_results, rank_mode);
-            (m, Some(info))
+            engine.search_ranked_with_limits(&query, limits, rank_mode)
         } else {
-            // Plain text search with path filtering and ranking
-            let (m, info) = engine
-                .search_with_filter_ranked(
+            engine
+                .search_with_filter_ranked_limits(
                     &query,
                     &include_patterns,
                     &exclude_patterns,
-                    max_results,
+                    limits,
                     rank_mode,
                 )
                 .map_err(|e| {
@@ -278,14 +308,8 @@ pub async fn search_handler(
                         StatusCode::BAD_REQUEST,
                         format!("Invalid filter pattern: {}", e),
                     )
-                })?;
-            (m, Some(info))
+                })?
         };
-
-        // Evict fallback file bytes cached when the OS mmap limit was exceeded.
-        // Without this, heap usage grows unboundedly across search requests on
-        // large codebases where mmap is unavailable for some files.
-        engine.evict_file_fallbacks();
 
         let results: Vec<SearchResultJson> = matches
             .into_iter()
@@ -340,8 +364,10 @@ pub async fn search_handler(
             .collect();
 
         let total_results = results.len();
-        // Results are capped at max_results; equal length signals likely truncation.
-        let has_more = total_results >= max_results;
+        let has_more = match ranking_info.total_matches {
+            Some(total) => offset + total_results < total,
+            None => true, // truncated by budget/deadline: more may exist
+        };
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
         Ok(Json(SearchResponse {
@@ -349,12 +375,13 @@ pub async fn search_handler(
             query,
             total_results,
             has_more,
+            offset,
+            total_matches: ranking_info.total_matches,
+            truncated_by_budget: ranking_info.truncated_by_budget,
             elapsed_ms,
-            rank_mode: ranking_info
-                .as_ref()
-                .map(|r| format!("{:?}", r.mode).to_lowercase()),
-            total_candidates: ranking_info.as_ref().map(|r| r.total_candidates),
-            candidates_searched: ranking_info.as_ref().map(|r| r.candidates_searched),
+            rank_mode: Some(format!("{:?}", ranking_info.mode).to_lowercase()),
+            total_candidates: Some(ranking_info.total_candidates),
+            candidates_searched: Some(ranking_info.candidates_searched),
         }))
     })
     .await

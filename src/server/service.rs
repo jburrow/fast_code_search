@@ -298,8 +298,6 @@ impl CodeSearch for CodeSearchService {
                     })?
             };
 
-            // Evict fallback file bytes cached when the OS mmap limit was exceeded.
-            engine.evict_file_fallbacks();
             Ok::<_, Status>(matches)
         })
         .await

@@ -372,6 +372,70 @@ async fn test_http_search_finds_results() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 3.6: `/api/search` pages with `offset`, reports `total_matches`
+/// and derives `has_more` from it; regex and symbol searches report ranking
+/// info too.
+#[tokio::test]
+async fn test_http_search_offset_paging_and_totals() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let get = |q: &[(&str, &str)]| {
+        client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(q)
+            .send()
+    };
+
+    let all: serde_json::Value = get(&[("q", "def "), ("max", "100")]).await?.json().await?;
+    let total = all["total_matches"].as_u64().expect("total_matches") as usize;
+    assert!(total >= 2, "need at least two matches for paging: {all}");
+    assert!(!all["has_more"].as_bool().unwrap());
+    assert!(!all["truncated_by_budget"].as_bool().unwrap());
+    let all_keys: Vec<String> = all["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| format!("{}:{}", r["file_path"], r["line_number"]))
+        .collect();
+
+    let p1: serde_json::Value = get(&[("q", "def "), ("max", "1")]).await?.json().await?;
+    assert_eq!(p1["offset"].as_u64().unwrap(), 0);
+    assert!(p1["has_more"].as_bool().unwrap());
+    let p2: serde_json::Value = get(&[("q", "def "), ("max", "1"), ("offset", "1")])
+        .await?
+        .json()
+        .await?;
+    assert_eq!(p2["offset"].as_u64().unwrap(), 1);
+    let k = |v: &serde_json::Value| {
+        format!(
+            "{}:{}",
+            v["results"][0]["file_path"], v["results"][0]["line_number"]
+        )
+    };
+    assert_eq!(k(&p1), all_keys[0]);
+    assert_eq!(k(&p2), all_keys[1]);
+    let far: serde_json::Value = get(&[("q", "def "), ("max", "5"), ("offset", "1000")])
+        .await?
+        .json()
+        .await?;
+    assert_eq!(far["total_results"].as_u64().unwrap(), 0);
+    assert!(!far["has_more"].as_bool().unwrap());
+
+    // Regex and symbol modes now carry ranking info.
+    let rx: serde_json::Value = get(&[("q", "def\\s+\\w+"), ("regex", "true")])
+        .await?
+        .json()
+        .await?;
+    assert!(rx["rank_mode"].is_string(), "{rx}");
+    assert!(rx["total_matches"].is_number(), "{rx}");
+    let sy: serde_json::Value = get(&[("q", "TestStruct"), ("symbols", "true")])
+        .await?
+        .json()
+        .await?;
+    assert!(sy["total_matches"].is_number(), "{sy}");
+    Ok(())
+}
+
 /// Roadmap 1.9: `/api/context` must cap the window and never overflow.
 /// `context=usize::MAX` used to compute `match_idx + context + 1` (a panic in
 /// debug builds, a wrapped index in release) and could otherwise return the
