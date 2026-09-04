@@ -291,6 +291,124 @@ fn find_match_position_case_insensitive(
     None
 }
 
+/// Per-document symbol lookups built lazily on the first match of a scan.
+struct SymbolLineMaps<'a> {
+    def_lines: Vec<usize>,
+    def_set: FxHashSet<usize>,
+    use_set: bool,
+    names_by_line: FxHashMap<usize, Vec<&'a str>>,
+}
+
+impl<'a> SymbolLineMaps<'a> {
+    fn build(symbols: &'a [Symbol]) -> Self {
+        // The synthetic FileName symbol lives at line 0 and must NOT count as
+        // a definition line, otherwise every match on the first line of every
+        // file gets the definition boost.
+        let def_lines: Vec<usize> = symbols
+            .iter()
+            .filter(|s| s.is_definition && s.symbol_type != SymbolType::FileName)
+            .map(|s| s.line)
+            .collect();
+        // Linear Vec::contains beats a hash set for the usual handful of
+        // definitions; promote to a set only for symbol-dense files.
+        let use_set = def_lines.len() > 32;
+        let def_set: FxHashSet<usize> = if use_set {
+            def_lines.iter().copied().collect()
+        } else {
+            FxHashSet::default()
+        };
+        let names_by_line: FxHashMap<usize, Vec<&'a str>> = symbols
+            .iter()
+            .filter(|s| s.symbol_type != SymbolType::FileName)
+            .fold(FxHashMap::default(), |mut map, s| {
+                map.entry(s.line).or_default().push(s.name.as_str());
+                map
+            });
+        Self {
+            def_lines,
+            def_set,
+            use_set,
+            names_by_line,
+        }
+    }
+
+    fn is_definition_line(&self, line: usize) -> bool {
+        if self.use_set {
+            self.def_set.contains(&line)
+        } else {
+            self.def_lines.contains(&line)
+        }
+    }
+
+    fn names_on_line(&self, line: usize) -> Option<&Vec<&'a str>> {
+        self.names_by_line.get(&line)
+    }
+}
+
+/// One line containing an ASCII case-insensitive hit.
+struct LineHit<'a> {
+    /// 0-based line number
+    line_num: usize,
+    /// The line without its terminator (`\n` / `\r\n`), like `str::lines`
+    line: &'a str,
+    /// Match byte range within `line` (first occurrence on the line)
+    start: usize,
+    end: usize,
+}
+
+/// Find the lines of `content` containing `needle_lower` (ASCII, lowercase),
+/// case-insensitively, scanning the whole buffer with `memchr` on the first
+/// byte in both cases and only resolving line boundaries at hits. Equivalent
+/// to running `find_match_position_case_insensitive` on every `lines()`
+/// item, but does no per-line work on the (typically thousands of) lines
+/// that do not match.
+fn ascii_ci_line_hits<'a>(content: &'a str, needle_lower: &str) -> Vec<LineHit<'a>> {
+    let mut hits = Vec::new();
+    let needle = needle_lower.as_bytes();
+    let bytes = content.as_bytes();
+    if needle.is_empty() || bytes.len() < needle.len() {
+        return hits;
+    }
+    let first = needle[0];
+    let first_upper = first.to_ascii_uppercase();
+    let mut line_num = 0usize;
+    let mut counted_upto = 0usize; // newlines before this offset are counted in line_num
+    let mut skip_until = 0usize; // first occurrence per line only
+
+    for pos in memchr::memchr2_iter(first, first_upper, bytes) {
+        if pos < skip_until || pos + needle.len() > bytes.len() {
+            continue;
+        }
+        let window = &bytes[pos..pos + needle.len()];
+        if !window
+            .iter()
+            .zip(needle)
+            .skip(1)
+            .all(|(&h, &n)| h.to_ascii_lowercase() == n)
+        {
+            continue;
+        }
+        let line_start = memchr::memrchr(b'\n', &bytes[..pos]).map_or(0, |i| i + 1);
+        let mut line_end = memchr::memchr(b'\n', &bytes[pos..]).map_or(bytes.len(), |i| pos + i);
+        skip_until = line_end + 1;
+        if line_end > line_start && bytes[line_end - 1] == b'\r' {
+            line_end -= 1;
+        }
+        line_num += memchr::memchr_iter(b'\n', &bytes[counted_upto..line_start]).count();
+        counted_upto = line_start;
+        // Both bounds sit on newline bytes (or the buffer edges), which are
+        // always char boundaries in valid UTF-8.
+        let line = &content[line_start..line_end];
+        hits.push(LineHit {
+            line_num,
+            line,
+            start: pos - line_start,
+            end: pos - line_start + needle.len(),
+        });
+    }
+    hits
+}
+
 /// Inline scoring function with pre-computed values (no method call overhead, no redundant lookups)
 ///
 /// `original_query` is the un-lowered query for exact case-sensitive match boosting.
@@ -839,11 +957,19 @@ pub struct FileMetadata {
     pub base_score: f32,
     /// Lowercase filename stem for efficient query matching (avoids per-query allocation)
     pub lowercase_stem: String,
+    /// Root-relative display path, precomputed so path filters and result
+    /// construction never allocate per candidate.
+    pub display_path: String,
 }
 
 impl FileMetadata {
     /// Compute metadata for a file at index time
-    fn compute(path: &Path, symbol_count: usize, dependency_count: u32) -> Self {
+    fn compute(
+        path: &Path,
+        display_path: String,
+        symbol_count: usize,
+        dependency_count: u32,
+    ) -> Self {
         let mut base_score: f32 = 1.0;
 
         let path_str = path.to_string_lossy();
@@ -899,6 +1025,7 @@ impl FileMetadata {
             is_src_lib,
             base_score,
             lowercase_stem,
+            display_path,
         }
     }
 
@@ -1982,11 +2109,33 @@ impl SearchEngine {
         if path_filter.is_empty() {
             return candidates;
         }
-        path_filter.filter_documents_with(&candidates, |doc_id| {
-            self.file_store
-                .get(doc_id)
-                .map(|f| self.make_display_path(&f.path))
-        })
+        // Precomputed display paths (no allocation) when metadata exists for
+        // the id; otherwise (fresh index before finalize) build it.
+        let mut result = roaring::RoaringBitmap::new();
+        for doc_id in candidates.iter() {
+            let keep = match self.file_metadata.get(doc_id as usize) {
+                Some(meta) if !meta.display_path.is_empty() => {
+                    path_filter.matches(&meta.display_path)
+                }
+                _ => self
+                    .file_store
+                    .get(doc_id)
+                    .map(|f| path_filter.matches(&self.make_display_path(&f.path)))
+                    .unwrap_or(false),
+            };
+            if keep {
+                result.insert(doc_id);
+            }
+        }
+        result
+    }
+
+    /// Display path for a file id: precomputed when available.
+    fn display_path_for(&self, doc_id: u32, path: &Path) -> String {
+        match self.file_metadata.get(doc_id as usize) {
+            Some(meta) if !meta.display_path.is_empty() => meta.display_path.clone(),
+            _ => self.make_display_path(path),
+        }
     }
 
     /// Search using a regex pattern with trigram acceleration.
@@ -2479,65 +2628,23 @@ impl SearchEngine {
             1.0
         };
 
-        // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
-        // Most files have <100 symbols, linear scan is faster than hash overhead
-        // The synthetic FileName symbol lives at line 0 and must NOT count as a
-        // definition line, otherwise every match on the first line of every
-        // file gets the definition boost.
-        let symbol_def_lines: Vec<usize> = symbols
-            .iter()
-            .filter(|s| s.is_definition && s.symbol_type != SymbolType::FileName)
-            .map(|s| s.line)
-            .collect();
-
-        // For files with many definition symbols, promote to a HashSet for O(1) lookups.
-        // Linear Vec::contains is O(n); with >32 defs across thousands of lines this
-        // becomes the hot path.  The HashSet build cost (~32 inserts) is paid back
-        // immediately on the first line scan.
-        let use_hashset = symbol_def_lines.len() > 32;
-        let symbol_def_set: FxHashSet<usize> = if use_hashset {
-            symbol_def_lines.iter().copied().collect()
-        } else {
-            FxHashSet::default()
-        };
-
-        // Pre-compute a per-line symbol-name map for O(1) `is_symbol` lookup.
-        // Without this, checking whether a matching line contains a symbol whose
-        // name contains the query requires an O(n_symbols) scan for every match —
-        // expensive when a common term appears on many lines in a file with many
-        // symbols.  Building the map costs O(n_symbols) once and then each
-        // per-match check is O(k) where k is the (usually 0 or 1) symbols on
-        // that particular line.
-        let symbol_names_by_line: FxHashMap<usize, Vec<&str>> = symbols
-            .iter()
-            .filter(|s| s.symbol_type != crate::symbols::SymbolType::FileName)
-            .fold(FxHashMap::default(), |mut map, s| {
-                map.entry(s.line).or_default().push(s.name.as_str());
-                map
-            });
-
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
 
-        // Lazy-compute path info only if we find matches
+        // Everything below is built lazily on the FIRST match: most candidates
+        // (trigram hits that fail verification, or files whose only hit is
+        // beyond the budget) must cost nothing beyond the scan itself.
         let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
+        let mut symbol_maps: Option<SymbolLineMaps<'_>> = None;
 
-        // Search in each line using case-insensitive matching without allocation
-        for (line_num, line) in content.lines().enumerate() {
-            // Bail out early once we have enough matches from this document to
-            // prevent unbounded memory growth when a common keyword matches
-            // thousands of lines (OOM fix).
-            if matches.len() >= Self::MAX_MATCHES_PER_DOC {
-                break;
-            }
-            if let Some((match_start, match_end)) =
-                find_match_position_case_insensitive(line, query_lower)
-            {
-                if !run.take_match() {
-                    break;
+        // Per-hit body shared by the ASCII whole-content scan and the
+        // per-line Unicode fallback. Returns false to stop scanning.
+        let mut emit =
+            |line_num: usize, line: &str, match_start: usize, match_end: usize| -> bool {
+                if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
+                    return false;
                 }
-                // Lazy initialize path info only when we have at least one match
                 let path_ref = display_path.get_or_insert_with(|| {
                     let raw = file.path.to_string_lossy().into_owned();
                     let path_bytes = raw.as_bytes();
@@ -2545,15 +2652,11 @@ impl SearchEngine {
                         || contains_bytes(path_bytes, b"\\src\\")
                         || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
-                    self.make_display_path(&file.path)
+                    self.display_path_for(doc_id, &file.path)
                 });
+                let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
 
-                // Calculate score using pre-computed values
-                let is_symbol_def = if use_hashset {
-                    symbol_def_set.contains(&line_num)
-                } else {
-                    symbol_def_lines.contains(&line_num)
-                };
+                let is_symbol_def = maps.is_definition_line(line_num);
                 let score = calculate_score_inline(
                     line,
                     original_query,
@@ -2562,20 +2665,13 @@ impl SearchEngine {
                     is_src_lib,
                     dependency_boost,
                 );
+                let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
+                    names
+                        .iter()
+                        .any(|n| contains_case_insensitive(n, query_lower))
+                });
 
-                // Check if this is a symbol match using the pre-computed per-line map (O(1) lookup)
-                let is_symbol = symbol_names_by_line
-                    .get(&line_num)
-                    .map(|names| {
-                        names
-                            .iter()
-                            .any(|name| contains_case_insensitive(name, query_lower))
-                    })
-                    .unwrap_or(false);
-
-                // Truncate long lines around the match
                 let truncated = truncate_around_match(line, match_start, match_end);
-
                 matches.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
@@ -2588,6 +2684,26 @@ impl SearchEngine {
                     is_symbol,
                     dependency_count,
                 });
+                true
+            };
+
+        if query_lower.is_ascii() {
+            // SIMD-assisted scan over the whole buffer (memchr on the first
+            // byte in both cases), resolving line bounds only at hits.
+            for hit in ascii_ci_line_hits(&content, query_lower) {
+                if !emit(hit.line_num, hit.line, hit.start, hit.end) {
+                    break;
+                }
+            }
+        } else {
+            for (line_num, line) in content.lines().enumerate() {
+                if let Some((match_start, match_end)) =
+                    find_match_position_case_insensitive(line, query_lower)
+                {
+                    if !emit(line_num, line, match_start, match_end) {
+                        break;
+                    }
+                }
             }
         }
 
@@ -2602,7 +2718,7 @@ impl SearchEngine {
             });
             if has_filename_match {
                 let path_ref =
-                    display_path.get_or_insert_with(|| self.make_display_path(&file.path));
+                    display_path.get_or_insert_with(|| self.display_path_for(doc_id, &file.path));
                 let display = path_ref.clone();
                 let (match_start, match_end) =
                     find_match_position_case_insensitive(&display, query_lower).unwrap_or((0, 0));
@@ -3407,7 +3523,8 @@ impl SearchEngine {
             Some(file) => {
                 let symbol_count = self.symbol_cache.get(idx).map(|s| s.len()).unwrap_or(0);
                 let dep_count = self.dependency_index.get_import_count(id);
-                FileMetadata::compute(&file.path, symbol_count, dep_count)
+                let display = self.make_display_path(&file.path);
+                FileMetadata::compute(&file.path, display, symbol_count, dep_count)
             }
             None => FileMetadata::default(),
         };
@@ -3432,7 +3549,8 @@ impl SearchEngine {
                     .map(|s| s.len())
                     .unwrap_or(0);
                 let dep_count = self.dependency_index.get_import_count(file_id);
-                FileMetadata::compute(&file.path, symbol_count, dep_count)
+                let display = self.make_display_path(&file.path);
+                FileMetadata::compute(&file.path, display, symbol_count, dep_count)
             } else {
                 FileMetadata::default()
             };
@@ -4252,6 +4370,31 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             exact_match.score,
             lower_match.score
         );
+    }
+
+    /// Roadmap 3.4: the whole-buffer ASCII scan must agree exactly with the
+    /// per-line search it replaces (first hit per line, CRLF handling, hits
+    /// on the last unterminated line, case-insensitivity, multi-byte text).
+    #[test]
+    fn test_ascii_line_hits_matches_per_line_search() {
+        let content =
+            "First Needle here\r\nno hit\nneedle NEEDLE twice\n\n  über needle\nlast needle";
+        let expected: Vec<(usize, &str, usize, usize)> = content
+            .lines()
+            .enumerate()
+            .filter_map(|(n, l)| {
+                find_match_position_case_insensitive(l, "needle").map(|(s, e)| (n, l, s, e))
+            })
+            .collect();
+        let got: Vec<(usize, &str, usize, usize)> = ascii_ci_line_hits(content, "needle")
+            .into_iter()
+            .map(|h| (h.line_num, h.line, h.start, h.end))
+            .collect();
+        assert_eq!(got, expected);
+        assert_eq!(got.len(), 4);
+        assert_eq!(got[0].1, "First Needle here", "CRLF stripped");
+        assert!(ascii_ci_line_hits(content, "absent").is_empty());
+        assert!(ascii_ci_line_hits("", "x").is_empty());
     }
 
     /// Roadmap 3.1: a query's work is bounded by the match budget; the
