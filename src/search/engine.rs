@@ -2528,7 +2528,7 @@ impl SearchEngine {
 
     pub fn get_stats(&self) -> SearchStats {
         SearchStats {
-            num_files: self.file_store.len(),
+            num_files: self.file_store.live_len(),
             total_size: self.file_store.total_mapped_size(),
             num_trigrams: self.trigram_index.num_trigrams(),
             dependency_edges: self.dependency_index.total_edges(),
