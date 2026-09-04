@@ -1,6 +1,7 @@
 use crate::dependencies::DependencyIndex;
 use crate::index::{extract_unique_trigrams, LazyFileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
+use crate::search::ranking::{FileScoreWeights, RankingWeights};
 use crate::search::regex_search::RegexAnalysis;
 use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
 use anyhow::Result;
@@ -428,33 +429,33 @@ fn calculate_score_inline(
     is_src_lib: bool,
     dependency_boost: f64,
 ) -> f64 {
+    let w = &RankingWeights::DEFAULT;
     let mut score = 1.0;
 
     // Boost for exact case-sensitive matches (using the original un-lowered query)
     if line.contains(original_query) {
-        score *= 2.0;
+        score *= w.exact_case;
     }
 
     // Boost for symbol definitions (pre-computed)
     if is_symbol_def {
-        score *= 3.0;
+        score *= w.symbol_definition;
     }
 
     // Boost for primary source directories (pre-computed)
     if is_src_lib {
-        score *= 1.5;
+        score *= w.src_lib_dir;
     }
 
-    // Boost for shorter lines (more relevant) — gentler logarithmic curve, floors at 0.3
-    let line_len_factor = (1.0 / (1.0 + (line.len() as f64 / 100.0).ln_1p())).max(0.3);
-    score *= line_len_factor;
+    // Boost for shorter lines (more relevant) — gentle logarithmic curve
+    score *= w.line_length_factor(line.len());
 
     // Boost for query appearing at the start of the line
     let trimmed = line.trim_start();
     if trimmed.len() >= query_lower.len()
         && trimmed.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes())
     {
-        score *= 1.5;
+        score *= w.line_start;
     }
 
     // Apply pre-computed dependency boost
@@ -470,27 +471,27 @@ fn calculate_score_regex_inline(
     is_src_lib: bool,
     dependency_boost: f64,
 ) -> f64 {
+    let w = &RankingWeights::DEFAULT;
     let mut score = 1.0;
 
     // Boost for symbol definitions (pre-computed)
     if is_symbol_def {
-        score *= 3.0;
+        score *= w.symbol_definition;
     }
 
     // Boost for primary source directories (pre-computed)
     if is_src_lib {
-        score *= 1.5;
+        score *= w.src_lib_dir;
     }
 
-    // Boost for shorter lines (more relevant) — gentler logarithmic curve, floors at 0.3
-    let line_len_factor = (1.0 / (1.0 + (line.len() as f64 / 100.0).ln_1p())).max(0.3);
-    score *= line_len_factor;
+    // Boost for shorter lines (more relevant) — gentle logarithmic curve
+    score *= w.line_length_factor(line.len());
 
     // Boost for matches at the start of the line
     let trimmed = line.trim_start();
     if let Some(m) = regex.find(trimmed) {
         if m.start() == 0 {
-            score *= 1.5;
+            score *= w.line_start;
         }
     }
 
@@ -984,7 +985,8 @@ impl FileMetadata {
         symbol_count: usize,
         dependency_count: u32,
     ) -> Self {
-        let mut base_score: f32 = 1.0;
+        let w = &FileScoreWeights::DEFAULT;
+        let mut base_score: f32 = w.base;
 
         let path_str = path.to_string_lossy();
         let path_lower = path_str.to_lowercase();
@@ -996,26 +998,32 @@ impl FileMetadata {
             || path_lower.contains("\\lib\\");
 
         if is_src_lib {
-            base_score += 2.0;
+            base_score += w.src_lib_dir;
         }
 
         // Boost for high-value extensions
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
-                "rs" | "py" | "ts" | "js" | "go" | "java" | "c" | "cpp" | "h" => base_score += 1.5,
-                "md" | "txt" | "json" | "toml" | "yaml" | "yml" => base_score += 0.5,
+                "rs" | "py" | "ts" | "js" | "go" | "java" | "c" | "cpp" | "h" => {
+                    base_score += w.code_extension
+                }
+                "md" | "txt" | "json" | "toml" | "yaml" | "yml" => base_score += w.doc_extension,
                 _ => {}
             }
         }
 
-        // Boost for files with symbols (more likely to be important code)
+        // Boost for files with symbols (more likely to be important code).
+        // (File-level scores are additive log2 terms; line-level scores use the
+        // multiplicative `RankingWeights::dependency_boost`. The two are on
+        // different scales by design: this one only orders which files to
+        // open in fast mode, it never appears in a result's score.)
         if symbol_count > 0 {
-            base_score += (symbol_count as f32).log2().min(4.0); // Up to +4 for 16+ symbols
+            base_score += (symbol_count as f32).log2().min(w.symbol_log2_cap);
         }
 
         // Boost for dependency count (files imported by others are important)
         if dependency_count > 0 {
-            base_score += (dependency_count as f32).log2().min(5.0);
+            base_score += (dependency_count as f32).log2().min(w.dependency_log2_cap);
         }
 
         // Penalty for test/example directories
@@ -1024,7 +1032,7 @@ impl FileMetadata {
             || path_lower.contains("/example")
             || path_lower.contains("\\example")
         {
-            base_score *= 0.7;
+            base_score *= w.test_example_penalty;
         }
 
         // Pre-compute lowercase stem for efficient filename matching during search
@@ -1051,7 +1059,7 @@ impl FileMetadata {
 
         // Big boost if query matches filename (using pre-computed lowercase stem)
         if !query_lower.is_empty() && self.lowercase_stem.contains(query_lower) {
-            score *= 5.0;
+            score *= FileScoreWeights::DEFAULT.filename_match;
         }
 
         score
@@ -2341,11 +2349,7 @@ impl SearchEngine {
         let dependency_count = self.dependency_index.get_import_count(doc_id);
 
         // Pre-compute dependency boost
-        let dependency_boost = if dependency_count > 0 {
-            1.0 + (dependency_count as f64).log10() * 0.5
-        } else {
-            1.0
-        };
+        let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
         // Lazy-compute path info
         let raw_path_str = file.path.to_string_lossy().into_owned();
@@ -2383,7 +2387,7 @@ impl SearchEngine {
                     line_match_start: match_start,
                     line_match_end: match_end,
                     match_column,
-                    score: 3.0 * dependency_boost,
+                    score: RankingWeights::DEFAULT.filename_hit * dependency_boost,
                     is_symbol: true,
                     dependency_count,
                 });
@@ -2417,15 +2421,34 @@ impl SearchEngine {
                 dependency_boost,
             );
 
-            // Boost exact symbol name matches over partial/subset matches.
-            // An exact match (symbol.name == query, case-insensitive) scores 2x higher
-            // than a partial match (e.g. query "calc" matching symbol "calculate").
+            // exact > prefix > substring, and definitions of types/functions
+            // slightly above variables/constants with the same match quality.
+            let w = &RankingWeights::DEFAULT;
             let name_lower = symbol.name.to_lowercase();
-            let score = if name_lower == query_lower {
-                base_score * 2.0
+            let name_factor = if name_lower == query_lower {
+                w.symbol_exact_name
+            } else if name_lower.starts_with(query_lower) {
+                w.symbol_prefix_name
             } else {
-                base_score
+                1.0
             };
+            let kind_factor = match symbol.symbol_type {
+                SymbolType::Variable | SymbolType::Constant => w.symbol_value_kind,
+                _ => 1.0,
+            };
+            let score = base_score * name_factor * kind_factor;
+
+            // One row per line: several symbols on one line (e.g. a struct and
+            // its impl, or a re-exported alias) keep the best-scoring one.
+            if let Some(existing) = matches
+                .iter_mut()
+                .find(|m: &&mut SearchMatch| m.line_number == symbol.line + 1)
+            {
+                if score > existing.score {
+                    existing.score = score;
+                }
+                continue;
+            }
 
             // Truncate long lines around the match
             let truncated = truncate_around_match(line, match_start, match_end);
@@ -2471,11 +2494,7 @@ impl SearchEngine {
         let dependency_count = self.dependency_index.get_import_count(doc_id);
 
         // Pre-compute dependency boost (done once per document, not per match)
-        let dependency_boost = if dependency_count > 0 {
-            1.0 + (dependency_count as f64).log10() * 0.5
-        } else {
-            1.0
-        };
+        let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
         // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
         // Most files have <100 symbols, linear scan is faster than hash overhead
@@ -2607,7 +2626,7 @@ impl SearchEngine {
                     line_match_start: match_start,
                     line_match_end: match_end,
                     match_column,
-                    score: 3.0 * dependency_boost,
+                    score: RankingWeights::DEFAULT.filename_hit * dependency_boost,
                     is_symbol: true,
                     dependency_count,
                 });
@@ -2650,11 +2669,7 @@ impl SearchEngine {
         let dependency_count = self.dependency_index.get_import_count(doc_id);
 
         // Pre-compute dependency boost (done once per document, not per match)
-        let dependency_boost = if dependency_count > 0 {
-            1.0 + (dependency_count as f64).log10() * 0.5
-        } else {
-            1.0
-        };
+        let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
         // Single-pass search: collect matches directly
         let mut matches = Vec::with_capacity(8);
@@ -2765,7 +2780,7 @@ impl SearchEngine {
                     line_match_start: match_start,
                     line_match_end: match_end,
                     match_column,
-                    score: 3.0 * dependency_boost, // Symbol def boost (3×) for filename matches
+                    score: RankingWeights::DEFAULT.filename_hit * dependency_boost, // Symbol def boost (3×) for filename matches
                     is_symbol: true,
                     dependency_count,
                 });
@@ -4404,6 +4419,47 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             "Exact case match ({:.3}) should score higher than lowercase ({:.3})",
             exact_match.score,
             lower_match.score
+        );
+    }
+
+    /// Roadmap 3.8: symbol search ranks exact > prefix > substring, and emits
+    /// one row per line even when several symbols on that line match.
+    #[test]
+    fn test_symbol_search_ranking_and_line_dedupe() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("syms.rs");
+        fs::write(
+            &file_path,
+            "fn recalc_total() {}\nfn calc() {}\nfn calc_sum() {}\n",
+        )
+        .unwrap();
+        let mut engine = SearchEngine::new();
+        engine.index_file(&file_path).unwrap();
+        engine.finalize();
+
+        let hits = engine.search_symbols("calc", "", "", 10).unwrap();
+        let order: Vec<usize> = hits.iter().map(|m| m.line_number).collect();
+        assert_eq!(
+            order,
+            vec![2, 3, 1],
+            "exact, then prefix, then substring: {hits:?}"
+        );
+
+        // Two symbols on one line: inject a duplicate definition on line 2.
+        let id = engine.find_file_id(&file_path.to_string_lossy()).unwrap();
+        let dup = Symbol {
+            name: "calc".to_string(),
+            symbol_type: SymbolType::Variable,
+            line: 1,
+            column: 3,
+            is_definition: true,
+        };
+        engine.symbol_cache[id as usize].push(dup);
+        let hits = engine.search_symbols("calc", "", "", 10).unwrap();
+        assert_eq!(
+            hits.iter().filter(|m| m.line_number == 2).count(),
+            1,
+            "one row per line: {hits:?}"
         );
     }
 
