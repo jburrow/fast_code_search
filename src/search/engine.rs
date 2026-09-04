@@ -1,6 +1,7 @@
 use crate::dependencies::DependencyIndex;
 use crate::index::{extract_unique_trigrams_lowercase, LazyFileStore, Trigram, TrigramIndex};
 use crate::search::path_filter::PathFilter;
+use crate::search::query_syntax::{ParsedQuery, SearchOptions};
 use crate::search::ranking::{FileScoreWeights, RankingWeights};
 use crate::search::regex_search::RegexAnalysis;
 use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
@@ -292,6 +293,27 @@ fn find_match_position_case_insensitive(
     None
 }
 
+/// Path filter from explicit include/exclude strings plus the query's globs.
+fn merged_path_filter(
+    parsed: &ParsedQuery,
+    include_patterns: &str,
+    exclude_patterns: &str,
+) -> Result<PathFilter> {
+    let mut include: Vec<&str> = include_patterns
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut exclude: Vec<&str> = exclude_patterns
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    include.extend(parsed.include_globs.iter().map(String::as_str));
+    exclude.extend(parsed.exclude_globs.iter().map(String::as_str));
+    PathFilter::from_delimited(&include.join(";"), &exclude.join(";"))
+}
+
 /// 0-based character column of `byte_offset` within `line`.
 #[inline]
 fn char_column(line: &str, byte_offset: usize) -> usize {
@@ -414,6 +436,191 @@ fn ascii_ci_line_hits<'a>(content: &'a str, needle_lower: &str) -> Vec<LineHit<'
         });
     }
     hits
+}
+
+/// Is the byte at `idx` (or the char starting there) a word character?
+#[inline]
+fn is_word_char_at(bytes: &[u8], idx: usize) -> bool {
+    match bytes.get(idx) {
+        None => false,
+        Some(&b) if b.is_ascii() => b.is_ascii_alphanumeric() || b == b'_',
+        // Non-ASCII: letters/digits count as word characters.
+        Some(_) => std::str::from_utf8(&bytes[idx..])
+            .ok()
+            .and_then(|s| s.chars().next())
+            .is_some_and(|c| c.is_alphanumeric()),
+    }
+}
+
+/// Byte index of the char *before* `idx` (`None` at the start).
+#[inline]
+fn prev_char_start(bytes: &[u8], idx: usize) -> Option<usize> {
+    if idx == 0 {
+        return None;
+    }
+    let mut i = idx - 1;
+    while i > 0 && (bytes[i] & 0xC0) == 0x80 {
+        i -= 1;
+    }
+    Some(i)
+}
+
+/// Whole-word test for a match at `[start, end)` within `line`.
+#[inline]
+fn is_whole_word(line: &str, start: usize, end: usize) -> bool {
+    let b = line.as_bytes();
+    let before = prev_char_start(b, start).is_some_and(|i| is_word_char_at(b, i));
+    !before && !is_word_char_at(b, end)
+}
+
+/// Lines containing `needle` under `opts` (first qualifying hit per line).
+///
+/// - case-sensitive: SIMD `memmem` over the whole buffer
+/// - case-insensitive ASCII: `memchr2` on the first byte in both cases
+/// - case-insensitive non-ASCII: Unicode fold per line
+///
+/// With `whole_word`, hits that touch a word character on either side are
+/// skipped and the scan continues within the line.
+fn line_hits<'a>(
+    content: &'a str,
+    needle: &str,
+    needle_lower: &str,
+    opts: SearchOptions,
+) -> Vec<LineHit<'a>> {
+    let bytes = content.as_bytes();
+    let mut hits = Vec::new();
+    if needle.is_empty() {
+        return hits;
+    }
+    let push_hit = |pos: usize,
+                    len: usize,
+                    line_num: &mut usize,
+                    counted: &mut usize,
+                    skip_until: &mut usize,
+                    hits: &mut Vec<LineHit<'a>>|
+     -> bool {
+        let line_start = memchr::memrchr(b'\n', &bytes[..pos]).map_or(0, |i| i + 1);
+        let mut line_end = memchr::memchr(b'\n', &bytes[pos..]).map_or(bytes.len(), |i| pos + i);
+        let raw_line_end = line_end;
+        if line_end > line_start && bytes[line_end - 1] == b'\r' {
+            line_end -= 1;
+        }
+        let line = &content[line_start..line_end];
+        let (s, e) = (pos - line_start, pos - line_start + len);
+        if opts.whole_word && !is_whole_word(line, s, e) {
+            return false; // keep scanning this line
+        }
+        *line_num += memchr::memchr_iter(b'\n', &bytes[*counted..line_start]).count();
+        *counted = line_start;
+        *skip_until = raw_line_end + 1;
+        hits.push(LineHit {
+            line_num: *line_num,
+            line,
+            start: s,
+            end: e,
+        });
+        true
+    };
+    let (mut line_num, mut counted, mut skip_until) = (0usize, 0usize, 0usize);
+    if opts.case_sensitive {
+        let finder = memmem::Finder::new(needle.as_bytes());
+        for pos in finder.find_iter(bytes) {
+            if pos < skip_until {
+                continue;
+            }
+            push_hit(
+                pos,
+                needle.len(),
+                &mut line_num,
+                &mut counted,
+                &mut skip_until,
+                &mut hits,
+            );
+        }
+    } else if needle_lower.is_ascii() {
+        let nb = needle_lower.as_bytes();
+        let (first, first_upper) = (nb[0], nb[0].to_ascii_uppercase());
+        for pos in memchr::memchr2_iter(first, first_upper, bytes) {
+            if pos < skip_until || pos + nb.len() > bytes.len() {
+                continue;
+            }
+            if !bytes[pos..pos + nb.len()]
+                .iter()
+                .zip(nb)
+                .skip(1)
+                .all(|(&h, &n)| h.to_ascii_lowercase() == n)
+            {
+                continue;
+            }
+            push_hit(
+                pos,
+                nb.len(),
+                &mut line_num,
+                &mut counted,
+                &mut skip_until,
+                &mut hits,
+            );
+        }
+    } else {
+        // Unicode fold: per line, all occurrences until one qualifies.
+        let mut offset = 0usize;
+        for (n, line) in content.lines().enumerate() {
+            let mut from = 0usize;
+            while let Some((s, e)) = unicode_ci_find(&line[from..], needle_lower) {
+                let (s, e) = (from + s, from + e);
+                if !opts.whole_word || is_whole_word(line, s, e) {
+                    hits.push(LineHit {
+                        line_num: n,
+                        line,
+                        start: s,
+                        end: e,
+                    });
+                    break;
+                }
+                from = e;
+            }
+            offset += line.len() + 1;
+        }
+        let _ = offset;
+    }
+    hits
+}
+
+/// A set of terms to verify in a document: all `terms` must be present, no
+/// `exclude` term may be, and lines matching any term are reported.
+#[derive(Debug, Clone)]
+pub struct TermSet {
+    /// (original, lowercase) per term; the first is the primary (ranking) term
+    pub terms: Vec<(String, String)>,
+    /// (original, lowercase) per excluded term
+    pub exclude: Vec<(String, String)>,
+    pub opts: SearchOptions,
+}
+
+impl TermSet {
+    fn single(original: &str, lower: &str) -> Self {
+        Self {
+            terms: vec![(original.to_string(), lower.to_string())],
+            exclude: Vec::new(),
+            opts: SearchOptions::default(),
+        }
+    }
+
+    fn from_parsed(parsed: &ParsedQuery) -> Self {
+        Self {
+            terms: parsed
+                .terms
+                .iter()
+                .map(|t| (t.clone(), t.to_lowercase()))
+                .collect(),
+            exclude: parsed
+                .exclude_terms
+                .iter()
+                .map(|t| (t.clone(), t.to_lowercase()))
+                .collect(),
+            opts: parsed.options,
+        }
+    }
 }
 
 /// Inline scoring function with pre-computed values (no method call overhead, no redundant lookups)
@@ -1935,13 +2142,85 @@ impl SearchEngine {
         limits: SearchLimits,
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        let terms = TermSet::single(query, query_lower);
+        self.run_terms(&terms, candidates, limits, rank_mode)
+    }
+
+    fn run_terms(
+        &self,
+        terms: &TermSet,
+        candidates: roaring::RoaringBitmap,
+        limits: SearchLimits,
+        rank_mode: RankMode,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        let primary_lower = terms.terms.first().map(|(_, l)| l.as_str()).unwrap_or("");
         self.run_candidates(
             candidates,
             rank_mode,
             limits,
-            |meta| meta.query_score(query_lower),
-            |doc_id, run| self.search_in_document_scored(doc_id, query, query_lower, run),
+            |meta| meta.query_score(primary_lower),
+            |doc_id, run| self.search_in_document_terms(doc_id, terms, run),
         )
+    }
+
+    /// Search with the full query syntax (`file:`, `lang:`, `-term`, `case:`,
+    /// `word:`, quoted phrases, several AND-ed terms). `include_patterns` /
+    /// `exclude_patterns` are merged with the globs from the query.
+    pub fn search_parsed(
+        &self,
+        parsed: &ParsedQuery,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+        rank_mode: RankMode,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        if parsed.terms.iter().all(|t| t.trim().is_empty()) {
+            return Ok((Vec::new(), SearchRankingInfo::empty(rank_mode)));
+        }
+        let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
+        // Candidates: files whose trigrams contain EVERY term (the index is
+        // lowercased, so candidate selection is case-insensitive even for a
+        // case-sensitive search; verification does the exact comparison).
+        let mut candidates: Option<roaring::RoaringBitmap> = None;
+        for term in &parsed.terms {
+            let docs = self.text_candidates(&term.to_lowercase());
+            candidates = Some(match candidates {
+                Some(acc) => acc & docs,
+                None => docs,
+            });
+        }
+        let candidates = self.apply_path_filter(candidates.unwrap_or_default(), &path_filter);
+        let terms = TermSet::from_parsed(parsed);
+        Ok(self.run_terms(&terms, candidates, limits, rank_mode))
+    }
+
+    /// Symbol search honouring the query's globs and matching options
+    /// (case-sensitive compares names exactly; whole-word requires the name
+    /// to equal the term).
+    pub fn search_symbols_parsed(
+        &self,
+        parsed: &ParsedQuery,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        let query = parsed.primary();
+        if query.trim().is_empty() {
+            return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
+        }
+        let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
+        let query_lower = query.to_lowercase();
+        let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
+        let opts = parsed.options;
+        Ok(self.run_candidates(
+            candidates,
+            RankMode::Full,
+            limits,
+            |meta| meta.base_score,
+            |doc_id, run| {
+                self.search_symbols_in_document_opts(doc_id, query, &query_lower, opts, run)
+            },
+        ))
     }
 
     /// The one place every search goes through: picks fast vs full ranking,
@@ -2339,13 +2618,38 @@ impl SearchEngine {
         query_lower: &str,
         run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
+        self.search_symbols_in_document_opts(
+            doc_id,
+            original_query,
+            query_lower,
+            SearchOptions::default(),
+            run,
+        )
+    }
+
+    fn search_symbols_in_document_opts(
+        &self,
+        doc_id: u32,
+        original_query: &str,
+        query_lower: &str,
+        opts: SearchOptions,
+        run: &QueryRun,
+    ) -> Option<Vec<SearchMatch>> {
         // Consult the symbol cache BEFORE touching file content: most
         // candidates have no matching symbol and must cost no I/O.
         let symbols = self.symbol_cache.get(doc_id as usize)?;
-        let matching_symbols: Vec<&Symbol> = symbols
-            .iter()
-            .filter(|s| contains_case_insensitive(&s.name, query_lower))
-            .collect();
+        let name_matches = |name: &str| -> bool {
+            match (opts.case_sensitive, opts.whole_word) {
+                (true, true) => name == original_query,
+                (true, false) => name.contains(original_query),
+                (false, true) => {
+                    name.eq_ignore_ascii_case(original_query) || name.to_lowercase() == query_lower
+                }
+                (false, false) => contains_case_insensitive(name, query_lower),
+            }
+        };
+        let matching_symbols: Vec<&Symbol> =
+            symbols.iter().filter(|s| name_matches(&s.name)).collect();
         if matching_symbols.is_empty() {
             return None;
         }
@@ -2648,20 +2952,37 @@ impl SearchEngine {
         }
     }
 
-    /// Optimized document search with original query for exact-case scoring.
-    ///
-    /// `original_query` is the un-lowered query string used for exact case-sensitive match boosting.
-    /// `query_lower` is the lowercased query for case-insensitive matching.
-    #[inline]
-    fn search_in_document_scored(
+    /// Term-set aware document scan: every term must occur somewhere in the
+    /// file and no excluded term may; lines matching any term are returned,
+    /// scored against the primary term.
+    fn search_in_document_terms(
         &self,
         doc_id: u32,
-        original_query: &str,
-        query_lower: &str,
+        terms: &TermSet,
         run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
+        let (original_query, query_lower) =
+            terms.terms.first().map(|(o, l)| (o.as_str(), l.as_str()))?;
+        let opts = terms.opts;
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
+
+        // File-level AND / NOT checks before any per-line work.
+        if terms
+            .exclude
+            .iter()
+            .any(|(o, l)| !line_hits(&content, o, l, opts).is_empty())
+        {
+            return None;
+        }
+        if terms
+            .terms
+            .iter()
+            .skip(1)
+            .any(|(o, l)| line_hits(&content, o, l, opts).is_empty())
+        {
+            return None;
+        }
 
         // Get symbols for this file. The symbol cache may be empty/missing if:
         // 1. The index was loaded from persistence (symbols aren't persisted for space efficiency)
@@ -2741,23 +3062,29 @@ impl SearchEngine {
                 true
             };
 
-        if query_lower.is_ascii() {
-            // SIMD-assisted scan over the whole buffer (memchr on the first
-            // byte in both cases), resolving line bounds only at hits.
-            for hit in ascii_ci_line_hits(&content, query_lower) {
-                if !emit(hit.line_num, hit.line, hit.start, hit.end) {
-                    break;
-                }
-            }
+        // Hits for every term, merged by line (a line reported once, by the
+        // earliest term that matched it), in document order.
+        let mut all_hits: Vec<LineHit<'_>> = Vec::new();
+        if terms.terms.len() == 1
+            && !opts.case_sensitive
+            && !opts.whole_word
+            && query_lower.is_ascii()
+        {
+            all_hits = ascii_ci_line_hits(&content, query_lower);
         } else {
-            for (line_num, line) in content.lines().enumerate() {
-                if let Some((match_start, match_end)) =
-                    find_match_position_case_insensitive(line, query_lower)
-                {
-                    if !emit(line_num, line, match_start, match_end) {
-                        break;
+            let mut seen_lines = FxHashSet::default();
+            for (o, l) in &terms.terms {
+                for hit in line_hits(&content, o, l, opts) {
+                    if seen_lines.insert(hit.line_num) {
+                        all_hits.push(hit);
                     }
                 }
+            }
+            all_hits.sort_by_key(|h| h.line_num);
+        }
+        for hit in all_hits {
+            if !emit(hit.line_num, hit.line, hit.start, hit.end) {
+                break;
             }
         }
 
@@ -4512,6 +4839,129 @@ fn calculate(x: f64, y: f64) -> f64 { x + y }
             1,
             "one row per line: {hits:?}"
         );
+    }
+
+    /// Roadmap 7: case-sensitive, whole-word, AND, exclusion and lang:/file:
+    /// through the parsed-query entry point.
+    #[test]
+    fn test_query_syntax_search() {
+        use crate::search::query_syntax::parse;
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(
+            temp_dir.path().join("a.rs"),
+            "fn Cat() {}\nlet concatenate = 1;\nlet cat = 2; // dog here\n",
+        )
+        .unwrap();
+        fs::write(temp_dir.path().join("b.py"), "cat = 'CAT'\n").unwrap();
+        fs::write(temp_dir.path().join("c.rs"), "fn other() { cat(); }\n").unwrap();
+        let mut engine = SearchEngine::new();
+        for f in ["a.rs", "b.py", "c.rs"] {
+            engine.index_file(temp_dir.path().join(f)).unwrap();
+        }
+        engine.finalize();
+        let run = |q: &str| -> Vec<(String, usize)> {
+            let parsed = parse(q);
+            let (hits, _) = engine
+                .search_parsed(&parsed, "", "", SearchLimits::new(50), RankMode::Full)
+                .unwrap();
+            let mut v: Vec<(String, usize)> = hits
+                .iter()
+                .map(|m| {
+                    (
+                        m.file_path.rsplit('/').next().unwrap().to_string(),
+                        m.line_number,
+                    )
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        // case-insensitive default: every line with "cat" in any case
+        assert_eq!(run("cat").len(), 5);
+        // case:yes -> only exact-case occurrences
+        assert_eq!(
+            run("cat case:yes"),
+            vec![
+                ("a.rs".into(), 2),
+                ("a.rs".into(), 3),
+                ("b.py".into(), 1),
+                ("c.rs".into(), 1)
+            ]
+        );
+        assert_eq!(run("Cat case:yes"), vec![("a.rs".into(), 1)]);
+        // word:yes -> "concatenate" no longer matches
+        assert_eq!(
+            run("cat word:yes"),
+            vec![
+                ("a.rs".into(), 1),
+                ("a.rs".into(), 3),
+                ("b.py".into(), 1),
+                ("c.rs".into(), 1)
+            ]
+        );
+        // AND: both terms must be in the file; lines matching either are returned
+        assert_eq!(
+            run("cat dog"),
+            vec![("a.rs".into(), 1), ("a.rs".into(), 2), ("a.rs".into(), 3)]
+        );
+        // exclusion at file level
+        assert_eq!(
+            run("cat -dog"),
+            vec![("b.py".into(), 1), ("c.rs".into(), 1)]
+        );
+        // lang: / file:
+        assert_eq!(run("cat lang:py"), vec![("b.py".into(), 1)]);
+        assert_eq!(run("cat file:c.rs"), vec![("c.rs".into(), 1)]);
+        assert_eq!(
+            run("cat -file:a"),
+            vec![("b.py".into(), 1), ("c.rs".into(), 1)]
+        );
+        // quoted phrase
+        assert_eq!(run("\"dog here\""), vec![("a.rs".into(), 3)]);
+    }
+
+    /// Roadmap 7: `line_hits` agrees with the ASCII scanner for the default
+    /// options and handles word boundaries around multi-byte characters.
+    #[test]
+    fn test_line_hits_options() {
+        let content = "Needle needlework\nüneedle needle\nneedle_x needle";
+        let default = SearchOptions::default();
+        let a: Vec<_> = line_hits(content, "needle", "needle", default)
+            .into_iter()
+            .map(|h| (h.line_num, h.start))
+            .collect();
+        let b: Vec<_> = ascii_ci_line_hits(content, "needle")
+            .into_iter()
+            .map(|h| (h.line_num, h.start))
+            .collect();
+        assert_eq!(a, b);
+        let word = SearchOptions {
+            whole_word: true,
+            ..default
+        };
+        let w: Vec<_> = line_hits(content, "needle", "needle", word)
+            .into_iter()
+            .map(|h| (h.line_num, h.line[h.start..h.end].to_string(), h.start))
+            .collect();
+        // line 0: "Needle" (word), line 1: skip "üneedle" (ü is a word char), take " needle";
+        // line 2: skip "needle_x", take the last one.
+        assert_eq!(
+            w,
+            vec![
+                (0, "Needle".to_string(), 0),
+                (1, "needle".to_string(), 9),
+                (2, "needle".to_string(), 9)
+            ]
+        );
+        let cs = SearchOptions {
+            case_sensitive: true,
+            ..default
+        };
+        let c: Vec<_> = line_hits(content, "Needle", "needle", cs)
+            .into_iter()
+            .map(|h| h.line_num)
+            .collect();
+        assert_eq!(c, vec![0]);
     }
 
     /// Roadmap 3.7: results carry offsets into the FULL line and a character

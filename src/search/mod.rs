@@ -3,6 +3,7 @@ pub mod engine;
 pub mod file_discovery;
 pub mod incremental;
 pub mod path_filter;
+pub mod query_syntax;
 pub mod ranking;
 pub mod regex_search;
 pub mod watcher;
@@ -19,6 +20,7 @@ pub use engine::{
 pub use file_discovery::{discover_files, FileDiscoveryConfig, FileDiscoveryIterator};
 pub use incremental::{apply_change, apply_changes, ChangeOutcome};
 pub use path_filter::PathFilter;
+pub use query_syntax::{parse as parse_query, ParsedQuery, SearchOptions};
 pub use ranking::{FileScoreWeights, RankingWeights};
 pub use regex_search::RegexAnalysis;
 pub use watcher::{FileChange, FileWatcher, WatcherConfig};

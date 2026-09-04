@@ -608,6 +608,56 @@ async fn test_http_diagnostics_reports_real_config() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 7: the REST API understands the query syntax and the explicit
+/// case/word parameters override the in-query switches.
+#[tokio::test]
+async fn test_http_query_syntax() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let get = |q: Vec<(&str, &str)>| {
+        client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(&q)
+            .send()
+    };
+    let files = |v: &serde_json::Value| -> Vec<String> {
+        let mut f: Vec<String> = v["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                r["file_path"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        f.sort();
+        f.dedup();
+        f
+    };
+    // "def " appears in the Python and JS fixtures; lang: narrows it.
+    let py: serde_json::Value = get(vec![("q", "def lang:python")]).await?.json().await?;
+    assert_eq!(files(&py), vec!["test_file.py"]);
+    let not_py: serde_json::Value = get(vec![("q", "def -lang:python")]).await?.json().await?;
+    assert!(
+        !files(&not_py).contains(&"test_file.py".to_string()),
+        "{not_py}"
+    );
+    // case=true parameter: "TESTSTRUCT" no longer matches "TestStruct"
+    let ci: serde_json::Value = get(vec![("q", "TESTSTRUCT")]).await?.json().await?;
+    assert!(ci["total_matches"].as_u64().unwrap() > 0);
+    let cs: serde_json::Value = get(vec![("q", "TESTSTRUCT"), ("case", "true")])
+        .await?
+        .json()
+        .await?;
+    assert_eq!(cs["total_matches"].as_u64().unwrap(), 0, "{cs}");
+    Ok(())
+}
+
 /// Roadmap 4.4: `/api/ready` reports readiness (200 once an index can
 /// serve), `/metrics` exposes request counters and index gauges in the
 /// Prometheus text format.

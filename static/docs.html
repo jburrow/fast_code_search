@@ -410,6 +410,22 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
                 <code>true</code>. Otherwise <code>has_more</code> means
                 <code>offset + total_results &lt; total_matches</code>.</p>
 
+            <h2>Query Syntax</h2>
+            <p>Plain-text queries (not <code>regex=true</code>) understand a few operators, in
+                the style of Zoekt / Sourcegraph. Anything else is a search term; several terms must
+                all appear in a file, and lines matching any of them are returned.</p>
+            <table>
+                <tr><th>Syntax</th><th>Meaning</th></tr>
+                <tr><td><code>"exact phrase"</code></td><td>One term containing spaces</td></tr>
+                <tr><td><code>-term</code></td><td>Drop files that contain <code>term</code></td></tr>
+                <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td>
+                    <td>Only / never paths matching PATTERN (a bare word matches anywhere in the path; globs and <code>/</code> are used as written)</td></tr>
+                <tr><td><code>lang:rust</code> / <code>-lang:py</code></td><td>Only / never files of that language (name or extension)</td></tr>
+                <tr><td><code>case:yes</code></td><td>Case-sensitive matching (also the <code>case=true</code> parameter)</td></tr>
+                <tr><td><code>word:yes</code></td><td>Whole-word matching (also the <code>word=true</code> parameter)</td></tr>
+            </table>
+            <pre><code>curl "http://localhost:8080/api/search?q=parse%20lang:rust%20-file:test%20word:yes"</code></pre>
+
             <h2>Path Filter Patterns</h2>
             <p>Use glob patterns to filter which files are searched:</p>
             <table>

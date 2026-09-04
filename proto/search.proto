@@ -17,7 +17,14 @@ message SearchRequest {
   int32 offset = 7;                   // Results to skip (deterministic ordering, so pages are stable)
   string rank = 8;                    // "auto" (default), "fast" or "full"
   int64 deadline_ms = 9;              // Stop scanning after this many ms and return the best so far (0 = none; capped at 30000)
+  bool case_sensitive = 10;           // Exact-case matching (overrides case: in the query)
+  bool whole_word = 11;               // Whole-word matching (overrides word: in the query)
 }
+
+// Plain-text queries understand: file:PAT, -file:PAT, lang:NAME, -lang:NAME,
+// case:yes, word:yes, -term (exclude files containing term), "quoted phrase",
+// and several terms (all must appear in a file). Regex queries are passed
+// through untouched.
 
 message SearchResult {
   string file_path = 1;

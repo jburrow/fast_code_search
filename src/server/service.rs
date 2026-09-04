@@ -114,6 +114,8 @@ impl CodeSearch for CodeSearchService {
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
+        let case_sensitive = req.case_sensitive;
+        let whole_word = req.whole_word;
         let rank_mode = RankMode::parse(&req.rank);
         let mut limits = SearchLimits::new(max_results).with_offset(req.offset.max(0) as usize);
         if req.deadline_ms > 0 {
@@ -152,15 +154,17 @@ impl CodeSearch for CodeSearchService {
                 }
             };
 
-            // Same four modes and limits as /api/search.
+            // Same modes, syntax and limits as /api/search.
+            let mut parsed = crate::search::parse_query(&query);
+            if case_sensitive {
+                parsed.options.case_sensitive = true;
+            }
+            if whole_word {
+                parsed.options.whole_word = true;
+            }
             let (matches, _info) = if symbols_only {
                 engine
-                    .search_symbols_with_limits(
-                        &query,
-                        &include_patterns,
-                        &exclude_patterns,
-                        limits,
-                    )
+                    .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid filter pattern: {}", e))
                     })?
@@ -176,12 +180,10 @@ impl CodeSearch for CodeSearchService {
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid regex pattern: {}", e))
                     })?
-            } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-                engine.search_ranked_with_limits(&query, limits, rank_mode)
             } else {
                 engine
-                    .search_with_filter_ranked_limits(
-                        &query,
+                    .search_parsed(
+                        &parsed,
                         &include_patterns,
                         &exclude_patterns,
                         limits,

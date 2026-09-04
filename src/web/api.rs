@@ -125,6 +125,12 @@ pub struct SearchQuery {
     /// matches seen so far (0 = no deadline; capped server-side).
     #[serde(default)]
     timeout_ms: u64,
+    /// Case-sensitive matching (overrides `case:` in the query).
+    #[serde(default)]
+    case: Option<bool>,
+    /// Whole-word matching (overrides `word:` in the query).
+    #[serde(default)]
+    word: Option<bool>,
 }
 
 fn default_max_results() -> usize {
@@ -362,6 +368,8 @@ pub async fn search_handler(
 
     let max_results = params.max.clamp(1, 1000);
     let offset = params.offset;
+    let case_override = params.case;
+    let word_override = params.word;
     let mut limits = SearchLimits::new(max_results).with_offset(offset);
     if params.timeout_ms > 0 {
         limits = limits.with_timeout(std::time::Duration::from_millis(
@@ -406,11 +414,22 @@ pub async fn search_handler(
         // Blocking here would cause threads to pile up and exhaust the thread pool.
         let engine = try_read_engine(&engine)?;
 
+        // Plain-text and symbol queries understand the query syntax
+        // (file:, lang:, -term, case:, word:, quoted phrases); explicit
+        // parameters override the in-query switches. Regex is passed through.
+        let mut parsed = crate::search::parse_query(&query);
+        if let Some(c) = case_override {
+            parsed.options.case_sensitive = c;
+        }
+        if let Some(w) = word_override {
+            parsed.options.whole_word = w;
+        }
+
         // Choose search method based on flags. Every mode reports ranking
         // info (regex/symbols included) and honours the limits.
         let (matches, ranking_info) = if symbols_only {
             engine
-                .search_symbols_with_limits(&query, &include_patterns, &exclude_patterns, limits)
+                .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
                 .map_err(|e| {
                     (
                         StatusCode::BAD_REQUEST,
@@ -432,12 +451,10 @@ pub async fn search_handler(
                         format!("Invalid regex pattern: {}", e),
                     )
                 })?
-        } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-            engine.search_ranked_with_limits(&query, limits, rank_mode)
         } else {
             engine
-                .search_with_filter_ranked_limits(
-                    &query,
+                .search_parsed(
+                    &parsed,
                     &include_patterns,
                     &exclude_patterns,
                     limits,
