@@ -731,7 +731,11 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   duplicating them in `path_to_id`; collapse the three `OnceLock`s + `Mutex`
   per file into one state cell; delete the fallback Mutex cache; return
   `all_documents()` by reference.
-- **6.4 Indexing throughput.** Bitset-based unique-trigram extraction with
+- [x] **6.4 Indexing throughput.** DONE (commit `perf(index): fold case during trigram extraction`):
+  per-byte ASCII fold + bitset dedupe (no lowercase copy, no per-byte hash
+  insert); `shrink_to_fit` mid-build and off-thread checkpoint saves are
+  still open.
+  Original text: Bitset-based unique-trigram extraction with
   on-the-fly ASCII lowercasing (no `to_lowercase()` copy, no per-byte hash
   insert); drop the mid-build `shrink_to_fit`; checkpoint saves on a separate
   thread from a snapshot.
@@ -740,7 +744,12 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   and reconciliation benches; a nightly large-corpus run with memory and
   file-count reporting; publish "files / GB indexed / RSS / p50 latency" in
   the README instead of the 100-file numbers.
-- **6.6 Release profile.** `[profile.release] lto = "thin", codegen-units = 1,
+- [x] **6.6 Release profile.** DONE (commits `build: release profile…` and `build: opentelemetry
+  0.27 -> 0.32`): thin LTO + strip, `semantic` feature (off by default,
+  implied by `ml-models`), md5/glob dropped, sysinfo/criterion bumped, single
+  tonic/axum stack, deny.toml + cargo-deny CI step, Dependabot. Debug
+  archives are still produced by release.yml.
+  Original text: `[profile.release] lto = "thin", codegen-units = 1,
   strip = true`; stop shipping debug archives by default; add a `semantic`
   feature gating `src/semantic*`, `ndarray`, `hnsw_rs`, `sha2` and the
   semantic bin; bump `opentelemetry*` onto `tonic 0.14`; drop `md5`, `glob`;

@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dependency_count`.
 
 ### Changed
+- Build: the semantic engine is behind the `semantic` Cargo feature (off by
+  default; `ml-models` implies it), release binaries use thin LTO and are
+  stripped, OpenTelemetry is on 0.32 (one tonic/axum stack), `md5` and `glob` are
+  gone (the config fingerprint format changed, so the first start after upgrading
+  rebuilds the index once), and `cargo-deny` + Dependabot are wired into CI.
+- Trigram extraction folds case per byte and dedupes through a bitset instead of
+  lowercasing a copy of every file and hashing every byte.
 - Symbols are extracted with each grammar's own `tags.scm` query (name-node
   positions, upstream-maintained coverage), supplemented by the previous walker;
   new symbol kinds Module, Macro, Field and Property; C++ `.h` headers are
