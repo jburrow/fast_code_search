@@ -190,14 +190,14 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Failed to bind Web UI server to {web_addr}"))?;
         info!(address = %web_addr, "Web UI available at http://{}", web_addr);
         let web_shutdown_rx = shutdown_rx.clone();
-        let cors_origins = config.server.cors_origins.clone();
+        let router_options = web::RouterOptions::from(&config.server);
         web_handle = Some(tokio::spawn(async move {
-            let router = web::create_router_with_cors(
+            let router = web::create_router_with_options(
                 web_engine,
                 web_progress,
                 web_progress_tx,
                 static_dir,
-                &cors_origins,
+                &router_options,
             );
             if let Err(e) = axum::serve(listener, router)
                 .with_graceful_shutdown(wait_for_shutdown(web_shutdown_rx))
@@ -342,8 +342,21 @@ async fn main() -> Result<()> {
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");
     info!("Ready to accept connections");
 
+    // Standard gRPC health service (grpc.health.v1) so load balancers and
+    // grpcurl can probe liveness the usual way.
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<fast_code_search::server::search_proto::code_search_server::CodeSearchServer<
+            fast_code_search::server::CodeSearchService,
+        >>()
+        .await;
+
+    let request_timeout = std::time::Duration::from_secs(config.server.request_timeout_secs.max(1));
     let serve_result = Server::builder()
-        .trace_fn(|_| tracing::info_span!("grpc"))
+        .timeout(request_timeout)
+        .concurrency_limit_per_connection(config.server.max_concurrent_searches.max(1))
+        .trace_fn(|req| tracing::info_span!("grpc", path = %req.uri().path()))
+        .add_service(health_service)
         .add_service(search_service)
         .serve_with_shutdown(addr, wait_for_shutdown(shutdown_rx.clone()))
         .await;

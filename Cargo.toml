@@ -50,6 +50,7 @@ tree-sitter-css = "0.23"
 tree-sitter-md = "0.5"
 tonic = "0.14"
 tonic-prost = "0.14"
+tonic-health = "0.14" # standard gRPC health service
 prost = "0.14"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-stream = "0.1"
@@ -76,7 +77,7 @@ tracing-opentelemetry = "0.28"
 sysinfo = "0.33"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = { version = "0.3", features = ["sink"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"
 mime_guess = "2"
 md5 = "0.8"

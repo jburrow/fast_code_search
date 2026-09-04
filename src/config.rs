@@ -110,6 +110,15 @@ pub struct ServerConfig {
     #[serde(default)]
     pub cors_origins: Vec<String>,
 
+    /// Maximum searches executing at once on the REST API; further requests
+    /// get 503 + Retry-After instead of queueing on the blocking pool.
+    #[serde(default = "default_max_concurrent_searches")]
+    pub max_concurrent_searches: usize,
+
+    /// Per-request timeout for the REST and gRPC servers, in seconds.
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+
     /// Serve static UI files from this directory instead of the embedded assets.
     ///
     /// When set, the web server reads HTML/CSS/JS files directly from disk on
@@ -220,6 +229,14 @@ fn default_enable_web_ui() -> bool {
     true
 }
 
+fn default_max_concurrent_searches() -> usize {
+    64
+}
+
+fn default_request_timeout_secs() -> u64 {
+    30
+}
+
 fn default_exclude_patterns() -> Vec<String> {
     vec![
         "**/node_modules/**".to_string(),
@@ -252,6 +269,8 @@ impl Default for ServerConfig {
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
             cors_origins: Vec::new(),
+            max_concurrent_searches: default_max_concurrent_searches(),
+            request_timeout_secs: default_request_timeout_secs(),
             static_dir: None,
         }
     }
@@ -417,6 +436,12 @@ enable_web_ui = true
 # Origins allowed to call the REST API from another site (CORS).
 # Empty (default) = same-origin only, which is all the embedded UI needs.
 # cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
+
+# Searches executing at once on the REST API; extra requests get 503 + Retry-After
+# max_concurrent_searches = 64
+
+# Per-request timeout (seconds) for both servers
+# request_timeout_secs = 30
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every

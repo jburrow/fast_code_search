@@ -221,6 +221,89 @@ pub struct StatusResponse {
     pub total_content_bytes: u64,
 }
 
+/// Readiness: 200 once the index can serve results (a build/reconcile has
+/// completed, or an index is loaded and no build is running), 503 otherwise.
+/// `/api/health` stays a pure liveness check.
+pub async fn ready_handler(State(state): State<WebState>) -> Result<Json<ReadyResponse>, ApiError> {
+    let (ready, status, num_files) = readiness(&state);
+    let body = ReadyResponse {
+        ready,
+        status,
+        num_files,
+    };
+    if ready {
+        Ok(Json(body))
+    } else {
+        Err(ApiError::from((
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "Index not ready (status: {}, files: {})",
+                body.status, body.num_files
+            ),
+        )))
+    }
+}
+
+/// Readiness response
+#[derive(Debug, Serialize)]
+pub struct ReadyResponse {
+    pub ready: bool,
+    pub status: String,
+    pub num_files: usize,
+}
+
+/// (ready, status name, live file count) without blocking a worker thread.
+fn readiness(state: &WebState) -> (bool, String, usize) {
+    let status = state
+        .progress
+        .try_read()
+        .map(|p| p.status)
+        .unwrap_or_default();
+    let num_files = state
+        .engine
+        .try_read()
+        .map(|e| e.get_stats().num_files)
+        .unwrap_or(0);
+    let ready = match status {
+        IndexingStatus::Completed => true,
+        IndexingStatus::Idle => num_files > 0,
+        _ => false,
+    };
+    (ready, format!("{status:?}").to_lowercase(), num_files)
+}
+
+/// Prometheus text exposition of request counters and index gauges.
+pub async fn metrics_handler(State(state): State<WebState>) -> impl IntoResponse {
+    let (ready, status, _) = readiness(&state);
+    let indexing = !matches!(status.as_str(), "completed" | "idle");
+    let gauges = state
+        .engine
+        .try_read()
+        .map(|e| {
+            let s = e.get_stats();
+            super::metrics::IndexGauges {
+                files: s.num_files as u64,
+                trigrams: s.num_trigrams as u64,
+                dependency_edges: s.dependency_edges as u64,
+                content_bytes: s.total_content_bytes,
+                indexing,
+                ready,
+            }
+        })
+        .unwrap_or(super::metrics::IndexGauges {
+            indexing,
+            ready,
+            ..Default::default()
+        });
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(&gauges),
+    )
+}
+
 /// Handle search requests
 pub async fn search_handler(
     State(state): State<WebState>,
@@ -265,8 +348,24 @@ pub async fn search_handler(
         _ => RankMode::Auto, // Default to auto
     };
 
+    // Concurrency limit: each search occupies a blocking-pool thread, so
+    // beyond the configured number we answer 503 + Retry-After immediately
+    // rather than letting requests pile up and starve the other endpoints.
+    let _permit = match state.search_permits.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            state.metrics.record_rejected();
+            return Err(ApiError::from((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent searches, please try again shortly".to_string(),
+            )));
+        }
+    };
+    let metrics = state.metrics.clone();
+    let request_start = std::time::Instant::now();
+
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
+    let outcome = tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Start timing the search
         let start_time = std::time::Instant::now();
 
@@ -404,7 +503,17 @@ pub async fn search_handler(
             format!("Task join error: {}", e),
         )
     })?
-    .map_err(ApiError::from)
+    .map_err(ApiError::from);
+
+    metrics.record_search(request_start.elapsed());
+    if let Err(e) = &outcome {
+        match e.status {
+            StatusCode::SERVICE_UNAVAILABLE => metrics.record_unavailable(),
+            s if s.is_client_error() => metrics.record_client_error(),
+            _ => {}
+        }
+    }
+    outcome
 }
 
 /// Handle stats requests

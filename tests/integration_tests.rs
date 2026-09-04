@@ -509,6 +509,99 @@ async fn test_http_search_offset_paging_and_totals() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 4.4: `/api/ready` reports readiness (200 once an index can
+/// serve), `/metrics` exposes request counters and index gauges in the
+/// Prometheus text format.
+#[tokio::test]
+async fn test_http_ready_and_metrics() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+
+    let ready = client
+        .get(format!("{}/api/ready", ctx.http_url))
+        .send()
+        .await?;
+    assert_eq!(ready.status(), 200, "3 files indexed, no build running");
+    let body: serde_json::Value = ready.json().await?;
+    assert_eq!(body["ready"], true);
+    assert_eq!(body["num_files"].as_u64().unwrap(), 3);
+
+    // One search, then the counters must reflect it.
+    client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "TestStruct")])
+        .send()
+        .await?;
+    client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "(unclosed"), ("regex", "true")])
+        .send()
+        .await?;
+    let metrics = client
+        .get(format!("{}/metrics", ctx.http_url))
+        .send()
+        .await?;
+    assert_eq!(metrics.status(), 200);
+    assert!(metrics
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/plain"));
+    let text = metrics.text().await?;
+    assert!(text.contains("fcs_search_requests_total 2"), "{text}");
+    assert!(
+        text.contains("fcs_search_errors_total{reason=\"client\"} 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("fcs_search_duration_seconds_count 2"),
+        "{text}"
+    );
+    assert!(text.contains("fcs_index_files 3"), "{text}");
+    assert!(text.contains("fcs_ready 1"), "{text}");
+    Ok(())
+}
+
+/// Roadmap 4.3: beyond `max_concurrent_searches` a search is refused with
+/// 503 + Retry-After instead of queueing on the blocking pool.
+#[tokio::test]
+async fn test_http_search_concurrency_limit() -> Result<()> {
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let opts = RouterOptions {
+        max_concurrent_searches: 0,
+        ..Default::default()
+    };
+    let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/api/search"))
+        .query(&[("q", "anything")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 503);
+    assert_eq!(resp.headers().get("retry-after").unwrap(), "1");
+    let body: serde_json::Value = resp.json().await?;
+    assert!(
+        body["error"].as_str().unwrap().contains("concurrent"),
+        "{body}"
+    );
+    Ok(())
+}
+
 /// Roadmap 1.9: `/api/context` must cap the window and never overflow.
 /// `context=usize::MAX` used to compute `match_idx + context + 1` (a panic in
 /// debug builds, a wrapped index in release) and could otherwise return the

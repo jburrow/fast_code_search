@@ -1,6 +1,7 @@
 //! Web UI and REST API module for Fast Code Search
 
 mod api;
+pub mod metrics;
 
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
 use axum::{
@@ -32,6 +33,46 @@ pub struct WebState {
     /// When set, static files are served from this directory on disk instead of
     /// the embedded assets.  Intended for development use only.
     pub static_dir: Option<PathBuf>,
+    /// Bounds concurrent searches (each holds a blocking-pool thread).
+    pub search_permits: Arc<tokio::sync::Semaphore>,
+    /// Request counters and latency histogram for `/metrics`.
+    pub metrics: Arc<metrics::Metrics>,
+}
+
+/// Knobs for [`create_router_with_options`].
+#[derive(Debug, Clone)]
+pub struct RouterOptions {
+    /// CORS origins (`"*"` = any; empty = same-origin only).
+    pub cors_origins: Vec<String>,
+    /// Searches allowed to execute at once; further requests get 503.
+    pub max_concurrent_searches: usize,
+    /// Whole-request timeout.
+    pub request_timeout: std::time::Duration,
+    /// Maximum request body size in bytes (the API is GET-only; this just
+    /// closes the door on oversized bodies).
+    pub body_limit: usize,
+}
+
+impl Default for RouterOptions {
+    fn default() -> Self {
+        Self {
+            cors_origins: Vec::new(),
+            max_concurrent_searches: 64,
+            request_timeout: std::time::Duration::from_secs(30),
+            body_limit: 64 * 1024,
+        }
+    }
+}
+
+impl From<&crate::config::ServerConfig> for RouterOptions {
+    fn from(c: &crate::config::ServerConfig) -> Self {
+        Self {
+            cors_origins: c.cors_origins.clone(),
+            max_concurrent_searches: c.max_concurrent_searches,
+            request_timeout: std::time::Duration::from_secs(c.request_timeout_secs.max(1)),
+            ..Default::default()
+        }
+    }
 }
 
 /// Create the web router with all routes and no cross-origin access
@@ -54,13 +95,30 @@ pub fn create_router_with_cors(
     static_dir: Option<PathBuf>,
     cors_origins: &[String],
 ) -> Router {
-    let cors = build_cors_layer(cors_origins);
+    let opts = RouterOptions {
+        cors_origins: cors_origins.to_vec(),
+        ..Default::default()
+    };
+    create_router_with_options(engine, progress, progress_tx, static_dir, &opts)
+}
+
+/// Create the web router with explicit limits (see [`RouterOptions`]).
+pub fn create_router_with_options(
+    engine: AppState,
+    progress: SharedIndexingProgress,
+    progress_tx: ProgressBroadcaster,
+    static_dir: Option<PathBuf>,
+    opts: &RouterOptions,
+) -> Router {
+    let cors = build_cors_layer(&opts.cors_origins);
 
     let state = WebState {
         engine,
         progress,
         progress_tx,
         static_dir,
+        search_permits: Arc::new(tokio::sync::Semaphore::new(opts.max_concurrent_searches)),
+        metrics: Arc::new(metrics::Metrics::new()),
     };
 
     let router = Router::new()
@@ -69,6 +127,8 @@ pub fn create_router_with_cors(
         .route("/api/stats", get(api::stats_handler))
         .route("/api/status", get(api::status_handler))
         .route("/api/health", get(api::health_handler))
+        .route("/api/ready", get(api::ready_handler))
+        .route("/metrics", get(api::metrics_handler))
         .route("/api/diagnostics", get(api::diagnostics_handler))
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
@@ -83,7 +143,16 @@ pub fn create_router_with_cors(
         Some(cors) => router.layer(cors),
         None => router,
     };
-    router.layer(TraceLayer::new_for_http()).with_state(state)
+    router
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            opts.body_limit,
+        ))
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            opts.request_timeout,
+        ))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }
 
 /// Translate the configured origin list into a CORS layer. Invalid origin
