@@ -2978,7 +2978,7 @@ impl SearchEngine {
     /// current content — all under the SAME file id so existing ids stay stable.
     /// A brand-new file is indexed normally.
     pub fn update_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
+        let Some(id) = self.find_file_id_exact(path) else {
             // Not yet indexed — treat as a fresh add.
             return self.index_file(path);
         };
@@ -3034,11 +3034,26 @@ impl SearchEngine {
     /// (tombstoned so its id is never reused). Returns true if a matching file
     /// was found and removed.
     pub fn remove_file(&mut self, path: &std::path::Path) -> bool {
-        let Some(id) = self.find_file_id(&path.to_string_lossy()) else {
+        let Some(id) = self.find_file_id_exact(path) else {
             return false;
         };
         self.remove_by_id(id);
         true
+    }
+
+    /// O(1) lookup by canonical path for file-system paths (watcher events,
+    /// index/update/remove). Unlike [`Self::find_file_id`] there is no suffix
+    /// fallback: a partial match must never be mistaken for the file being
+    /// updated, and the suffix scan allocates per indexed file.
+    pub fn find_file_id_exact(&self, path: &std::path::Path) -> Option<u32> {
+        if let Some(id) = self.file_store.find_by_exact_path(path) {
+            return Some(id);
+        }
+        let canonical = canonicalize_lossy(path);
+        if canonical != path {
+            return self.file_store.find_by_exact_path(&canonical);
+        }
+        None
     }
 
     /// Remove every indexed file under directory `dir` (for directory delete /

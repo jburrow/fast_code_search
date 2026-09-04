@@ -319,6 +319,22 @@ impl IndexerConfig {
         })
     }
 
+    /// Canonicalize every configured index path that exists on disk.
+    ///
+    /// The file store keys files by canonical path; the watcher reports
+    /// events under whatever form the root was configured in (relative,
+    /// symlinked, `\\?\`-prefixed on Windows). Canonicalizing the roots once
+    /// makes exact-path lookups hit on every event instead of falling back to
+    /// an O(n) suffix scan. Non-existent paths are left as written so the
+    /// usual "path does not exist" warning still names what the user typed.
+    pub fn canonicalize_paths(&mut self) {
+        for p in &mut self.paths {
+            if let Ok(canonical) = std::path::Path::new(p.as_str()).canonicalize() {
+                *p = canonical.to_string_lossy().to_string();
+            }
+        }
+    }
+
     /// Check if a path is within the configured index paths
     pub fn is_path_in_scope(&self, path: &std::path::Path) -> bool {
         let path_str = path.to_string_lossy().replace('\\', "/").to_lowercase();
@@ -512,6 +528,7 @@ service_name = "fast_code_search"
 
         // Append extra paths from CLI
         self.indexer.paths.extend(extra_paths);
+        self.indexer.canonicalize_paths();
 
         self
     }

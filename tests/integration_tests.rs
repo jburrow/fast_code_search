@@ -2247,6 +2247,46 @@ async fn test_directory_rename_and_delete_update_index() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 2.3: watcher paths are matched by canonical path, never by suffix.
+/// A non-canonical spelling of an indexed file must update it in place (no
+/// duplicate id, no trigram accumulation), and a different file whose path
+/// merely ends with the same suffix must not be mistaken for it.
+#[tokio::test]
+async fn test_update_file_uses_canonical_exact_match() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    std::fs::create_dir_all(temp.path().join("sub"))?;
+    let file = temp.path().join("sub/main.rs");
+    std::fs::write(&file, "fn canon_v1() {}\n")?;
+    let mut eng = SearchEngine::new();
+    eng.index_file(&file)?;
+    let files_before = eng.get_stats().num_files;
+
+    // 50 updates through a non-canonical spelling of the same path.
+    let dotted = temp.path().join("sub").join(".").join("main.rs");
+    for i in 0..50 {
+        std::fs::write(&file, format!("fn canon_v{i}_more() {{}}\n"))?;
+        eng.update_file(&dotted)?;
+    }
+    assert_eq!(eng.get_stats().num_files, files_before, "no duplicate ids");
+    assert!(eng.search("canon_v1() ", 10).is_empty(), "old content gone");
+    assert_eq!(eng.search("canon_v49_more", 10).len(), 1);
+
+    // A path that only shares a suffix is NOT this file.
+    let other_dir = temp.path().join("elsewhere");
+    std::fs::create_dir_all(&other_dir)?;
+    let other = other_dir.join("main.rs");
+    std::fs::write(&other, "fn other_main_token() {}\n")?;
+    assert!(
+        !eng.remove_file(&other),
+        "an unindexed file with a matching suffix must not remove the indexed one"
+    );
+    assert_eq!(eng.search("canon_v49_more", 10).len(), 1);
+    Ok(())
+}
+
 /// Roadmap 2.1: a burst of watcher events is coalesced per path and applied
 /// as one batch: a rename followed by a modify of the new path indexes the
 /// file once, deletes are removed in one pass, and a delete after a modify of
