@@ -564,7 +564,10 @@ set, never to the corpus.
   prefixes; demote the "no constraints" log to `debug`; small LRU of compiled
   regexes. Accept: `(?i)needle` and `abc+` show `total_candidates` far below
   the corpus size.
-- **3.4 Verification.** `memmem::Finder` over whole-file content with line
+- [x] **3.4 Verification.** DONE (commit `5da3240`): memchr2 whole-buffer
+  scan for ASCII needles with line resolution at hits; lazy `SymbolLineMaps`;
+  `FileMetadata.display_path` makes path filtering allocation-free. Test
+  `test_ascii_line_hits_matches_per_line_search`. `memmem::Finder` over whole-file content with line
   resolution via `memrchr`; lazy symbol maps on first hit; symbol search
   consults the cache before touching content; precompute display path (or an
   extension/language bitmap) in `FileMetadata` so path filtering is
@@ -588,7 +591,9 @@ set, never to the corpus.
   `total_matches` when the budget was not hit; replace the `len >= max`
   heuristic. Accept: two identical requests return identical order; page 2
   never repeats page 1.
-- **3.7 Match offsets contract.** Return `line_match_start/end` in bytes into
+- [x] **3.7 Match offsets contract.** DONE (commit `8f208bb`): `line_match_start/end`
+  (bytes into the full line) and `match_column` (char column) on engine, REST
+  and gRPC; documented in `docs.html`. Test `test_match_offsets_refer_to_full_line`. Return `line_match_start/end` in bytes into
   the untruncated line plus a UTF-16 column, and all occurrences on the line;
   document the contract in `docs.html`; keep the old fields for one release.
   (The VS Code provider can then be fixed separately.)
