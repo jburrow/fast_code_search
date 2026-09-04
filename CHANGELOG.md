@@ -34,7 +34,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DependencyIndex::remove_file` never pruned the filename index and every
   watcher update pushed a duplicate path entry.
 
+### Added
+- `/api/search` paging and budgets: `offset` (deterministic ordering, so pages
+  are stable), `timeout_ms`, and `total_matches` / `truncated_by_budget` in the
+  response; `has_more` is now derived from the real total. Regex and symbol
+  searches report ranking info too.
+- Every result carries `line_match_start` / `line_match_end` (byte offsets into
+  the full line) and `match_column` (0-based character column) on REST and gRPC.
+
 ### Changed
+- Every query's work is bounded by a match budget (8× the page, minimum 512) and
+  an optional deadline; `rank=full` no longer materializes every match of every
+  candidate before truncating.
+- Regex searches are accelerated for `(?i)` literals and repeated suffixes
+  (`abc+`), and compiled patterns are cached; plain-text verification scans the
+  whole buffer with `memchr` and builds symbol maps only on the first hit.
+- Symbol search consults the symbol cache before reading any file, never drops
+  low-scoring files before matching, ranks exact > prefix > substring, and
+  returns one row per line.
 - **Retrieval no longer reads through a live memory map for files up to 1 MiB**:
   a searcher touching a mapped file that an editor truncated in place was an
   uncatchable SIGBUS that killed the server. Small files (essentially all source

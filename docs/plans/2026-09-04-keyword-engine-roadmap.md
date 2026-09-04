@@ -573,10 +573,11 @@ set, never to the corpus.
   extension/language bitmap) in `FileMetadata` so path filtering is
   allocation-free. Accept: search bench on a 10 k-file corpus improves; no
   per-candidate `String` allocations in the filter path.
-- [~] **3.5 Shared candidate runner.** Runner DONE (`run_candidates` is the only
-  path for all four searches). Still open: `RankingWeights`, unifying the two
-  "heavily imported" formulas and the filename boost across modes, and the
-  `engine.rs` split. Extract `run_candidates(candidates,
+- [x] **3.5 Shared candidate runner.** DONE: `run_candidates` is the only path
+  for all four searches; `search::ranking::{RankingWeights, FileScoreWeights}`
+  hold every boost, one `dependency_boost` function. The file-level and
+  line-level dependency terms stay on different scales by design (documented).
+  The `engine.rs` split is tracked under cross-cutting. Extract `run_candidates(candidates,
   rank_mode, budget, per_doc_fn)` used by `search_ranked`,
   `search_with_filter_ranked`, `search_regex`, `search_symbols`; move scoring
   constants into a `RankingWeights` struct with `Default`; unify the two
@@ -597,10 +598,10 @@ set, never to the corpus.
   the untruncated line plus a UTF-16 column, and all occurrences on the line;
   document the contract in `docs.html`; keep the old fields for one release.
   (The VS Code provider can then be fixed separately.)
-- [~] **3.8 Symbol search quality.** Candidates are no longer truncated by base
-  score before matching and the symbol cache is consulted before any read
-  (DONE). Still open: per-line dedupe and exact > prefix > substring / kind
-  weighting. Do not truncate symbol candidates by base
+- [x] **3.8 Symbol search quality.** DONE: no base-score truncation before
+  matching, symbol cache consulted before any read, exact > prefix >
+  substring and kind weighting, one row per line. Test
+  `test_symbol_search_ranking_and_line_dedupe`. Do not truncate symbol candidates by base
   score before matching; dedupe rows per line; weight exact > prefix >
   substring and by symbol kind.
 
