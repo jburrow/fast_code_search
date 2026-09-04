@@ -9,11 +9,14 @@ service CodeSearch {
 
 message SearchRequest {
   string query = 1;
-  int32 max_results = 2;
+  int32 max_results = 2;              // 0 (unset) means the default page size, 50; capped at 1000
   repeated string include_paths = 3;  // Glob patterns for paths to include
   repeated string exclude_paths = 4;  // Glob patterns for paths to exclude
   bool is_regex = 5;                  // Treat query as regex pattern
   bool symbols_only = 6;              // Search only in discovered symbols (function/class names)
+  int32 offset = 7;                   // Results to skip (deterministic ordering, so pages are stable)
+  string rank = 8;                    // "auto" (default), "fast" or "full"
+  int64 deadline_ms = 9;              // Stop scanning after this many ms and return the best so far (0 = none; capped at 30000)
 }
 
 message SearchResult {
@@ -28,12 +31,13 @@ message SearchResult {
   int32 line_match_start = 9;  // Byte offset of match start within the FULL line
   int32 line_match_end = 10;   // Byte offset of match end within the full line
   int32 match_column = 11;     // 0-based character column of match start in the full line
+  uint32 dependency_count = 12; // Files that import this file
 }
 
 enum MatchType {
   TEXT = 0;
   SYMBOL_DEFINITION = 1;
-  SYMBOL_REFERENCE = 2;
+  SYMBOL_REFERENCE = 2;  // Reserved: not emitted yet (needs reference captures)
 }
 
 message IndexRequest {

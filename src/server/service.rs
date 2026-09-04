@@ -1,5 +1,5 @@
 use crate::config::IndexerConfig;
-use crate::search::SearchEngine;
+use crate::search::{RankMode, SearchEngine, SearchLimits};
 use anyhow::Result;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -240,11 +240,29 @@ impl CodeSearch for CodeSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query.trim().to_string();
-        let max_results = req.max_results.clamp(1, 1000) as usize;
+        // proto3 default 0 = "unset": use the REST default page size rather
+        // than clamping to a single result.
+        let max_results = if req.max_results <= 0 {
+            50
+        } else {
+            req.max_results.min(1000) as usize
+        };
         let include_patterns = req.include_paths.join(";");
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
+        let rank_mode = RankMode::parse(&req.rank);
+        let mut limits = SearchLimits::new(max_results).with_offset(req.offset.max(0) as usize);
+        if req.deadline_ms > 0 {
+            limits = limits.with_timeout(std::time::Duration::from_millis(
+                (req.deadline_ms as u64).min(30_000),
+            ));
+        }
+        {
+            let span = tracing::Span::current();
+            span.record("query", query.as_str());
+            span.record("max_results", max_results);
+        }
 
         // Return empty stream immediately for empty queries, consistent with REST API.
         if query.is_empty() {
@@ -271,28 +289,41 @@ impl CodeSearch for CodeSearchService {
                 }
             };
 
-            // Choose search method based on flags
-            let matches = if symbols_only {
-                // Search only in discovered symbols
+            // Same four modes and limits as /api/search.
+            let (matches, _info) = if symbols_only {
                 engine
-                    .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+                    .search_symbols_with_limits(
+                        &query,
+                        &include_patterns,
+                        &exclude_patterns,
+                        limits,
+                    )
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid filter pattern: {}", e))
                     })?
             } else if is_regex {
-                // Use regex search with optional path filtering
                 engine
-                    .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
+                    .search_regex_with_limits(
+                        &query,
+                        &include_patterns,
+                        &exclude_patterns,
+                        limits,
+                        rank_mode,
+                    )
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid regex pattern: {}", e))
                     })?
             } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-                // Plain text search without filtering
-                engine.search(&query, max_results)
+                engine.search_ranked_with_limits(&query, limits, rank_mode)
             } else {
-                // Plain text search with path filtering
                 engine
-                    .search_with_filter(&query, &include_patterns, &exclude_patterns, max_results)
+                    .search_with_filter_ranked_limits(
+                        &query,
+                        &include_patterns,
+                        &exclude_patterns,
+                        limits,
+                        rank_mode,
+                    )
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid filter pattern: {}", e))
                     })?
@@ -325,6 +356,7 @@ impl CodeSearch for CodeSearchService {
                     line_match_start: m.line_match_start as i32,
                     line_match_end: m.line_match_end as i32,
                     match_column: m.match_column as i32,
+                    dependency_count: m.dependency_count,
                     content_truncated: m.content_truncated,
                 };
 

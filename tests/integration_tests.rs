@@ -156,6 +156,7 @@ async fn test_grpc_search_finds_rust_function() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -192,6 +193,7 @@ async fn test_grpc_search_finds_python_function() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -224,6 +226,7 @@ async fn test_grpc_search_empty_query_returns_empty() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -251,6 +254,7 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -265,6 +269,75 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
         "Expected no results for non-matching query"
     );
 
+    Ok(())
+}
+
+/// Drain a gRPC search stream into a Vec.
+async fn collect(
+    req: SearchRequest,
+    client: &mut CodeSearchClient<tonic::transport::Channel>,
+) -> Result<Vec<fast_code_search::server::search_proto::SearchResult>> {
+    let mut stream = client.search(req).await?.into_inner();
+    let mut out = Vec::new();
+    while let Some(r) = stream.message().await? {
+        out.push(r);
+    }
+    Ok(out)
+}
+
+/// Roadmap 4.2: an unset max_results (proto3 zero) means the default page
+/// of 50, not a single result; offset and rank are honoured; results carry
+/// dependency_count and full-line offsets.
+#[tokio::test]
+async fn test_grpc_search_defaults_offset_and_fields() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    // "def " matches several lines across the Python/JS fixtures.
+    let all = collect(
+        SearchRequest {
+            query: "def ".to_string(),
+            max_results: 0, // unset
+            ..Default::default()
+        },
+        &mut client,
+    )
+    .await?;
+    assert!(
+        all.len() >= 2,
+        "default page must not be clamped to 1: {}",
+        all.len()
+    );
+    assert!(all.iter().all(|r| r.line_match_end >= r.line_match_start));
+
+    let page1 = collect(
+        SearchRequest {
+            query: "def ".to_string(),
+            max_results: 1,
+            rank: "full".to_string(),
+            ..Default::default()
+        },
+        &mut client,
+    )
+    .await?;
+    let page2 = collect(
+        SearchRequest {
+            query: "def ".to_string(),
+            max_results: 1,
+            offset: 1,
+            rank: "full".to_string(),
+            ..Default::default()
+        },
+        &mut client,
+    )
+    .await?;
+    assert_eq!(page1.len(), 1);
+    assert_eq!(page2.len(), 1);
+    let key = |r: &fast_code_search::server::search_proto::SearchResult| {
+        (r.file_path.clone(), r.line_number)
+    };
+    assert_eq!(key(&page1[0]), key(&all[0]));
+    assert_eq!(key(&page2[0]), key(&all[1]));
     Ok(())
 }
 
@@ -745,6 +818,7 @@ async fn test_grpc_search_symbols_only() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: true,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -817,6 +891,7 @@ async fn test_grpc_regex_search() -> Result<()> {
         exclude_paths: vec![],
         is_regex: true,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -915,6 +990,7 @@ async fn test_grpc_search_with_path_filters() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -982,6 +1058,7 @@ async fn test_grpc_search_max_results_limit() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -1677,6 +1754,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1741,6 +1819,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: true,
+            ..Default::default()
         };
         let mut stream_sym = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1812,6 +1891,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: true,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_regex = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1892,6 +1972,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_py = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1923,6 +2004,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec!["*.js".to_string()],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_nojs = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1967,6 +2049,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_max = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -2022,6 +2105,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_empty = client.search(req).await?.into_inner();
         let mut results = vec![];

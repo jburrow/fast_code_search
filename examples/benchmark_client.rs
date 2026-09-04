@@ -129,6 +129,7 @@ async fn main() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
 
         let mut stream = client.search(search_request).await?.into_inner();
