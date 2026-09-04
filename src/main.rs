@@ -3,9 +3,9 @@ use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    apply_change, create_progress_broadcaster, run_background_indexer, save_after_watcher_shutdown,
-    save_on_watcher_update, BackgroundIndexerConfig, FileWatcher, IndexingProgress,
-    ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
+    apply_changes, create_progress_broadcaster, run_background_indexer,
+    save_after_watcher_shutdown, save_on_watcher_update, BackgroundIndexerConfig, FileWatcher,
+    IndexingProgress, ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
@@ -271,18 +271,38 @@ async fn main() -> Result<()> {
                             );
                             break;
                         }
-                        if let Some(change) =
-                            watcher.recv_timeout(std::time::Duration::from_secs(1))
+                        if let Some(first) = watcher.recv_timeout(std::time::Duration::from_secs(1))
                         {
-                            tracing::debug!(?change, "Applying file change to index");
+                            // Gather the rest of the burst (branch switch, formatter
+                            // run, generated files) for a short window so it is
+                            // applied under ONE write lock with one posting scan.
+                            let mut changes = vec![first];
+                            let deadline = std::time::Instant::now()
+                                + std::time::Duration::from_millis(WATCH_BATCH_WINDOW_MS);
+                            loop {
+                                let remaining =
+                                    deadline.saturating_duration_since(std::time::Instant::now());
+                                if remaining.is_zero() {
+                                    break;
+                                }
+                                match watcher.recv_timeout(remaining) {
+                                    Some(c) => changes.push(c),
+                                    None => break,
+                                }
+                            }
+                            tracing::debug!(
+                                count = changes.len(),
+                                "Applying file changes to index"
+                            );
                             let outcome = with_engine_write(&watch_engine, |engine| {
-                                apply_change(engine, &change, &watch_indexer_config)
+                                apply_changes(engine, &changes, &watch_indexer_config)
                             });
                             if let Some(outcome) = outcome.filter(|o| o.changed()) {
                                 tracing::debug!(
+                                    events = changes.len(),
                                     indexed = outcome.indexed,
                                     removed = outcome.removed,
-                                    "File change applied"
+                                    "File changes applied"
                                 );
                                 watcher_updates_total += 1;
                                 save_on_watcher_update(
@@ -420,6 +440,11 @@ async fn wait_for_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
         }
     }
 }
+
+/// How long the watcher keeps collecting events after the first one before
+/// applying the batch. The debouncer already coalesces per-file noise; this
+/// window groups *different* files touched by one operation.
+const WATCH_BATCH_WINDOW_MS: u64 = 200;
 
 fn load_config(args: &Args) -> Result<Config> {
     let base_config = if let Some(ref config_path) = args.config {

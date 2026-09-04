@@ -1055,33 +1055,16 @@ impl SearchEngine {
 
         // Pre-compute file metadata for fast ranking
         // This enables ranking by file-level signals without reading file content
-        let num_files = self.file_store.len();
-        self.file_metadata = Vec::with_capacity(num_files);
-
-        for file_id in 0..num_files as u32 {
-            let metadata = if let Some(file) = self.file_store.get(file_id) {
-                let symbol_count = self
-                    .symbol_cache
-                    .get(file_id as usize)
-                    .map(|s| s.len())
-                    .unwrap_or(0);
-                let dep_count = self.dependency_index.get_import_count(file_id);
-                FileMetadata::compute(&file.path, symbol_count, dep_count)
-            } else {
-                FileMetadata::default()
-            };
-            self.file_metadata.push(metadata);
-        }
+        self.compute_all_file_metadata();
 
         tracing::info!(
-            num_files = num_files,
+            num_files = self.file_store.len(),
             "Computed file metadata for fast ranking"
         );
 
         // Release over-allocated Vec capacity accumulated during incremental push().
         // Vec doubles on growth; after indexing N files the backing store may be 2N slots.
         // Shrinking here can save tens to hundreds of MB on large codebases.
-        self.file_metadata.shrink_to_fit();
         self.pending_imports.shrink_to_fit();
         // Shrink the outer symbol_cache Vec and every inner Vec<Symbol>.
         // Inner Vecs are built by tree-sitter extraction which also uses push(),
@@ -2643,6 +2626,12 @@ impl SearchEngine {
             .map(|&idx| persisted.files[idx].path.clone())
             .collect();
 
+        // Fast-mode ranking needs per-file metadata; without it a freshly
+
+        // loaded index ranks by id order until the background finalize runs.
+
+        self.compute_all_file_metadata();
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -2859,6 +2848,12 @@ impl SearchEngine {
             .map(|&idx| persisted.files[idx].path.clone())
             .collect();
 
+        // Fast-mode ranking needs per-file metadata; without it a freshly
+
+        // loaded index ranks by id order until the background finalize runs.
+
+        self.compute_all_file_metadata();
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -2959,6 +2954,12 @@ impl SearchEngine {
             }
         }
 
+        // Fast-mode ranking needs per-file metadata; without it a freshly
+
+        // loaded index ranks by id order until the background finalize runs.
+
+        self.compute_all_file_metadata();
+
         tracing::info!(
             path = %path.display(),
             files_loaded = self.file_store.len(),
@@ -3022,8 +3023,8 @@ impl SearchEngine {
             self.resolve_imports_incremental();
         }
 
-        // The all-documents cache was invalidated by remove/add; it lazily
-        // recomputes on the next short-query search.
+        // Keep fast-mode ranking signals current for the touched file.
+        self.refresh_file_metadata(id);
         Ok(())
     }
 
@@ -3044,24 +3045,102 @@ impl SearchEngine {
     /// rename-away events, where the watcher reports only the directory).
     /// Returns the number of files removed.
     pub fn remove_files_under(&mut self, dir: &std::path::Path) -> usize {
+        let ids = self.file_ids_under(dir);
+        self.remove_files_by_ids(&ids)
+    }
+
+    /// Ids of every live file under directory `dir` (any form of the path;
+    /// it is canonicalized lossily so it need not still exist).
+    pub fn file_ids_under(&self, dir: &std::path::Path) -> Vec<u32> {
         let prefix = canonicalize_lossy(dir);
-        let ids = self.file_store.ids_under(&prefix);
-        for &id in &ids {
-            self.remove_by_id(id);
-        }
-        ids.len()
+        self.file_store.ids_under(&prefix)
     }
 
     fn remove_by_id(&mut self, id: u32) {
         self.trigram_index.remove_document(id);
+        self.forget_id(id);
+    }
+
+    /// Remove many files in one pass over the trigram index (see
+    /// [`TrigramIndex::remove_documents`]). Unknown/tombstoned ids are ignored.
+    pub fn remove_files_by_ids(&mut self, ids: &[u32]) -> usize {
+        let mut doomed = roaring::RoaringBitmap::new();
+        for &id in ids {
+            if self.file_store.get(id).is_some() {
+                doomed.insert(id);
+            }
+        }
+        if doomed.is_empty() {
+            return 0;
+        }
+        self.trigram_index.remove_documents(&doomed);
+        for id in doomed.iter() {
+            self.forget_id(id);
+        }
+        doomed.len() as usize
+    }
+
+    /// Everything except the trigram postings: symbols, metadata, dependency
+    /// edges and the store slot (tombstoned so the id is never reused).
+    fn forget_id(&mut self, id: u32) {
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
             slot.clear();
         }
         if let Some(meta) = self.file_metadata.get_mut(id as usize) {
             *meta = FileMetadata::default();
         }
+        // Files that imported this one lose an out-edge but their own metadata
+        // (symbol count, in-edges) is unchanged; files it imported lose an
+        // in-edge, so refresh their dependency-count-based base score.
+        let dependents_changed: Vec<u32> = self.dependency_index.get_dependencies(id);
         self.dependency_index.remove_file(id);
         self.file_store.remove_file_by_id(id);
+        for other in dependents_changed {
+            self.refresh_file_metadata(other);
+        }
+    }
+
+    /// Recompute the fast-ranking metadata for one file (after an incremental
+    /// add/update, or when its in-edge count changed). Cheap: one path walk
+    /// plus two map lookups; no file I/O.
+    pub fn refresh_file_metadata(&mut self, id: u32) {
+        let idx = id as usize;
+        let meta = match self.file_store.get(id) {
+            Some(file) => {
+                let symbol_count = self.symbol_cache.get(idx).map(|s| s.len()).unwrap_or(0);
+                let dep_count = self.dependency_index.get_import_count(id);
+                FileMetadata::compute(&file.path, symbol_count, dep_count)
+            }
+            None => FileMetadata::default(),
+        };
+        if self.file_metadata.len() <= idx {
+            self.file_metadata
+                .resize_with(idx + 1, FileMetadata::default);
+        }
+        self.file_metadata[idx] = meta;
+    }
+
+    /// Compute fast-ranking metadata for every live file. Called by
+    /// `finalize()` and after a persisted load so Fast mode never falls back
+    /// to "first N ids in id order" while the background reconcile runs.
+    pub fn compute_all_file_metadata(&mut self) {
+        let num_files = self.file_store.len();
+        self.file_metadata = Vec::with_capacity(num_files);
+        for file_id in 0..num_files as u32 {
+            let metadata = if let Some(file) = self.file_store.get(file_id) {
+                let symbol_count = self
+                    .symbol_cache
+                    .get(file_id as usize)
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                let dep_count = self.dependency_index.get_import_count(file_id);
+                FileMetadata::compute(&file.path, symbol_count, dep_count)
+            } else {
+                FileMetadata::default()
+            };
+            self.file_metadata.push(metadata);
+        }
+        self.file_metadata.shrink_to_fit();
     }
 }
 

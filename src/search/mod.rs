@@ -16,7 +16,7 @@ pub use engine::{
     SearchRankingInfo, SearchStats, SharedIndexingProgress,
 };
 pub use file_discovery::{discover_files, FileDiscoveryConfig, FileDiscoveryIterator};
-pub use incremental::{apply_change, ChangeOutcome};
+pub use incremental::{apply_change, apply_changes, ChangeOutcome};
 pub use path_filter::PathFilter;
 pub use regex_search::RegexAnalysis;
 pub use watcher::{FileChange, FileWatcher, WatcherConfig};

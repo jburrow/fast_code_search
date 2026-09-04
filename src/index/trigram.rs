@@ -87,8 +87,9 @@ impl TrigramIndex {
                 .insert(doc_id);
         }
 
-        // Invalidate cache when documents are added
-        self.all_docs_cache = None;
+        if let Some(cache) = self.all_docs_cache.as_mut() {
+            cache.insert(doc_id);
+        }
     }
 
     /// Add a document using pre-computed trigrams (for parallel indexing)
@@ -100,8 +101,11 @@ impl TrigramIndex {
                 .insert(doc_id);
         }
 
-        // Invalidate cache when documents are added
-        self.all_docs_cache = None;
+        // Keep the all-documents cache warm across incremental adds instead of
+        // forcing a full union over every posting list on the next short query.
+        if let Some(cache) = self.all_docs_cache.as_mut() {
+            cache.insert(doc_id);
+        }
     }
 
     /// Remove a document from the index (for incremental updates / deletions).
@@ -111,12 +115,29 @@ impl TrigramIndex {
     /// removed file can never reappear as a candidate. O(number of trigrams),
     /// which is acceptable for the infrequent update/delete path.
     pub fn remove_document(&mut self, doc_id: u32) {
+        let mut doomed = RoaringBitmap::new();
+        doomed.insert(doc_id);
+        self.remove_documents(&doomed);
+    }
+
+    /// Remove many documents in a single pass over the posting lists.
+    ///
+    /// A watcher burst (branch switch, formatter run) used to cost one full
+    /// map scan *per file*; this costs one scan per batch. The all-documents
+    /// cache is updated in place rather than invalidated.
+    pub fn remove_documents(&mut self, doomed: &RoaringBitmap) {
+        if doomed.is_empty() {
+            return;
+        }
         self.trigram_to_docs.retain(|_, docs| {
-            docs.remove(doc_id);
+            if docs.intersection_len(doomed) > 0 {
+                *docs -= doomed;
+            }
             !docs.is_empty()
         });
-        // Invalidate cache; it will be recomputed on next finalize()/all_documents().
-        self.all_docs_cache = None;
+        if let Some(cache) = self.all_docs_cache.as_mut() {
+            *cache -= doomed;
+        }
     }
 
     /// Release over-allocated bucket memory from incremental inserts.
@@ -225,6 +246,39 @@ impl TrigramIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Roadmap 2.1/2.2: bulk removal strips ids in one pass and keeps the
+    /// all-documents cache correct instead of invalidating it.
+    #[test]
+    fn test_remove_documents_bulk_keeps_cache_warm() {
+        let mut idx = TrigramIndex::new();
+        idx.add_document(0, "hello world");
+        idx.add_document(1, "hello there");
+        idx.add_document(2, "world peace");
+        idx.finalize();
+        assert_eq!(idx.all_documents().len(), 3);
+
+        let mut doomed = RoaringBitmap::new();
+        doomed.insert(0);
+        doomed.insert(2);
+        idx.remove_documents(&doomed);
+
+        // Cache was updated in place (still present, still correct).
+        assert!(idx.all_docs_cache.is_some());
+        let all: Vec<u32> = idx.all_documents().iter().collect();
+        assert_eq!(all, vec![1]);
+        // "wor" only appeared in removed docs -> pruned; "hel" survives with doc 1.
+        assert!(idx.get_trigram_map().get(&Trigram::new(*b"wor")).is_none());
+        let hel: Vec<u32> = idx.get_trigram_map()[&Trigram::new(*b"hel")]
+            .iter()
+            .collect();
+        assert_eq!(hel, vec![1]);
+
+        // Adding keeps the cache warm too.
+        idx.add_document(3, "hello again");
+        assert!(idx.all_docs_cache.is_some());
+        assert_eq!(idx.all_documents().len(), 2);
+    }
 
     #[test]
     fn test_trigram_extraction() {

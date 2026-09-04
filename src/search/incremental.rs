@@ -30,6 +30,78 @@ impl ChangeOutcome {
     }
 }
 
+/// Apply a burst of changes under one write lock.
+///
+/// Events are coalesced per path (the last event for a path wins; a rename
+/// is a delete of `from` plus a modify of `to`), all removals are applied in
+/// a single pass over the trigram index, then the surviving modifications
+/// are indexed. A `git checkout` touching thousands of files therefore costs
+/// one lock window and one posting-list scan instead of one per file.
+pub fn apply_changes(
+    engine: &mut SearchEngine,
+    changes: &[FileChange],
+    config: &IndexerConfig,
+) -> ChangeOutcome {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Op {
+        Delete,
+        Modify,
+    }
+
+    // Ordered coalescing: insertion order is kept so directory removals happen
+    // before files that were moved into a directory of the same name, etc.
+    let mut order: Vec<PathBuf> = Vec::new();
+    let mut ops: HashMap<PathBuf, Op> = HashMap::new();
+    let mut set = |path: &PathBuf, op: Op| {
+        if !ops.contains_key(path) {
+            order.push(path.clone());
+        }
+        ops.insert(path.clone(), op);
+    };
+    for change in changes {
+        match change {
+            FileChange::Modified(p) => set(p, Op::Modify),
+            FileChange::Deleted(p) => set(p, Op::Delete),
+            FileChange::Renamed { from, to } => {
+                set(from, Op::Delete);
+                set(to, Op::Modify);
+            }
+        }
+    }
+
+    // Phase 1: collect every id to remove (files, or whole directories for
+    // paths with no id) and drop them in one pass.
+    let mut doomed: Vec<u32> = Vec::new();
+    for path in &order {
+        if ops[path] != Op::Delete {
+            continue;
+        }
+        match engine.find_file_id(&path.to_string_lossy()) {
+            Some(id) => doomed.push(id),
+            None => doomed.extend(engine.file_ids_under(path)),
+        }
+    }
+    let removed = engine.remove_files_by_ids(&doomed);
+
+    // Phase 2: (re)index the modified paths.
+    let mut outcome = ChangeOutcome {
+        indexed: 0,
+        removed,
+    };
+    for path in &order {
+        if ops[path] != Op::Modify {
+            continue;
+        }
+        let o = index_path(engine, path, config);
+        outcome.indexed += o.indexed;
+        outcome.removed += o.removed;
+    }
+    outcome
+}
+
 /// Apply one file-system change to the engine under the caller's write lock.
 pub fn apply_change(
     engine: &mut SearchEngine,

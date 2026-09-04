@@ -2247,6 +2247,67 @@ async fn test_directory_rename_and_delete_update_index() -> Result<()> {
     Ok(())
 }
 
+/// Roadmap 2.1: a burst of watcher events is coalesced per path and applied
+/// as one batch: a rename followed by a modify of the new path indexes the
+/// file once, deletes are removed in one pass, and a delete after a modify of
+/// the same path wins.
+#[tokio::test]
+async fn test_apply_changes_batches_and_coalesces() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_changes, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mk = |name: &str, body: &str| -> Result<std::path::PathBuf> {
+        let p = temp.path().join(name);
+        std::fs::write(&p, body)?;
+        Ok(p)
+    };
+    let a = mk("a.rs", "fn batch_a() {}\n")?;
+    let b = mk("b.rs", "fn batch_b() {}\n")?;
+    let c = mk("c.rs", "fn batch_c() {}\n")?;
+    let d = mk("d.rs", "fn batch_d() {}\n")?;
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut eng = SearchEngine::new();
+    for p in [&a, &b, &c, &d] {
+        eng.index_file(p)?;
+    }
+    eng.finalize();
+
+    // Burst: delete a and b; rename c -> e then "modify" e; modify d then delete d.
+    let e = temp.path().join("e.rs");
+    std::fs::rename(&c, &e)?;
+    std::fs::write(&e, "fn batch_e_new() {}\n")?;
+    std::fs::remove_file(&a)?;
+    std::fs::remove_file(&b)?;
+    std::fs::remove_file(&d)?;
+    let changes = vec![
+        FileChange::Deleted(a.clone()),
+        FileChange::Modified(d.clone()),
+        FileChange::Renamed {
+            from: c.clone(),
+            to: e.clone(),
+        },
+        FileChange::Modified(e.clone()),
+        FileChange::Deleted(b.clone()),
+        FileChange::Deleted(d.clone()),
+    ];
+    let outcome = apply_changes(&mut eng, &changes, &config);
+    assert_eq!(outcome.removed, 4, "{outcome:?}"); // a, b, c(old), d
+    assert_eq!(outcome.indexed, 1, "{outcome:?}"); // e, once
+
+    for gone in ["batch_a", "batch_b", "batch_c", "batch_d"] {
+        assert!(eng.search(gone, 10).is_empty(), "{gone} must be gone");
+    }
+    let hits = eng.search("batch_e_new", 10);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].file_path.ends_with("e.rs"));
+    Ok(())
+}
+
 /// Roadmap 1.8 / 2.4: the watcher applies the same eligibility rules as the
 /// initial build. A changed file with a non-included extension is not indexed
 /// and an excluded path is dropped.
