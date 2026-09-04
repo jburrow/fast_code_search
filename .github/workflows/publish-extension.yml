@@ -1,11 +1,12 @@
 name: Publish VS Code Extension
 
-# Triggered when a release tag is pushed (same pattern as the binary release workflow).
-# Also available as a manual trigger for emergency re-publishes.
+# Triggered by extension release tags (ext-vX.Y.Z), decoupled from the core
+# binary's v* tags so a server release does not re-publish an unchanged
+# extension. Also available as a manual trigger for emergency re-publishes.
 on:
   push:
     tags:
-      - 'v[0-9]+.*'
+      - 'ext-v[0-9]+.*'
   workflow_dispatch:
     inputs:
       tag:
