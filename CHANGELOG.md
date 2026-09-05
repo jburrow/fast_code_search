@@ -97,9 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This also keeps the mapping count far below `vm.max_map_count`.
 - `.gitignore` / `.ignore` files under the indexed paths are honoured by the
   initial build and by the watcher (`indexer.respect_gitignore`, default true).
-- **Persisted index format v4** (`FCSIDX02`): unresolved imports are stored so a
-  checkpoint restore still gains the edge when the target file is indexed later.
-  Index files written by earlier versions are rebuilt automatically.
+- **Persisted index format v5** (`FCSIDX03`): unresolved imports are stored so a
+  checkpoint restore still gains the edge when the target file is indexed later;
+  mtimes are kept at nanosecond precision, paths are stored as raw bytes, and
+  posting bitmaps are run-optimised before writing. Index files written by
+  earlier versions are rebuilt automatically.
 - Import resolution is now per language (Rust crate/module paths, Python
   relative and package imports, JS/TS extension and `index` probing, `@/`
   aliases) and no longer guesses a same-named file anywhere in the repo for bare
