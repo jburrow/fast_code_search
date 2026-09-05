@@ -421,14 +421,13 @@ impl SearchEngine {
             config.fingerprint(),
             config.paths.clone(),
             files,
-            trigram_map,
             symbols,
             dependency_edges,
             pending_imports,
             self.reference_names().to_vec(),
             references,
         )?;
-        persisted.save(path)?;
+        persisted.save(path, trigram_map)?;
 
         tracing::info!(
             path = %path.display(),
