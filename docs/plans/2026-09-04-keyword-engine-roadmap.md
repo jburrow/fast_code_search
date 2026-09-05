@@ -1,9 +1,15 @@
 # Keyword Engine Roadmap — 2026-09-04
 
-Status: IMPLEMENTED on branch `keyword-roadmap` (2026-09-04). Tasks are ticked
-`[x]` (done) or `[~]` (partial) with a DONE note; each task is one commit.
-Open: 6.1 sectioned layout, 6.3 memory diet, 6.5 real-corpus benchmarks,
-multi-line regex and symbol references (Phase 7), the load-path merge. Produced from a full read of the keyword engine at v0.9.0 (commit
+Status: COMPLETE. Phases 0–5 and the cross-cutting work landed via PR #104
+(branch `keyword-roadmap`, merged 2026-09-05); the remaining Phase 6 and 7
+items, the load-path merge and the pruning landed on branch
+`keyword-roadmap-2` (2026-09-05). Tasks are ticked `[x]` with a DONE note;
+each task is one commit. Known gaps, all noted inline: TypeScript call-site
+references (the crate's TS tags query lacks call patterns), lazy posting
+lists (judged not worth a TrigramIndex redesign), and the macOS CI job,
+which was failing before this work and whose log is not readable without a
+token (the branch adds failing-test annotations and a likely fix to the
+watcher test). Produced from a full read of the keyword engine at v0.9.0 (commit
 `241d01a`), verified by building and running the suite on Linux (Rust 1.98.1):
 lib 166 passed, integration 35 passed, benches compile, clippy 3 warnings,
 `cargo fmt --check` 13 hunks in 6 files.
@@ -831,7 +837,7 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
 - [x] Split `engine.rs` — DONE: `search/engine/{mod,query,text,persist,progress,
   tests}.rs` (mod.rs 1.4k lines; query 1.1k). `search/ranking.rs` holds the
   weights. Persistence stayed under `engine/persist.rs` rather than `index/`.
-- [~] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
+- [x] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
   `new_with_indexing`, `RegexAnalysis::literals`. The three load paths now
   share one implementation (`load_index_inner`; commit "refactor(engine):
   one load path behind the three public loaders") — this also fixed a
