@@ -733,7 +733,15 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   (the overwhelming majority) with mmap only above a threshold, or a segmented
   blob store — removes the SIGBUS exposure and the `max_map_count` ceiling
   together. Own the mmap accounting in `LazyFileStore` if mmap stays.
-- **6.3 Memory diet.** Intern paths once (`Arc<Path>` or arena) and stop
+- [x] **6.3 Memory diet.** DONE (commits "perf(index): intern paths and
+  shrink the per-file entry" and "perf(search): borrow the all-documents
+  bitmap"): paths are one `Arc<Path>` shared with the path map; the
+  per-file entry is one lazily created cell for large files only and is
+  asserted to be at most 64 bytes; the fallback cache and its eviction API
+  are gone (unmapped large files are read per access); `all_documents()`
+  returns a `Cow` borrowed from the finalize-time cache and candidate sets
+  flow by reference.
+  Original text: Intern paths once (`Arc<Path>` or arena) and stop
   duplicating them in `path_to_id`; collapse the three `OnceLock`s + `Mutex`
   per file into one state cell; delete the fallback Mutex cache; return
   `all_documents()` by reference.
@@ -785,10 +793,12 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
   tests}.rs` (mod.rs 1.4k lines; query 1.1k). `search/ranking.rs` holds the
   weights. Persistence stayed under `engine/persist.rs` rather than `index/`.
 - [~] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
-  `new_with_indexing`, `RegexAnalysis::literals`. Still open: the three load
-  paths (`load_index`, `load_index_with_reconciliation`,
-  `load_index_with_progress`) remain separate functions, and the remaining
-  uncalled `pub fn`s have not been pruned.
+  `new_with_indexing`, `RegexAnalysis::literals`. The three load paths now
+  share one implementation (`load_index_inner`; commit "refactor(engine):
+  one load path behind the three public loaders") — this also fixed a
+  freshly loaded index showing absolute display paths until the next
+  finalize, because roots were registered after the metadata pass. Still
+  open: the remaining uncalled `pub fn`s have not been pruned.
 - [x] Docs — DONE: `DEVELOPMENT.md` rewritten against the code (module tree,
   pipelines, threading, scoring, logging, adding a language, release targets);
   `REVIEW.md` and the June plan archived; `CONTRIBUTING.md` refreshed;

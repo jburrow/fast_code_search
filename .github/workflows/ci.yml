@@ -37,11 +37,31 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      # Failed test names are echoed as workflow annotations so they show up
+      # in the checks API and the PR without opening the (login-only) log.
       - name: Run tests
-        run: cargo test --verbose
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --verbose --no-fail-fast 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E '^test .* FAILED$' test.log | sort -u | sed 's/^/::error title=Failed test::/'
+            grep -E "panicked at|assertion .* failed|left:|right:" test.log | head -40 | sed 's/^/::error::/'
+          fi
+          exit "$status"
 
       - name: Run tests (semantic feature)
-        run: cargo test --verbose --features semantic --lib
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --verbose --features semantic --lib --no-fail-fast 2>&1 | tee test-semantic.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E '^test .* FAILED$' test-semantic.log | sort -u | sed 's/^/::error title=Failed test::/'
+            grep -E "panicked at|assertion .* failed|left:|right:" test-semantic.log | head -40 | sed 's/^/::error::/'
+          fi
+          exit "$status"
 
   lint:
     name: Lint

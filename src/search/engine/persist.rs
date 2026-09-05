@@ -3,6 +3,9 @@
 use super::*;
 use tracing::warn;
 
+/// Progress sink used by the loaders: `(phase, total, done, message)`.
+type LoadProgressSink<'a> = &'a mut dyn FnMut(LoadingPhase, Option<usize>, Option<usize>, &str);
+
 impl SearchEngine {
     /// Build the `original persisted file index → new file id` map from the
     /// **actual** ids assigned during registration.
@@ -348,7 +351,7 @@ impl SearchEngine {
                 };
 
                 files.push(PersistedFileMetadata {
-                    path: mapped_file.path.clone(),
+                    path: mapped_file.path.to_path_buf(),
                     mtime,
                     size: size as u64,
                     source_base_path: source_base,
@@ -424,138 +427,28 @@ impl SearchEngine {
         path.exists()
     }
 
-    /// Load an index from disk with reconciliation against current config
-    /// Returns detailed information about what needs to be updated
+    /// Load an index from disk and reconcile it against the current
+    /// configuration.
+    ///
+    /// Returns which files are stale or gone and which configured paths were
+    /// added or removed since the index was saved, so the caller can index
+    /// exactly the difference. Configured paths are registered as roots for
+    /// display-path computation.
     pub fn load_index_with_reconciliation(
         &mut self,
         path: &std::path::Path,
         config: &crate::config::IndexerConfig,
     ) -> anyhow::Result<LoadIndexResult> {
-        use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
-
-        let persisted = PersistedIndex::load(path)?;
-
-        // Check config compatibility
-        let current_fingerprint = config.fingerprint();
-        let config_compatible = persisted.is_config_compatible(&current_fingerprint);
-
-        if !config_compatible {
-            tracing::info!(
-                old_fingerprint = %persisted.config_fingerprint,
-                new_fingerprint = %current_fingerprint,
-                "Config fingerprint changed, will reconcile"
-            );
-        }
-
-        // Determine paths to add/remove based on config changes
-        let new_paths = persisted.paths_to_add(&config.paths);
-        let removed_paths = persisted.paths_to_remove(&config.paths);
-
-        // Batch check all files in parallel for staleness/removal
-        let file_statuses = batch_check_files(&persisted.files, &removed_paths);
-
-        // Categorize files based on status
-        let mut stale_files = Vec::new();
-        let mut removed_files = Vec::new();
-        let mut valid_file_indices = Vec::new();
-
-        for (idx, status) in file_statuses {
-            match status {
-                FileStatus::Valid => valid_file_indices.push(idx),
-                FileStatus::Stale => stale_files.push(persisted.files[idx].path.clone()),
-                FileStatus::Removed => removed_files.push(persisted.files[idx].path.clone()),
-            }
-        }
-
-        // Map from original persisted index → new file id, built from the ACTUAL
-        // ids assigned during registration so trigrams/symbols/deps stay aligned.
-        let mut orig_to_new: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
-
-        // Only restore index if we have valid files
-        if !valid_file_indices.is_empty() {
-            // Re-add valid files FIRST, capturing the real id each one receives.
-            let mut new_ids = Vec::with_capacity(valid_file_indices.len());
-            for &idx in &valid_file_indices {
-                let file_meta = &persisted.files[idx];
-                match self.file_store.add_file(&file_meta.path) {
-                    Ok(id) => new_ids.push(id),
-                    Err(_) => new_ids.push(u32::MAX), // failed → dropped from the map
-                }
-            }
-            orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
-            self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
-
-            // Restore the trigram index and remap its doc ids onto the new ids.
-            let trigram_map = persisted.restore_trigram_index()?;
-            let remapped =
-                Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
-
-            self.trigram_index.finalize();
-        }
-
-        if !self.file_store.is_empty() {
-            if !persisted.symbols.is_empty() {
-                // Restore symbols and dependency graph directly from persisted data,
-                // remapping original file indices to the new file IDs assigned during load.
-                self.restore_symbols_and_deps(&orig_to_new, &persisted);
-                tracing::info!(
-                    files_restored = valid_file_indices.len(),
-                    "Restored symbol and dependency caches from persisted index"
-                );
-            } else {
-                // Fallback: re-extract from file contents (old index format without symbols)
-                let rebuild_stats = self.rebuild_symbols_and_dependencies();
-                tracing::info!(
-                    symbols_rebuilt = rebuild_stats.symbols_extracted,
-                    imports_rebuilt = rebuild_stats.imports_extracted,
-                    files_skipped = rebuild_stats.files_skipped,
-                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
-                );
-            }
-        }
-
-        let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
-            .iter()
-            .map(|&idx| persisted.files[idx].path.clone())
-            .collect();
-
-        // Fast-mode ranking needs per-file metadata; without it a freshly
-
-        // loaded index ranks by id order until the background finalize runs.
-
-        self.compute_all_file_metadata();
-        self.generation += 1;
-
-        tracing::info!(
-            path = %path.display(),
-            files_loaded = self.file_store.len(),
-            stale_files = stale_files.len(),
-            removed_files = removed_files.len(),
-            new_paths = new_paths.len(),
-            removed_paths = removed_paths.len(),
-            config_compatible = config_compatible,
-            "Index loaded from disk with reconciliation"
-        );
-
-        Ok(LoadIndexResult {
-            stale_files,
-            removed_files,
-            new_paths,
-            removed_paths,
-            config_compatible,
-            already_indexed_files,
-        })
+        self.load_index_inner(path, Some(config), &mut |_, _, _, _| {})
     }
 
-    /// Load an index from disk with reconciliation and progress reporting
+    /// [`load_index_with_reconciliation`](Self::load_index_with_reconciliation)
+    /// with a progress callback.
     ///
-    /// The progress callback receives updates during each phase of loading:
-    /// - ReadingFile: Starting to read the index file
-    /// - Deserializing: Deserializing persisted data
-    /// - CheckingFiles: Checking file staleness (with file count progress)
-    /// - RestoringTrigrams: Restoring the trigram index
-    /// - MappingFiles: Memory-mapping files (with file count progress)
+    /// The callback receives `(phase, total, done, message)` as loading moves
+    /// through reading and deserializing the file, checking files for
+    /// staleness, registering the surviving files, restoring the trigram
+    /// index and restoring (or rebuilding) symbols and imports.
     pub fn load_index_with_progress<F>(
         &mut self,
         path: &std::path::Path,
@@ -565,18 +458,45 @@ impl SearchEngine {
     where
         F: FnMut(LoadingPhase, Option<usize>, Option<usize>, &str),
     {
+        self.load_index_inner(path, Some(config), &mut progress_callback)
+    }
+
+    /// Load an index from disk without a configuration to reconcile against.
+    ///
+    /// Every persisted file that still exists unchanged is restored; the
+    /// returned list holds the files that need re-indexing because they
+    /// changed or disappeared.
+    pub fn load_index(
+        &mut self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<std::path::PathBuf>> {
+        let mut result = self.load_index_inner(path, None, &mut |_, _, _, _| {})?;
+        result.stale_files.append(&mut result.removed_files);
+        Ok(result.stale_files)
+    }
+
+    /// The single load path behind the three public loaders.
+    ///
+    /// Without a `config` there is nothing to reconcile: the fingerprint is
+    /// taken as compatible and no configured paths are added, removed or
+    /// registered as roots. Files are registered lazily (no I/O) with the
+    /// persisted size and mtime, then trigrams, symbols and dependency edges
+    /// are remapped onto the ids the registration actually assigned.
+    fn load_index_inner(
+        &mut self,
+        path: &std::path::Path,
+        config: Option<&crate::config::IndexerConfig>,
+        progress: LoadProgressSink<'_>,
+    ) -> anyhow::Result<LoadIndexResult> {
         use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
-        // Phase 1: Reading file from disk
-        progress_callback(
+        progress(
             LoadingPhase::ReadingFile,
             None,
             None,
             "Reading index file from disk...",
         );
-
-        // Phase 2: Deserializing
-        progress_callback(
+        progress(
             LoadingPhase::Deserializing,
             None,
             None,
@@ -585,44 +505,43 @@ impl SearchEngine {
         let persisted = PersistedIndex::load(path)?;
         let total_files = persisted.files.len();
 
-        // Check config compatibility
-        let current_fingerprint = config.fingerprint();
-        let config_compatible = persisted.is_config_compatible(&current_fingerprint);
+        let (config_compatible, new_paths, removed_paths) = match config {
+            Some(config) => {
+                let current_fingerprint = config.fingerprint();
+                let compatible = persisted.is_config_compatible(&current_fingerprint);
+                if !compatible {
+                    tracing::info!(
+                        old_fingerprint = %persisted.config_fingerprint,
+                        new_fingerprint = %current_fingerprint,
+                        "Config fingerprint changed, will reconcile"
+                    );
+                }
+                (
+                    compatible,
+                    persisted.paths_to_add(&config.paths),
+                    persisted.paths_to_remove(&config.paths),
+                )
+            }
+            None => (true, Vec::new(), Vec::new()),
+        };
 
-        if !config_compatible {
-            tracing::info!(
-                old_fingerprint = %persisted.config_fingerprint,
-                new_fingerprint = %current_fingerprint,
-                "Config fingerprint changed, will reconcile"
-            );
-        }
-
-        // Determine paths to add/remove based on config changes
-        let new_paths = persisted.paths_to_add(&config.paths);
-        let removed_paths = persisted.paths_to_remove(&config.paths);
-
-        // Phase 3: Checking files for staleness
-        progress_callback(
+        progress(
             LoadingPhase::CheckingFiles,
             Some(total_files),
             Some(0),
             &format!("Checking {} files for changes...", total_files),
         );
-
         let file_statuses = batch_check_files(&persisted.files, &removed_paths);
-
-        progress_callback(
+        progress(
             LoadingPhase::CheckingFiles,
             Some(total_files),
             Some(total_files),
             &format!("Checked {} files", total_files),
         );
 
-        // Categorize files based on status
         let mut stale_files = Vec::new();
         let mut removed_files = Vec::new();
         let mut valid_file_indices = Vec::new();
-
         for (idx, status) in file_statuses {
             match status {
                 FileStatus::Valid => valid_file_indices.push(idx),
@@ -630,125 +549,117 @@ impl SearchEngine {
                 FileStatus::Removed => removed_files.push(persisted.files[idx].path.clone()),
             }
         }
-
         let valid_count = valid_file_indices.len();
 
-        // Map from original persisted index → new file id, built from the ACTUAL
-        // ids returned by registration (handles path dedupe correctly).
+        // Map from persisted position -> new file id, built from the ids the
+        // registration actually assigned so trigrams/symbols/deps stay aligned.
         let mut orig_to_new: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
 
-        // Only restore index if we have valid files
-        if !valid_file_indices.is_empty() {
-            // Phase 5: Register file paths FIRST (LAZY - no I/O, instant!) so we
-            // know the real id assigned to each before remapping the trigrams.
-            progress_callback(
+        if valid_count > 0 {
+            progress(
                 LoadingPhase::MappingFiles,
                 Some(valid_count),
                 Some(0),
                 &format!("Registering {} files...", valid_count),
             );
 
-            // Collect paths for lazy registration
             let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
                 .iter()
                 .map(|&idx| persisted.files[idx].path.clone())
                 .collect();
-
-            // Calculate total content bytes from persisted metadata
             let total_content_bytes: u64 = valid_file_indices
                 .iter()
                 .map(|&idx| persisted.files[idx].size)
                 .sum();
 
-            // Pre-allocate capacity for efficiency
+            // Lazy registration: no I/O, the persisted size stands in for the
+            // content until a file is first read.
             self.file_store.reserve(paths_to_register.len());
-
-            // Register all files instantly (no I/O, just storing paths)
             let new_ids = self.file_store.register_files_bulk(&paths_to_register);
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
             self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
-
-            // Track content bytes from persisted metadata
             self.file_store.add_content_bytes(total_content_bytes);
 
-            // Final progress update
-            progress_callback(
+            progress(
                 LoadingPhase::MappingFiles,
                 Some(valid_count),
                 Some(valid_count),
                 &format!("Registered {} files (lazy loading enabled)", valid_count),
             );
 
-            // Phase 4: Restore trigram index and remap doc ids onto the new ids.
-            progress_callback(
+            progress(
                 LoadingPhase::RestoringTrigrams,
                 None,
                 None,
                 "Restoring search index...",
             );
-
             let trigram_map = persisted.restore_trigram_index()?;
             let remapped =
                 Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
-
             self.trigram_index.finalize();
         }
 
         if !self.file_store.is_empty() {
-            let total_files = self.file_store.len();
-            progress_callback(
+            let loaded = self.file_store.len();
+            progress(
                 LoadingPhase::RebuildingSymbols,
-                Some(total_files),
+                Some(loaded),
                 Some(0),
                 "Restoring symbols and import graph...",
             );
 
             if !persisted.symbols.is_empty() {
-                // Restore symbols and dependency graph directly from persisted data
                 self.restore_symbols_and_deps(&orig_to_new, &persisted);
-                progress_callback(
-                    LoadingPhase::RebuildingSymbols,
-                    Some(total_files),
-                    Some(total_files),
-                    "Symbol and dependency caches restored from index",
-                );
                 tracing::info!(
-                    files_restored = valid_file_indices.len(),
+                    files_restored = valid_count,
                     "Restored symbol and dependency caches from persisted index"
                 );
             } else {
-                // Fallback: re-extract from file contents (old index format without symbols)
-                let _stats =
+                // Index written without symbols: re-extract from file contents.
+                let stats =
                     self.rebuild_symbols_and_dependencies_with_progress(|processed, total| {
-                        progress_callback(
+                        progress(
                             LoadingPhase::RebuildingSymbols,
                             Some(total),
                             Some(processed),
                             "Rebuilding symbols and import graph...",
                         );
                     });
-
-                progress_callback(
-                    LoadingPhase::RebuildingSymbols,
-                    Some(total_files),
-                    Some(total_files),
-                    "Symbol and dependency caches rebuilt",
+                tracing::info!(
+                    symbols_rebuilt = stats.symbols_extracted,
+                    imports_rebuilt = stats.imports_extracted,
+                    files_skipped = stats.files_skipped,
+                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
                 );
             }
+
+            progress(
+                LoadingPhase::RebuildingSymbols,
+                Some(loaded),
+                Some(loaded),
+                "Symbol and dependency caches ready",
+            );
         }
+
+        // Configured paths are the roots for display-path computation. They
+        // must be known before the metadata pass below caches display paths,
+        // otherwise results show absolute paths until the next finalize.
+        if let Some(config) = config {
+            for path_str in &config.paths {
+                self.add_root_path(std::path::Path::new(path_str));
+            }
+        }
+
+        // Fast-mode ranking needs per-file metadata; without it a freshly
+        // loaded index ranks by id order until the background finalize runs.
+        self.compute_all_file_metadata();
+        self.generation += 1;
 
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
             .map(|&idx| persisted.files[idx].path.clone())
             .collect();
-
-        // Fast-mode ranking needs per-file metadata; without it a freshly
-
-        // loaded index ranks by id order until the background finalize runs.
-
-        self.compute_all_file_metadata();
-        self.generation += 1;
 
         tracing::info!(
             path = %path.display(),
@@ -757,15 +668,10 @@ impl SearchEngine {
             removed_files = removed_files.len(),
             new_paths = new_paths.len(),
             removed_paths = removed_paths.len(),
-            config_compatible = config_compatible,
-            "Index loaded from disk with reconciliation"
+            config_compatible,
+            reconciled = config.is_some(),
+            "Index loaded from disk"
         );
-
-        // Register configured paths as root paths for display-path computation
-        for path_str in &config.paths {
-            let p = std::path::Path::new(path_str);
-            self.add_root_path(p);
-        }
 
         Ok(LoadIndexResult {
             stale_files,
@@ -775,95 +681,5 @@ impl SearchEngine {
             config_compatible,
             already_indexed_files,
         })
-    }
-
-    /// Load an index from disk if available and not stale (legacy method)
-    /// Returns the list of stale files that need re-indexing
-    pub fn load_index(
-        &mut self,
-        path: &std::path::Path,
-    ) -> anyhow::Result<Vec<std::path::PathBuf>> {
-        use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
-
-        let persisted = PersistedIndex::load(path)?;
-
-        // Batch check all files in parallel
-        let file_statuses = batch_check_files(&persisted.files, &[]);
-
-        // Categorize files
-        let mut stale_files = Vec::new();
-        let mut valid_file_indices = Vec::new();
-
-        for (idx, status) in file_statuses {
-            match status {
-                FileStatus::Valid => valid_file_indices.push(idx),
-                FileStatus::Stale | FileStatus::Removed => {
-                    stale_files.push(persisted.files[idx].path.clone())
-                }
-            }
-        }
-
-        // Register file paths lazily (no I/O - instant!) FIRST so we know the
-        // real id assigned to each before remapping the trigram doc ids.
-        let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
-            .iter()
-            .map(|&idx| persisted.files[idx].path.clone())
-            .collect();
-
-        // Calculate total content bytes from persisted metadata
-        let total_content_bytes: u64 = valid_file_indices
-            .iter()
-            .map(|&idx| persisted.files[idx].size)
-            .sum();
-
-        self.file_store.reserve(paths_to_register.len());
-        let new_ids = self.file_store.register_files_bulk(&paths_to_register);
-        let orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
-        self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
-
-        // Track content bytes from persisted metadata
-        self.file_store.add_content_bytes(total_content_bytes);
-
-        // Restore trigram index (parallelized) and remap doc ids onto new ids.
-        let trigram_map = persisted.restore_trigram_index()?;
-        let remapped =
-            Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
-        self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
-
-        self.trigram_index.finalize();
-
-        if !self.file_store.is_empty() {
-            if !persisted.symbols.is_empty() {
-                self.restore_symbols_and_deps(&orig_to_new, &persisted);
-                tracing::info!(
-                    files_restored = valid_file_indices.len(),
-                    "Restored symbol and dependency caches from persisted index"
-                );
-            } else {
-                let rebuild_stats = self.rebuild_symbols_and_dependencies();
-                tracing::info!(
-                    symbols_rebuilt = rebuild_stats.symbols_extracted,
-                    imports_rebuilt = rebuild_stats.imports_extracted,
-                    files_skipped = rebuild_stats.files_skipped,
-                    "Rebuilt symbol and dependency caches after load (no persisted symbols)"
-                );
-            }
-        }
-
-        // Fast-mode ranking needs per-file metadata; without it a freshly
-
-        // loaded index ranks by id order until the background finalize runs.
-
-        self.compute_all_file_metadata();
-        self.generation += 1;
-
-        tracing::info!(
-            path = %path.display(),
-            files_loaded = self.file_store.len(),
-            stale_files = stale_files.len(),
-            "Index loaded from disk"
-        );
-
-        Ok(stale_files)
     }
 }

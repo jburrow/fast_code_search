@@ -274,18 +274,19 @@ impl TrigramIndex {
         all_docs.len() as u32
     }
 
-    /// Get all document IDs in the index.
-    /// For best performance, call `finalize()` after indexing is complete.
-    pub fn all_documents(&self) -> RoaringBitmap {
+    /// All document IDs in the index.
+    ///
+    /// Borrowed from the cache that `finalize()` maintains; only an index that
+    /// has never been finalized pays for a fresh union.
+    pub fn all_documents(&self) -> std::borrow::Cow<'_, RoaringBitmap> {
         if let Some(ref cached) = self.all_docs_cache {
-            return cached.clone();
+            return std::borrow::Cow::Borrowed(cached);
         }
-        // Fallback: compute on the fly (slower)
         let mut all_docs = RoaringBitmap::new();
         for docs in self.trigram_to_docs.values() {
             all_docs |= docs;
         }
-        all_docs
+        std::borrow::Cow::Owned(all_docs)
     }
 
     /// Get a reference to the internal trigram-to-docs map for persistence

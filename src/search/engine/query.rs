@@ -1,6 +1,7 @@
 //! Split out of the search engine module; see `engine/mod.rs`.
 
 use super::*;
+use std::borrow::Cow;
 
 impl SearchEngine {
     /// Get the metadata for a file
@@ -60,15 +61,15 @@ impl SearchEngine {
         }
         let query_lower = query.to_lowercase();
         let candidate_docs = self.text_candidates(&query_lower);
-        self.run_text_query(query, &query_lower, candidate_docs, limits, rank_mode)
+        self.run_text_query(query, &query_lower, &candidate_docs, limits, rank_mode)
     }
 
     /// Candidate documents for a plain-text query. Queries shorter than 3
     /// bytes produce no trigrams; fall back to all documents so short terms
     /// like `_` or `__` still return results.
-    pub(super) fn text_candidates(&self, query_lower: &str) -> roaring::RoaringBitmap {
+    pub(super) fn text_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
         if query_lower.len() >= 3 {
-            self.trigram_index.search(query_lower)
+            Cow::Owned(self.trigram_index.search(query_lower))
         } else {
             self.trigram_index.all_documents()
         }
@@ -79,7 +80,7 @@ impl SearchEngine {
         &self,
         query: &str,
         query_lower: &str,
-        candidates: roaring::RoaringBitmap,
+        candidates: &roaring::RoaringBitmap,
         limits: SearchLimits,
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
@@ -90,7 +91,7 @@ impl SearchEngine {
     pub(super) fn run_terms(
         &self,
         terms: &TermSet,
-        candidates: roaring::RoaringBitmap,
+        candidates: &roaring::RoaringBitmap,
         limits: SearchLimits,
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
@@ -126,13 +127,14 @@ impl SearchEngine {
         for term in &parsed.terms {
             let docs = self.text_candidates(&term.to_lowercase());
             candidates = Some(match candidates {
-                Some(acc) => acc & docs,
-                None => docs,
+                Some(acc) => acc & &*docs,
+                None => docs.into_owned(),
             });
         }
-        let candidates = self.apply_path_filter(candidates.unwrap_or_default(), &path_filter);
+        let candidates =
+            self.apply_path_filter(Cow::Owned(candidates.unwrap_or_default()), &path_filter);
         let terms = TermSet::from_parsed(parsed);
-        Ok(self.run_terms(&terms, candidates, limits, rank_mode))
+        Ok(self.run_terms(&terms, &candidates, limits, rank_mode))
     }
 
     /// Symbol search honouring the query's globs and matching options
@@ -154,7 +156,7 @@ impl SearchEngine {
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         let opts = parsed.options;
         Ok(self.run_candidates(
-            candidates,
+            &candidates,
             RankMode::Full,
             limits,
             |meta| meta.base_score,
@@ -172,7 +174,7 @@ impl SearchEngine {
     /// mode limits how many files are opened.
     pub(super) fn run_candidates<S, F>(
         &self,
-        candidates: roaring::RoaringBitmap,
+        candidates: &roaring::RoaringBitmap,
         rank_mode: RankMode,
         limits: SearchLimits,
         fast_score: S,
@@ -232,7 +234,6 @@ impl SearchEngine {
             .collect();
         let found = matches.len();
         Self::sort_and_page(&mut matches, &limits);
-        self.file_store.evict_all_fallbacks();
 
         let truncated = run.was_truncated();
         (
@@ -347,15 +348,15 @@ impl SearchEngine {
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
         let query_lower = query.to_lowercase();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
-        Ok(self.run_text_query(query, &query_lower, candidates, limits, rank_mode))
+        Ok(self.run_text_query(query, &query_lower, &candidates, limits, rank_mode))
     }
 
     /// Narrow a candidate set by include/exclude globs on display paths.
-    pub(super) fn apply_path_filter(
+    pub(super) fn apply_path_filter<'a>(
         &self,
-        candidates: roaring::RoaringBitmap,
+        candidates: Cow<'a, roaring::RoaringBitmap>,
         path_filter: &PathFilter,
-    ) -> roaring::RoaringBitmap {
+    ) -> Cow<'a, roaring::RoaringBitmap> {
         if path_filter.is_empty() {
             return candidates;
         }
@@ -377,7 +378,7 @@ impl SearchEngine {
                 result.insert(doc_id);
             }
         }
-        result
+        Cow::Owned(result)
     }
 
     /// Display path for a file id: precomputed when available.
@@ -478,7 +479,7 @@ impl SearchEngine {
         let candidate_docs = match self.regex_candidate_docs(&analysis) {
             Some(docs) => {
                 tracing::debug!(pattern = %pattern, "Using trigram acceleration for regex");
-                docs
+                Cow::Owned(docs)
             }
             None => {
                 tracing::debug!(pattern = %pattern, "Regex has no sound literal constraints - full scan");
@@ -488,7 +489,7 @@ impl SearchEngine {
         let candidates = self.apply_path_filter(candidate_docs, &path_filter);
         let regex = &analysis.regex;
         Ok(self.run_candidates(
-            candidates,
+            &candidates,
             rank_mode,
             limits,
             |meta| meta.base_score,
@@ -545,7 +546,7 @@ impl SearchEngine {
         let query_lower = query.to_lowercase();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         Ok(self.run_candidates(
-            candidates,
+            &candidates,
             RankMode::Full,
             limits,
             |meta| meta.base_score,

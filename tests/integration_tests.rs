@@ -2732,14 +2732,23 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
         exclude_patterns: Vec::new(),
     })?;
 
-    // Collect events for up to `wait`, returning as soon as `want` events landed.
-    let collect = |watcher: &FileWatcher, want: usize, wait: Duration| -> Vec<FileChange> {
+    // Wait up to `wait` for the first event, then keep draining until the
+    // watcher has been quiet for a while. Backends differ in how many events
+    // one disk operation produces (FSEvents on macOS reports a create as
+    // Create + Modify, and a rename as two Modify(Name) events that may or
+    // may not be paired), so a step must consume everything it caused
+    // rather than exactly one event; a leftover would be misread as the
+    // next step's event.
+    let collect = |watcher: &FileWatcher, wait: Duration| -> Vec<FileChange> {
         let deadline = std::time::Instant::now() + wait;
         let mut out = Vec::new();
-        while out.len() < want && std::time::Instant::now() < deadline {
+        while out.is_empty() && std::time::Instant::now() < deadline {
             if let Some(c) = watcher.recv_timeout(Duration::from_millis(200)) {
                 out.push(c);
             }
+        }
+        while let Some(c) = watcher.recv_timeout(Duration::from_millis(500)) {
+            out.push(c);
         }
         out
     };
@@ -2747,14 +2756,14 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
     // create
     let a = root.join("w_a.rs");
     std::fs::write(&a, "fn watch_created() {}\n")?;
-    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    let ev = collect(&watcher, Duration::from_secs(5));
     assert!(!ev.is_empty(), "expected a create event");
     apply_changes(&mut engine, &ev, &config);
     assert_eq!(engine.search("watch_created", 5).len(), 1);
 
     // modify
     std::fs::write(&a, "fn watch_modified() {}\n")?;
-    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    let ev = collect(&watcher, Duration::from_secs(5));
     assert!(!ev.is_empty(), "expected a modify event");
     apply_changes(&mut engine, &ev, &config);
     assert!(engine.search("watch_created", 5).is_empty());
@@ -2763,7 +2772,7 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
     // rename
     let b = root.join("w_b.rs");
     std::fs::rename(&a, &b)?;
-    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    let ev = collect(&watcher, Duration::from_secs(5));
     assert!(!ev.is_empty(), "expected a rename event");
     apply_changes(&mut engine, &ev, &config);
     let hits = engine.search("watch_modified", 5);
@@ -2776,7 +2785,7 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
 
     // delete
     std::fs::remove_file(&b)?;
-    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    let ev = collect(&watcher, Duration::from_secs(5));
     assert!(!ev.is_empty(), "expected a delete event");
     apply_changes(&mut engine, &ev, &config);
     assert!(engine.search("watch_modified", 5).is_empty());

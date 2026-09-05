@@ -256,6 +256,99 @@ fn test_save_and_load_index() {
     );
 }
 
+/// The three public loaders share one implementation. `load_index` folds
+/// removed files into its stale list and registers no roots (display paths
+/// stay absolute); the reconciling loaders report removed files separately,
+/// register the configured paths as roots, and report every phase in order.
+#[test]
+fn test_load_paths_share_one_implementation() {
+    use crate::config::IndexerConfig;
+    use std::collections::BTreeSet;
+
+    let temp_dir = TempDir::new().unwrap();
+    let keep = temp_dir.path().join("keep.rs");
+    let gone = temp_dir.path().join("gone.rs");
+    let index_path = temp_dir.path().join("index.bin");
+    fs::write(&keep, "fn keep_token() {}\n").unwrap();
+    fs::write(&gone, "fn gone_token() {}\n").unwrap();
+    let config = IndexerConfig {
+        paths: vec![temp_dir.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&keep).unwrap();
+    engine.index_file(&gone).unwrap();
+    engine.finalize();
+    engine.save_index(&index_path, &config).unwrap();
+    fs::remove_file(&gone).unwrap();
+
+    // Legacy loader: removed file is reported as stale, paths stay absolute.
+    let mut legacy = SearchEngine::new();
+    let stale = legacy.load_index(&index_path).unwrap();
+    assert_eq!(stale.len(), 1);
+    assert!(stale[0].ends_with("gone.rs"));
+    let hits = legacy.search("keep_token", 10);
+    assert_eq!(hits.len(), 1);
+    assert!(
+        std::path::Path::new(&hits[0].file_path).is_absolute(),
+        "no roots registered without a config: {}",
+        hits[0].file_path
+    );
+    assert!(legacy.search("gone_token", 10).is_empty());
+
+    // Reconciling loader with progress: removed file reported separately,
+    // configured path registered as a root, phases reported in order.
+    let mut phases = Vec::new();
+    let mut reconciled = SearchEngine::new();
+    let result = reconciled
+        .load_index_with_progress(&index_path, &config, |phase, _, _, _| {
+            if phases.last() != Some(&phase) {
+                phases.push(phase);
+            }
+        })
+        .unwrap();
+    assert!(result.stale_files.is_empty());
+    assert_eq!(result.removed_files.len(), 1);
+    assert!(result.removed_files[0].ends_with("gone.rs"));
+    assert!(result.config_compatible);
+    assert_eq!(
+        result.already_indexed_files,
+        vec![keep.canonicalize().unwrap()]
+    );
+    assert_eq!(
+        phases,
+        vec![
+            LoadingPhase::ReadingFile,
+            LoadingPhase::Deserializing,
+            LoadingPhase::CheckingFiles,
+            LoadingPhase::MappingFiles,
+            LoadingPhase::RestoringTrigrams,
+            LoadingPhase::RebuildingSymbols,
+        ]
+    );
+    let root_name = temp_dir
+        .path()
+        .canonicalize()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let hits = reconciled.search("keep_token", 10);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].file_path, format!("{root_name}/keep.rs"));
+
+    // Both loaders restore the same searchable set.
+    let ids = |e: &SearchEngine| -> BTreeSet<String> {
+        e.search("keep_token", 10)
+            .into_iter()
+            .map(|m| m.line_number.to_string())
+            .collect()
+    };
+    assert_eq!(ids(&legacy), ids(&reconciled));
+}
+
 #[test]
 fn test_can_load_index() {
     let temp_dir = TempDir::new().unwrap();
