@@ -785,10 +785,12 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
   tests}.rs` (mod.rs 1.4k lines; query 1.1k). `search/ranking.rs` holds the
   weights. Persistence stayed under `engine/persist.rs` rather than `index/`.
 - [~] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
-  `new_with_indexing`, `RegexAnalysis::literals`. Still open: the three load
-  paths (`load_index`, `load_index_with_reconciliation`,
-  `load_index_with_progress`) remain separate functions, and the remaining
-  uncalled `pub fn`s have not been pruned.
+  `new_with_indexing`, `RegexAnalysis::literals`. The three load paths now
+  share one implementation (`load_index_inner`; commit "refactor(engine):
+  one load path behind the three public loaders") — this also fixed a
+  freshly loaded index showing absolute display paths until the next
+  finalize, because roots were registered after the metadata pass. Still
+  open: the remaining uncalled `pub fn`s have not been pruned.
 - [x] Docs — DONE: `DEVELOPMENT.md` rewritten against the code (module tree,
   pipelines, threading, scoring, logging, adding a language, release targets);
   `REVIEW.md` and the June plan archived; `CONTRIBUTING.md` refreshed;

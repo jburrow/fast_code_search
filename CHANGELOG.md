@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A freshly loaded index reported absolute display paths (and the UI could
+  not round-trip them) until the next finalize, because the configured roots
+  were registered after the per-file metadata pass cached the paths.
 - **Persisted index corruption after a file removal**: `save_index` compacted the
   file table over tombstoned ids but wrote trigram bitmaps, symbols and dependency
   edges keyed by live id, so every file after a removed one was misattributed or

@@ -1092,10 +1092,6 @@ impl SearchEngine {
         self.symbol_cache.shrink_to_fit();
     }
 
-    pub fn rebuild_symbols_and_dependencies(&mut self) -> RebuildCacheStats {
-        self.rebuild_symbols_and_dependencies_with_progress(|_, _| {})
-    }
-
     pub fn get_stats(&self) -> SearchStats {
         SearchStats {
             num_files: self.file_store.live_len(),
