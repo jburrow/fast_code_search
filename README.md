@@ -139,6 +139,37 @@ measure the query path only, against a pre-built in-memory index.
 Absolute timings vary with hardware and corpus; the workflow tracks trends across
 commits and flags regressions beyond a 2× threshold.
 
+### Real corpus
+
+The same workflow also builds an index over two pinned real repositories,
+[tokio 1.45.0](https://github.com/tokio-rs/tokio/tree/tokio-1.45.0) and
+[Django 5.2](https://github.com/django/django/tree/5.2), with
+[examples/corpus_bench.rs](examples/corpus_bench.rs) and prints this table in the
+job summary. Numbers below are from a local run on an 11th-gen Intel i5 laptop
+(4 cores / 8 threads, 7 GB RAM) on 2026-09-05, commit `04e1a00`; the CI run for
+each commit on `main` carries the authoritative values.
+
+| Measure | Value |
+|---------|-------|
+| files indexed | 6,240 (38.9 MB of text) |
+| full build (read, trigrams, symbols, imports, merge) | 3.1 s, ~2,000 files/s, ~12 MB/s |
+| resident memory after build | 143 MB |
+| index save / reconciling load | 0.11 s / 0.24 s (18.6 MB on disk) |
+| text search, common word (`return`), p50 / p95 | 0.51 ms / 0.60 ms |
+| text search, identifier, p50 | 0.6 ms |
+| regex with literal / case-insensitive / no literal, p50 | 1.5 ms / 1.2 ms / 0.8 ms |
+| symbol search, p50 | 1.7 ms |
+| incremental update of one file, p50 / p95 | 4.3 ms / 8.0 ms |
+
+Tree-sitter symbol extraction is about three quarters of build time (the same
+build without symbols takes 1.5 s). A nightly job runs the same benchmark over
+the `rust-lang/rust` 1.89.0 tree and records file count, throughput and memory in
+its job summary.
+
+```bash
+cargo run --release --example corpus_bench -- path/to/repo [more paths] --label mine
+```
+
 ```bash
 cargo bench                                # all benchmarks
 cargo bench --bench search_benchmark       # search only

@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   watcher update pushed a duplicate path entry.
 
 ### Added
+- A real-corpus benchmark (`examples/corpus_bench.rs`, run in CI over pinned
+  tokio and Django checkouts, nightly over the Rust compiler tree) reporting
+  build throughput, resident memory, query latency percentiles, incremental
+  update cost and index save/load.
 - `/api/search` paging and budgets: `offset` (deterministic ordering, so pages
   are stable), `timeout_ms`, and `total_matches` / `truncated_by_budget` in the
   response; `has_more` is now derived from the real total. Regex and symbol
@@ -66,6 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds the index once), and `cargo-deny` + Dependabot are wired into CI.
 - Trigram extraction folds case per byte and dedupes through a bitset instead of
   lowercasing a copy of every file and hashing every byte.
+- Import resolution no longer probes candidate paths through `realpath`
+  (17.6 million failing `readlink` calls while building a 6k-file corpus);
+  candidates are resolved lexically against the indexed path table. Full
+  build of tokio + Django: 25 s -> 3 s.
+- Updating one file from the watcher went from 55 ms to 4 ms on that corpus:
+  posting-list removal is parallel with a membership fast path, and compiled
+  `.gitignore` matchers are cached per directory (keyed by mtime) instead of
+  rebuilt per event.
 - Memory diet: each indexed file stores its path once (shared with the
   path lookup map) and keeps at most 64 bytes of inline state; only files
   above the mmap threshold allocate mapping state. The evictable fallback
