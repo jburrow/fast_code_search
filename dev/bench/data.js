@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1781196816720,
+  "lastUpdate": 1788596861241,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -10289,6 +10289,300 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 921290,
             "range": "± 23347",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1b99b6a609fcb9312846d8e9c6b9b937dc754659",
+          "message": "Keyword roadmap (#104)\n\n* chore: add .gitattributes to normalize line endings to LF\n\nThe working tree was a pure CRLF flip of 172 files with no .gitattributes.\nText files are now LF in the repo and on checkout; Windows scripts keep CRLF;\nbinary assets are marked so they are never converted.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* chore: repair .gitignore and untrack onnxruntime and test_corpus\n\n.gitignore had a UTF-16 fragment spliced into the onnxruntime/ line, so 23\nfiles including a 12 MB DLL were tracked, and *.zip was never ignored.\ntest_corpus/ held three gitlinks with no .gitmodules. Both are now untracked\nand ignored.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* chore: format and fix clippy/rustdoc warnings across all targets\n\nApplies cargo fmt (13 hunks) and clears the 8 clippy warnings and 1 rustdoc\nerror exposed by linting with --all-targets --all-features: is_none_or,\nsort_by_key, redundant closure, byte-string literals, struct-init in a test,\na stale doc block above regex_candidate_docs, and an unescaped generic in a\ndoc comment.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* build: set MSRV 1.89, pin toolchain 1.98.1, use rustls for reqwest\n\nThe docs claimed Rust 1.70+; the code uses File::lock_shared (1.89) and\nis_multiple_of (1.87) and the dependency tree needs 1.85, so rust-version is\nnow 1.89 (verified with cargo +1.89 check --all-targets). rust-toolchain.toml\npins 1.98.1 so rustfmt output is stable between CI and developers.\n\nreqwest (dev-dependency and the optional ml-models dependency) now uses\nrustls-tls so cargo test and --all-features builds no longer need system\nOpenSSL headers. The unused tokio-test dev-dependency is dropped and the\ncrate exclude list covers non-crate directories.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* ci: pin toolchain, widen lint, add MSRV job, gate release on tests\n\n- clippy now runs --all-targets --all-features -D warnings; cargo doc with\n  -D warnings\n- new MSRV job (cargo +1.89 check --all-targets)\n- release build job needs a test job (fmt + clippy + tests) on the tag\n- VS Code extension publishes on ext-v* tags instead of every v* tag\n- Swatinem/rust-cache replaces raw actions/cache on target/\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: add keyword engine review and roadmap (Phase 0 complete)\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(index): remap doc ids on save so removals don't corrupt the persisted index\n\nsave_index compacts the file table over tombstoned ids but wrote trigram\nbitmaps, symbols and dependency edges keyed by live id. After any\nremove_file (the watcher delete path), every file after the tombstone was\nmisattributed or lost on reload. Symbols, edges and bitmaps are now remapped\nfrom live id to file-table position at save time; when nothing was removed\nthe bitmaps are borrowed unchanged.\n\nAdds test_save_after_remove_keeps_ids_consistent, which failed before this\nchange with two of three surviving files returning no results.\n\nRoadmap 1.1 (P0).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(search): stop the first line of every file getting the definition boost\n\nThe synthetic FileName symbol lives at line 0 with is_definition = true and\nwas included in symbol_def_lines, so any match on line 1 of any file scored\n3x as if it were a symbol definition (shebangs, license headers, use lines\noutranked real definitions). FileName is now excluded in both the scored and\nregex per-document paths.\n\nAdds test_first_line_does_not_get_definition_boost (fails without the fix).\n\nRoadmap 1.2.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(index): keep long-line / deeply nested files text-searchable\n\ncontent_safety_check gated the whole file: a single line over 100 KB or\nbracket nesting over 500 dropped the file from the trigram index, even with\nsymbols disabled, so large JSON fixtures and generated code were\nunsearchable. The check is now split: binary-looking content is still\nskipped entirely, but the structural checks only set tree_sitter_safe on the\nPartialIndexedFile, and from_partial skips symbol/import extraction for\nthose files while their trigrams are indexed normally.\n\nAdds test_long_line_file_is_searchable_without_symbols.\n\nRoadmap 1.3.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(index): persist the mtime/size of the content that was indexed\n\nsave_index re-stat'ed every file at save time, so a file edited between\nindexing and a (possibly minutes-later) checkpoint was saved with its new\nmtime/size next to its old trigrams and never detected as stale on reload.\nPartialIndexedFile now captures (mtime, size) from the metadata read\nimmediately before the content; the engine keeps it per file id (seeded from\npersisted metadata on reload) and save_index writes that, only falling back\nto a stat for ids with no record. This also removes one stat per file from\nthe save path.\n\nAdds test_edit_between_index_and_save_is_detected_as_stale.\n\nRoadmap 1.4.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(symbols): TSX grammar, JS/TS method and arrow coverage, name-node positions\n\n- .tsx files were parsed with the TypeScript grammar, which rejects JSX, so\n  every React component body became ERROR nodes; they now use LANGUAGE_TSX.\n- JS/TS class members (method_definition: methods, getters, setters,\n  constructors), arrow-function and function-expression consts\n  (const Foo = () => ...), generator functions, abstract classes and\n  namespaces were not captured at all.\n- Symbol line/column came from the whole declaration node, so Java\n  @Override, TS decorators, Rust attributes and multi-line C signatures\n  reported the annotation's line and the definition boost landed there.\n  All arms now take the position of the name node.\n\nAdds test_tsx_react_component_extraction, test_javascript_methods_and_arrows\nand test_symbol_line_is_name_line (the first line-number assertions in the\nextractor tests).\n\nRoadmap 1.5.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(server): graceful shutdown with final index save\n\nSIGINT/SIGTERM previously killed the process outright: no index save, no\ntelemetry flush, and watcher-applied edits were lost unless\nsave_after_updates happened to fire. Now:\n\n- a shutdown task listens for Ctrl+C and (on Unix) SIGTERM and flips a\n  shared AtomicBool plus a watch channel\n- tonic uses serve_with_shutdown and axum with_graceful_shutdown\n- the background indexer's discovery and batch loops stop when the flag is\n  set and fall through to the normal finalize + save, so a partial build is\n  persisted as a checkpoint\n- the watcher loop exits on the flag and saves if it applied any updates\n  since the last periodic save (save_after_watcher_shutdown)\n- main joins the web task and both threads before flushing telemetry\n- the web listener is bound in main so a port conflict is fatal instead of\n  leaving a half-alive server with no REST API\n\nVerified manually: start with watch=true, append a function to a file,\nSIGTERM -> log shows the watcher save; restart loads 2 files from cache and\nthe new function is searchable with 0 stale files.\n\nRoadmap 1.6 (and the web-bind part of the P1 serving findings).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs(roadmap): tick 1.3-1.6\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(server): make the watcher write path panic-safe and recover from poisoned locks\n\nA panic while the watcher held the engine write lock poisoned it, after\nwhich every REST/gRPC search returned 500 until restart while the indexer\n(which already recovered from poison) kept going. Now:\n\n- watcher updates run through with_engine_write, which recovers a poisoned\n  lock and wraps the update in catch_unwind so a pathological file is\n  skipped instead of taking the server down\n- the watcher thread is spawned with an 8 MB stack (it runs tree-sitter,\n  where a stack overflow is an abort, not a panic), matching rayon workers\n- the global rayon pool with 8 MB stacks is built in main before anything\n  can run a par_iter with the 2 MB default\n- the REST handlers (via try_read_engine) and the gRPC search recover from a\n  poisoned read lock instead of returning a permanent 500; WouldBlock still\n  maps to 503 + Retry-After\n\nRoadmap 1.7.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(watcher): handle directory rename/delete and apply build eligibility rules\n\nDirectory events left the index permanently wrong: remove_file(dir)\nmatched no file id and update_file(dir) failed to read a directory, so every\nfile under a renamed or deleted directory stayed indexed under its old path\nand nothing under the new path was indexed.\n\n- new search::incremental::apply_change applies a FileChange to the engine:\n  a path with no file id is treated as a directory (remove_files_under,\n  which matches whole path components against the canonical store paths\n  via a lossy canonicalizer that works for paths that no longer exist), and\n  a directory target is walked with FileDiscoveryIterator\n- the watcher path now uses the same eligibility rules as the initial build\n  (exclude patterns, include_extensions, binary extensions, size cap,\n  exclude_files) through a shared FileDiscoveryIterator::accepts /\n  file_discovery::is_eligible, so a whitelist-configured server no longer\n  indexes a .log file the moment it changes (roadmap 2.4, watcher half)\n- main.rs collapses the three watcher arms into one apply_change call\n\nAdds test_directory_rename_and_delete_update_index and\ntest_watcher_change_respects_eligibility.\n\nRoadmap 1.8.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(api): cap the /api/context window and bound regex compilation size\n\n/api/context accepted any context value: context=usize::MAX overflowed\nmatch_idx + context + 1 (panic in debug, wrapped index in release) and a\nlarge value returned the whole file through the lightweight hover endpoint.\nThe window is now capped at 200 lines each side with saturating arithmetic.\n\nUser regexes are compiled with an explicit RegexBuilder size_limit (4 MB)\nand dfa_size_limit (2 MB), so a pattern like (a{1000}){1000} is rejected\nas a 400 instead of compiling into hundreds of megabytes on a search thread.\n\nAdds test_http_context_caps_window_and_survives_overflow and\ntest_http_regex_size_limit_returns_400.\n\nRoadmap 1.9.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(deps): make dependency-index registration idempotent and removal O(1)\n\nDependencyIndex::remove_file never removed anything from filename_to_paths\n(the loop body was a no-op) and update_file re-registered the path on every\nwatcher event, pushing a duplicate entry each time, so the filename index\ngrew without bound per edited file and a removed path could still be picked\nas a bare-name resolution candidate. path_to_id removal was also a full-map\nretain per event.\n\nAn id -> path map now makes re-registration idempotent (same path: no-op;\nnew path: old lookups dropped first) and removal O(1), pruning the filename\nindex as well.\n\nAdds test_reregister_and_remove_keep_lookups_bounded.\n\nRoadmap 1.11.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(server): bind to loopback by default, opt-in CORS, scope the gRPC Index RPC\n\nThe server has no authentication, the REST API serves full file contents,\nand the gRPC Index RPC indexed any path a client named (and followed\nsymlinks), yet both listeners bound to 0.0.0.0 and CORS allowed any origin.\n\n- default address / web_address are now 127.0.0.1; the config template and\n  README say why and how to expose the server deliberately\n- new server.cors_origins (empty = same-origin only, which the embedded UI\n  needs; explicit origins or \"*\" opt in); create_router keeps its\n  signature and create_router_with_cors takes the list\n- the shipped binary builds the gRPC service with\n  create_server_with_engine_scoped(config.indexer.paths): Index requests\n  outside those canonical roots return PermissionDenied; the walk no longer\n  follows symlinks\n- README gains a \"Network exposure\" section; DEPLOYMENT.md corrected\n\nAdds test_grpc_index_rejects_paths_outside_scope.\n\nRoadmap 1.10.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: tick roadmap 1.7-1.11 (Phase 1 complete) and record changes in CHANGELOG\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(watcher): batch bursts of events and keep ranking caches warm\n\nEach watcher event previously took its own write lock and did a full\nposting-list scan (TrigramIndex::remove_document), invalidated the\nall-documents cache (never rebuilt until the next finalize, so every short\nquery recomputed a union over every posting list), and left the touched\nfile's fast-ranking metadata stale (watcher-added files ranked last; a\nfreshly loaded index had no metadata at all until the background finalize).\n\n- main.rs gathers events for a 200 ms window after the first and applies\n  them with search::incremental::apply_changes under ONE write lock; events\n  are coalesced per path (rename = delete + modify, last op wins)\n- TrigramIndex::remove_documents strips a RoaringBitmap of ids in a single\n  pass; add/remove now update the all-documents cache in place instead of\n  invalidating it\n- SearchEngine::refresh_file_metadata recomputes one file's fast-ranking\n  metadata after update_file and for files whose in-edge count changed on\n  removal; compute_all_file_metadata runs after every persisted load\n\nAdds test_remove_documents_bulk_keeps_cache_warm and\ntest_apply_changes_batches_and_coalesces.\n\nRoadmap 2.1 and 2.2.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs(roadmap): tick 2.1 and 2.2\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(watcher): canonicalize configured roots and match watcher paths exactly\n\nWatcher events arrive under whatever form the root was configured in\n(relative, symlinked, \\\\?\\-prefixed on Windows) while the file store keys on\ncanonical paths, so update_file/remove_file missed the O(1) exact lookup,\nfell back to an O(n) suffix scan (one String per indexed file), and on a\nmiss update_file re-added the file via index_file, which deduped to the\nexisting id and ADDED trigrams without removing the old ones.\n\n- IndexerConfig::canonicalize_paths runs in Config::with_overrides so the\n  watcher and discovery see canonical roots\n- update_file / remove_file use find_file_id_exact (canonical, no suffix\n  fallback); find_file_id keeps the suffix fallback for API lookups only\n\nAdds test_update_file_uses_canonical_exact_match.\n\nRoadmap 2.3.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(indexer): do not queue stale files twice after a checkpoint load\n\nStale files were sent to the batch pipeline explicitly and then sent again\nby the full path scan, because the skip set only held files that were valid\nat load. The discovery thread now remembers what it queued as stale\n(should_skip_discovered), which is also the first unit test in\nbackground_indexer.rs.\n\nRoadmap 2.7.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(deps): per-language import resolution, no bare-name fallback\n\nresolve_import_path treated every import the same way: relative paths were\njoined and probed with a fixed extension list, and anything else fell back\nto \"any file with that filename anywhere in the repo\". Consequences: Rust\n`use crate::a::b` never resolved and `mod foo;` bound to an arbitrary foo.rs;\nPython `from .foo import x` looked for a hidden file `.foo` and dotted\nimports became `foo.bar.py`; `import merge from 'lodash/merge'` linked to any\nlocal merge.ts. The \"heavily imported\" ranking boost inherited all of it.\n\nThe resolver now dispatches on the importing file's language:\n- Rust: crate root (nearest Cargo.toml/src), self/super module directories,\n  longest-prefix probing of a/b.rs and a/b/mod.rs, use-group and glob\n  stripping; external crates resolve to None\n- Python: leading dots walk parent packages, dotted paths are directories,\n  packages resolve to __init__.py, absolute imports search a bounded number\n  of ancestor directories; stdlib names resolve to None\n- JS/TS: relative paths probe the full extension list, .js -> .ts/.tsx,\n  index.*; @/ and ~/ aliases resolve against the nearest package root;\n  bare package names resolve to None\n\nImport extraction gains Python `import a, b as c` (all names), JS\n`export … from` re-exports, dynamic `import()` and backtick require.\n\nAdds test_resolve_rust_module_paths, test_resolve_python_imports,\ntest_resolve_js_imports and test_python_and_js_import_extraction.\n\nRoadmap 2.5.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(deps): retry parked imports only when a matching file appears; persist them\n\nresolve_imports_incremental re-attempted every unresolved import after every\nbatch under the engine write lock. Stdlib/package imports never resolve, so\nthe pending list grew for the whole build and each retry cost up to seven\ncanonicalize syscalls per relative import: O(batches x unresolved). Unresolved\nimports were also dropped by the final resolve_imports and never persisted,\nso a checkpoint restore lost the incoming edge of any file indexed later.\n\n- unresolved imports are parked in waiting_imports, keyed by the lowercase\n  path segments of the import string; a batch retries only the parked\n  imports whose key matches a stem it just added (dir names for mod.rs /\n  __init__.py / index.*), so the cost is proportional to the batch\n- resolve_imports (finalize) makes one last pass and keeps the rest parked\n- parked imports are persisted (PersistedIndex.pending_imports) and\n  re-parked on load with remapped ids; persistence format bumps to v4 /\n  magic FCSIDX02, so older index files are rebuilt cleanly\n\nAdds test_waiting_import_resolves_when_target_appears and\ntest_unresolved_imports_survive_reload; test_pending_imports_count now\nasserts the parked set is stable under repeated resolution.\n\nRoadmap 2.6.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: tick roadmap 2.3-2.7 and record Phase 2 changes\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(discovery): honour .gitignore / .ignore files (indexer.respect_gitignore)\n\nDiscovery used walkdir with only exclude_patterns, so build output outside\nthe eight default excludes (anything a repo lists in .gitignore) was fully\nindexed. Discovery now uses the ignore crate's walker (.gitignore, .ignore,\n.git/info/exclude; hidden files kept, symlinks not followed), and the\nsingle-path check the watcher uses consults the same files via\nis_gitignored, so the initial build and incremental updates agree. New\nconfig indexer.respect_gitignore (default true) switches it off.\n\nAdds test_gitignore_is_respected_and_optional.\n\nRoadmap 2.8.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* fix(index): serve files up to 1 MiB by owned reads, never through a live mmap\n\nA searcher reading a memory-mapped file that an editor truncates in place\ntakes an uncatchable SIGBUS and kills the whole server (the concurrency\ntest added in the next commit reproduced it on the first run). Indexing was\nmoved to owned buffers in 0.9.0; retrieval was not.\n\nFiles at or below MMAP_THRESHOLD_BYTES (1 MiB, i.e. essentially all source\nfiles) are now registered without a mapping and read into an owned buffer\non each access (the page cache makes this cheap; UTF-8 is validated fresh\nevery time). Only larger files keep the zero-copy mapping. This also keeps\nthe number of mappings far below vm.max_map_count on large trees.\n\nget_stats().num_files now reports live (non-tombstoned) files.\n\nAdds test_small_file_survives_concurrent_truncation; the existing store\ntests are updated for the new semantics (with_mmap_failure simulates a\nlarge file).\n\nRoadmap 6.2 (pulled forward from Phase 6 because 2.9's concurrency test\ncrashed on it).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* test: batch pipeline, poisoned-lock recovery, concurrent updates, real watcher\n\n- background_indexer: process_batches drains in batch_size groups and\n  flushes the tail, stops on the shutdown flag, and process_batch recovers\n  a poisoned engine lock instead of dropping the batch\n- integration: searches run in a loop while files are rewritten on disk and\n  update_file is applied (no panics, no duplicate ids, correct final state);\n  a real notify watcher reports create/modify/rename/delete which\n  apply_changes turns into the matching index state\n\nRoadmap 2.9.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: tick roadmap 2.8, 2.9 and 6.2; changelog for mmap and gitignore changes\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(search): one budgeted candidate runner; deterministic order; offset paging\n\nAll four searches (text, filtered text, regex, symbols) previously each\nselected fast/full mode, ordered candidates, ran rayon and truncated on\ntheir own, and Full mode collected every match from every candidate\nbefore truncating: max_results never bounded work.\n\n- run_candidates is now the single path: mode selection, fast-mode\n  ordering by a per-search metadata score, parallel per-document scan\n  under a QueryRun, deterministic sort + paging, eviction\n- SearchLimits carries max_results, offset, a match budget (default\n  8x the page, min 512) and an optional deadline; per-document scans stop\n  materializing matches once the budget is spent and no further documents\n  are opened; SearchRankingInfo reports truncated_by_budget and an exact\n  total_matches when the scan completed\n- ordering ties break on (file_id, line): identical requests return\n  identical pages, and offset paging tiles the full ordering\n- symbol search consults the symbol cache before reading any content and\n  no longer drops low-scoring files before matching\n- evict_all_fallbacks skips small (owned-read) files without locking;\n  the duplicate eviction calls in the REST and gRPC handlers are removed\n- /api/search gains offset and timeout_ms (capped at 30 s), reports\n  total_matches, truncated_by_budget and offset, derives has_more from the\n  real total, and returns ranking info for regex and symbol modes too\n\nAdds test_match_budget_bounds_work_and_is_reported,\ntest_deterministic_order_and_offset_paging and\ntest_http_search_offset_paging_and_totals.\n\nRoadmap 3.1, 3.2, 3.5 (runner half), 3.6, 3.8 (partial).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(regex): accelerate (?i) literals and repeated suffixes; cache compiled regexes\n\nTrigram constraints were extracted only from HirKind::Literal, so\n(?i)needle (which compiles to per-character case classes) and abc+ (whose\nmandatory c is a Repetition) produced no constraint and fell back to a\nfull corpus scan with a warn! per query. The project's own validator uses\n(?i). Constraint extraction now works on \"mandatory text\": literals,\nsingle-character case-insensitive classes (lowered to the lowercase char\nthe lowercased index needs), and the first copy of a min>=1 repetition,\nmerged across a concatenation.\n\nCompiled analyses are kept in a 64-entry LRU on the engine so\nsearch-as-you-type does not recompile the same pattern per keystroke. The\ndead RegexAnalysis::literals / best_literal / extract_literals_recursive\nare removed and the regex tests rewritten against constraints.\n\nAdds test_case_insensitive_literal_is_accelerated and\ntest_repetition_prefix_is_required.\n\nRoadmap 3.3.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs(roadmap): tick 3.1-3.3, 3.6; note 3.5/3.8 partial\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(search): whole-buffer ASCII scan, lazy symbol maps, precomputed display paths\n\n- plain-text verification scanned every line of every candidate with a\n  scalar byte loop; ASCII needles now use memchr2 on the first byte (both\n  cases) over the whole buffer and resolve line bounds only at hits\n  (identical results to the per-line search, CRLF and last-line included;\n  non-ASCII needles keep the Unicode per-line path)\n- per-document symbol maps (definition lines, names by line) were built\n  eagerly for every candidate; they are now built on the first hit\n  (SymbolLineMaps), so trigram candidates that fail verification cost\n  nothing beyond the scan\n- FileMetadata carries the root-relative display path, so include/exclude\n  filtering and result construction no longer allocate a String per\n  candidate\n\nAdds test_ascii_line_hits_matches_per_line_search.\n\nRoadmap 3.4.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(api): full-line match offsets and character column on every result\n\nmatch_start/match_end are byte offsets into the possibly truncated content\nwindow, but consumers (the VS Code provider among them) applied them as\ncharacter columns on the real line. Results now also carry\nline_match_start / line_match_end (bytes into the full line; into the\ndisplay path for filename hits) and match_column (0-based character\ncolumn), on the engine, REST and gRPC (proto fields 9-11) surfaces. The\ndocs page documents the contract plus offset / timeout_ms /\ntotal_matches / truncated_by_budget from the previous commits.\n\nAdds test_match_offsets_refer_to_full_line.\n\nRoadmap 3.7.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs(roadmap): tick 3.4 and 3.7\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* refactor(search): RankingWeights/FileScoreWeights; symbol exact>prefix>substring, one row per line\n\nAll boosts (exact case, definition, src/lib, line start, length floor,\nfilename hit, dependency log10 scale) and the file-level fast-ranking\nterms now live in search::ranking with documented defaults, replacing\nmagic numbers scattered across three per-document scorers and\nFileMetadata::compute; the three copies of the dependency-boost formula\nare one function. The file-level and line-level dependency terms are on\ndifferent scales by design (documented: the file score only orders which\nfiles fast mode opens and never appears in a result).\n\nSymbol search ranks exact name > prefix > substring (2.0 / 1.5 / 1.0),\nweights variables/constants slightly below type and function definitions,\nand emits one row per line, keeping the best score when several symbols on\na line match.\n\nAdds test_symbol_search_ranking_and_line_dedupe.\n\nRoadmap 3.5 (weights) and 3.8.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: Phase 3 complete in roadmap and changelog\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(api): resolve display paths through their root; read context files once per request\n\nEvery path-addressed endpoint took an O(n) suffix scan with a String per\nindexed file because the UI round-trips display paths\n(<root name>/<relative>) that never matched the canonical map.\nfind_file_id now reverses make_display_path onto the configured roots\n(O(roots), exact lookup), which is also unambiguous when two roots contain\nthe same relative path; the suffix scan remains only as a last resort.\n\nThe search handler used find_file_id per result to fetch context lines and\nre-read the file for every hit; it now uses the result's file id and\nsplits each file once per request.\n\nAdds test_find_file_id_by_display_path_across_roots.\n\nRoadmap 4.1.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(grpc): align Search with the REST contract\n\n- max_results = 0 (proto3 unset) now means the default page of 50 instead\n  of being clamped to a single result\n- new request fields: offset (deterministic paging), rank (auto/fast/full,\n  honoured for regex too) and deadline_ms (capped at 30 s); the handler uses\n  the same budgeted *_with_limits engine calls as /api/search\n- results carry dependency_count (field 12) alongside the full-line match\n  offsets; SYMBOL_REFERENCE is documented as reserved\n- the instrumented span's query/max_results fields are actually recorded\n\nAdds test_grpc_search_defaults_offset_and_fields; examples and tests use\n..Default::default() for SearchRequest so future fields do not break them.\n\nRoadmap 4.2.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(server): request limits, search concurrency cap, readiness and metrics\n\n- REST: TimeoutLayer (server.request_timeout_secs, default 30 s) and a\n  64 KB body limit; searches take a permit from a Semaphore sized by\n  server.max_concurrent_searches (default 64) and get 503 + Retry-After\n  when none is free, instead of piling up on tokio's blocking pool and\n  stalling every other endpoint\n- gRPC: per-request timeout and per-connection concurrency limit; the\n  standard grpc.health.v1 service is registered; the trace span carries\n  the request path\n- /api/ready answers 200 only when the index can serve (build completed,\n  or an index is loaded with no build running); /api/health stays liveness\n- /metrics exposes Prometheus text: search request/error counters by\n  reason, a latency histogram, and index gauges (files, trigrams, edges,\n  bytes, indexing, ready) — hand-rendered, no new dependency\n- RouterOptions (from ServerConfig) bundles CORS, limits and timeout for\n  create_router_with_options; older constructors keep working\n\nAdds test_http_ready_and_metrics and test_http_search_concurrency_limit.\n\nRoadmap 4.3 and 4.4.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs(roadmap): tick 4.1-4.4\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(config): reject unknown keys, validate at startup, --web-address; JSON query errors\n\nConfig: all four config structs use deny_unknown_fields (a typo such as\nexlude_patterns used to be silently ignored); Config::validate runs after\noverrides and errors on unparseable or duplicate addresses, zero limits and\na missing index_path directory, warning about empty/missing index paths;\nnew --web-address CLI flag; OTEL_SDK_DISABLED=true is now final (it could\nbe re-enabled by FCS_TRACING_ENABLED); a warning is logged when RUST_LOG\noverrides --verbose. DEPLOYMENT.md documents the environment variables the\nserver actually reads instead of two that never existed.\n\nAPI: ApiQuery wraps axum's Query extractor so a malformed parameter\n(max=abc) returns the standard JSON {\"error\": …} 400; the progress\nWebSocket pings every 30 s and the broadcast buffer grows to 64.\n\nAdds test_unknown_key_rejected_and_template_parses,\ntest_validate_reports_errors_and_warnings,\ntest_with_overrides_sets_web_address and\ntest_http_bad_query_param_is_json_error.\n\nRoadmap 4.5 and 4.8.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(server): real diagnostics config with cached breakdown; lock-light gRPC Index\n\n/api/diagnostics reported a hard-coded config (\"see server configuration\",\n10 MB, watch=false) and walked every file, allocating a String each, on\nevery call. The router now carries the IndexerConfig (RouterOptions\n.indexer_config) and reports it via ConfigSummary; the extension breakdown\nis cached per engine generation (a counter bumped on every mutation) and\nrecomputed only when the index changed or force_refresh=true; sampling\npicks ids first and builds paths only for the sampled files.\n\nThe gRPC Index RPC held the engine write lock for its entire directory\nwalk and ignored every eligibility rule. It now discovers files without\nthe lock using the indexer's FileDiscoveryIterator (excludes, include\nextensions, size cap, .gitignore, exclude_files), processes each batch in\nparallel outside the lock and merges under a short write lock per batch,\nthen resolves imports and finalizes. The dead new_with_indexing /\ncreate_server / create_server_with_indexing / create_indexed_engine paths\n(which still carried the substring-exclusion bug) are removed;\ncreate_server_with_engine_config is what the binary uses.\n\nThe scoped-Index test now also checks that node_modules is excluded.\n\nRoadmap 4.6 and 4.7.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* test(api): diagnostics reports the configured indexer settings\n\nRoadmap 4.9.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: Phase 4 complete in roadmap and changelog\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(symbols): extract via the grammars' tags queries; more kinds and coverage\n\nSymbol extraction was a single 13-language match on node kinds with\ncolliding names; adding a language meant editing that arm list and\npositions had only just been fixed. Each grammar's own tags.scm query\n(TAGS_QUERY; the C# one is vendored because its crate does not export it)\nnow drives extraction, with @name giving the position and the\n@definition.* capture the kind, refined by node kind where a query lumps\nconstructs together (Go type_spec, Rust struct/enum/type, PHP traits, C++\nmember declarations). The hand-written walker still runs afterwards and\nadds anything the queries miss (Rust consts and trait signatures, C#\nproperties/delegates, Go type aliases, C++ in-class declarations, Bash);\nresults are merged on (name, line).\n\n- new SymbolType variants: Module, Macro, Field, Property (C# properties\n  were typed Method; namespaces and Ruby modules are Module now)\n- C/C++ pointer and reference declarators are unwrapped to the identifier\n- .h headers that are unmistakably C++ use the C++ grammar; extensions\n  match case-insensitively; .inl/.phtml added\n- one tree-sitter Parser per thread, re-targeted per file, with a 2 s\n  parse timeout (a cancelled parse indexes the file without symbols)\n- JSON/TOML/YAML/HTML/CSS/Markdown are no longer parsed at all (no\n  captures ever existed for them) and their grammar crates are dropped\n\nAdds test_python_extraction_with_lines, test_c_and_cpp_header_extraction\nand test_extra_kinds_and_coverage; Ruby modules and C++ namespaces now\nassert Module.\n\nRoadmap 5.1-5.6.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: Phase 5 complete in roadmap and changelog\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(index): fold case during trigram extraction; bitset dedupe\n\nTrigram extraction lowercased the whole buffer into a second String and\nthen did one hash-set insert per byte (with the set capacity capped at\n1024, so it rehashed repeatedly). ASCII content (the common case) is now\nfolded per byte during extraction with no copy, and uniqueness is tracked\nin a per-thread 2^24-bit bitset (only touched bits are cleared), so the\nhash set is built once from the unique trigrams. Non-ASCII content still\ngoes through to_lowercase() so multi-byte case mappings match the query\nside exactly.\n\nAdds test_lowercase_extraction_matches_reference. Neutral on the 3 KB-file\nbenchmark (tree-sitter dominates there); the win is on large files.\n\nRoadmap 6.4 (extraction half).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(symbols): single-cursor traversal for the supplementary walker\n\nRoadmap 5.5.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(symbols): disable the reference/doc patterns of each tags query\n\nOnly patterns that capture a @definition.* stay enabled; @reference.call on\nevery call expression and the @doc comment patterns matched far more nodes\nthan the definitions and were ignored. Repeated benchmark runs put indexing\nat the pre-tags baseline (~12 ms for the 25-file fixture).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* build: release profile, semantic feature gate, dependency cleanup\n\n- [profile.release]: thin LTO, codegen-units = 1, strip = true\n- the semantic engine (src/semantic*, ndarray, hnsw_rs, sha2) is behind a\n  new `semantic` feature, off by default; `ml-models` implies it; the\n  semantic binary and example declare required-features. The keyword\n  server build no longer compiles the vector index.\n- md5 dropped: the config fingerprint uses FxHasher (documented,\n  deterministic); the semantic web ETag uses rust-embed's compile-time\n  sha256 like the keyword UI already did. One-time index rebuild on the\n  first start after upgrading (fingerprint format changed).\n- glob dropped (globset remains); sysinfo 0.33 -> 0.39; criterion\n  0.5 -> 0.8 (benches use std::hint::black_box)\n- deny.toml + a cargo-deny CI step (advisories, licenses, sources);\n  Dependabot for cargo and GitHub Actions; CI also runs the lib tests with\n  the semantic feature\n\nRoadmap 6.6 (except the OpenTelemetry bump).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* build: opentelemetry 0.27 -> 0.32 (single tonic/axum/prost stack)\n\nopentelemetry-otlp 0.27 pulled in tonic 0.12, axum 0.7, prost 0.13 and rand\n0.8 next to the project's 0.14 / 0.8 / 0.14 / 0.9. telemetry.rs is\nrewritten for the 0.32 API (SdkTracerProvider with a batch exporter, a\nkept provider handle for shutdown since the global shutdown hook is gone).\nThe dependency graph shrinks from 461 to fewer packages with no duplicate\ntonic or axum.\n\nRoadmap 6.6 (complete).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: tick 6.4 and 6.6; changelog for build and extraction changes\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(index): persistence v5 — nanosecond mtimes, byte paths, run-optimized bitmaps\n\n- staleness compares nanosecond mtimes (a same-size edit within one second\n  was invisible); the value recorded at read time is nanoseconds too\n- file paths are persisted as raw bytes (lossless on Unix), so one\n  non-UTF-8 filename no longer makes every checkpoint fail\n- posting lists are run-optimized in finalize(), so ubiquitous trigrams\n  cost bytes instead of a bitmap container per 65k documents, on disk and\n  in memory\n- magic FCSIDX03 / version 5: older files are rejected before decoding\n  with a clear \"will be rebuilt\" message\n\nAdds test_load_rejects_older_magic and\ntest_non_utf8_path_round_trips_and_nanosecond_mtime. The sectioned,\nmmap-able layout (lazy load, no double materialization) remains open.\n\nRoadmap 6.1 (partial).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(search): query syntax — file:/lang:/-term/case:/word:, phrases, AND terms\n\nPlain-text queries now understand a small Zoekt-style syntax\n(search::query_syntax): quoted phrases, several terms that must all appear\nin a file (lines matching any are returned), -term to drop files containing\na term, file:/-file: path globs, lang:/-lang: by language name or\nextension, and case:yes / word:yes. Candidates are the intersection of the\nterms' trigram sets; verification uses a new options-aware line scanner\n(exact memmem for case-sensitive, memchr2 fold for ASCII, Unicode fold\notherwise) with word-boundary checks that understand multi-byte letters.\nSymbol search honours the globs and compares names exactly / whole when\nasked.\n\nREST: q is parsed by default (regex mode is untouched); case=true|false\nand word=true|false override the in-query switches. gRPC: SearchRequest\ngains case_sensitive and whole_word. The docs page documents the syntax.\n\nAdds query_syntax unit tests, test_query_syntax_search,\ntest_line_hits_options and test_http_query_syntax.\n\nRoadmap Phase 7 (multi-line regex and SYMBOL_REFERENCE results remain\nopen).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: Phase 7 in roadmap and changelog\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* chore(index): delete the dead FileStore/MappedFile module\n\nOnly its re-export referenced it; the engine has used LazyFileStore since\nthe lazy-load rewrite. 414 lines and 12 tests of dead code removed.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* refactor(search): split engine.rs into engine/{mod,text,query,persist,progress,tests}.rs\n\nengine.rs had grown to 5.8k lines holding text matching helpers, the query\nrunner, persistence/reconciliation, progress types and 1.4k lines of\ntests. It is now a directory module: mod.rs keeps the types, indexing and\nincremental-update methods; text.rs the matching/scoring helpers; query.rs\nthe runner and per-document scans; persist.rs save/load/reconcile and\nsymbol rebuild; progress.rs the status/progress types; tests.rs the unit\ntests. No behaviour change; public paths are unchanged.\n\nRoadmap cross-cutting (engine.rs split).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: archive stale review/plan, refresh CONTRIBUTING, add PR template, CODEOWNERS, SECURITY\n\n- docs/REVIEW.md (a review of v0.2.1) and the completed June 2026 plan move\n  under docs/archive/\n- CONTRIBUTING's \"Areas for Contribution\" listed work shipped long ago; it\n  now points at the open roadmap items\n- .github/PULL_REQUEST_TEMPLATE.md, CODEOWNERS and SECURITY.md added\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: rewrite DEVELOPMENT.md against the code; roadmap status and cross-cutting ticks\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* build: keep sysinfo on the latest release that supports the 1.89 MSRV\n\nsysinfo 0.39 requires rustc 1.95; the MSRV job caught it.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: describe persisted index format v5 in the changelog\n\nThe entry still said v4 / FCSIDX02; the branch writes FCSIDX03 with\nnanosecond mtimes, byte paths and run-optimised bitmaps.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* build: clear cargo-deny advisories\n\ncargo-deny in CI failed on the RustSec database as of 2026-09-05:\n\n- rustls-webpki 0.103.9 -> 0.103.15 (RUSTSEC-2026-0049/0098/0099/0104)\n- h2 0.4.13 -> 0.4.19 (RUSTSEC-2026-0258)\n- bytes 1.11.0 -> 1.12.1 (RUSTSEC-2026-0007)\n- memmap2 0.9.9 -> 0.9.11 (RUSTSEC-2026-0186)\n- crossbeam-epoch 0.9.18 -> 0.9.20 (RUSTSEC-2026-0204)\n- anyhow 1.0.100 -> 1.0.104 (RUSTSEC-2026-0190)\n- rand 0.9.2 -> 0.9.5 (RUSTSEC-2026-0097)\n- indicatif 0.17 -> 0.18, which drops the unmaintained number_prefix\n  (RUSTSEC-2025-0119)\n\nTwo unmaintained-crate advisories are ignored with reasons in deny.toml:\nbincode 1.x is the pinned index codec (migration is roadmap item 6.1) and\npaste is a compile-time proc-macro reached only via the optional semantic\nfeature. MSRV 1.89 still checks with the updated lock.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* test: make the query-syntax exclusion test independent of the temp path\n\n`-file:a` is a substring match over the whole display path, and with no\nroot registered that is the absolute temp path. macOS temp dirs live\nunder /var/folders and Windows under AppData, so every file was excluded\nand the macOS CI job failed (Linux only passed when the random temp name\nhappened not to contain an 'a'). Exclude by file name instead.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-05T09:15:40+01:00",
+          "tree_id": "ac148729a502e0ccd4642c33f0d4677ee7f5a887",
+          "url": "https://github.com/jburrow/fast_code_search/commit/1b99b6a609fcb9312846d8e9c6b9b937dc754659"
+        },
+        "date": 1788596860771,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 253831,
+            "range": "± 24912",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 21950,
+            "range": "± 580",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 443,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 255649,
+            "range": "± 8177",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 20841,
+            "range": "± 669",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 558,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 250900,
+            "range": "± 7311",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 21784,
+            "range": "± 779",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 778,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 420399,
+            "range": "± 13274",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 357980,
+            "range": "± 8897",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 491277,
+            "range": "± 13003",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 581552,
+            "range": "± 12189",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 251749,
+            "range": "± 8619",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 264081,
+            "range": "± 4220",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 326748,
+            "range": "± 11520",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 420073,
+            "range": "± 4160",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 248677,
+            "range": "± 5776",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 247338,
+            "range": "± 7170",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 296927,
+            "range": "± 10360",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 175663,
+            "range": "± 3483",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 247335,
+            "range": "± 5856",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 547000,
+            "range": "± 12151",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 379674,
+            "range": "± 13164",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 344388,
+            "range": "± 11754",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 7311,
+            "range": "± 29",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 9961305,
+            "range": "± 12391",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 19760579,
+            "range": "± 137633",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 39198755,
+            "range": "± 54112",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 21265720,
+            "range": "± 67176",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 23893149,
+            "range": "± 72598",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 41907738,
+            "range": "± 71725",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 47622187,
+            "range": "± 62058",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 745751,
+            "range": "± 1274606",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 1503144,
+            "range": "± 1477138",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 2821063,
+            "range": "± 3672585",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1404694,
+            "range": "± 44563",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 5192356,
+            "range": "± 21043",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 9891990,
+            "range": "± 27959",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 126657,
+            "range": "± 3730",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 173441,
+            "range": "± 3622",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 228863,
+            "range": "± 4701",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 103612,
+            "range": "± 1197",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 475998,
+            "range": "± 3164",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 945807,
+            "range": "± 7612",
             "unit": "ns/iter"
           }
         ]
