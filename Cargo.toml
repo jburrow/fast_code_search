@@ -79,7 +79,7 @@ fs2 = "0.4"
 chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
 rand = "0.9"                                                                    # For random file sampling in self-tests
 tempfile = "3"                                                                  # For validator temporary corpus
-indicatif = "0.17"                                                              # Terminal progress bars
+indicatif = "0.18"                                                              # Terminal progress bars
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
 ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
     "load-dynamic",

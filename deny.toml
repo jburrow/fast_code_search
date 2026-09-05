@@ -4,7 +4,15 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = []
+ignore = [
+    # bincode 1.x is the persisted-index codec (format pinned by a magic header,
+    # fixint little-endian). It is feature-complete for our use; replacing it is
+    # part of the sectioned-layout work in docs/plans (roadmap item 6.1).
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x is the pinned index codec; migration tracked in roadmap 6.1" },
+    # `paste` is a proc-macro pulled in only by `tokenizers` behind the optional
+    # `semantic` feature; it runs at compile time and has no runtime surface.
+    { id = "RUSTSEC-2024-0436", reason = "compile-time proc-macro reached only via the optional semantic feature" },
+]
 
 [licenses]
 version = 2
