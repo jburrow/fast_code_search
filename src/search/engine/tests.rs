@@ -606,8 +606,12 @@ fn test_query_syntax_search() {
     // lang: / file:
     assert_eq!(run("cat lang:py"), vec![("b.py".into(), 1)]);
     assert_eq!(run("cat file:c.rs"), vec![("c.rs".into(), 1)]);
+    // A bare `file:` fragment is a substring match over the whole display
+    // path, and with no root registered that is the absolute temp path, so
+    // exclude by file name rather than by a single letter (macOS temp dirs
+    // live under `/var/folders`, Windows under `AppData`).
     assert_eq!(
-        run("cat -file:a"),
+        run("cat -file:a.rs"),
         vec![("b.py".into(), 1), ("c.rs".into(), 1)]
     );
     // quoted phrase
