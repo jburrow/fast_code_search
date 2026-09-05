@@ -18,6 +18,14 @@ pub enum SymbolType {
     Struct,
     /// File name - indexed for path-based searches
     FileName,
+    /// Module / namespace (`mod`, `namespace`, `package`, Ruby `module`)
+    Module,
+    /// Macro definition (`macro_rules!`, C `#define` is not parsed)
+    Macro,
+    /// Field / property of a type
+    Field,
+    /// C# / TS property accessor pair
+    Property,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,44 +64,303 @@ pub struct SymbolExtractor {
     extension: String,
 }
 
+/// Wall-clock cap for a single tree-sitter parse; pathological inputs that
+/// pass the structural pre-check can still be quadratic.
+const PARSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+thread_local! {
+    /// One parser per worker thread, re-targeted with `set_language` instead
+    /// of being allocated per file.
+    static PARSER: std::cell::RefCell<Parser> = std::cell::RefCell::new(Parser::new());
+}
+
+/// Parse `source` with the thread's parser under [`PARSE_TIMEOUT`].
+/// `Ok(None)` means the parse was cancelled (timeout).
+fn parse_with_reused_parser(
+    language: LanguageFn,
+    source: &str,
+) -> Result<Option<tree_sitter::Tree>> {
+    PARSER.with(|cell| {
+        let mut parser = cell.borrow_mut();
+        parser.set_language(&language.into())?;
+        let started = std::time::Instant::now();
+        let mut progress = |_: &tree_sitter::ParseState| {
+            if started.elapsed() > PARSE_TIMEOUT {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        };
+        let options = tree_sitter::ParseOptions::new().progress_callback(&mut progress);
+        let bytes = source.as_bytes();
+        let tree = parser.parse_with_options(
+            &mut |offset, _| {
+                if offset < bytes.len() {
+                    &bytes[offset..]
+                } else {
+                    &[]
+                }
+            },
+            None,
+            Some(options),
+        );
+        if tree.is_none() {
+            tracing::warn!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "tree-sitter parse cancelled (timeout); file indexed without symbols"
+            );
+        }
+        parser.reset();
+        Ok(tree)
+    })
+}
+
+/// Cheap C++-ness test for `.h` headers.
+fn looks_like_cpp(source: &str) -> bool {
+    const HINTS: [&str; 7] = [
+        "class ",
+        "namespace ",
+        "template<",
+        "template <",
+        "public:",
+        "private:",
+        "::",
+    ];
+    HINTS.iter().any(|h| source.contains(h))
+}
+
+/// Innermost identifier of a (possibly pointer/reference/function) declarator.
+fn innermost_declarator(mut node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    loop {
+        match node.kind() {
+            "identifier"
+            | "field_identifier"
+            | "type_identifier"
+            | "destructor_name"
+            | "operator_name"
+            | "qualified_identifier" => return Some(node),
+            "function_declarator"
+            | "pointer_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator"
+            | "init_declarator" => {
+                node = node.child_by_field_name("declarator")?;
+            }
+            // reference_declarator has no fields: the declarator is its last named child
+            "reference_declarator" => {
+                let mut cursor = node.walk();
+                let last = node.named_children(&mut cursor).last()?;
+                node = last;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Map a `@definition.<kind>` capture (plus the captured node's kind, for
+/// grammars whose query lumps several constructs together) to a SymbolType.
+fn symbol_type_for(capture_kind: &str, node: tree_sitter::Node) -> SymbolType {
+    let node_kind = node.kind();
+    // Go: `type X struct{}` / `type X interface{}` / `type X = Y` all land on
+    // a type_spec; the `type` child says which.
+    if node_kind == "type_spec" {
+        return match node.child_by_field_name("type").map(|t| t.kind()) {
+            Some("struct_type") => SymbolType::Struct,
+            Some("interface_type") => SymbolType::Interface,
+            _ => SymbolType::Type,
+        };
+    }
+    match node_kind {
+        "struct_item"
+        | "struct_specifier"
+        | "struct_declaration"
+        | "union_item"
+        | "union_specifier"
+        | "record_struct_declaration" => return SymbolType::Struct,
+        "enum_item" | "enum_specifier" | "enum_declaration" => return SymbolType::Enum,
+        "type_item" | "type_alias_declaration" | "type_definition" | "type_alias" => {
+            return SymbolType::Type
+        }
+        "trait_item" | "trait_declaration" => return SymbolType::Trait,
+        "interface_declaration" | "interface_type" => return SymbolType::Interface,
+        "namespace_definition" | "namespace_declaration" | "internal_module" => {
+            return SymbolType::Module
+        }
+        _ => {}
+    }
+    // C/C++ tags mark every function_declarator as a function; one that is
+    // a class member declaration (`field_declaration`) is a method.
+    if capture_kind == "function" {
+        let mut up = node.parent();
+        for _ in 0..3 {
+            match up {
+                Some(p) if p.kind() == "field_declaration" => return SymbolType::Method,
+                Some(p) => up = p.parent(),
+                None => break,
+            }
+        }
+    }
+    match capture_kind {
+        "function" => SymbolType::Function,
+        "method" => SymbolType::Method,
+        "class" => SymbolType::Class,
+        "interface" => SymbolType::Interface,
+        "module" => SymbolType::Module,
+        "macro" => SymbolType::Macro,
+        "constant" => SymbolType::Constant,
+        "type" => SymbolType::Type,
+        "field" | "property" => SymbolType::Field,
+        _ => SymbolType::Function,
+    }
+}
+
+/// Tags queries also describe *references* (`@reference.call` on every call
+/// expression, `@doc` comments, ...). Those patterns match far more nodes
+/// than the definitions do and we ignore them, so switch them off once at
+/// compile time: only patterns that capture some `@definition.*` stay.
+fn disable_non_definition_patterns(query: &mut tree_sitter::Query) {
+    let names = query.capture_names().to_vec();
+    let definition_captures: Vec<usize> = names
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.starts_with("definition."))
+        .map(|(i, _)| i)
+        .collect();
+    for pattern in 0..query.pattern_count() {
+        let quantifiers = query.capture_quantifiers(pattern);
+        let defines = definition_captures.iter().any(|&c| {
+            quantifiers
+                .get(c)
+                .is_some_and(|q| *q != tree_sitter::CaptureQuantifier::Zero)
+        });
+        if !defines {
+            query.disable_pattern(pattern);
+        }
+    }
+}
+
+/// Compile-once registry of the grammars' `tags.scm` queries.
+fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree_sitter::Query> {
+    use std::sync::OnceLock;
+    macro_rules! once {
+        ($cell:ident, $lang:expr, $src:expr) => {{
+            static $cell: OnceLock<Option<tree_sitter::Query>> = OnceLock::new();
+            $cell
+                .get_or_init(|| match tree_sitter::Query::new(&$lang.into(), $src) {
+                    Ok(mut q) => {
+                        disable_non_definition_patterns(&mut q);
+                        Some(q)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "tags query failed to compile; using walker only");
+                        None
+                    }
+                })
+                .as_ref()
+        }};
+    }
+    let _ = language;
+    match extension {
+        "rs" => once!(
+            RUST,
+            tree_sitter_rust::LANGUAGE,
+            tree_sitter_rust::TAGS_QUERY
+        ),
+        "py" | "pyi" | "pyw" => once!(
+            PY,
+            tree_sitter_python::LANGUAGE,
+            tree_sitter_python::TAGS_QUERY
+        ),
+        "js" | "jsx" | "mjs" | "cjs" => once!(
+            JS,
+            tree_sitter_javascript::LANGUAGE,
+            tree_sitter_javascript::TAGS_QUERY
+        ),
+        "ts" | "mts" | "cts" => once!(
+            TS,
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+            tree_sitter_typescript::TAGS_QUERY
+        ),
+        "tsx" => once!(
+            TSX,
+            tree_sitter_typescript::LANGUAGE_TSX,
+            tree_sitter_typescript::TAGS_QUERY
+        ),
+        "go" => once!(GO, tree_sitter_go::LANGUAGE, tree_sitter_go::TAGS_QUERY),
+        "c" | "h" => once!(C, tree_sitter_c::LANGUAGE, tree_sitter_c::TAGS_QUERY),
+        "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" | "inl" => {
+            once!(CPP, tree_sitter_cpp::LANGUAGE, tree_sitter_cpp::TAGS_QUERY)
+        }
+        "java" => once!(
+            JAVA,
+            tree_sitter_java::LANGUAGE,
+            tree_sitter_java::TAGS_QUERY
+        ),
+        "cs" => once!(
+            CS,
+            tree_sitter_c_sharp::LANGUAGE,
+            include_str!("queries/c_sharp_tags.scm")
+        ),
+        "rb" | "rake" | "gemspec" => {
+            once!(RB, tree_sitter_ruby::LANGUAGE, tree_sitter_ruby::TAGS_QUERY)
+        }
+        "php" | "phtml" => once!(
+            PHP,
+            tree_sitter_php::LANGUAGE_PHP,
+            tree_sitter_php::TAGS_QUERY
+        ),
+        _ => None,
+    }
+}
+
 impl SymbolExtractor {
     pub fn new(file_path: &Path) -> Self {
-        let language = Self::language_for_file(file_path);
+        Self::new_for_source(file_path, None)
+    }
+
+    /// Like [`Self::new`], but may look at the content to disambiguate
+    /// (`.h` headers that are really C++).
+    pub fn new_for_source(file_path: &Path, source: Option<&str>) -> Self {
         let extension = file_path
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("")
-            .to_string();
+            .to_ascii_lowercase();
+        // A `.h` header that is unmistakably C++ is treated as `.hpp` so the
+        // grammar, the tags query and import extraction all agree.
+        let extension = if extension == "h" && source.is_some_and(looks_like_cpp) {
+            "hpp".to_string()
+        } else {
+            extension
+        };
+        let language = Self::language_for_extension(&extension, source);
         Self {
             language,
             extension,
         }
     }
 
-    fn language_for_file(path: &Path) -> Option<LanguageFn> {
-        let extension = path.extension()?.to_str()?;
-
+    fn language_for_extension(extension: &str, _source: Option<&str>) -> Option<LanguageFn> {
         match extension {
             // Core programming languages
             "rs" => Some(tree_sitter_rust::LANGUAGE),
             "py" | "pyi" | "pyw" => Some(tree_sitter_python::LANGUAGE),
             "js" | "jsx" | "mjs" | "cjs" => Some(tree_sitter_javascript::LANGUAGE),
-            "ts" | "tsx" | "mts" | "cts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            "ts" | "mts" | "cts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            // JSX is not valid TypeScript; .tsx needs the dedicated grammar.
+            "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX),
             "go" => Some(tree_sitter_go::LANGUAGE),
+            // `.h` is C unless `new_for_source` already promoted it to `hpp`.
             "c" | "h" => Some(tree_sitter_c::LANGUAGE),
-            "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Some(tree_sitter_cpp::LANGUAGE),
+            "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" | "inl" => Some(tree_sitter_cpp::LANGUAGE),
             "java" => Some(tree_sitter_java::LANGUAGE),
             "cs" => Some(tree_sitter_c_sharp::LANGUAGE),
             "rb" | "rake" | "gemspec" => Some(tree_sitter_ruby::LANGUAGE),
-            "php" => Some(tree_sitter_php::LANGUAGE_PHP),
+            "php" | "phtml" => Some(tree_sitter_php::LANGUAGE_PHP),
             "sh" | "bash" | "zsh" => Some(tree_sitter_bash::LANGUAGE),
-            // Config and markup languages
-            "json" | "jsonc" => Some(tree_sitter_json::LANGUAGE),
-            "toml" => Some(tree_sitter_toml_ng::LANGUAGE),
-            "yaml" | "yml" => Some(tree_sitter_yaml::LANGUAGE),
-            "html" | "htm" => Some(tree_sitter_html::LANGUAGE),
-            "css" | "scss" => Some(tree_sitter_css::LANGUAGE),
-            "md" | "markdown" => Some(tree_sitter_md::LANGUAGE),
+            // Config and markup formats are deliberately NOT parsed: no symbol
+            // or import captures exist for them, so parsing (e.g. a multi-MB
+            // package-lock.json) was pure cost.
             _ => None,
         }
     }
@@ -103,73 +370,387 @@ impl SymbolExtractor {
             Some(lang) => lang,
             None => return Ok(Vec::new()), // No symbols for unknown languages
         };
-
-        let mut parser = Parser::new();
-        parser.set_language(&language.into())?;
-
-        let tree = match parser.parse(source, None) {
-            Some(tree) => tree,
-            None => return Ok(Vec::new()),
+        let Some(tree) = parse_with_reused_parser(language, source)? else {
+            return Ok(Vec::new());
         };
+        Ok(self.symbols_from_tree(&tree, source))
+    }
 
-        let mut symbols = Vec::new();
+    /// Symbols from a parsed tree: the grammar's own `tags.scm` query first
+    /// (correct name positions, per-language maintained upstream), then the
+    /// hand-written walker for the node kinds the query does not cover
+    /// (Rust consts, C# properties, trait signatures, ...). Deduplicated on
+    /// (name, line), sorted by line.
+    fn symbols_from_tree(&self, tree: &tree_sitter::Tree, source: &str) -> Vec<Symbol> {
         let root_node = tree.root_node();
-
-        // Extract function definitions
-        Self::extract_functions(&root_node, source, &mut symbols);
-
+        let mut symbols = Vec::new();
+        if let Some(query) = self.tags_query() {
+            Self::extract_with_tags(query, &root_node, source, &mut symbols);
+        }
+        let mut walker_symbols = Vec::new();
+        Self::extract_functions(&root_node, source, &mut walker_symbols);
+        let mut seen: std::collections::HashSet<(usize, String)> =
+            symbols.iter().map(|s| (s.line, s.name.clone())).collect();
+        for s in walker_symbols {
+            if seen.insert((s.line, s.name.clone())) {
+                symbols.push(s);
+            }
+        }
         symbols.sort_by_key(|s| s.line);
-        Ok(symbols)
+        symbols
+    }
+
+    /// The compiled `tags.scm` query for this file's grammar, if it has one.
+    fn tags_query(&self) -> Option<&'static tree_sitter::Query> {
+        let language = self.language?;
+        tags_query_for(language, &self.extension)
+    }
+
+    /// Run the tags query and collect every `@definition.*` capture with its
+    /// `@name`. Several patterns may match one node (Rust methods match both
+    /// the method and the function pattern); the first pattern wins.
+    fn extract_with_tags(
+        query: &tree_sitter::Query,
+        root: &tree_sitter::Node,
+        source: &str,
+        symbols: &mut Vec<Symbol>,
+    ) {
+        use tree_sitter::StreamingIterator;
+        let names = query.capture_names();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(query, *root, source.as_bytes());
+        let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        while let Some(m) = matches.next() {
+            let mut name_node: Option<tree_sitter::Node> = None;
+            let mut def: Option<(&str, tree_sitter::Node)> = None;
+            for cap in m.captures {
+                let cap_name = names[cap.index as usize];
+                if cap_name == "name" {
+                    name_node = Some(cap.node);
+                } else if let Some(kind) = cap_name.strip_prefix("definition.") {
+                    def = Some((kind, cap.node));
+                }
+            }
+            let (Some(name_node), Some((kind, def_node))) = (name_node, def) else {
+                continue;
+            };
+            let range = name_node.byte_range();
+            if !seen.insert((range.start, range.end)) {
+                continue;
+            }
+            let Some(name) = source.get(range) else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let start = name_node.start_position();
+            symbols.push(Symbol {
+                name: name.to_string(),
+                symbol_type: symbol_type_for(kind, def_node),
+                line: start.row,
+                column: start.column,
+                is_definition: true,
+            });
+        }
     }
 
     fn extract_functions(node: &tree_sitter::Node, source: &str, symbols: &mut Vec<Symbol>) {
-        // Use iterative traversal with explicit stack to avoid stack overflow
-        // on deeply nested code
-        let mut stack = vec![*node];
+        // Single-cursor depth-first walk: no per-node cursor allocation and
+        // no explicit stack, which halves the walker's cost on large trees.
+        let mut cursor = node.walk();
+        if !cursor.goto_first_child() {
+            return;
+        }
+        loop {
+            Self::visit_definition_node(cursor.node(), source, symbols);
+            if cursor.goto_first_child() {
+                continue;
+            }
+            loop {
+                if cursor.goto_next_sibling() {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    return;
+                }
+            }
+        }
+    }
 
-        while let Some(current) = stack.pop() {
-            let mut cursor = current.walk();
-
-            for child in current.children(&mut cursor) {
-                match child.kind() {
-                    // Functions: Rust, Python, JS/TS, PHP, Bash
-                    // Note: C/C++ function_definition has "declarator" not "name"
-                    "function_item" | "function_declaration" | "function_definition" => {
-                        // Try "name" first (most languages), then "declarator" (C/C++)
-                        let name_opt = child.child_by_field_name("name").or_else(|| {
-                            // C/C++: name is inside declarator -> function_declarator -> identifier
-                            child
-                                .child_by_field_name("declarator")
-                                .and_then(|d| d.child_by_field_name("declarator"))
-                                .or_else(|| child.child_by_field_name("declarator"))
+    /// The hand-written per-node-kind extraction (supplements the tags query).
+    fn visit_definition_node(child: tree_sitter::Node, source: &str, symbols: &mut Vec<Symbol>) {
+        match child.kind() {
+            // Functions: Rust, Python, JS/TS, PHP, Bash
+            // Note: C/C++ function_definition has "declarator" not "name"
+            "function_item" | "function_declaration" | "function_definition" => {
+                // Try "name" first (most languages), then "declarator" (C/C++)
+                let name_opt = child.child_by_field_name("name").or_else(|| {
+                    // C/C++: name is inside declarator -> function_declarator -> identifier
+                    child
+                        .child_by_field_name("declarator")
+                        .and_then(|d| d.child_by_field_name("declarator"))
+                        .or_else(|| child.child_by_field_name("declarator"))
+                });
+                if let Some(name_node) = name_opt {
+                    // For C/C++, the declarator might be a function_declarator
+                    // We need to find the actual identifier
+                    let ident_node = if matches!(
+                        name_node.kind(),
+                        "function_declarator" | "pointer_declarator" | "reference_declarator"
+                    ) {
+                        innermost_declarator(name_node)
+                    } else {
+                        Some(name_node)
+                    };
+                    if let Some(ident) = ident_node {
+                        let name = &source[ident.byte_range()];
+                        let start = ident.start_position();
+                        symbols.push(Symbol {
+                            name: name.to_string(),
+                            symbol_type: SymbolType::Function,
+                            line: start.row,
+                            column: start.column,
+                            is_definition: true,
                         });
-                        if let Some(name_node) = name_opt {
-                            // For C/C++, the declarator might be a function_declarator
-                            // We need to find the actual identifier
-                            let name_text = if name_node.kind() == "function_declarator" {
-                                name_node
-                                    .child_by_field_name("declarator")
-                                    .map(|n| &source[n.byte_range()])
-                            } else {
-                                Some(&source[name_node.byte_range()])
-                            };
-                            if let Some(name) = name_text {
-                                let start = child.start_position();
-                                symbols.push(Symbol {
-                                    name: name.to_string(),
-                                    symbol_type: SymbolType::Function,
-                                    line: start.row,
-                                    column: start.column,
-                                    is_definition: true,
-                                });
-                            }
+                    }
+                }
+            }
+            // Methods: Go, Java, C#, Ruby, PHP
+            "method_declaration" | "method" | "singleton_method" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Method,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // JS/TS class members: methods, getters/setters, constructors
+            "method_definition" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Method,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // JS/TS: `const Foo = () => …` / `const foo = function () {}` —
+            // the dominant modern function form (React components, handlers).
+            // Only plain identifier names (not destructuring patterns).
+            "variable_declarator" => {
+                let is_fn_value = child
+                    .child_by_field_name("value")
+                    .map(|v| {
+                        matches!(
+                            v.kind(),
+                            "arrow_function"
+                                | "function_expression"
+                                | "function"
+                                | "generator_function"
+                        )
+                    })
+                    .unwrap_or(false);
+                if is_fn_value {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        if name_node.kind() == "identifier" {
+                            let name = &source[name_node.byte_range()];
+                            let start = name_node.start_position();
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type: SymbolType::Function,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
                         }
                     }
-                    // Methods: Go, Java, C#, Ruby, PHP
-                    "method_declaration" | "method" | "singleton_method" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                }
+            }
+            // JS: `function* gen() {}`
+            "generator_function_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Function,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // TS: `abstract class X {}` and `namespace X {}` / `module X {}`
+            "abstract_class_declaration" | "internal_module" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Class,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Constructors: Java, C#
+            "constructor_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Method,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // C# property declarations
+            "property_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Property,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Classes: JS/TS, Python, Java, C#, PHP, Ruby
+            "class_declaration" | "class_definition" | "class" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Class,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Ruby modules
+            "module" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Module,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Rust impl blocks use "type" field, not "name"
+            "impl_item" => {
+                if let Some(type_node) = child.child_by_field_name("type") {
+                    let name = &source[type_node.byte_range()];
+                    let start = type_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Class,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Interfaces: TS, Java, C#, PHP
+            "interface_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Interface,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Type aliases: TS, Rust
+            "type_alias_declaration" | "type_item" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Type,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Enums: TS, Rust, Java, C#
+            "enum_declaration" | "enum_item" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Enum,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Rust trait method signatures (`fn area(&self) -> f64;`)
+            "function_signature_item" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Method,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // C# delegates are named types
+            "delegate_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Type,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // C++ in-class method declarations: `int area() const;`
+            "field_declaration" => {
+                if let Some(decl) = child.child_by_field_name("declarator") {
+                    if decl.kind() == "function_declarator" {
+                        if let Some(ident) = innermost_declarator(decl) {
+                            let name = &source[ident.byte_range()];
+                            let start = ident.start_position();
                             symbols.push(Symbol {
                                 name: name.to_string(),
                                 symbol_type: SymbolType::Method,
@@ -179,297 +760,198 @@ impl SymbolExtractor {
                             });
                         }
                     }
-                    // Constructors: Java, C#
-                    "constructor_declaration" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                }
+            }
+            // Records: Java, C#
+            "record_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Class,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Rust traits (similar to interfaces)
+            "trait_item" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Trait,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // PHP traits
+            "trait_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Trait,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Structs: Rust, C#
+            "struct_item" | "struct_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Struct,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Rust constants and statics
+            "const_item" | "static_item" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Constant,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // Go: type declarations (struct, interface, type alias)
+            "type_declaration" => {
+                let mut type_cursor = child.walk();
+                for type_child in child.children(&mut type_cursor) {
+                    if type_child.kind() == "type_alias" {
+                        if let Some(name_node) = type_child.child_by_field_name("name") {
+                            let start = name_node.start_position();
                             symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Method,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // C# property declarations
-                    "property_declaration" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Method,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Classes: JS/TS, Python, Java, C#, PHP, Ruby
-                    "class_declaration" | "class_definition" | "class" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Class,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Ruby modules (similar to classes)
-                    "module" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Class,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Rust impl blocks use "type" field, not "name"
-                    "impl_item" => {
-                        if let Some(type_node) = child.child_by_field_name("type") {
-                            let name = &source[type_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Class,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Interfaces: TS, Java, C#, PHP
-                    "interface_declaration" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Interface,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Type aliases: TS, Rust
-                    "type_alias_declaration" | "type_item" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
+                                name: source[name_node.byte_range()].to_string(),
                                 symbol_type: SymbolType::Type,
                                 line: start.row,
                                 column: start.column,
                                 is_definition: true,
                             });
                         }
+                        continue;
                     }
-                    // Enums: TS, Rust, Java, C#
-                    "enum_declaration" | "enum_item" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
+                    if type_child.kind() == "type_spec" {
+                        if let Some(name_node) = type_child.child_by_field_name("name") {
                             let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
+                            let start = name_node.start_position();
+                            let symbol_type =
+                                if let Some(type_node) = type_child.child_by_field_name("type") {
+                                    match type_node.kind() {
+                                        "struct_type" => SymbolType::Struct,
+                                        "interface_type" => SymbolType::Interface,
+                                        _ => SymbolType::Type,
+                                    }
+                                } else {
+                                    SymbolType::Type
+                                };
                             symbols.push(Symbol {
                                 name: name.to_string(),
-                                symbol_type: SymbolType::Enum,
+                                symbol_type,
                                 line: start.row,
                                 column: start.column,
                                 is_definition: true,
                             });
                         }
                     }
-                    // Records: Java, C#
-                    "record_declaration" | "record_struct_declaration" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Class,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Rust traits (similar to interfaces)
-                    "trait_item" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Trait,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // PHP traits
-                    "trait_declaration" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Trait,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Structs: Rust, C#
-                    "struct_item" | "struct_declaration" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Struct,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Rust constants and statics
-                    "const_item" | "static_item" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Constant,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // Go: type declarations (struct, interface, type alias)
-                    "type_declaration" => {
-                        let mut type_cursor = child.walk();
-                        for type_child in child.children(&mut type_cursor) {
-                            if type_child.kind() == "type_spec" {
-                                if let Some(name_node) = type_child.child_by_field_name("name") {
-                                    let name = &source[name_node.byte_range()];
-                                    let start = type_child.start_position();
-                                    let symbol_type = if let Some(type_node) =
-                                        type_child.child_by_field_name("type")
-                                    {
-                                        match type_node.kind() {
-                                            "struct_type" => SymbolType::Struct,
-                                            "interface_type" => SymbolType::Interface,
-                                            _ => SymbolType::Type,
-                                        }
-                                    } else {
-                                        SymbolType::Type
-                                    };
-                                    symbols.push(Symbol {
-                                        name: name.to_string(),
-                                        symbol_type,
-                                        line: start.row,
-                                        column: start.column,
-                                        is_definition: true,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    // Go: const and var declarations
-                    "const_declaration" | "var_declaration" => {
-                        let mut const_cursor = child.walk();
-                        for spec in child.children(&mut const_cursor) {
-                            if spec.kind() == "const_spec" || spec.kind() == "var_spec" {
-                                if let Some(name_node) = spec.child_by_field_name("name") {
-                                    let name = &source[name_node.byte_range()];
-                                    let start = spec.start_position();
-                                    let symbol_type = if child.kind() == "const_declaration" {
-                                        SymbolType::Constant
-                                    } else {
-                                        SymbolType::Variable
-                                    };
-                                    symbols.push(Symbol {
-                                        name: name.to_string(),
-                                        symbol_type,
-                                        line: start.row,
-                                        column: start.column,
-                                        is_definition: true,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    // C/C++: struct, union declarations
-                    "struct_specifier" | "union_specifier" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Struct,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // C/C++: enum specifier
-                    "enum_specifier" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Enum,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // C++: class specifier and namespace
-                    "class_specifier" | "namespace_definition" => {
-                        if let Some(name_node) = child.child_by_field_name("name") {
-                            let name = &source[name_node.byte_range()];
-                            let start = child.start_position();
-                            symbols.push(Symbol {
-                                name: name.to_string(),
-                                symbol_type: SymbolType::Class,
-                                line: start.row,
-                                column: start.column,
-                                is_definition: true,
-                            });
-                        }
-                    }
-                    // C++: template declarations - traverse into them
-                    // C++: template declarations — just let the default stack.push(child)
-                    // below handle traversal. The template_declaration node will be pushed
-                    // to the stack, and when it becomes `current`, its children
-                    // (function_definition, class_specifier, etc.) will be matched naturally.
-                    // No special handling needed.
-                    "template_declaration" => {}
-                    _ => {}
                 }
-
-                // Add child to stack for iterative processing
-                stack.push(child);
             }
+            // Go: const and var declarations
+            "const_declaration" | "var_declaration" => {
+                let mut const_cursor = child.walk();
+                for spec in child.children(&mut const_cursor) {
+                    if spec.kind() == "const_spec" || spec.kind() == "var_spec" {
+                        if let Some(name_node) = spec.child_by_field_name("name") {
+                            let name = &source[name_node.byte_range()];
+                            let start = name_node.start_position();
+                            let symbol_type = if child.kind() == "const_declaration" {
+                                SymbolType::Constant
+                            } else {
+                                SymbolType::Variable
+                            };
+                            symbols.push(Symbol {
+                                name: name.to_string(),
+                                symbol_type,
+                                line: start.row,
+                                column: start.column,
+                                is_definition: true,
+                            });
+                        }
+                    }
+                }
+            }
+            // C/C++: struct, union declarations
+            "struct_specifier" | "union_specifier" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Struct,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // C/C++: enum specifier
+            "enum_specifier" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: SymbolType::Enum,
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // C++: class specifier and namespace
+            "class_specifier" | "namespace_definition" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = &source[name_node.byte_range()];
+                    let start = name_node.start_position();
+                    symbols.push(Symbol {
+                        name: name.to_string(),
+                        symbol_type: if child.kind() == "namespace_definition" {
+                            SymbolType::Module
+                        } else {
+                            SymbolType::Class
+                        },
+                        line: start.row,
+                        column: start.column,
+                        is_definition: true,
+                    });
+                }
+            }
+            // C++: template declarations - traverse into them
+            // C++: template declarations — just let the default stack.push(child)
+            // below handle traversal. The template_declaration node will be pushed
+            // to the stack, and when it becomes `current`, its children
+            // (function_definition, class_specifier, etc.) will be matched naturally.
+            // No special handling needed.
+            "template_declaration" => {}
+            _ => {}
         }
     }
 
@@ -479,13 +961,8 @@ impl SymbolExtractor {
             Some(lang) => lang,
             None => return Ok(Vec::new()),
         };
-
-        let mut parser = Parser::new();
-        parser.set_language(&language.into())?;
-
-        let tree = match parser.parse(source, None) {
-            Some(tree) => tree,
-            None => return Ok(Vec::new()),
+        let Some(tree) = parse_with_reused_parser(language, source)? else {
+            return Ok(Vec::new());
         };
 
         let mut imports = Vec::new();
@@ -516,20 +993,11 @@ impl SymbolExtractor {
             Some(lang) => lang,
             None => return Ok((Vec::new(), Vec::new())),
         };
-
-        let mut parser = Parser::new();
-        parser.set_language(&language.into())?;
-
-        let tree = match parser.parse(source, None) {
-            Some(tree) => tree,
-            None => return Ok((Vec::new(), Vec::new())),
+        let Some(tree) = parse_with_reused_parser(language, source)? else {
+            return Ok((Vec::new(), Vec::new()));
         };
-
         let root_node = tree.root_node();
-
-        let mut symbols = Vec::new();
-        Self::extract_functions(&root_node, source, &mut symbols);
-        symbols.sort_by_key(|s| s.line);
+        let symbols = self.symbols_from_tree(&tree, source);
 
         let mut imports = Vec::new();
         match self.extension.as_str() {
@@ -615,7 +1083,38 @@ impl SymbolExtractor {
 
             for child in current.children(&mut cursor) {
                 match child.kind() {
-                    "import_statement" | "import_from_statement" => {
+                    // `import a, b as c` — one `name` field per imported module
+                    // (a `dotted_name` or an `aliased_import` wrapping one).
+                    "import_statement" => {
+                        let mut import_cursor = child.walk();
+                        let mut found = false;
+                        for part in child.children_by_field_name("name", &mut import_cursor) {
+                            let module_node = if part.kind() == "aliased_import" {
+                                part.child_by_field_name("name")
+                            } else {
+                                Some(part)
+                            };
+                            if let Some(module_node) = module_node {
+                                found = true;
+                                imports.push(ImportStatement {
+                                    path: source[module_node.byte_range()].to_string(),
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Python,
+                                });
+                            }
+                        }
+                        if !found {
+                            let text = &source[child.byte_range()];
+                            if let Some(path) = Self::parse_python_import_text(text) {
+                                imports.push(ImportStatement {
+                                    path,
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Python,
+                                });
+                            }
+                        }
+                    }
+                    "import_from_statement" => {
                         // Get the module name from the import
                         if let Some(module_node) = child.child_by_field_name("module_name") {
                             let module = &source[module_node.byte_range()];
@@ -677,12 +1176,12 @@ impl SymbolExtractor {
 
             for child in current.children(&mut cursor) {
                 match child.kind() {
-                    "import_statement" => {
-                        // import { foo } from './bar'
+                    // `import x from './bar'` and re-exports `export { x } from './bar'`
+                    // (barrel index files) both carry a `source` field.
+                    "import_statement" | "export_statement" => {
                         if let Some(source_node) = child.child_by_field_name("source") {
                             let path = &source[source_node.byte_range()];
-                            // Remove quotes
-                            let path = path.trim_matches(|c| c == '"' || c == '\'');
+                            let path = path.trim_matches(|c| c == '"' || c == '\'' || c == '`');
                             imports.push(ImportStatement {
                                 path: path.to_string(),
                                 line: child.start_position().row,
@@ -691,16 +1190,17 @@ impl SymbolExtractor {
                         }
                     }
                     "call_expression" => {
-                        // require('./foo')
+                        // require('./foo') and dynamic import('./foo')
                         if let Some(func_node) = child.child_by_field_name("function") {
                             let func_name = &source[func_node.byte_range()];
-                            if func_name == "require" {
+                            if func_name == "require" || func_name == "import" {
                                 if let Some(args_node) = child.child_by_field_name("arguments") {
                                     let args_text = &source[args_node.byte_range()];
                                     let path = args_text
                                         .trim_matches(|c| c == '(' || c == ')')
-                                        .trim_matches(|c| c == '"' || c == '\'');
-                                    if !path.is_empty() {
+                                        .trim()
+                                        .trim_matches(|c| c == '"' || c == '\'' || c == '`');
+                                    if !path.is_empty() && !path.contains("${") {
                                         imports.push(ImportStatement {
                                             path: path.to_string(),
                                             line: child.start_position().row,
@@ -806,6 +1306,290 @@ function processUser(user: User): void {
                 .any(|s| s.name == "processUser" && s.symbol_type == SymbolType::Function),
             "Should find processUser function"
         );
+    }
+
+    /// Roadmap 1.5: `.tsx` must be parsed with the TSX grammar (JSX is not
+    /// valid TypeScript), and modern JS/TS function forms must be captured:
+    /// class methods, arrow-function consts, abstract classes, namespaces.
+    #[test]
+    fn test_tsx_react_component_extraction() {
+        let source = r#"
+import React from "react";
+
+export const Button = ({ label }: { label: string }) => {
+    return <button className="btn">{label}</button>;
+};
+
+export function Card(props: { title: string }) {
+    return <div><h1>{props.title}</h1></div>;
+}
+
+class Widget extends React.Component {
+    render() {
+        return <span />;
+    }
+    handleClick = () => {};
+}
+
+abstract class Shape {
+    abstract area(): number;
+}
+
+namespace Util {
+    export const helper = function () { return 1; };
+}
+"#;
+        let extractor = SymbolExtractor::new(Path::new("App.tsx"));
+        let symbols = extractor.extract(source).unwrap();
+        let has =
+            |n: &str, t: SymbolType| symbols.iter().any(|s| s.name == n && s.symbol_type == t);
+
+        assert!(
+            has("Button", SymbolType::Function),
+            "arrow const: {symbols:?}"
+        );
+        assert!(has("Card", SymbolType::Function), "function with JSX body");
+        assert!(has("Widget", SymbolType::Class), "class");
+        assert!(has("render", SymbolType::Method), "method_definition");
+        assert!(has("Shape", SymbolType::Class), "abstract class");
+        assert!(has("Util", SymbolType::Class), "namespace");
+        assert!(
+            has("helper", SymbolType::Function),
+            "function expression const"
+        );
+        // A component body with JSX would have become ERROR nodes under the
+        // TypeScript grammar; `Card` being found with its correct line proves
+        // the TSX grammar parsed it.
+        let card = symbols.iter().find(|s| s.name == "Card").unwrap();
+        assert_eq!(card.line, 7, "Card is on (0-based) line 7");
+    }
+
+    /// Roadmap 1.5: plain JavaScript method and arrow-function coverage.
+    #[test]
+    fn test_javascript_methods_and_arrows() {
+        let source = r#"
+class Store {
+    constructor() { this.items = []; }
+    add(item) { this.items.push(item); }
+    get size() { return this.items.length; }
+    static create() { return new Store(); }
+}
+const onClick = (e) => e.preventDefault();
+const legacy = function (x) { return x; };
+function* ids() { yield 1; }
+const { a, b } = obj;
+"#;
+        let extractor = SymbolExtractor::new(Path::new("store.js"));
+        let symbols = extractor.extract(source).unwrap();
+        let has =
+            |n: &str, t: SymbolType| symbols.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("Store", SymbolType::Class));
+        assert!(has("constructor", SymbolType::Method));
+        assert!(has("add", SymbolType::Method));
+        assert!(has("size", SymbolType::Method), "getter");
+        assert!(has("create", SymbolType::Method), "static method");
+        assert!(has("onClick", SymbolType::Function), "arrow const");
+        assert!(
+            has("legacy", SymbolType::Function),
+            "function-expression const"
+        );
+        assert!(has("ids", SymbolType::Function), "generator");
+        assert!(
+            !symbols.iter().any(|s| s.name == "a" || s.name == "b"),
+            "destructuring patterns are not symbols"
+        );
+    }
+
+    /// Roadmap 1.5: `line`/`column` must come from the *name* node. Annotations,
+    /// decorators, modifiers and multi-line return types precede the name and
+    /// previously shifted every such symbol to the wrong line (and the
+    /// definition boost with it).
+    #[test]
+    fn test_symbol_line_is_name_line() {
+        // Java: @Override on its own line above the method name.
+        let java = "class A {\n    @Override\n    public String toString() {\n        return \"\";\n    }\n}\n";
+        let syms = SymbolExtractor::new(Path::new("A.java"))
+            .extract(java)
+            .unwrap();
+        let m = syms
+            .iter()
+            .find(|s| s.name == "toString")
+            .expect("toString");
+        assert_eq!(
+            (m.line, m.column),
+            (2, 18),
+            "Java method line/col from name node: {m:?}"
+        );
+
+        // TypeScript: decorator line above the class name.
+        let ts = "@Component({})\nexport class AppRoot {\n}\n";
+        let syms = SymbolExtractor::new(Path::new("app.ts"))
+            .extract(ts)
+            .unwrap();
+        let c = syms.iter().find(|s| s.name == "AppRoot").expect("AppRoot");
+        assert_eq!(c.line, 1, "TS decorated class line from name node: {c:?}");
+
+        // C: return type on its own line above the function name.
+        let c_src = "static int\nadd(int a, int b)\n{\n    return a + b;\n}\n";
+        let syms = SymbolExtractor::new(Path::new("m.c"))
+            .extract(c_src)
+            .unwrap();
+        let f = syms.iter().find(|s| s.name == "add").expect("add");
+        assert_eq!(
+            (f.line, f.column),
+            (1, 0),
+            "C function line/col from name node: {f:?}"
+        );
+
+        // Rust: attribute above a function.
+        let rs = "#[inline]\npub fn fast() {}\n";
+        let syms = SymbolExtractor::new(Path::new("x.rs")).extract(rs).unwrap();
+        let f = syms.iter().find(|s| s.name == "fast").expect("fast");
+        assert_eq!(
+            (f.line, f.column),
+            (1, 7),
+            "Rust fn line/col from name node: {f:?}"
+        );
+    }
+
+    /// Roadmap 2.5: import extraction covers `import a, b as c`, re-exports,
+    /// dynamic `import()` and backtick `require`.
+    #[test]
+    fn test_python_and_js_import_extraction() {
+        let py = "import os, sys as system\nfrom .rel import thing\nfrom pkg.mod import x\n";
+        let imports = SymbolExtractor::new(Path::new("a.py"))
+            .extract_imports(py)
+            .unwrap();
+        let paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths, vec!["os", "sys", ".rel", "pkg.mod"], "{paths:?}");
+
+        let js = concat!(
+            "import a from './a';\n",
+            "export { b } from './b';\n",
+            "export * from './c';\n",
+            "const d = require(`./d`);\n",
+            "const e = await import('./e');\n",
+            "const bad = require(`./${name}`);\n",
+        );
+        let imports = SymbolExtractor::new(Path::new("index.js"))
+            .extract_imports(js)
+            .unwrap();
+        let mut paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["./a", "./b", "./c", "./d", "./e"], "{paths:?}");
+    }
+
+    /// Roadmap 5.6: Python — classes, functions, methods, module constants,
+    /// with line numbers.
+    #[test]
+    fn test_python_extraction_with_lines() {
+        let src = "MAX_RETRIES = 3\n\nclass Client:\n    def __init__(self):\n        pass\n\n    @property\n    def name(self):\n        return 'x'\n\ndef helper(x):\n    return x\n";
+        let syms = SymbolExtractor::new(Path::new("client.py"))
+            .extract(src)
+            .unwrap();
+        let find = |n: &str| {
+            syms.iter()
+                .find(|s| s.name == n)
+                .unwrap_or_else(|| panic!("{n}: {syms:?}"))
+        };
+        assert_eq!(find("MAX_RETRIES").symbol_type, SymbolType::Constant);
+        assert_eq!(find("MAX_RETRIES").line, 0);
+        assert_eq!(find("Client").symbol_type, SymbolType::Class);
+        assert_eq!(find("Client").line, 2);
+        assert_eq!(find("__init__").line, 3);
+        assert_eq!(
+            find("name").line,
+            7,
+            "decorated method: name line, not decorator line"
+        );
+        assert_eq!((find("helper").line, find("helper").column), (10, 4));
+    }
+
+    /// Roadmap 5.6: C and a C++ header named `.h`.
+    #[test]
+    fn test_c_and_cpp_header_extraction() {
+        let c_src = "typedef struct point { int x; } point_t;\nstatic int *make_ptr(void) { return 0; }\nint &ref_fn();\nenum color { RED };\nint add(int a, int b) {\n    return a + b;\n}\n";
+        let syms = SymbolExtractor::new(Path::new("m.c"))
+            .extract(c_src)
+            .unwrap();
+        let has = |n: &str, t: SymbolType| syms.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("point", SymbolType::Struct), "{syms:?}");
+        assert!(has("point_t", SymbolType::Type), "typedef: {syms:?}");
+        assert!(
+            has("make_ptr", SymbolType::Function),
+            "pointer declarator unwrapped: {syms:?}"
+        );
+        assert!(has("color", SymbolType::Enum), "{syms:?}");
+        assert!(has("add", SymbolType::Function));
+        assert!(
+            !syms
+                .iter()
+                .any(|s| s.name.contains('*') || s.name.contains('&')),
+            "{syms:?}"
+        );
+
+        // A .h that is really C++: class/namespace parse (they would be ERROR
+        // nodes under the C grammar).
+        let h_src = "namespace geo {\nclass Shape {\npublic:\n    virtual double area() const;\n    Shape();\n};\n}\n";
+        let syms = SymbolExtractor::new_for_source(Path::new("shape.h"), Some(h_src))
+            .extract(h_src)
+            .unwrap();
+        let has = |n: &str, t: SymbolType| syms.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("geo", SymbolType::Module), "{syms:?}");
+        assert!(has("Shape", SymbolType::Class), "{syms:?}");
+        assert!(
+            has("area", SymbolType::Method),
+            "in-class declaration: {syms:?}"
+        );
+        // Plain C header stays C.
+        let plain = "int add(int a, int b);\n";
+        let syms = SymbolExtractor::new_for_source(Path::new("add.h"), Some(plain))
+            .extract(plain)
+            .unwrap();
+        assert!(syms.iter().any(|s| s.name == "add"), "{syms:?}");
+    }
+
+    /// Roadmap 5.2/5.3: kinds and coverage added on top of the tags queries.
+    #[test]
+    fn test_extra_kinds_and_coverage() {
+        let rs = "pub trait Shape {\n    fn area(&self) -> f64;\n}\nmacro_rules! sq { ($x:expr) => { $x * $x }; }\npub union U { a: u32 }\nmod inner {}\nimpl Shape for U {\n    fn area(&self) -> f64 { 0.0 }\n}\n";
+        let syms = SymbolExtractor::new(Path::new("s.rs")).extract(rs).unwrap();
+        let has = |n: &str, t: SymbolType| syms.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("Shape", SymbolType::Trait), "{syms:?}");
+        assert!(
+            has("area", SymbolType::Method),
+            "trait signature + impl method: {syms:?}"
+        );
+        assert!(has("sq", SymbolType::Macro), "{syms:?}");
+        assert!(has("U", SymbolType::Struct), "union: {syms:?}");
+        assert!(has("inner", SymbolType::Module), "{syms:?}");
+        assert_eq!(
+            syms.iter().filter(|s| s.name == "area").count(),
+            2,
+            "one per line"
+        );
+
+        let cs = "namespace App {\n  public delegate void Handler(int x);\n  public class Svc {\n    public int Count { get; set; }\n    public void Run() {}\n  }\n}\n";
+        let syms = SymbolExtractor::new(Path::new("a.cs")).extract(cs).unwrap();
+        let has = |n: &str, t: SymbolType| syms.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("App", SymbolType::Module), "{syms:?}");
+        assert!(has("Handler", SymbolType::Type), "delegate: {syms:?}");
+        assert!(has("Count", SymbolType::Property), "{syms:?}");
+        assert!(has("Run", SymbolType::Method), "{syms:?}");
+
+        let go = "package p\ntype ID = string\ntype Reader interface{ Read() }\n";
+        let syms = SymbolExtractor::new(Path::new("p.go")).extract(go).unwrap();
+        let has = |n: &str, t: SymbolType| syms.iter().any(|s| s.name == n && s.symbol_type == t);
+        assert!(has("ID", SymbolType::Type), "type alias: {syms:?}");
+        assert!(has("Reader", SymbolType::Interface), "{syms:?}");
+
+        // Case-insensitive extension.
+        let syms = SymbolExtractor::new(Path::new("X.RS"))
+            .extract("fn upper_ext() {}\n")
+            .unwrap();
+        assert!(syms.iter().any(|s| s.name == "upper_ext"), "{syms:?}");
+        // Markup is not parsed at all.
+        assert!(!SymbolExtractor::new(Path::new("package-lock.json")).is_supported());
     }
 
     #[test]
@@ -1150,7 +1934,7 @@ void globalFunction() {
         assert!(
             symbols
                 .iter()
-                .any(|s| s.name == "MyNamespace" && s.symbol_type == SymbolType::Class),
+                .any(|s| s.name == "MyNamespace" && s.symbol_type == SymbolType::Module),
             "Should find MyNamespace namespace"
         );
         assert!(
@@ -1201,7 +1985,7 @@ end
         assert!(
             symbols
                 .iter()
-                .any(|s| s.name == "Helpers" && s.symbol_type == SymbolType::Class),
+                .any(|s| s.name == "Helpers" && s.symbol_type == SymbolType::Module),
             "Should find Helpers module"
         );
         assert!(

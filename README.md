@@ -29,7 +29,7 @@ It ships two engines:
 
 ## Quick start
 
-Requires Rust 1.70+ and the Protocol Buffers compiler (`protoc`).
+Requires Rust 1.89+ and the Protocol Buffers compiler (`protoc`).
 
 ```bash
 cargo build --release
@@ -48,14 +48,16 @@ curl "http://localhost:8080/api/search?q=fn%20main&max=10"
 ```
 
 `cargo keyword` and `cargo semantic` are aliases defined in [.cargo/config.toml](.cargo/config.toml).
-For the optional semantic engine, see [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
+The semantic engine is behind the `semantic` Cargo feature (`ml-models` implies it), so the
+default build is the keyword server only; see
+[docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
 
 ## Features
 
 - **Trigram inverted index** over Roaring bitmaps; candidate lookup is a bitmap
   intersection, independent of corpus size.
-- **Symbol-aware ranking.** tree-sitter parses 12 programming languages (plus JSON,
-  TOML, YAML, HTML, CSS, Markdown); definitions outrank usages.
+- **Symbol-aware ranking.** tree-sitter parses 12 programming languages using each
+  grammar's own `tags.scm` definitions query; definitions outrank usages.
 - **Dependency graph.** Imports are resolved across the codebase — query "what
   imports this file", and heavily-imported files rank higher.
 - **Regex search** accelerated by literal pre-filtering: required literals are
@@ -81,6 +83,14 @@ Scores combine a content match with structural signals:
 | File in `src/` or `lib/` | 1.5× |
 | Heavily-imported file | `1 + log10(importers) × 0.5` |
 | Long lines | inverse-length penalty |
+
+## Network exposure
+
+The server has no authentication: the REST API returns full file contents and
+the gRPC `Index` RPC indexes paths on request (restricted to the configured
+`paths`). Both listeners therefore bind to loopback by default. Bind to
+`0.0.0.0` only on a trusted network, and list explicit `cors_origins` if a page
+on another origin needs to call the API (the embedded UI does not).
 
 ## Why a server instead of a CLI?
 
@@ -147,8 +157,8 @@ cargo run --release --bin fast_code_search_server -- --init config.toml
 
 ```toml
 [server]
-address = "0.0.0.0:50051"      # gRPC
-web_address = "0.0.0.0:8080"   # REST + web UI
+address = "127.0.0.1:50051"    # gRPC
+web_address = "127.0.0.1:8080" # REST + web UI
 enable_web_ui = true
 
 [indexer]

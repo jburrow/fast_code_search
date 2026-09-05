@@ -6,8 +6,9 @@
 //! These benchmarks measure the performance of saving and loading indexes
 //! from disk, focusing on the optimizations for parallel deserialization.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fast_code_search::search::SearchEngine;
+use std::hint::black_box;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;

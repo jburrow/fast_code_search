@@ -10,6 +10,7 @@ use crate::utils::normalize_path_for_comparison;
 
 /// Telemetry / OpenTelemetry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     /// Enable OpenTelemetry trace export (default: false)
     /// Can be overridden by env var FCS_TRACING_ENABLED or OTEL_SDK_DISABLED
@@ -49,15 +50,16 @@ impl TelemetryConfig {
     /// Apply environment variable overrides.
     /// Env vars take precedence over TOML config values.
     pub fn with_env_overrides(mut self) -> Self {
-        // OTEL_SDK_DISABLED=true → disabled (official OTel convention)
+        // FCS_TRACING_ENABLED overrides the TOML value (project-specific switch)
+        if let Ok(val) = std::env::var("FCS_TRACING_ENABLED") {
+            self.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        // OTEL_SDK_DISABLED=true is the standard kill-switch and is FINAL:
+        // nothing else may re-enable export after it.
         if let Ok(val) = std::env::var("OTEL_SDK_DISABLED") {
             if val.eq_ignore_ascii_case("true") {
                 self.enabled = false;
             }
-        }
-        // FCS_TRACING_ENABLED=false → disabled (project-specific kill-switch)
-        if let Ok(val) = std::env::var("FCS_TRACING_ENABLED") {
-            self.enabled = val.eq_ignore_ascii_case("true") || val == "1";
         }
         if let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
             if !val.is_empty() {
@@ -75,6 +77,7 @@ impl TelemetryConfig {
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -88,6 +91,7 @@ pub struct Config {
 
 /// Server-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Address to bind the gRPC server to
     #[serde(default = "default_address")]
@@ -100,6 +104,24 @@ pub struct ServerConfig {
     /// Enable the web UI and REST API
     #[serde(default = "default_enable_web_ui")]
     pub enable_web_ui: bool,
+
+    /// Origins allowed to call the REST API cross-origin (CORS).
+    ///
+    /// Empty (the default) sends no CORS headers, so only same-origin pages
+    /// (the embedded web UI) can read API responses. List explicit origins
+    /// such as `"http://localhost:3000"`, or `"*"` to allow any origin. The
+    /// API serves full source files, so keep this tight.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+
+    /// Maximum searches executing at once on the REST API; further requests
+    /// get 503 + Retry-After instead of queueing on the blocking pool.
+    #[serde(default = "default_max_concurrent_searches")]
+    pub max_concurrent_searches: usize,
+
+    /// Per-request timeout for the REST and gRPC servers, in seconds.
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
 
     /// Serve static UI files from this directory instead of the embedded assets.
     ///
@@ -115,6 +137,7 @@ pub struct ServerConfig {
 
 /// Indexer-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IndexerConfig {
     /// Paths to index on startup
     #[serde(default)]
@@ -127,6 +150,10 @@ pub struct IndexerConfig {
     /// Glob-like patterns to exclude (matched as path substrings during discovery)
     #[serde(default = "default_exclude_patterns")]
     pub exclude_patterns: Vec<String>,
+
+    /// Honour `.gitignore` / `.ignore` files under the indexed paths (default true).
+    #[serde(default = "default_true")]
+    pub respect_gitignore: bool,
 
     /// Maximum file size to index in bytes (default 10MB)
     #[serde(default = "default_max_file_size")]
@@ -192,16 +219,27 @@ pub struct IndexerConfig {
     pub enable_symbols: bool,
 }
 
+// Both servers bind to loopback by default: there is no authentication, the
+// REST API serves full file contents and the gRPC Index RPC indexes paths on
+// request. Exposing them on a network is an explicit choice (`0.0.0.0:…`).
 fn default_address() -> String {
-    "0.0.0.0:50051".to_string()
+    "127.0.0.1:50051".to_string()
 }
 
 fn default_web_address() -> String {
-    "0.0.0.0:8080".to_string()
+    "127.0.0.1:8080".to_string()
 }
 
 fn default_enable_web_ui() -> bool {
     true
+}
+
+fn default_max_concurrent_searches() -> usize {
+    64
+}
+
+fn default_request_timeout_secs() -> u64 {
+    30
 }
 
 fn default_exclude_patterns() -> Vec<String> {
@@ -235,6 +273,9 @@ impl Default for ServerConfig {
             address: default_address(),
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
+            cors_origins: Vec::new(),
+            max_concurrent_searches: default_max_concurrent_searches(),
+            request_timeout_secs: default_request_timeout_secs(),
             static_dir: None,
         }
     }
@@ -246,6 +287,7 @@ impl Default for IndexerConfig {
             paths: Vec::new(),
             include_extensions: Vec::new(),
             exclude_patterns: default_exclude_patterns(),
+            respect_gitignore: true,
             max_file_size: default_max_file_size(),
             index_path: None,
             watch: false,
@@ -291,7 +333,12 @@ impl IndexerConfig {
         );
 
         // Generate MD5 hash
-        format!("{:x}", md5::compute(config_str.as_bytes()))
+        // FxHasher is a documented, deterministic algorithm (unlike
+        // DefaultHasher), so the fingerprint is stable across runs and builds.
+        use std::hash::Hasher as _;
+        let mut h = rustc_hash::FxHasher::default();
+        h.write(config_str.as_bytes());
+        format!("{:016x}", h.finish())
     }
 
     /// Check if a file path is explicitly excluded via `exclude_files`.
@@ -304,6 +351,22 @@ impl IndexerConfig {
             let excluded_normalized = excluded.replace('\\', "/");
             path_str == excluded_normalized
         })
+    }
+
+    /// Canonicalize every configured index path that exists on disk.
+    ///
+    /// The file store keys files by canonical path; the watcher reports
+    /// events under whatever form the root was configured in (relative,
+    /// symlinked, `\\?\`-prefixed on Windows). Canonicalizing the roots once
+    /// makes exact-path lookups hit on every event instead of falling back to
+    /// an O(n) suffix scan. Non-existent paths are left as written so the
+    /// usual "path does not exist" warning still names what the user typed.
+    pub fn canonicalize_paths(&mut self) {
+        for p in &mut self.paths {
+            if let Ok(canonical) = std::path::Path::new(p.as_str()).canonicalize() {
+                *p = canonical.to_string_lossy().to_string();
+            }
+        }
     }
 
     /// Check if a path is within the configured index paths
@@ -369,14 +432,26 @@ impl Config {
 # Generated template - customize as needed
 
 [server]
-# Address to bind the gRPC server to
-address = "0.0.0.0:50051"
+# Address to bind the gRPC server to.
+# Loopback by default: the server has no authentication and serves full file
+# contents. Use "0.0.0.0:50051" only on a trusted network.
+address = "127.0.0.1:50051"
 
-# Address to bind the HTTP/Web UI server to
-web_address = "0.0.0.0:8080"
+# Address to bind the HTTP/Web UI server to (same caveat as above)
+web_address = "127.0.0.1:8080"
 
 # Enable the web UI and REST API (default: true)
 enable_web_ui = true
+
+# Origins allowed to call the REST API from another site (CORS).
+# Empty (default) = same-origin only, which is all the embedded UI needs.
+# cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
+
+# Searches executing at once on the REST API; extra requests get 503 + Retry-After
+# max_concurrent_searches = 64
+
+# Per-request timeout (seconds) for both servers
+# request_timeout_secs = 30
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
@@ -392,6 +467,9 @@ paths = [
     # "C:/code/another-project",
     # "/home/user/projects/my-app",
 ]
+
+# Honour .gitignore / .ignore files under the indexed paths (default: true)
+# respect_gitignore = true
 
 # File extensions to include (empty = all text files)
 # Uncomment and customize to limit indexed file types
@@ -486,15 +564,91 @@ service_name = "fast_code_search"
     }
 
     /// Merge CLI overrides into the configuration
-    pub fn with_overrides(mut self, address: Option<String>, extra_paths: Vec<String>) -> Self {
+    pub fn with_overrides(
+        mut self,
+        address: Option<String>,
+        web_address: Option<String>,
+        extra_paths: Vec<String>,
+    ) -> Self {
         if let Some(addr) = address {
             self.server.address = addr;
+        }
+        if let Some(addr) = web_address {
+            self.server.web_address = addr;
         }
 
         // Append extra paths from CLI
         self.indexer.paths.extend(extra_paths);
+        self.indexer.canonicalize_paths();
 
         self
+    }
+
+    /// Check the configuration before anything binds or indexes.
+    ///
+    /// Hard errors (unparseable addresses, zero limits, an index_path whose
+    /// directory does not exist) are returned; soft problems (an index path
+    /// that does not exist yet, no paths at all) come back as warnings so
+    /// the caller can log them and continue.
+    pub fn validate(&self) -> Result<Vec<String>> {
+        use std::net::SocketAddr;
+        let mut warnings = Vec::new();
+
+        self.server
+            .address
+            .parse::<SocketAddr>()
+            .with_context(|| format!("server.address is not host:port: {}", self.server.address))?;
+        if self.server.enable_web_ui {
+            self.server
+                .web_address
+                .parse::<SocketAddr>()
+                .with_context(|| {
+                    format!(
+                        "server.web_address is not host:port: {}",
+                        self.server.web_address
+                    )
+                })?;
+            if self.server.web_address == self.server.address {
+                anyhow::bail!(
+                    "server.address and server.web_address are both {}",
+                    self.server.address
+                );
+            }
+        }
+        if self.server.max_concurrent_searches == 0 {
+            anyhow::bail!("server.max_concurrent_searches must be at least 1");
+        }
+        if self.server.request_timeout_secs == 0 {
+            anyhow::bail!("server.request_timeout_secs must be at least 1");
+        }
+        if self.indexer.batch_size == 0 {
+            anyhow::bail!("indexer.batch_size must be at least 1");
+        }
+        if let Some(index_path) = &self.indexer.index_path {
+            let p = Path::new(index_path);
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() && !parent.is_dir() {
+                    anyhow::bail!(
+                        "indexer.index_path directory does not exist: {}",
+                        parent.display()
+                    );
+                }
+            }
+        }
+        if self.indexer.paths.is_empty() {
+            warnings.push("indexer.paths is empty: nothing will be indexed".to_string());
+        }
+        for p in &self.indexer.paths {
+            if !Path::new(p).exists() {
+                warnings.push(format!("indexer.paths entry does not exist (yet): {p}"));
+            }
+        }
+        if self.indexer.save_after_updates > 0 && self.indexer.index_path.is_none() {
+            warnings.push(
+                "indexer.save_after_updates is set but indexer.index_path is not".to_string(),
+            );
+        }
+        Ok(warnings)
     }
 }
 
@@ -502,10 +656,60 @@ service_name = "fast_code_search"
 mod tests {
     use super::*;
 
+    /// Roadmap 4.5: a misspelled key is an error, not a silently ignored
+    /// default; the generated template must parse; validate() catches bad
+    /// addresses and zero limits and warns about missing paths.
+    #[test]
+    fn test_unknown_key_rejected_and_template_parses() {
+        let err = toml::from_str::<Config>("[indexer]\nexlude_patterns = [\"x\"]\n")
+            .expect_err("typo must be rejected");
+        assert!(err.to_string().contains("exlude_patterns"), "{err}");
+
+        let template = Config::generate_template();
+        let cfg: Config = toml::from_str(&template).expect("template must parse");
+        assert_eq!(cfg.server.address, "127.0.0.1:50051");
+    }
+
+    #[test]
+    fn test_validate_reports_errors_and_warnings() {
+        let mut cfg = Config::default();
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("indexer.paths is empty")));
+
+        cfg.server.address = "not-an-address".to_string();
+        assert!(cfg.validate().is_err());
+        cfg.server.address = "127.0.0.1:1".to_string();
+        cfg.server.web_address = "127.0.0.1:1".to_string();
+        assert!(cfg.validate().is_err(), "same port twice");
+        cfg.server.web_address = "127.0.0.1:2".to_string();
+        cfg.indexer.batch_size = 0;
+        assert!(cfg.validate().is_err());
+        cfg.indexer.batch_size = 10;
+        cfg.indexer.index_path = Some("/definitely/not/here/index.bin".to_string());
+        assert!(cfg.validate().is_err());
+        cfg.indexer.index_path = None;
+        cfg.indexer.paths = vec!["/no/such/dir".to_string()];
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings.iter().any(|w| w.contains("does not exist")));
+    }
+
+    #[test]
+    fn test_with_overrides_sets_web_address() {
+        let cfg = Config::default().with_overrides(
+            Some("127.0.0.1:9000".to_string()),
+            Some("127.0.0.1:9001".to_string()),
+            vec![],
+        );
+        assert_eq!(cfg.server.address, "127.0.0.1:9000");
+        assert_eq!(cfg.server.web_address, "127.0.0.1:9001");
+    }
+
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.server.address, "0.0.0.0:50051");
+        assert_eq!(config.server.address, "127.0.0.1:50051");
         assert!(config.indexer.paths.is_empty());
         assert!(!config.indexer.exclude_patterns.is_empty());
     }

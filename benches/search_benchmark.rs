@@ -11,8 +11,9 @@
 //! - Shorter measurement times (3s vs 10s)
 //! - Reuses engines across related benchmarks where possible
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fast_code_search::search::SearchEngine;
+use std::hint::black_box;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;

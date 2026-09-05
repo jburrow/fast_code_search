@@ -5,7 +5,7 @@ use crate::diagnostics::{
     self, ConfigSummary, DiagnosticsQuery, ExtensionBreakdown, HealthStatus,
     KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
 };
-use crate::search::{IndexingStatus, RankMode};
+use crate::search::{IndexingStatus, RankMode, SearchEngine, SearchLimits};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -48,8 +48,13 @@ impl From<(StatusCode, String)> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        let mut resp =
-            (self.status, Json(ErrorResponse { error: self.message })).into_response();
+        let mut resp = (
+            self.status,
+            Json(ErrorResponse {
+                error: self.message,
+            }),
+        )
+            .into_response();
         if self.status == StatusCode::SERVICE_UNAVAILABLE {
             resp.headers_mut().insert(
                 axum::http::header::RETRY_AFTER,
@@ -57,6 +62,32 @@ impl IntoResponse for ApiError {
             );
         }
         resp
+    }
+}
+
+/// `axum::extract::Query` whose rejection is the same JSON `{ "error": … }`
+/// envelope every handler error uses (a plain-text 400 from the built-in
+/// extractor was the one inconsistent response on the API).
+pub struct ApiQuery<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiQuery<T>
+where
+    T: serde::de::DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match Query::<T>::from_request_parts(parts, state).await {
+            Ok(Query(v)) => Ok(ApiQuery(v)),
+            Err(rej) => Err(ApiError::from((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid query parameters: {}", rej.body_text()),
+            ))),
+        }
     }
 }
 
@@ -86,15 +117,36 @@ pub struct SearchQuery {
     /// Number of context lines to return before and after each match (default: 0)
     #[serde(default)]
     context: usize,
+    /// Results to skip before the returned page (default: 0). Ordering is
+    /// deterministic, so `offset=max` returns the next page.
+    #[serde(default)]
+    offset: usize,
+    /// Stop scanning after this many milliseconds and return the best
+    /// matches seen so far (0 = no deadline; capped server-side).
+    #[serde(default)]
+    timeout_ms: u64,
+    /// Case-sensitive matching (overrides `case:` in the query).
+    #[serde(default)]
+    case: Option<bool>,
+    /// Whole-word matching (overrides `word:` in the query).
+    #[serde(default)]
+    word: Option<bool>,
 }
 
 fn default_max_results() -> usize {
     50
 }
 
+/// Upper bound for a client-requested search deadline.
+const MAX_SEARCH_TIMEOUT_MS: u64 = 30_000;
+
 /// Maximum number of context lines allowed per match.
 /// Capped to avoid returning excessively large payloads for dense result sets.
 const MAX_CONTEXT_LINES: usize = 10;
+
+/// Maximum lines of context on each side for `/api/context` (hover preview /
+/// "show more" windows). Larger windows should use `/api/file`.
+const MAX_CONTEXT_WINDOW_LINES: usize = 200;
 
 /// Search result for JSON response
 #[derive(Debug, Serialize)]
@@ -108,6 +160,14 @@ pub struct SearchResultJson {
     pub match_end: usize,
     /// Whether content was truncated from original line
     pub content_truncated: bool,
+    /// Byte offset of the match start within the FULL line (not the possibly
+    /// truncated `content`); within the display path for filename hits.
+    pub line_match_start: usize,
+    /// Byte offset of the match end within the full line.
+    pub line_match_end: usize,
+    /// 0-based character column of the match start within the full line
+    /// (use this to place an editor cursor).
+    pub match_column: usize,
     pub score: f64,
     pub match_type: &'static str,
     pub dependency_count: u32,
@@ -125,9 +185,18 @@ pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
     pub query: String,
     pub total_results: usize,
-    /// True when the result set was capped at `max` (more matches likely exist).
-    /// `total_results` reflects the returned page length, not the full match count.
+    /// True when more results exist beyond this page: either `total_matches`
+    /// exceeds `offset + total_results`, or the search stopped early on its
+    /// match budget / deadline (`truncated_by_budget`).
     pub has_more: bool,
+    /// Offset that was applied to this page.
+    pub offset: usize,
+    /// Total matches found across all searched files (before paging), when
+    /// the search ran to completion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_matches: Option<usize>,
+    /// True when the match budget or deadline stopped the scan early.
+    pub truncated_by_budget: bool,
     /// Time taken by the search in milliseconds
     pub elapsed_ms: f64,
     /// Ranking mode used: "auto", "fast", or "full"
@@ -184,10 +253,100 @@ pub struct StatusResponse {
     pub total_content_bytes: u64,
 }
 
+/// Cached, per-generation part of the diagnostics response.
+#[derive(Debug, Clone)]
+pub struct DiagnosticsCache {
+    pub generation: u64,
+    pub files_by_extension: Vec<ExtensionBreakdown>,
+}
+
+/// Readiness: 200 once the index can serve results (a build/reconcile has
+/// completed, or an index is loaded and no build is running), 503 otherwise.
+/// `/api/health` stays a pure liveness check.
+pub async fn ready_handler(State(state): State<WebState>) -> Result<Json<ReadyResponse>, ApiError> {
+    let (ready, status, num_files) = readiness(&state);
+    let body = ReadyResponse {
+        ready,
+        status,
+        num_files,
+    };
+    if ready {
+        Ok(Json(body))
+    } else {
+        Err(ApiError::from((
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "Index not ready (status: {}, files: {})",
+                body.status, body.num_files
+            ),
+        )))
+    }
+}
+
+/// Readiness response
+#[derive(Debug, Serialize)]
+pub struct ReadyResponse {
+    pub ready: bool,
+    pub status: String,
+    pub num_files: usize,
+}
+
+/// (ready, status name, live file count) without blocking a worker thread.
+fn readiness(state: &WebState) -> (bool, String, usize) {
+    let status = state
+        .progress
+        .try_read()
+        .map(|p| p.status)
+        .unwrap_or_default();
+    let num_files = state
+        .engine
+        .try_read()
+        .map(|e| e.get_stats().num_files)
+        .unwrap_or(0);
+    let ready = match status {
+        IndexingStatus::Completed => true,
+        IndexingStatus::Idle => num_files > 0,
+        _ => false,
+    };
+    (ready, format!("{status:?}").to_lowercase(), num_files)
+}
+
+/// Prometheus text exposition of request counters and index gauges.
+pub async fn metrics_handler(State(state): State<WebState>) -> impl IntoResponse {
+    let (ready, status, _) = readiness(&state);
+    let indexing = !matches!(status.as_str(), "completed" | "idle");
+    let gauges = state
+        .engine
+        .try_read()
+        .map(|e| {
+            let s = e.get_stats();
+            super::metrics::IndexGauges {
+                files: s.num_files as u64,
+                trigrams: s.num_trigrams as u64,
+                dependency_edges: s.dependency_edges as u64,
+                content_bytes: s.total_content_bytes,
+                indexing,
+                ready,
+            }
+        })
+        .unwrap_or(super::metrics::IndexGauges {
+            indexing,
+            ready,
+            ..Default::default()
+        });
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(&gauges),
+    )
+}
+
 /// Handle search requests
 pub async fn search_handler(
     State(state): State<WebState>,
-    Query(params): Query<SearchQuery>,
+    ApiQuery(params): ApiQuery<SearchQuery>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let query = params.q.trim().to_string();
 
@@ -197,6 +356,9 @@ pub async fn search_handler(
             query: String::new(),
             total_results: 0,
             has_more: false,
+            offset: 0,
+            total_matches: Some(0),
+            truncated_by_budget: false,
             elapsed_ms: 0.0,
             rank_mode: None,
             total_candidates: None,
@@ -205,6 +367,15 @@ pub async fn search_handler(
     }
 
     let max_results = params.max.clamp(1, 1000);
+    let offset = params.offset;
+    let case_override = params.case;
+    let word_override = params.word;
+    let mut limits = SearchLimits::new(max_results).with_offset(offset);
+    if params.timeout_ms > 0 {
+        limits = limits.with_timeout(std::time::Duration::from_millis(
+            params.timeout_ms.min(MAX_SEARCH_TIMEOUT_MS),
+        ));
+    }
     let include_patterns = params.include;
     let exclude_patterns = params.exclude;
     let is_regex = params.regex;
@@ -218,59 +389,75 @@ pub async fn search_handler(
         _ => RankMode::Auto, // Default to auto
     };
 
+    // Concurrency limit: each search occupies a blocking-pool thread, so
+    // beyond the configured number we answer 503 + Retry-After immediately
+    // rather than letting requests pile up and starve the other endpoints.
+    let _permit = match state.search_permits.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            state.metrics.record_rejected();
+            return Err(ApiError::from((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent searches, please try again shortly".to_string(),
+            )));
+        }
+    };
+    let metrics = state.metrics.clone();
+    let request_start = std::time::Instant::now();
+
     let engine = state.engine.clone();
-    tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
+    let outcome = tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Start timing the search
         let start_time = std::time::Instant::now();
 
         // Use try_read to avoid blocking when a write lock is held during indexing.
         // Blocking here would cause threads to pile up and exhaust the thread pool.
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
-        // Choose search method based on flags
+        // Plain-text and symbol queries understand the query syntax
+        // (file:, lang:, -term, case:, word:, quoted phrases); explicit
+        // parameters override the in-query switches. Regex is passed through.
+        let mut parsed = crate::search::parse_query(&query);
+        if let Some(c) = case_override {
+            parsed.options.case_sensitive = c;
+        }
+        if let Some(w) = word_override {
+            parsed.options.whole_word = w;
+        }
+
+        // Choose search method based on flags. Every mode reports ranking
+        // info (regex/symbols included) and honours the limits.
         let (matches, ranking_info) = if symbols_only {
-            // Search only in discovered symbols
-            let m = engine
-                .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+            engine
+                .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
                 .map_err(|e| {
                     (
                         StatusCode::BAD_REQUEST,
                         format!("Invalid filter pattern: {}", e),
                     )
-                })?;
-            (m, None)
+                })?
         } else if is_regex {
-            // Use regex search with optional path filtering
-            let m = engine
-                .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
+            engine
+                .search_regex_with_limits(
+                    &query,
+                    &include_patterns,
+                    &exclude_patterns,
+                    limits,
+                    rank_mode,
+                )
                 .map_err(|e| {
                     (
                         StatusCode::BAD_REQUEST,
                         format!("Invalid regex pattern: {}", e),
                     )
-                })?;
-            (m, None)
-        } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-            // Plain text search with ranking
-            let (m, info) = engine.search_ranked(&query, max_results, rank_mode);
-            (m, Some(info))
+                })?
         } else {
-            // Plain text search with path filtering and ranking
-            let (m, info) = engine
-                .search_with_filter_ranked(
-                    &query,
+            engine
+                .search_parsed(
+                    &parsed,
                     &include_patterns,
                     &exclude_patterns,
-                    max_results,
+                    limits,
                     rank_mode,
                 )
                 .map_err(|e| {
@@ -278,42 +465,38 @@ pub async fn search_handler(
                         StatusCode::BAD_REQUEST,
                         format!("Invalid filter pattern: {}", e),
                     )
-                })?;
-            (m, Some(info))
+                })?
         };
 
-        // Evict fallback file bytes cached when the OS mmap limit was exceeded.
-        // Without this, heap usage grows unboundedly across search requests on
-        // large codebases where mmap is unavailable for some files.
-        engine.evict_file_fallbacks();
-
+        // Context lines: each file is read and split ONCE per request (the
+        // result already carries the file id — no path lookup, no per-result
+        // re-read when many hits come from one file).
+        let mut line_cache: std::collections::HashMap<u32, Option<Vec<String>>> =
+            std::collections::HashMap::new();
         let results: Vec<SearchResultJson> = matches
             .into_iter()
             .map(|m| {
-                // Fetch context lines from the file store when requested
-                let (ctx_lines, ctx_start) = if context_lines > 0 {
-                    if let Some(file_id) = engine.find_file_id(&m.file_path) {
-                        if let Some(mapped) = engine.file_store.get(file_id) {
-                            if let Ok(content) = mapped.as_str() {
-                                let all_lines: Vec<&str> = content.lines().collect();
-                                let total = all_lines.len();
-                                let match_idx =
-                                    m.line_number.saturating_sub(1).min(total.saturating_sub(1));
-                                let start_idx = match_idx.saturating_sub(context_lines);
-                                let end_idx = (match_idx + context_lines + 1).min(total);
-                                let lines: Vec<String> = all_lines[start_idx..end_idx]
-                                    .iter()
-                                    .map(|l| l.to_string())
-                                    .collect();
-                                (Some(lines), Some(start_idx + 1))
-                            } else {
-                                (None, None)
-                            }
-                        } else {
-                            (None, None)
+                let (ctx_lines, ctx_start) = if context_lines > 0 && m.line_number > 0 {
+                    let lines = line_cache.entry(m.file_id).or_insert_with(|| {
+                        engine.file_store.get(m.file_id).and_then(|f| {
+                            f.as_str()
+                                .ok()
+                                .map(|c| c.lines().map(str::to_string).collect())
+                        })
+                    });
+                    match lines {
+                        Some(all_lines) => {
+                            let total = all_lines.len();
+                            let match_idx =
+                                m.line_number.saturating_sub(1).min(total.saturating_sub(1));
+                            let start_idx = match_idx.saturating_sub(context_lines);
+                            let end_idx = (match_idx + context_lines + 1).min(total);
+                            (
+                                Some(all_lines[start_idx..end_idx].to_vec()),
+                                Some(start_idx + 1),
+                            )
                         }
-                    } else {
-                        (None, None)
+                        None => (None, None),
                     }
                 } else {
                     (None, None)
@@ -326,6 +509,9 @@ pub async fn search_handler(
                     match_start: m.match_start,
                     match_end: m.match_end,
                     content_truncated: m.content_truncated,
+                    line_match_start: m.line_match_start,
+                    line_match_end: m.line_match_end,
+                    match_column: m.match_column,
                     score: m.score,
                     match_type: if m.is_symbol {
                         "SYMBOL_DEFINITION"
@@ -340,8 +526,10 @@ pub async fn search_handler(
             .collect();
 
         let total_results = results.len();
-        // Results are capped at max_results; equal length signals likely truncation.
-        let has_more = total_results >= max_results;
+        let has_more = match ranking_info.total_matches {
+            Some(total) => offset + total_results < total,
+            None => true, // truncated by budget/deadline: more may exist
+        };
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
         Ok(Json(SearchResponse {
@@ -349,12 +537,13 @@ pub async fn search_handler(
             query,
             total_results,
             has_more,
+            offset,
+            total_matches: ranking_info.total_matches,
+            truncated_by_budget: ranking_info.truncated_by_budget,
             elapsed_ms,
-            rank_mode: ranking_info
-                .as_ref()
-                .map(|r| format!("{:?}", r.mode).to_lowercase()),
-            total_candidates: ranking_info.as_ref().map(|r| r.total_candidates),
-            candidates_searched: ranking_info.as_ref().map(|r| r.candidates_searched),
+            rank_mode: Some(format!("{:?}", ranking_info.mode).to_lowercase()),
+            total_candidates: Some(ranking_info.total_candidates),
+            candidates_searched: Some(ranking_info.candidates_searched),
         }))
     })
     .await
@@ -364,25 +553,24 @@ pub async fn search_handler(
             format!("Task join error: {}", e),
         )
     })?
-    .map_err(ApiError::from)
+    .map_err(ApiError::from);
+
+    metrics.record_search(request_start.elapsed());
+    if let Err(e) = &outcome {
+        match e.status {
+            StatusCode::SERVICE_UNAVAILABLE => metrics.record_unavailable(),
+            s if s.is_client_error() => metrics.record_client_error(),
+            _ => {}
+        }
+    }
+    outcome
 }
 
 /// Handle stats requests
-pub async fn stats_handler(
-    State(state): State<WebState>,
-) -> Result<Json<StatsResponse>, ApiError> {
+pub async fn stats_handler(State(state): State<WebState>) -> Result<Json<StatsResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let stats = engine.get_stats();
 
@@ -506,20 +694,11 @@ pub struct DependencyResponse {
 /// Get files that depend on (import) the specified file
 pub async fn dependents_handler(
     State(state): State<WebState>,
-    Query(params): Query<DependencyQuery>,
+    ApiQuery(params): ApiQuery<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -555,20 +734,11 @@ pub async fn dependents_handler(
 /// Get files that the specified file depends on (imports)
 pub async fn dependencies_handler(
     State(state): State<WebState>,
-    Query(params): Query<DependencyQuery>,
+    ApiQuery(params): ApiQuery<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -620,20 +790,11 @@ pub struct FileResponse {
 /// Return the full content of a file by path
 pub async fn file_handler(
     State(state): State<WebState>,
-    Query(params): Query<FileQuery>,
+    ApiQuery(params): ApiQuery<FileQuery>,
 ) -> Result<Json<FileResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -705,20 +866,11 @@ pub struct ContextResponse {
 /// Return a window of lines around a matched line for the hover tooltip
 pub async fn context_handler(
     State(state): State<WebState>,
-    Query(params): Query<ContextQuery>,
+    ApiQuery(params): ApiQuery<ContextQuery>,
 ) -> Result<Json<ContextResponse>, ApiError> {
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         let file_id = engine.find_file_id(&params.file).ok_or_else(|| {
             (
@@ -744,10 +896,16 @@ pub async fn context_handler(
         let all_lines: Vec<&str> = content.lines().collect();
         let total = all_lines.len();
 
-        // line is 1-based; clamp to valid range
+        // line is 1-based; clamp to valid range. The window is capped so a
+        // client cannot pull an entire file through the "lightweight" endpoint
+        // (or overflow usize with context=usize::MAX).
+        let context = params.context.min(MAX_CONTEXT_WINDOW_LINES);
         let match_idx = params.line.saturating_sub(1).min(total.saturating_sub(1));
-        let start_idx = match_idx.saturating_sub(params.context);
-        let end_idx = (match_idx + params.context + 1).min(total);
+        let start_idx = match_idx.saturating_sub(context);
+        let end_idx = match_idx
+            .saturating_add(context)
+            .saturating_add(1)
+            .min(total);
 
         let lines: Vec<String> = all_lines[start_idx..end_idx]
             .iter()
@@ -799,6 +957,28 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
 }
 
 /// Handle a WebSocket connection for progress updates
+/// Acquire the engine read lock without blocking a worker thread.
+///
+/// `WouldBlock` (a writer holds the lock during indexing) becomes a 503 with
+/// `Retry-After`. A *poisoned* lock is recovered rather than turned into a
+/// permanent 500: every indexing path is wrapped in `catch_unwind`, so poison
+/// only means some other thread panicked, not that the index is unusable.
+fn try_read_engine(
+    engine: &std::sync::RwLock<SearchEngine>,
+) -> Result<std::sync::RwLockReadGuard<'_, SearchEngine>, (StatusCode, String)> {
+    match engine.try_read() {
+        Ok(guard) => Ok(guard),
+        Err(std::sync::TryLockError::WouldBlock) => Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Index is currently being updated, please try again shortly".to_string(),
+        )),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            tracing::error!("Search engine lock was poisoned; recovering for read");
+            Ok(poisoned.into_inner())
+        }
+    }
+}
+
 async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -821,10 +1001,23 @@ async fn handle_progress_socket(socket: WebSocket, state: WebState) {
         let _ = sender.send(Message::Text(json.into())).await;
     }
 
-    // Spawn a task to forward broadcast messages to the WebSocket
+    // Spawn a task to forward broadcast messages to the WebSocket. A ping
+    // every 30 s keeps half-open connections from lingering until TCP
+    // gives up (the client answers pongs automatically).
     let send_task = tokio::spawn(async move {
+        let mut ping = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping.tick().await; // first tick fires immediately; skip it
         loop {
-            match rx.recv().await {
+            let event = tokio::select! {
+                _ = ping.tick() => {
+                    if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                event = rx.recv() => event,
+            };
+            match event {
                 Ok(progress) => {
                     let stats = get_stats_from_engine(&engine);
                     let status_response = progress_to_status(&progress, stats);
@@ -933,80 +1126,106 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 /// Handle diagnostics requests with self-tests
 pub async fn diagnostics_handler(
     State(state): State<WebState>,
-    Query(params): Query<DiagnosticsQuery>,
+    ApiQuery(params): ApiQuery<DiagnosticsQuery>,
 ) -> Result<Json<KeywordDiagnosticsResponse>, ApiError> {
     let sample_count = params.sample_count.clamp(1, 20);
+    let force_refresh = params.force_refresh;
     let engine = state.engine.clone();
+    let indexer_config = state.indexer_config.clone();
+    let diagnostics_cache = state.diagnostics_cache.clone();
 
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         // Use try_read to avoid blocking when a write lock is held during indexing.
-        let engine = engine.try_read().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Index is currently being updated, please try again shortly".to_string(),
-            ),
-            std::sync::TryLockError::Poisoned(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to acquire engine read lock: {}", e),
-            ),
-        })?;
+        let engine = try_read_engine(&engine)?;
 
         // Get basic stats
         let stats = engine.get_stats();
 
-        // Build extension breakdown
-        let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
-        let mut all_file_paths: Vec<(u32, String)> = Vec::new();
-
-        for file_id in 0..engine.file_store.len() as u32 {
-            if let Some(mapped_file) = engine.file_store.get(file_id) {
-                let path_str = mapped_file.path.to_string_lossy().to_string();
-                all_file_paths.push((file_id, path_str.clone()));
-
-                let ext = mapped_file
-                    .path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("(none)")
-                    .to_lowercase();
-
-                let entry = ext_map.entry(ext).or_insert((0, 0));
-                entry.0 += 1;
-                // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
-                entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
-            }
-        }
-
-        // Convert to sorted extension breakdown
-        let mut files_by_extension: Vec<ExtensionBreakdown> = ext_map
-            .into_iter()
-            .map(|(ext, (count, bytes))| ExtensionBreakdown {
-                extension: ext,
-                count,
-                total_bytes: bytes,
-            })
-            .collect();
-        files_by_extension.sort_by(|a, b| b.count.cmp(&a.count));
-        files_by_extension.truncate(20); // Top 20 extensions
-
-        // Sample random files for display
-        let mut rng = rand::rng();
-        let sample_count_actual = sample_count.min(all_file_paths.len());
-        let sampled: Vec<&(u32, String)> = all_file_paths
-            .choose_multiple(&mut rng, sample_count_actual)
-            .collect();
-        let sample_files: Vec<String> = sampled.into_iter().map(|(_, p)| p.clone()).collect();
-
-        // Get config summary from progress state if available (we don't have direct config access here)
-        // For now, provide a minimal config summary
-        let config = ConfigSummary {
-            indexed_paths: vec!["(see server configuration)".to_string()],
-            include_extensions: vec![],
-            exclude_patterns: vec![],
-            max_file_size_bytes: 10 * 1024 * 1024, // default
-            index_path: None,
-            watch_enabled: false,
+        // Extension breakdown: an O(files) walk, cached per engine generation
+        // (every mutation bumps it) unless the client forces a refresh.
+        let generation = engine.generation();
+        let cached = if force_refresh {
+            None
+        } else {
+            diagnostics_cache
+                .lock()
+                .ok()
+                .and_then(|c| c.as_ref().filter(|c| c.generation == generation).cloned())
         };
+        let files_by_extension = match cached {
+            Some(c) => c.files_by_extension,
+            None => {
+                let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
+                for file_id in 0..engine.file_store.len() as u32 {
+                    if let Some(mapped_file) = engine.file_store.get(file_id) {
+                        let ext = mapped_file
+                            .path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("(none)")
+                            .to_lowercase();
+                        let entry = ext_map.entry(ext).or_insert((0, 0));
+                        entry.0 += 1;
+                        // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
+                        entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
+                    }
+                }
+                let mut v: Vec<ExtensionBreakdown> = ext_map
+                    .into_iter()
+                    .map(|(ext, (count, bytes))| ExtensionBreakdown {
+                        extension: ext,
+                        count,
+                        total_bytes: bytes,
+                    })
+                    .collect();
+                v.sort_by_key(|f| std::cmp::Reverse(f.count));
+                v.truncate(20); // Top 20 extensions
+                if let Ok(mut c) = diagnostics_cache.lock() {
+                    *c = Some(DiagnosticsCache {
+                        generation,
+                        files_by_extension: v.clone(),
+                    });
+                }
+                v
+            }
+        };
+
+        // Sample by id first; only the sampled files get a path String.
+        let mut rng = rand::rng();
+        let live_ids: Vec<u32> = (0..engine.file_store.len() as u32)
+            .filter(|&id| engine.file_store.get(id).is_some())
+            .collect();
+        let path_of = |id: u32| -> String {
+            engine
+                .file_store
+                .get(id)
+                .map(|f| f.path.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+        let sample_count_actual = sample_count.min(live_ids.len());
+        let sample_files: Vec<String> = live_ids
+            .choose_multiple(&mut rng, sample_count_actual)
+            .map(|&id| path_of(id))
+            .collect();
+        // Small pool for the self-tests below (they pick from it at random).
+        let all_file_paths: Vec<(u32, String)> = live_ids
+            .choose_multiple(&mut rng, 32.min(live_ids.len()))
+            .map(|&id| (id, path_of(id)))
+            .collect();
+
+        // Real configuration when the router was built by the server; the
+        // embedded/test router has none.
+        let config = indexer_config
+            .as_deref()
+            .map(ConfigSummary::from)
+            .unwrap_or_else(|| ConfigSummary {
+                indexed_paths: vec!["(not available: router built without config)".to_string()],
+                include_extensions: vec![],
+                exclude_patterns: vec![],
+                max_file_size_bytes: 0,
+                index_path: None,
+                watch_enabled: false,
+            });
 
         // Run self-tests
         let mut self_tests = Vec::new();

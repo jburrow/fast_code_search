@@ -2,6 +2,7 @@
 name = "fast_code_search"
 version = "0.9.0"
 edition = "2021"
+rust-version = "1.89"
 authors = ["James Burrow"]
 description = "High-performance, in-memory code search service with trigram indexing and symbol awareness"
 license = "MIT"
@@ -11,7 +12,7 @@ documentation = "https://docs.rs/fast_code_search"
 readme = "README.md"
 keywords = ["search", "code-search", "trigram", "grpc", "indexing"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**"]
+exclude = ["test_corpus/**", "target/**", ".github/**", "scripts/**", "onnxruntime/**", "node_modules/**", "vscode-extension/**", "docs/**", ".agents/**", "static/fonts/**"]
 default-run = "fast_code_search_server"
 
 [lib]
@@ -40,80 +41,73 @@ tree-sitter-c-sharp = "0.23"
 tree-sitter-ruby = "0.23"
 tree-sitter-php = "0.24"
 tree-sitter-bash = "0.23"
-# Language grammars - config and markup
-tree-sitter-json = "0.24"
-tree-sitter-toml-ng = "0.7"
-tree-sitter-yaml = "0.7"
-tree-sitter-html = "0.23"
-tree-sitter-css = "0.23"
-tree-sitter-md = "0.5"
 tonic = "0.14"
 tonic-prost = "0.14"
+tonic-health = "0.14" # standard gRPC health service
 prost = "0.14"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-stream = "0.1"
 rayon = "1.10"
 anyhow = "1.0"
 walkdir = "2.5"
+ignore = "0.4" # .gitignore-aware directory walking
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = "1.3"
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
-glob = "0.3"
 globset = "0.4"
 regex = "1.11"
 regex-syntax = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
-opentelemetry = { version = "0.27", features = ["trace"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"] }
-opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace"] }
-tracing-opentelemetry = "0.28"
-sysinfo = "0.33"
+opentelemetry = { version = "0.32", features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace"] }
+tracing-opentelemetry = "0.33"
+sysinfo = "0.37"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = { version = "0.3", features = ["sink"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"
 mime_guess = "2"
-md5 = "0.8"
 notify-debouncer-full = "0.7"
-ndarray = "0.15"                                                                # For vector operations in semantic search
-hnsw_rs = "0.3"                                                                 # HNSW for approximate nearest neighbor search
+ndarray = { version = "0.15", optional = true } # semantic: vector operations
+hnsw_rs = { version = "0.3", optional = true }  # semantic: approximate nearest neighbour search
 fs2 = "0.4"
 chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
 rand = "0.9"                                                                    # For random file sampling in self-tests
 tempfile = "3"                                                                  # For validator temporary corpus
-indicatif = "0.17"                                                              # Terminal progress bars
+indicatif = "0.18"                                                              # Terminal progress bars
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
 ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
     "load-dynamic",
 ] } # ONNX Runtime for ML model inference (rc.10 works with ONNX Runtime 1.18-1.22)
 tokenizers = { version = "0.22", optional = true } # HuggingFace tokenizers for text encoding
-sha2 = "0.10" # Checksum verification for model downloads
-reqwest = { version = "0.12", features = [
+sha2 = { version = "0.10", optional = true } # semantic: checksum verification for model downloads
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
     "json",
     "blocking",
-], optional = true } # HTTP client for model downloads
+], optional = true } # HTTP client for model downloads (rustls: no system OpenSSL needed)
 
 [features]
 default = []
-ml-models = [
-    "ort",
-    "tokenizers",
-    "reqwest",
-] # Enable ML model support (requires ONNX Runtime)
+# The optional semantic engine (TF-IDF, vector index, its gRPC/web servers).
+# Off by default so the keyword server builds without ndarray/hnsw.
+semantic = ["ndarray", "hnsw_rs", "sha2"]
+# Semantic engine with ONNX embedding models (requires ONNX Runtime at run time).
+ml-models = ["semantic", "ort", "tokenizers", "reqwest"]
 
 [dev-dependencies]
-tempfile = "3"
-reqwest = { version = "0.12", features = [
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
     "json",
     "blocking",
-] } # Also used for model downloads in production
-tokio-test = "0.4"
+] } # HTTP client for integration tests (rustls: no system OpenSSL needed)
 tokio-stream = { version = "0.1", features = ["net"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 dhat = "0.3"
 
 [[bench]]
@@ -134,6 +128,16 @@ path = "src/main.rs"
 [[bin]]
 name = "fast_code_search_semantic"
 path = "src/bin/fast_code_search_semantic.rs"
+required-features = ["semantic"]
+
+[[example]]
+name = "semantic_grpc_client"
+required-features = ["semantic"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
 
 [[bin]]
 name = "fast_code_search_validator"

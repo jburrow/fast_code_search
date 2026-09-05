@@ -1,11 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    create_progress_broadcaster, run_background_indexer, save_on_watcher_update,
-    BackgroundIndexerConfig, FileChange, FileWatcher, IndexingProgress, ProgressBroadcaster,
-    SharedIndexingProgress, WatcherConfig,
+    apply_changes, create_progress_broadcaster, run_background_indexer,
+    save_after_watcher_shutdown, save_on_watcher_update, BackgroundIndexerConfig, FileWatcher,
+    IndexingProgress, ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
@@ -24,9 +24,13 @@ struct Args {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Server listen address (overrides config file)
+    /// gRPC listen address (overrides config file)
     #[arg(short, long, value_name = "ADDR")]
     address: Option<String>,
+
+    /// Web UI / REST listen address (overrides config file)
+    #[arg(long, value_name = "ADDR")]
+    web_address: Option<String>,
 
     /// Additional paths to index (can be repeated, adds to config file paths)
     #[arg(short, long = "index", value_name = "PATH")]
@@ -119,6 +123,16 @@ async fn main() -> Result<()> {
 
     let addr = config.server.address.parse()?;
 
+    // Build the global rayon pool up front with 8 MB stacks. tree-sitter
+    // recursion runs on this pool during indexing; if a search (par_iter) got
+    // there first it would install the default 2 MB stacks instead.
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .stack_size(8 * 1024 * 1024)
+        .build_global()
+    {
+        tracing::warn!(error = %e, "Global rayon pool already initialized");
+    }
+
     // Create shared engine (empty initially, will be indexed in background)
     // Using RwLock allows concurrent read access during searches while only blocking for writes (indexing)
     let shared_engine = std::sync::Arc::new(std::sync::RwLock::new(
@@ -131,6 +145,23 @@ async fn main() -> Result<()> {
 
     // Create broadcast channel for WebSocket progress updates
     let progress_tx: ProgressBroadcaster = create_progress_broadcaster();
+
+    // Shutdown coordination: SIGINT/SIGTERM flips the flag (observed by the
+    // indexer and watcher threads) and the watch channel (observed by both
+    // servers' graceful-shutdown futures).
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown.store(true, std::sync::atomic::Ordering::Release);
+            let _ = shutdown_tx.send(true);
+        });
+    }
+    let mut web_handle: Option<tokio::task::JoinHandle<()>> = None;
+    let mut indexer_handle: Option<std::thread::JoinHandle<()>> = None;
+    let mut watcher_handle: Option<std::thread::JoinHandle<()>> = None;
 
     // Start web server first if enabled (so UI is available during indexing)
     if config.server.enable_web_ui {
@@ -156,24 +187,30 @@ async fn main() -> Result<()> {
 
         info!(web_address = %web_addr, "Starting Web UI server");
 
-        tokio::spawn(async move {
-            let router = web::create_router(web_engine, web_progress, web_progress_tx, static_dir);
-            let listener = match tokio::net::TcpListener::bind(&web_addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!(
-                        address = %web_addr,
-                        error = %e,
-                        "Failed to bind Web UI server to address"
-                    );
-                    return;
-                }
-            };
-            info!(address = %web_addr, "Web UI available at http://{}", web_addr);
-            if let Err(e) = axum::serve(listener, router).await {
+        // Bind here (not inside the task) so a port conflict is fatal instead
+        // of leaving a half-alive server with no REST API.
+        let listener = tokio::net::TcpListener::bind(&web_addr)
+            .await
+            .with_context(|| format!("Failed to bind Web UI server to {web_addr}"))?;
+        info!(address = %web_addr, "Web UI available at http://{}", web_addr);
+        let web_shutdown_rx = shutdown_rx.clone();
+        let mut router_options = web::RouterOptions::from(&config.server);
+        router_options.indexer_config = Some(config.indexer.clone());
+        web_handle = Some(tokio::spawn(async move {
+            let router = web::create_router_with_options(
+                web_engine,
+                web_progress,
+                web_progress_tx,
+                static_dir,
+                &router_options,
+            );
+            if let Err(e) = axum::serve(listener, router)
+                .with_graceful_shutdown(wait_for_shutdown(web_shutdown_rx))
+                .await
+            {
                 tracing::error!(error = %e, "Web UI server stopped unexpectedly");
             }
-        });
+        }));
     }
 
     // Start background indexing if enabled
@@ -184,14 +221,16 @@ async fn main() -> Result<()> {
         let index_progress_tx = progress_tx.clone();
         info!("Starting background indexing");
 
-        std::thread::spawn(move || {
+        let index_shutdown = shutdown.clone();
+        indexer_handle = Some(std::thread::spawn(move || {
             run_background_indexer(BackgroundIndexerConfig {
                 indexer_config,
                 engine: index_engine,
                 progress: index_progress,
                 progress_tx: index_progress_tx,
+                shutdown: index_shutdown,
             });
-        });
+        }));
     } else if args.no_auto_index {
         info!("Auto-indexing disabled via --no-auto-index flag");
     } else {
@@ -211,7 +250,13 @@ async fn main() -> Result<()> {
         let watch_indexer_config = config.indexer.clone();
         info!("Starting file watcher for incremental indexing");
 
-        std::thread::spawn(move || {
+        let watch_shutdown = shutdown.clone();
+        // Same 8 MB stack as the rayon workers: update_file runs tree-sitter on
+        // this thread, and a stack overflow is an abort, not a panic.
+        let watcher_thread = std::thread::Builder::new()
+            .name("file-watcher".into())
+            .stack_size(8 * 1024 * 1024);
+        let spawned = watcher_thread.spawn(move || {
             let watcher_config = WatcherConfig {
                 paths: watch_paths,
                 exclude_patterns: watch_exclude,
@@ -222,73 +267,55 @@ async fn main() -> Result<()> {
                     info!("File watcher started");
                     let mut watcher_updates_total: usize = 0;
                     loop {
-                        match watcher.recv_timeout(std::time::Duration::from_secs(1)) {
-                            Some(FileChange::Modified(path)) => {
-                                tracing::debug!(path = %path.display(), "File modified, updating index");
-                                let mut update_ok = false;
-                                if let Ok(mut engine) = watch_engine.write() {
-                                    match engine.update_file(&path) {
-                                        Ok(()) => update_ok = true,
-                                        Err(e) => tracing::warn!(
-                                            path = %path.display(),
-                                            error = %e,
-                                            "Failed to update file in index"
-                                        ),
-                                    }
+                        if watch_shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                            info!("File watcher stopping for shutdown");
+                            save_after_watcher_shutdown(
+                                &watch_indexer_config,
+                                &watch_engine,
+                                watcher_updates_total,
+                            );
+                            break;
+                        }
+                        if let Some(first) = watcher.recv_timeout(std::time::Duration::from_secs(1))
+                        {
+                            // Gather the rest of the burst (branch switch, formatter
+                            // run, generated files) for a short window so it is
+                            // applied under ONE write lock with one posting scan.
+                            let mut changes = vec![first];
+                            let deadline = std::time::Instant::now()
+                                + std::time::Duration::from_millis(WATCH_BATCH_WINDOW_MS);
+                            loop {
+                                let remaining =
+                                    deadline.saturating_duration_since(std::time::Instant::now());
+                                if remaining.is_zero() {
+                                    break;
                                 }
-                                if update_ok {
-                                    watcher_updates_total += 1;
-                                    save_on_watcher_update(
-                                        &watch_indexer_config,
-                                        &watch_engine,
-                                        watcher_updates_total,
-                                    );
+                                match watcher.recv_timeout(remaining) {
+                                    Some(c) => changes.push(c),
+                                    None => break,
                                 }
                             }
-                            Some(FileChange::Renamed { from, to }) => {
+                            tracing::debug!(
+                                count = changes.len(),
+                                "Applying file changes to index"
+                            );
+                            let outcome = with_engine_write(&watch_engine, |engine| {
+                                apply_changes(engine, &changes, &watch_indexer_config)
+                            });
+                            if let Some(outcome) = outcome.filter(|o| o.changed()) {
                                 tracing::debug!(
-                                    from = %from.display(),
-                                    to = %to.display(),
-                                    "File renamed: removing old path and indexing new path"
+                                    events = changes.len(),
+                                    indexed = outcome.indexed,
+                                    removed = outcome.removed,
+                                    "File changes applied"
                                 );
-                                let mut update_ok = false;
-                                if let Ok(mut engine) = watch_engine.write() {
-                                    // Drop the old path's entry, then index the new path.
-                                    engine.remove_file(&from);
-                                    match engine.update_file(&to) {
-                                        Ok(()) => update_ok = true,
-                                        Err(e) => tracing::warn!(
-                                            path = %to.display(),
-                                            error = %e,
-                                            "Failed to index renamed file"
-                                        ),
-                                    }
-                                }
-                                if update_ok {
-                                    watcher_updates_total += 1;
-                                    save_on_watcher_update(
-                                        &watch_indexer_config,
-                                        &watch_engine,
-                                        watcher_updates_total,
-                                    );
-                                }
+                                watcher_updates_total += 1;
+                                save_on_watcher_update(
+                                    &watch_indexer_config,
+                                    &watch_engine,
+                                    watcher_updates_total,
+                                );
                             }
-                            Some(FileChange::Deleted(path)) => {
-                                tracing::debug!(path = %path.display(), "File deleted, removing from index");
-                                let mut removed = false;
-                                if let Ok(mut engine) = watch_engine.write() {
-                                    removed = engine.remove_file(&path);
-                                }
-                                if removed {
-                                    watcher_updates_total += 1;
-                                    save_on_watcher_update(
-                                        &watch_indexer_config,
-                                        &watch_engine,
-                                        watcher_updates_total,
-                                    );
-                                }
-                            }
-                            None => {} // recv_timeout returned nothing, loop again
                         }
                     }
                 }
@@ -305,26 +332,136 @@ async fn main() -> Result<()> {
                 }
             }
         });
+        match spawned {
+            Ok(h) => watcher_handle = Some(h),
+            Err(e) => tracing::error!(error = %e, "Failed to spawn file watcher thread"),
+        }
     }
 
     // Create gRPC service with shared engine
-    let search_service = server::create_server_with_engine(shared_engine.clone());
+    let search_service =
+        server::create_server_with_engine_config(shared_engine.clone(), &config.indexer);
 
     info!(version = env!("CARGO_PKG_VERSION"), address = %addr, "Fast Code Search Server starting");
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");
     info!("Ready to accept connections");
 
-    Server::builder()
-        .trace_fn(|_| tracing::info_span!("grpc"))
+    // Standard gRPC health service (grpc.health.v1) so load balancers and
+    // grpcurl can probe liveness the usual way.
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<fast_code_search::server::search_proto::code_search_server::CodeSearchServer<
+            fast_code_search::server::CodeSearchService,
+        >>()
+        .await;
+
+    let request_timeout = std::time::Duration::from_secs(config.server.request_timeout_secs.max(1));
+    let serve_result = Server::builder()
+        .timeout(request_timeout)
+        .concurrency_limit_per_connection(config.server.max_concurrent_searches.max(1))
+        .trace_fn(|req| tracing::info_span!("grpc", path = %req.uri().path()))
+        .add_service(health_service)
         .add_service(search_service)
-        .serve(addr)
-        .await?;
+        .serve_with_shutdown(addr, wait_for_shutdown(shutdown_rx.clone()))
+        .await;
+
+    // Whether we got here via a signal or a server error, make sure every
+    // background thread sees the flag, then wait for them so the final index
+    // save completes before the process exits.
+    shutdown.store(true, std::sync::atomic::Ordering::Release);
+    info!("Shutting down: waiting for web server, indexer and watcher to finish");
+    if let Some(h) = web_handle {
+        let _ = h.await;
+    }
+    let join_threads = tokio::task::spawn_blocking(move || {
+        if let Some(h) = indexer_handle {
+            if h.join().is_err() {
+                tracing::error!("Background indexer thread panicked during shutdown");
+            }
+        }
+        if let Some(h) = watcher_handle {
+            if h.join().is_err() {
+                tracing::error!("File watcher thread panicked during shutdown");
+            }
+        }
+    });
+    let _ = join_threads.await;
 
     // Flush pending OTel spans on shutdown
     telemetry::shutdown_telemetry();
+    info!("Shutdown complete");
 
+    serve_result?;
     Ok(())
 }
+
+/// Run `f` under the engine write lock from the watcher thread.
+///
+/// Recovers from a poisoned lock (a panic elsewhere must not disable the
+/// watcher forever) and catches panics inside `f` so one pathological file
+/// cannot poison the lock for every search. Returns `None` if `f` panicked.
+fn with_engine_write<F, R>(
+    engine: &std::sync::Arc<std::sync::RwLock<fast_code_search::search::SearchEngine>>,
+    f: F,
+) -> Option<R>
+where
+    F: FnOnce(&mut fast_code_search::search::SearchEngine) -> R,
+{
+    let mut guard = engine.write().unwrap_or_else(|poisoned| {
+        tracing::error!("Search engine lock was poisoned; recovering in file watcher");
+        poisoned.into_inner()
+    });
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut guard))) {
+        Ok(result) => Some(result),
+        Err(_) => {
+            tracing::error!("File watcher update panicked; the change was skipped");
+            None
+        }
+    }
+}
+
+/// Resolve when SIGINT (Ctrl+C) or, on Unix, SIGTERM is received.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "Failed to install Ctrl+C handler");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => info!("Received Ctrl+C, shutting down"),
+        _ = terminate => info!("Received SIGTERM, shutting down"),
+    }
+}
+
+/// Resolve once the shutdown watch channel is set (or its sender is gone).
+async fn wait_for_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
+    while !*rx.borrow() {
+        if rx.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+/// How long the watcher keeps collecting events after the first one before
+/// applying the batch. The debouncer already coalesces per-file noise; this
+/// window groups *different* files touched by one operation.
+const WATCH_BATCH_WINDOW_MS: u64 = 200;
 
 fn load_config(args: &Args) -> Result<Config> {
     let base_config = if let Some(ref config_path) = args.config {
@@ -353,5 +490,14 @@ fn load_config(args: &Args) -> Result<Config> {
     };
 
     // Apply CLI overrides
-    Ok(base_config.with_overrides(args.address.clone(), args.index_paths.clone()))
+    let config = base_config.with_overrides(
+        args.address.clone(),
+        args.web_address.clone(),
+        args.index_paths.clone(),
+    );
+    let warnings = config.validate()?;
+    for w in warnings {
+        tracing::warn!("Config: {w}");
+    }
+    Ok(config)
 }

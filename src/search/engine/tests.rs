@@ -1,0 +1,1465 @@
+//! Unit tests for the search engine (split out of `engine/mod.rs`).
+
+use super::*;
+use std::fs;
+use std::io::Write;
+use tempfile::TempDir;
+
+#[test]
+fn test_unicode_ci_find_matches_accented() {
+    // Needle already Unicode-lowercased; haystack has uppercase accented form.
+    assert_eq!(
+        unicode_ci_find("ÜBER alles", "über"),
+        Some((0, "Ü".len() + 3))
+    );
+    assert!(unicode_ci_find("der ÜBER mensch", "über").is_some());
+    assert!(unicode_ci_find("nothing here", "über").is_none());
+}
+
+#[test]
+fn test_contains_case_insensitive_unicode() {
+    assert!(contains_case_insensitive("ÜBER", "über"));
+    assert!(contains_case_insensitive("Café", "café"));
+    assert!(!contains_case_insensitive("cafe", "café"));
+}
+
+#[test]
+fn test_empty_query_returns_nothing() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("e.txt");
+    std::fs::write(&file_path, "hello world\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+
+    assert!(engine.search("", 10).is_empty(), "empty query → no results");
+    assert!(
+        engine.search("   ", 10).is_empty(),
+        "whitespace query → no results"
+    );
+    let (m, info) = engine.search_ranked("  ", 10, RankMode::Auto);
+    assert!(m.is_empty());
+    assert_eq!(info.total_candidates, 0, "must not scan any documents");
+}
+
+#[test]
+fn test_search_engine() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    let mut file = fs::File::create(&file_path).unwrap();
+    writeln!(file, "hello world").unwrap();
+    writeln!(file, "hello rust").unwrap();
+    writeln!(file, "goodbye world").unwrap();
+    drop(file);
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+
+    let results = engine.search("hello", 10);
+    assert_eq!(results.len(), 2);
+
+    let results = engine.search("world", 10);
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
+fn test_incremental_import_resolution() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a file with imports
+    let main_path = temp_dir.path().join("main.rs");
+    let helper_path = temp_dir.path().join("helper.rs");
+
+    fs::write(
+        &helper_path,
+        "pub fn help() {\n    println!(\"helping\");\n}\n",
+    )
+    .unwrap();
+
+    fs::write(
+        &main_path,
+        "mod helper;\nfn main() {\n    helper::help();\n}\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+
+    // Index the helper file first
+    engine.index_file(&helper_path).unwrap();
+
+    // Now index main file - its import to helper should be resolvable
+    engine.index_file(&main_path).unwrap();
+
+    // Try incremental resolution - should resolve the import
+    let _resolved = engine.resolve_imports_incremental();
+
+    // Some imports may or may not resolve depending on path canonicalization
+    // The key is that incremental resolution doesn't panic and works correctly
+    // pending_imports_count is always >= 0 (usize), so just check it works
+    let _ = engine.pending_imports_count();
+
+    // Final resolve should clear any remaining
+    engine.resolve_imports();
+    assert_eq!(engine.pending_imports_count(), 0);
+}
+
+#[test]
+fn test_pending_imports_count() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.py");
+
+    fs::write(
+        &file_path,
+        "import os\nimport sys\nfrom pathlib import Path\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+
+    // There should be pending imports (stdlib imports won't resolve to indexed files)
+    // These will remain unresolved since os, sys, pathlib aren't indexed
+    let pending = engine.pending_imports_count();
+    assert!(pending > 0, "Expected pending imports");
+
+    // After resolution they are *parked* (waiting for a matching file),
+    // not dropped, so a later `sys.py` can still gain the edge. Repeated
+    // resolution does not grow the parked set.
+    engine.resolve_imports();
+    let parked = engine.waiting_imports_count();
+    assert_eq!(parked, pending);
+    engine.resolve_imports();
+    engine.resolve_imports_incremental();
+    assert_eq!(engine.waiting_imports_count(), parked);
+}
+
+/// Roadmap 2.6: an import whose target is indexed *later* is parked and
+/// retried only when a file with a matching name appears; it must then
+/// produce the edge without rescanning every unresolved import.
+#[test]
+fn test_waiting_import_resolves_when_target_appears() {
+    let temp_dir = TempDir::new().unwrap();
+    let main_path = temp_dir.path().join("main.rs");
+    let helper_path = temp_dir.path().join("helper.rs");
+    let unrelated = temp_dir.path().join("zzz.rs");
+    fs::write(&main_path, "mod helper;\nuse std::io;\nfn main() {}\n").unwrap();
+    fs::write(&helper_path, "pub fn help() {}\n").unwrap();
+    fs::write(&unrelated, "pub fn nothing() {}\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&main_path).unwrap(); // helper not indexed yet
+    assert_eq!(engine.resolve_imports_incremental(), 0);
+    assert_eq!(engine.waiting_imports_count(), 2, "helper + std::io parked");
+
+    // An unrelated file must not trigger a retry of parked imports.
+    engine.index_file(&unrelated).unwrap();
+    assert_eq!(engine.resolve_imports_incremental(), 0);
+    assert_eq!(engine.waiting_imports_count(), 2);
+
+    // The target arrives: only the `helper` import is retried and resolves.
+    engine.index_file(&helper_path).unwrap();
+    assert_eq!(engine.resolve_imports_incremental(), 1);
+    assert_eq!(engine.waiting_imports_count(), 1, "std::io stays parked");
+    let helper_id = engine.find_file_id(&helper_path.to_string_lossy()).unwrap();
+    let main_id = engine.find_file_id(&main_path.to_string_lossy()).unwrap();
+    assert_eq!(engine.get_dependents(helper_id), vec![main_id]);
+}
+
+#[test]
+fn test_case_insensitive_search() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Create file with only lowercase content
+    let mut file = fs::File::create(&file_path).unwrap();
+    writeln!(file, "hello world").unwrap();
+    writeln!(file, "another hello here").unwrap();
+    drop(file);
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Test that all case variants find the same results
+    let results_lower = engine.search("hello", 10);
+    let results_upper = engine.search("HELLO", 10);
+    let results_mixed = engine.search("Hello", 10);
+
+    // All queries should find both lines with "hello"
+    assert_eq!(
+        results_lower.len(),
+        2,
+        "lowercase query 'hello' should find 2 matches"
+    );
+    assert_eq!(
+        results_upper.len(),
+        2,
+        "uppercase query 'HELLO' should find 2 matches"
+    );
+    assert_eq!(
+        results_mixed.len(),
+        2,
+        "mixed case query 'Hello' should find 2 matches"
+    );
+}
+
+#[test]
+fn test_save_and_load_index() {
+    use crate::config::IndexerConfig;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    let index_path = temp_dir.path().join("index.bin");
+
+    // Create a test file
+    let mut file = fs::File::create(&file_path).unwrap();
+    writeln!(file, "fn hello_world() {{}}").unwrap();
+    writeln!(file, "hello world").unwrap();
+    writeln!(file, "rust programming").unwrap();
+    drop(file);
+
+    // Create config for the test
+    let config = IndexerConfig {
+        paths: vec![temp_dir.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+
+    // Index and save
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Verify search works before save
+    let results = engine.search("hello", 10);
+    assert!(!results.is_empty(), "Should find hello before save");
+
+    // Save the index
+    engine.save_index(&index_path, &config).unwrap();
+    assert!(index_path.exists(), "Index file should exist");
+
+    // Create a new engine and load the index
+    let mut engine2 = SearchEngine::new();
+    let stale_files = engine2.load_index(&index_path).unwrap();
+
+    // No files should be stale since we haven't modified them
+    assert!(stale_files.is_empty(), "No files should be stale");
+
+    // Verify search works after load
+    let results2 = engine2.search("hello", 10);
+    assert!(!results2.is_empty(), "Should find hello after load");
+
+    // Verify symbol cache was rebuilt after load
+    let symbol_results = engine2.search_symbols("hello_world", "", "", 10).unwrap();
+    assert!(
+        !symbol_results.is_empty(),
+        "Should find hello_world symbol after load"
+    );
+}
+
+#[test]
+fn test_can_load_index() {
+    let temp_dir = TempDir::new().unwrap();
+    let index_path = temp_dir.path().join("nonexistent.bin");
+
+    assert!(!SearchEngine::can_load_index(&index_path));
+
+    // Create the file
+    fs::write(&index_path, "dummy").unwrap();
+    assert!(SearchEngine::can_load_index(&index_path));
+}
+
+#[test]
+fn test_search_symbols() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    // Create a Rust file with functions and a class
+    fs::write(
+        &file_path,
+        r#"
+fn hello_world() {
+println!("Hello");
+}
+
+fn another_function() {
+// code
+}
+
+pub struct TestStruct {
+name: String,
+}
+
+impl TestStruct {
+pub fn new(name: &str) -> Self {
+    Self { name: name.to_string() }
+}
+}
+"#,
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Search for symbols matching "function"
+    let results = engine.search_symbols("function", "", "", 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "Expected at least one symbol match for 'function'"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|r| r.content.contains("another_function")),
+        "Expected to find 'another_function' symbol"
+    );
+
+    // Search for symbols matching "hello"
+    let results = engine.search_symbols("hello", "", "", 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "Expected at least one symbol match for 'hello'"
+    );
+    assert!(
+        results.iter().any(|r| r.content.contains("hello_world")),
+        "Expected to find 'hello_world' symbol"
+    );
+
+    // All results should be marked as symbols
+    for result in &results {
+        assert!(
+            result.is_symbol,
+            "All symbol search results should have is_symbol=true"
+        );
+    }
+
+    // Search for something that doesn't match any symbol
+    let results = engine.search_symbols("println", "", "", 10).unwrap();
+    assert!(
+        results.is_empty(),
+        "Expected no symbol match for 'println' (it's not a symbol name)"
+    );
+}
+
+#[test]
+fn test_search_symbols_case_insensitive() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    fs::write(
+        &file_path,
+        r#"
+fn HelloWorld() {
+println!("Hello");
+}
+"#,
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Case-insensitive search should work
+    let results_lower = engine.search_symbols("helloworld", "", "", 10).unwrap();
+    let results_upper = engine.search_symbols("HELLOWORLD", "", "", 10).unwrap();
+    let results_mixed = engine.search_symbols("HelloWorld", "", "", 10).unwrap();
+
+    assert!(
+        !results_lower.is_empty(),
+        "lowercase query should find symbol"
+    );
+    assert!(
+        !results_upper.is_empty(),
+        "uppercase query should find symbol"
+    );
+    assert!(
+        !results_mixed.is_empty(),
+        "mixed case query should find symbol"
+    );
+}
+
+#[test]
+fn test_symbol_exact_match_scores_higher_than_partial() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    // Two symbols: one is an exact match for "calc", one is a superset "calculate"
+    fs::write(
+        &file_path,
+        r#"
+fn calc(x: f64) -> f64 { x }
+
+fn calculate(x: f64, y: f64) -> f64 { x + y }
+"#,
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let results = engine.search_symbols("calc", "", "", 10).unwrap();
+    assert!(
+        results.len() >= 2,
+        "Expected at least two symbol matches (calc and calculate)"
+    );
+
+    let calc_score = results
+        .iter()
+        .find(|r| r.content.contains("fn calc("))
+        .map(|r| r.score)
+        .expect("Expected to find 'calc' symbol");
+
+    let calculate_score = results
+        .iter()
+        .find(|r| r.content.contains("fn calculate("))
+        .map(|r| r.score)
+        .expect("Expected to find 'calculate' symbol");
+
+    assert!(
+        calc_score > calculate_score,
+        "Exact match 'calc' (score={calc_score}) should score higher than partial match 'calculate' (score={calculate_score})"
+    );
+}
+
+// ========== Tests for review fixes ==========
+
+/// Fix #1: Regex trigram literals should be lowercased before index lookup.
+/// Without this fix, searching for a regex like `MyClass\.\w+` would fail to
+/// find trigram matches because the index stores lowercased content.
+#[test]
+fn test_regex_search_uses_lowercased_trigrams() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.py");
+
+    fs::write(
+        &file_path,
+        "class MyClass:\n    def do_thing(self):\n        MyClass.do_thing()\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Regex with uppercase literal — trigram acceleration must lowercase before lookup
+    let results = engine.search_regex(r"MyClass\.\w+", "", "", 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "Regex with uppercase literal should find matches via lowered trigram lookup"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|r| r.content.contains("MyClass.do_thing")),
+        "Should find MyClass.do_thing()"
+    );
+}
+
+/// Fix #2: Exact match boost must compare against the original (un-lowered) query.
+/// A search for "MyFunction" should score the exact-case line higher than
+/// a line with "myfunction".
+#[test]
+fn test_exact_match_boost_uses_original_case() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    // Two lines: one with exact case, one with different case
+    fs::write(&file_path, "fn MyFunction() {}\nfn myfunction() {}\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let results = engine.search("MyFunction", 10);
+    assert!(results.len() >= 2, "Should find both variants");
+
+    // Find the exact-case match and the lower-case match
+    let exact_match = results
+        .iter()
+        .find(|r| r.content.contains("fn MyFunction"))
+        .unwrap();
+    let lower_match = results
+        .iter()
+        .find(|r| r.content.contains("fn myfunction"))
+        .unwrap();
+
+    assert!(
+        exact_match.score > lower_match.score,
+        "Exact case match ({:.3}) should score higher than lowercase ({:.3})",
+        exact_match.score,
+        lower_match.score
+    );
+}
+
+/// Roadmap 3.8: symbol search ranks exact > prefix > substring, and emits
+/// one row per line even when several symbols on that line match.
+#[test]
+fn test_symbol_search_ranking_and_line_dedupe() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("syms.rs");
+    fs::write(
+        &file_path,
+        "fn recalc_total() {}\nfn calc() {}\nfn calc_sum() {}\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let hits = engine.search_symbols("calc", "", "", 10).unwrap();
+    let order: Vec<usize> = hits.iter().map(|m| m.line_number).collect();
+    assert_eq!(
+        order,
+        vec![2, 3, 1],
+        "exact, then prefix, then substring: {hits:?}"
+    );
+
+    // Two symbols on one line: inject a duplicate definition on line 2.
+    let id = engine.find_file_id(&file_path.to_string_lossy()).unwrap();
+    let dup = Symbol {
+        name: "calc".to_string(),
+        symbol_type: SymbolType::Variable,
+        line: 1,
+        column: 3,
+        is_definition: true,
+    };
+    engine.symbol_cache[id as usize].push(dup);
+    let hits = engine.search_symbols("calc", "", "", 10).unwrap();
+    assert_eq!(
+        hits.iter().filter(|m| m.line_number == 2).count(),
+        1,
+        "one row per line: {hits:?}"
+    );
+}
+
+/// Roadmap 7: case-sensitive, whole-word, AND, exclusion and lang:/file:
+/// through the parsed-query entry point.
+#[test]
+fn test_query_syntax_search() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    fs::write(
+        temp_dir.path().join("a.rs"),
+        "fn Cat() {}\nlet concatenate = 1;\nlet cat = 2; // dog here\n",
+    )
+    .unwrap();
+    fs::write(temp_dir.path().join("b.py"), "cat = 'CAT'\n").unwrap();
+    fs::write(temp_dir.path().join("c.rs"), "fn other() { cat(); }\n").unwrap();
+    let mut engine = SearchEngine::new();
+    for f in ["a.rs", "b.py", "c.rs"] {
+        engine.index_file(temp_dir.path().join(f)).unwrap();
+    }
+    engine.finalize();
+    let run = |q: &str| -> Vec<(String, usize)> {
+        let parsed = parse(q);
+        let (hits, _) = engine
+            .search_parsed(&parsed, "", "", SearchLimits::new(50), RankMode::Full)
+            .unwrap();
+        let mut v: Vec<(String, usize)> = hits
+            .iter()
+            .map(|m| {
+                (
+                    m.file_path.rsplit('/').next().unwrap().to_string(),
+                    m.line_number,
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    // case-insensitive default: every line with "cat" in any case
+    assert_eq!(run("cat").len(), 5);
+    // case:yes -> only exact-case occurrences
+    assert_eq!(
+        run("cat case:yes"),
+        vec![
+            ("a.rs".into(), 2),
+            ("a.rs".into(), 3),
+            ("b.py".into(), 1),
+            ("c.rs".into(), 1)
+        ]
+    );
+    assert_eq!(run("Cat case:yes"), vec![("a.rs".into(), 1)]);
+    // word:yes -> "concatenate" no longer matches
+    assert_eq!(
+        run("cat word:yes"),
+        vec![
+            ("a.rs".into(), 1),
+            ("a.rs".into(), 3),
+            ("b.py".into(), 1),
+            ("c.rs".into(), 1)
+        ]
+    );
+    // AND: both terms must be in the file; lines matching either are returned
+    assert_eq!(
+        run("cat dog"),
+        vec![("a.rs".into(), 1), ("a.rs".into(), 2), ("a.rs".into(), 3)]
+    );
+    // exclusion at file level
+    assert_eq!(
+        run("cat -dog"),
+        vec![("b.py".into(), 1), ("c.rs".into(), 1)]
+    );
+    // lang: / file:
+    assert_eq!(run("cat lang:py"), vec![("b.py".into(), 1)]);
+    assert_eq!(run("cat file:c.rs"), vec![("c.rs".into(), 1)]);
+    // A bare `file:` fragment is a substring match over the whole display
+    // path, and with no root registered that is the absolute temp path, so
+    // exclude by file name rather than by a single letter (macOS temp dirs
+    // live under `/var/folders`, Windows under `AppData`).
+    assert_eq!(
+        run("cat -file:a.rs"),
+        vec![("b.py".into(), 1), ("c.rs".into(), 1)]
+    );
+    // quoted phrase
+    assert_eq!(run("\"dog here\""), vec![("a.rs".into(), 3)]);
+}
+
+/// Roadmap 7: `line_hits` agrees with the ASCII scanner for the default
+/// options and handles word boundaries around multi-byte characters.
+#[test]
+fn test_line_hits_options() {
+    let content = "Needle needlework\nüneedle needle\nneedle_x needle";
+    let default = SearchOptions::default();
+    let a: Vec<_> = line_hits(content, "needle", "needle", default)
+        .into_iter()
+        .map(|h| (h.line_num, h.start))
+        .collect();
+    let b: Vec<_> = ascii_ci_line_hits(content, "needle")
+        .into_iter()
+        .map(|h| (h.line_num, h.start))
+        .collect();
+    assert_eq!(a, b);
+    let word = SearchOptions {
+        whole_word: true,
+        ..default
+    };
+    let w: Vec<_> = line_hits(content, "needle", "needle", word)
+        .into_iter()
+        .map(|h| (h.line_num, h.line[h.start..h.end].to_string(), h.start))
+        .collect();
+    // line 0: "Needle" (word), line 1: skip "üneedle" (ü is a word char), take " needle";
+    // line 2: skip "needle_x", take the last one.
+    assert_eq!(
+        w,
+        vec![
+            (0, "Needle".to_string(), 0),
+            (1, "needle".to_string(), 9),
+            (2, "needle".to_string(), 9)
+        ]
+    );
+    let cs = SearchOptions {
+        case_sensitive: true,
+        ..default
+    };
+    let c: Vec<_> = line_hits(content, "Needle", "needle", cs)
+        .into_iter()
+        .map(|h| h.line_num)
+        .collect();
+    assert_eq!(c, vec![0]);
+}
+
+/// Roadmap 3.7: results carry offsets into the FULL line and a character
+/// column, independent of content truncation and multi-byte prefixes.
+#[test]
+fn test_match_offsets_refer_to_full_line() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("offsets.rs");
+    // 600 bytes of prefix (truncation window is 500), then a multi-byte
+    // char, then the needle.
+    let prefix = "x".repeat(600);
+    let line = format!("{prefix}é offsets_needle();");
+    fs::write(&file_path, format!("{line}\n")).unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let hits = engine.search("offsets_needle", 5);
+    assert_eq!(hits.len(), 1);
+    let m = &hits[0];
+    assert!(m.content_truncated);
+    let expected_byte = line.find("offsets_needle").unwrap();
+    assert_eq!(m.line_match_start, expected_byte);
+    assert_eq!(m.line_match_end, expected_byte + "offsets_needle".len());
+    // 600 x's + 'é' + ' ' = 602 characters before the match.
+    assert_eq!(m.match_column, 602);
+    // The truncated-content offsets still index `content` correctly.
+    assert_eq!(&m.content[m.match_start..m.match_end], "offsets_needle");
+}
+
+/// Roadmap 3.4: the whole-buffer ASCII scan must agree exactly with the
+/// per-line search it replaces (first hit per line, CRLF handling, hits
+/// on the last unterminated line, case-insensitivity, multi-byte text).
+#[test]
+fn test_ascii_line_hits_matches_per_line_search() {
+    let content = "First Needle here\r\nno hit\nneedle NEEDLE twice\n\n  über needle\nlast needle";
+    let expected: Vec<(usize, &str, usize, usize)> = content
+        .lines()
+        .enumerate()
+        .filter_map(|(n, l)| {
+            find_match_position_case_insensitive(l, "needle").map(|(s, e)| (n, l, s, e))
+        })
+        .collect();
+    let got: Vec<(usize, &str, usize, usize)> = ascii_ci_line_hits(content, "needle")
+        .into_iter()
+        .map(|h| (h.line_num, h.line, h.start, h.end))
+        .collect();
+    assert_eq!(got, expected);
+    assert_eq!(got.len(), 4);
+    assert_eq!(got[0].1, "First Needle here", "CRLF stripped");
+    assert!(ascii_ci_line_hits(content, "absent").is_empty());
+    assert!(ascii_ci_line_hits("", "x").is_empty());
+}
+
+/// Roadmap 3.1: a query's work is bounded by the match budget; the
+/// result reports the truncation and omits the total. With an unbounded
+/// budget the total is exact.
+#[test]
+fn test_match_budget_bounds_work_and_is_reported() {
+    let temp_dir = TempDir::new().unwrap();
+    for f in 0..40 {
+        let body: String = (0..30)
+            .map(|l| format!("let budget_needle_{f}_{l} = 1;\n"))
+            .collect();
+        fs::write(temp_dir.path().join(format!("b{f}.rs")), body).unwrap();
+    }
+    let mut engine = SearchEngine::new();
+    for f in 0..40 {
+        engine
+            .index_file(temp_dir.path().join(format!("b{f}.rs")))
+            .unwrap();
+    }
+    engine.finalize();
+
+    // 1200 matching lines exist. A budget of 100 must stop early.
+    let limits = SearchLimits::new(10).with_match_budget(100);
+    let (hits, info) = engine.search_ranked_with_limits("budget_needle", limits, RankMode::Full);
+    assert_eq!(hits.len(), 10);
+    assert!(info.truncated_by_budget, "{info:?}");
+    assert_eq!(info.total_matches, None);
+
+    // Unbounded: exact total, not truncated.
+    let limits = SearchLimits::new(10).with_match_budget(usize::MAX);
+    let (hits, info) = engine.search_ranked_with_limits("budget_needle", limits, RankMode::Full);
+    assert_eq!(hits.len(), 10);
+    assert!(!info.truncated_by_budget);
+    assert_eq!(info.total_matches, Some(1200));
+
+    // An already-expired deadline stops the scan immediately.
+    let limits = SearchLimits::new(10)
+        .with_match_budget(usize::MAX)
+        .with_deadline(std::time::Instant::now() - std::time::Duration::from_millis(1));
+    let (_hits, info) = engine.search_ranked_with_limits("budget_needle", limits, RankMode::Full);
+    assert!(info.truncated_by_budget, "deadline must mark truncation");
+}
+
+/// Roadmap 3.6: ordering is deterministic under ties and paging with
+/// `offset` walks the same ordering without repeats or gaps.
+#[test]
+fn test_deterministic_order_and_offset_paging() {
+    let temp_dir = TempDir::new().unwrap();
+    // 12 identical files -> 12 tied matches per query.
+    for f in 0..12 {
+        fs::write(
+            temp_dir.path().join(format!("tie{f:02}.rs")),
+            "fn tied_needle() {}\n",
+        )
+        .unwrap();
+    }
+    let mut engine = SearchEngine::new();
+    for f in 0..12 {
+        engine
+            .index_file(temp_dir.path().join(format!("tie{f:02}.rs")))
+            .unwrap();
+    }
+    engine.finalize();
+
+    let key = |m: &SearchMatch| (m.file_path.clone(), m.line_number);
+    let full: Vec<_> = engine
+        .search_ranked_with_limits("tied_needle", SearchLimits::new(100), RankMode::Full)
+        .0
+        .iter()
+        .map(key)
+        .collect();
+    assert_eq!(full.len(), 12);
+    for _ in 0..5 {
+        let again: Vec<_> = engine
+            .search_ranked_with_limits("tied_needle", SearchLimits::new(100), RankMode::Full)
+            .0
+            .iter()
+            .map(key)
+            .collect();
+        assert_eq!(again, full, "order must be identical run to run");
+    }
+
+    let mut paged = Vec::new();
+    for page in 0..3 {
+        let (hits, info) = engine.search_ranked_with_limits(
+            "tied_needle",
+            SearchLimits::new(5).with_offset(page * 5),
+            RankMode::Full,
+        );
+        assert_eq!(info.total_matches, Some(12));
+        paged.extend(hits.iter().map(key));
+    }
+    assert_eq!(paged, full, "pages must tile the full ordering");
+    let (past_end, _) = engine.search_ranked_with_limits(
+        "tied_needle",
+        SearchLimits::new(5).with_offset(50),
+        RankMode::Full,
+    );
+    assert!(past_end.is_empty());
+}
+
+/// Roadmap 1.3: a file that fails the tree-sitter structural check (here a
+/// single 200 KB line) must still be text-searchable; it only loses symbol
+/// extraction. Previously it was dropped from the whole index.
+#[test]
+fn test_long_line_file_is_searchable_without_symbols() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("fixture.json");
+    let mut content = String::from("{\"needle_zq\": \"");
+    content.push_str(&"x".repeat(200_000));
+    content.push_str("\", \"fn\": \"other_fn_name\"}\n");
+    fs::write(&file_path, &content).unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let results = engine.search("needle_zq", 10);
+    assert_eq!(results.len(), 1, "long-line file must be searchable");
+    assert!(results[0].file_path.ends_with("fixture.json"));
+
+    // Only the synthetic FileName symbol exists; nothing was extracted.
+    let syms = engine.symbol_cache.first().cloned().unwrap_or_default();
+    assert!(
+        syms.iter()
+            .all(|s| s.symbol_type == crate::symbols::SymbolType::FileName),
+        "no tree-sitter symbols expected, got {syms:?}"
+    );
+}
+
+/// Roadmap 1.2: the synthetic FileName symbol sits at line 0 and must not
+/// make every first-line match look like a symbol definition. Two identical
+/// non-definition lines (line 1 and line 4) must score identically, and a
+/// real definition further down must still outrank a plain first-line
+/// mention.
+#[test]
+fn test_first_line_does_not_get_definition_boost() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("boost.rs");
+    fs::write(
+        &file_path,
+        "// widget_thing mention\n\n\n// widget_thing mention\nfn widget_thing() {}\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let results = engine.search("widget_thing", 10);
+    let by_line = |n: usize| {
+        results
+            .iter()
+            .find(|r| r.line_number == n)
+            .unwrap_or_else(|| panic!("no match on line {n}: {results:?}"))
+    };
+    let (l1, l4, l5) = (by_line(1), by_line(4), by_line(5));
+
+    assert!(
+        (l1.score - l4.score).abs() < 1e-9,
+        "identical plain lines must score identically (line1={:.3}, line4={:.3})",
+        l1.score,
+        l4.score
+    );
+    assert!(
+        !l1.is_symbol,
+        "a comment on line 1 is not a symbol definition"
+    );
+    assert!(
+        l5.score > l1.score,
+        "definition on line 5 ({:.3}) must outrank the first-line mention ({:.3})",
+        l5.score,
+        l1.score
+    );
+}
+
+/// Fix #7: Line length penalty should be gentle (logarithmic), not harsh.
+/// A function definition on a ~100-char line should NOT be obliterated by
+/// a short comment. Both should get reasonable scores.
+#[test]
+fn test_line_length_penalty_is_gentle() {
+    // Short line (20 chars)
+    let short_score = calculate_score_inline(
+        "fn do_thing() {}   ",
+        "do_thing",
+        "do_thing",
+        false,
+        false,
+        1.0,
+    );
+
+    // Medium line (~80 chars)
+    let medium_line = "fn do_thing(arg1: String, arg2: i32, arg3: bool) -> Result<()> { todo!() }";
+    let medium_score =
+        calculate_score_inline(medium_line, "do_thing", "do_thing", false, false, 1.0);
+
+    // Long line (~200 chars)
+    let long_line = format!(
+        "fn do_thing({}) -> Result<()> {{}}",
+        (0..20)
+            .map(|i| format!("arg{}: String", i))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let long_score = calculate_score_inline(&long_line, "do_thing", "do_thing", false, false, 1.0);
+
+    // The medium line should retain a decent fraction of the short line's score
+    assert!(
+        medium_score / short_score > 0.5,
+        "Medium line ({:.3}) should be > 50% of short line ({:.3}), got {:.1}%",
+        medium_score,
+        short_score,
+        medium_score / short_score * 100.0
+    );
+
+    // Even the long line should not drop below 30% (the floor)
+    assert!(
+        long_score / short_score > 0.25,
+        "Long line ({:.3}) should be > 25% of short line ({:.3}), got {:.1}%",
+        long_score,
+        short_score,
+        long_score / short_score * 100.0
+    );
+}
+
+/// Fix #8: Document search functions should return None for zero matches
+/// instead of Some(empty vec), avoiding unnecessary allocations.
+#[test]
+fn test_no_match_returns_none_not_empty_vec() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    fs::write(&file_path, "hello world\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Search for something not in the file — should produce zero results
+    let results = engine.search("xyznonexistent", 10);
+    assert!(
+        results.is_empty(),
+        "Search for non-existent term should yield empty results"
+    );
+}
+
+/// Fix #9: Filename and content should be separated by triple newline to
+/// prevent trigram bleed across the boundary.
+#[test]
+fn test_filename_content_separator_prevents_trigram_bleed() {
+    let temp_dir = TempDir::new().unwrap();
+    // File named "alpha_module.txt" with content starting with "beta_function"
+    let file_path = temp_dir.path().join("alpha_module.txt");
+    fs::write(&file_path, "beta_function called here\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Verify content is still searchable after the separator change
+    let results = engine.search("beta_function", 10);
+    assert!(
+        !results.is_empty(),
+        "Should find 'beta_function' in file content"
+    );
+
+    // Verify content from the file is correctly returned
+    assert!(
+        results[0].content.contains("beta_function"),
+        "Result content should contain the search term"
+    );
+
+    // The triple newline separator means trigrams like "xt\nb" (from single newline join)
+    // are NOT generated, protecting against false trigram candidate matches on
+    // boundary-spanning text. The filename is used only for trigram candidate filtering,
+    // not for result content.
+}
+
+/// Fix #12: FileMetadata should pre-compute lowercase_stem at index time
+/// and use it for query matching, avoiding per-query path allocation.
+#[test]
+fn test_file_metadata_precomputed_lowercase_stem() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("MyModule.rs");
+    fs::write(&file_path, "fn test() {}\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Verify the metadata was computed with the correct lowercase stem
+    let metadata = engine.get_file_metadata(0);
+    assert_eq!(
+        metadata.lowercase_stem, "mymodule",
+        "lowercase_stem should be pre-computed at index time"
+    );
+
+    // Query score should boost when query matches the filename stem
+    let score_match = metadata.query_score("mymodule");
+    let score_nomatch = metadata.query_score("unrelated");
+    assert!(
+        score_match > score_nomatch,
+        "Query matching filename stem ({:.3}) should score higher than non-match ({:.3})",
+        score_match,
+        score_nomatch
+    );
+}
+
+/// Fix #4: Symbol search should use trigram pre-filtering for queries >= 3 chars
+/// instead of scanning all documents.
+#[test]
+fn test_symbol_search_uses_trigram_filtering() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create two files: one with target symbol, one without
+    let file_with = temp_dir.path().join("has_symbol.rs");
+    fs::write(&file_with, "fn calculate_total() {\n    // does math\n}\n").unwrap();
+
+    let file_without = temp_dir.path().join("no_symbol.rs");
+    fs::write(
+        &file_without,
+        "fn something_else() {\n    // unrelated\n}\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_with).unwrap();
+    engine.index_file(&file_without).unwrap();
+    engine.finalize();
+
+    // Symbol search for "calculate" (>= 3 chars, should use trigram pre-filtering)
+    let results = engine.search_symbols("calculate", "", "", 10).unwrap();
+    assert!(!results.is_empty(), "Should find calculate_total symbol");
+    assert!(
+        results.iter().all(|r| r.content.contains("calculate")),
+        "All results should contain the query term"
+    );
+}
+
+/// Fix #6: FAST_RANKING_TOP_N should be large enough to not miss relevant results.
+#[test]
+fn test_fast_ranking_top_n_is_sufficient() {
+    // Just verify the constant is reasonable (constant value is expected here)
+    #[allow(clippy::assertions_on_constants)]
+    {
+        assert!(
+            SearchEngine::FAST_RANKING_TOP_N >= 2000,
+            "FAST_RANKING_TOP_N should be at least 2000 to avoid dropping relevant files"
+        );
+    }
+}
+
+/// Filename-only matches: searching for the filename stem should return
+/// a result even when the query does NOT appear in the file content.
+#[test]
+fn test_filename_only_match_returns_result() {
+    let temp_dir = TempDir::new().unwrap();
+    // File whose content does NOT contain "configuration_manager"
+    let file_path = temp_dir.path().join("configuration_manager.rs");
+    fs::write(
+        &file_path,
+        "pub fn init() {\n    println!(\"starting up\");\n}\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Search for the filename stem — not present in content
+    let results = engine.search("configuration_manager", 10);
+    assert!(
+        !results.is_empty(),
+        "Searching for filename stem should return a result even when content doesn't match"
+    );
+
+    // The synthetic filename match should have line_number 0
+    let filename_result = results.iter().find(|r| r.line_number == 0);
+    assert!(
+        filename_result.is_some(),
+        "Filename match should appear with line_number=0"
+    );
+    let filename_result = filename_result.unwrap();
+    assert!(
+        filename_result.is_symbol,
+        "Filename match should be marked as a symbol"
+    );
+    assert!(
+        filename_result.content.contains("configuration_manager"),
+        "Filename match content should contain the filename: got '{}'",
+        filename_result.content
+    );
+}
+
+/// Filename-only matches should work in symbol search too.
+#[test]
+fn test_filename_symbol_search() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("widget_factory.rs");
+    fs::write(&file_path, "pub fn make() {}\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Symbol search for the filename — the FileName symbol should match
+    let results = engine.search_symbols("widget_factory", "", "", 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "Symbol search for filename stem should return a result"
+    );
+    let sym_result = &results[0];
+    assert_eq!(
+        sym_result.line_number, 0,
+        "FileName symbol should have line_number=0"
+    );
+    assert!(
+        sym_result.content.contains("widget_factory"),
+        "FileName symbol result should show the file path"
+    );
+}
+
+/// Filename-only matches should work with regex search too.
+#[test]
+fn test_filename_regex_match() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("data_processor.py");
+    fs::write(&file_path, "x = 42\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    let results = engine.search_regex(r"data_processor", "", "", 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "Regex search for filename stem should return a result"
+    );
+    assert!(
+        results[0].content.contains("data_processor"),
+        "Regex filename match should show the file path"
+    );
+}
+
+#[test]
+fn test_reconciling_progress_percent_with_new_files() {
+    // Simulate starting from a saved index (1000 cached) with 50 new files to index.
+    let mut progress = IndexingProgress {
+        status: IndexingStatus::Reconciling,
+        files_indexed: 1000,
+        files_discovered: 1000, // pre-seeded with offset
+        files_loaded_from_cache: 1000,
+        ..Default::default()
+    };
+
+    // Before any new files are discovered the percentage should be 92%.
+    assert_eq!(progress.progress_percent(), 92);
+
+    // Simulate discovery of 50 new files and partial indexing of 25.
+    progress.files_discovered = 1050;
+    progress.files_indexed = 1025;
+    let mid_pct = progress.progress_percent();
+    assert!(
+        mid_pct > 92 && mid_pct < 99,
+        "Mid-reconciliation percent should be between 92 and 99, got {mid_pct}"
+    );
+
+    // After all new files are indexed the percentage should reach 99%.
+    progress.files_indexed = 1050;
+    assert_eq!(progress.progress_percent(), 99);
+}
+
+#[test]
+fn test_reconciling_progress_percent_no_new_files() {
+    // When there are no new files (nothing to reconcile) percentage stays at 92.
+    let progress = IndexingProgress {
+        status: IndexingStatus::Reconciling,
+        files_indexed: 1000,
+        files_discovered: 1000,
+        files_loaded_from_cache: 1000,
+        ..Default::default()
+    };
+    assert_eq!(progress.progress_percent(), 92);
+}
+
+/// Fix: Short queries (< 3 bytes) should fall back to scanning all documents
+/// rather than returning empty results from the trigram index.
+/// This is particularly important for `_` (wildcard variable), `__` (Python dunder prefix),
+/// and other short but common code search terms.
+#[test]
+fn test_short_query_underscore_returns_results() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.py");
+
+    fs::write(
+        &file_path,
+        "class MyClass:\n    def __init__(self):\n        _ = unused_value\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Single `_` — 1 byte, no trigrams can be extracted.
+    // Before the fix this returned 0 results; now it falls back to full scan.
+    let results = engine.search("_", 10);
+    assert!(
+        !results.is_empty(),
+        "Searching for `_` should find lines containing underscore"
+    );
+
+    // `__` — 2 bytes, still no trigrams.
+    let results = engine.search("__", 10);
+    assert!(
+        !results.is_empty(),
+        "Searching for `__` should find dunder-style identifiers"
+    );
+}
+
+/// Compound underscore terms like `badger_farmer` must be found case-insensitively.
+/// The trigram index includes cross-underscore trigrams (e.g. `er_`, `r_f`, `_fa`),
+/// so a document containing the term will always be a candidate.
+#[test]
+fn test_compound_underscore_term_search() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+
+    fs::write(
+        &file_path,
+        "fn badger_farmer(x: u32) -> u32 { x + 1 }\nfn other_func() {}\n",
+    )
+    .unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.index_file(&file_path).unwrap();
+    engine.finalize();
+
+    // Exact-case search.
+    let results = engine.search("badger_farmer", 10);
+    assert!(
+        results.iter().any(|r| r.content.contains("badger_farmer")),
+        "Should find line containing badger_farmer"
+    );
+
+    // Case-insensitive: UPPER_CASE query should match lower-case content.
+    let results = engine.search("BADGER_FARMER", 10);
+    assert!(
+        results.iter().any(|r| r.content.contains("badger_farmer")),
+        "UPPER case query should find badger_farmer (case-insensitive)"
+    );
+
+    // Prefix ending with underscore.
+    let results = engine.search("badger_", 10);
+    assert!(
+        results.iter().any(|r| r.content.contains("badger_farmer")),
+        "Prefix 'badger_' should find badger_farmer"
+    );
+
+    // Suffix starting with underscore.
+    let results = engine.search("_farmer", 10);
+    assert!(
+        results.iter().any(|r| r.content.contains("badger_farmer")),
+        "Suffix '_farmer' should find badger_farmer"
+    );
+
+    // Unrelated term must not match.
+    let results = engine.search("badger_thatcher", 10);
+    assert!(
+        results.is_empty(),
+        "Should NOT find badger_thatcher when it is not in the content"
+    );
+}
+
+/// `truncate_around_match` match positions: no truncation case.
+/// When the line is short enough, positions should be returned unchanged.
+#[test]
+fn test_truncate_around_match_no_truncation() {
+    let line = "hello world"; // shorter than MAX_CONTENT_LENGTH
+    let result = truncate_around_match(line, 6, 11); // "world"
+    assert!(!result.was_truncated);
+    assert_eq!(result.match_start, 6);
+    assert_eq!(result.match_end, 11);
+    assert_eq!(
+        &result.content[result.match_start..result.match_end],
+        "world"
+    );
+}
+
+/// `truncate_around_match` match positions: prefix-only truncation.
+/// The prefix "…" is 3 bytes (UTF-8 U+2026), so match positions must be
+/// shifted by 3, not 1.
+#[test]
+fn test_truncate_around_match_prefix_ellipsis_is_3_bytes() {
+    // Build a line long enough to trigger truncation (> MAX_CONTENT_LENGTH = 500).
+    // The match is placed far enough from the start that the window will cut
+    // the prefix (match_start > MATCH_CONTEXT_CHARS = 200).
+    let prefix = "x".repeat(300); // 300 bytes before the match
+    let needle = "TARGET";
+    let suffix = "y".repeat(300); // 300 bytes after the match → total > 500
+    let line = format!("{prefix}{needle}{suffix}");
+
+    let match_start = 300; // byte offset of "TARGET" in `line`
+    let match_end = 306; // "TARGET".len() == 6
+
+    assert!(line.len() > 500, "line must exceed MAX_CONTENT_LENGTH");
+    assert!(
+        match_start > 200,
+        "match must be far enough right to trigger prefix truncation"
+    );
+
+    let result = truncate_around_match(&line, match_start, match_end);
+
+    assert!(result.was_truncated, "Long line should be truncated");
+
+    // The returned content should start with "…" (3 bytes) when prefix is cut.
+    assert!(
+        result.content.starts_with('…'),
+        "Truncated content with cut prefix should start with '…'"
+    );
+
+    // The byte slice at [match_start..match_end] in the truncated content
+    // must equal the original needle.
+    let truncated_slice = &result.content[result.match_start..result.match_end];
+    assert_eq!(
+        truncated_slice, needle,
+        "match_start/match_end must point to the needle in the truncated content; \
+         got '{truncated_slice}' (expected '{needle}'). \
+         This catches the off-by-2 bug where +1 was used instead of +3 for the 3-byte '…'."
+    );
+}
+
+/// `truncate_around_match` match positions: suffix-only truncation.
+/// No prefix ellipsis, so positions should only be shifted by the safe_start offset.
+#[test]
+fn test_truncate_around_match_suffix_only_no_shift() {
+    // Match near the beginning — prefix won't be cut, but suffix will.
+    // Total line > 500 bytes (MAX_CONTENT_LENGTH).
+    let needle = "TARGET";
+    let suffix = "z".repeat(600); // 600 bytes after → total > 500
+    let line = format!("{needle}{suffix}");
+
+    assert!(line.len() > 500, "line must exceed MAX_CONTENT_LENGTH");
+
+    let match_start = 0;
+    let match_end = needle.len();
+
+    let result = truncate_around_match(&line, match_start, match_end);
+
+    assert!(result.was_truncated, "Long line should be truncated");
+
+    // No prefix ellipsis
+    assert!(
+        !result.content.starts_with('…'),
+        "No prefix cut means content should not start with '…'"
+    );
+    assert!(
+        result.content.ends_with('…'),
+        "Suffix cut means content should end with '…'"
+    );
+
+    let truncated_slice = &result.content[result.match_start..result.match_end];
+    assert_eq!(
+        truncated_slice, needle,
+        "match_start/match_end must point to the needle even with suffix-only truncation"
+    );
+}
+
+// ── make_display_path workspace-relative tests ───────────────────────────
+
+/// When no root paths are registered the full path (forward-slash
+/// normalised) is returned as a fallback.
+#[test]
+fn test_make_display_path_no_roots() {
+    let engine = SearchEngine::new();
+    let path = Path::new("/home/user/project/src/main.rs");
+    let result = engine.make_display_path(path);
+    // With no roots, the full path is returned with forward slashes
+    assert_eq!(result, "/home/user/project/src/main.rs");
+}
+
+/// The root folder name must be the first component of the display path.
+/// E.g. root `/tmp/myproject`, file `/tmp/myproject/src/main.rs`
+/// → `myproject/src/main.rs`.
+#[test]
+fn test_make_display_path_includes_root_folder_name() {
+    let temp_dir = TempDir::new().unwrap();
+    // Create a sub-directory that will be the "project root"
+    let project_dir = temp_dir.path().join("myproject");
+    fs::create_dir_all(&project_dir).unwrap();
+    let src_dir = project_dir.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    let file = src_dir.join("main.rs");
+    fs::write(&file, "fn main() {}").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&project_dir);
+
+    let canonical_file = file.canonicalize().unwrap();
+    let display = engine.make_display_path(&canonical_file);
+
+    // Should be "myproject/src/main.rs" — root name included
+    assert_eq!(display, "myproject/src/main.rs");
+}
+
+/// A file directly inside the root (no sub-directory) should be displayed
+/// as `rootname/file.txt`.
+#[test]
+fn test_make_display_path_file_at_root_level() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let file = project_dir.join("README.md");
+    fs::write(&file, "# readme").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&project_dir);
+
+    let canonical_file = file.canonicalize().unwrap();
+    let display = engine.make_display_path(&canonical_file);
+
+    assert_eq!(display, "project/README.md");
+}
+
+/// With two registered roots, each file shows under its own workspace name.
+#[test]
+fn test_make_display_path_multiple_roots() {
+    let temp_dir = TempDir::new().unwrap();
+
+    let root_a = temp_dir.path().join("alpha");
+    let root_b = temp_dir.path().join("beta");
+    fs::create_dir_all(&root_a).unwrap();
+    fs::create_dir_all(&root_b).unwrap();
+
+    let file_a = root_a.join("utils.rs");
+    let file_b = root_b.join("utils.rs");
+    fs::write(&file_a, "// alpha utils").unwrap();
+    fs::write(&file_b, "// beta utils").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&root_a);
+    engine.add_root_path(&root_b);
+
+    let display_a = engine.make_display_path(&file_a.canonicalize().unwrap());
+    let display_b = engine.make_display_path(&file_b.canonicalize().unwrap());
+
+    assert_eq!(display_a, "alpha/utils.rs");
+    assert_eq!(display_b, "beta/utils.rs");
+}

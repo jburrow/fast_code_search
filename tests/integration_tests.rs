@@ -156,6 +156,7 @@ async fn test_grpc_search_finds_rust_function() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -192,6 +193,7 @@ async fn test_grpc_search_finds_python_function() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -224,6 +226,7 @@ async fn test_grpc_search_empty_query_returns_empty() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -251,6 +254,7 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -265,6 +269,75 @@ async fn test_grpc_search_no_match_returns_empty() -> Result<()> {
         "Expected no results for non-matching query"
     );
 
+    Ok(())
+}
+
+/// Drain a gRPC search stream into a Vec.
+async fn collect(
+    req: SearchRequest,
+    client: &mut CodeSearchClient<tonic::transport::Channel>,
+) -> Result<Vec<fast_code_search::server::search_proto::SearchResult>> {
+    let mut stream = client.search(req).await?.into_inner();
+    let mut out = Vec::new();
+    while let Some(r) = stream.message().await? {
+        out.push(r);
+    }
+    Ok(out)
+}
+
+/// Roadmap 4.2: an unset max_results (proto3 zero) means the default page
+/// of 50, not a single result; offset and rank are honoured; results carry
+/// dependency_count and full-line offsets.
+#[tokio::test]
+async fn test_grpc_search_defaults_offset_and_fields() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    // "def " matches several lines across the Python/JS fixtures.
+    let all = collect(
+        SearchRequest {
+            query: "def ".to_string(),
+            max_results: 0, // unset
+            ..Default::default()
+        },
+        &mut client,
+    )
+    .await?;
+    assert!(
+        all.len() >= 2,
+        "default page must not be clamped to 1: {}",
+        all.len()
+    );
+    assert!(all.iter().all(|r| r.line_match_end >= r.line_match_start));
+
+    let page1 = collect(
+        SearchRequest {
+            query: "def ".to_string(),
+            max_results: 1,
+            rank: "full".to_string(),
+            ..Default::default()
+        },
+        &mut client,
+    )
+    .await?;
+    let page2 = collect(
+        SearchRequest {
+            query: "def ".to_string(),
+            max_results: 1,
+            offset: 1,
+            rank: "full".to_string(),
+            ..Default::default()
+        },
+        &mut client,
+    )
+    .await?;
+    assert_eq!(page1.len(), 1);
+    assert_eq!(page2.len(), 1);
+    let key = |r: &fast_code_search::server::search_proto::SearchResult| {
+        (r.file_path.clone(), r.line_number)
+    };
+    assert_eq!(key(&page1[0]), key(&all[0]));
+    assert_eq!(key(&page2[0]), key(&all[1]));
     Ok(())
 }
 
@@ -287,6 +360,72 @@ async fn test_grpc_index_request() -> Result<()> {
     );
     assert!(!response.message.is_empty(), "Expected a status message");
 
+    Ok(())
+}
+
+/// Roadmap 1.10: the shipped server scopes the gRPC `Index` RPC to the
+/// configured index roots, so a network client cannot index (and then read
+/// back through /api/file) arbitrary host paths.
+#[tokio::test]
+async fn test_grpc_index_rejects_paths_outside_scope() -> Result<()> {
+    use fast_code_search::server::create_server_with_engine_scoped;
+
+    use fast_code_search::config::IndexerConfig;
+    let inside = TempDir::new()?;
+    let outside = TempDir::new()?;
+    std::fs::write(inside.path().join("in.rs"), "fn inside_scope() {}\n")?;
+    std::fs::create_dir_all(inside.path().join("node_modules"))?;
+    std::fs::write(
+        inside.path().join("node_modules/dep.rs"),
+        "fn excluded_by_pattern() {}\n",
+    )?;
+    std::fs::write(outside.path().join("out.rs"), "fn outside_scope() {}\n")?;
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let config = IndexerConfig {
+        paths: vec![inside.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let service =
+        fast_code_search::server::create_server_with_engine_config(engine.clone(), &config);
+    let _ = create_server_with_engine_scoped; // still exported for library users
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(service)
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .await
+            .expect("gRPC server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut client = CodeSearchClient::connect(format!("http://{addr}")).await?;
+
+    let err = client
+        .index(IndexRequest {
+            paths: vec![outside.path().to_string_lossy().to_string()],
+        })
+        .await
+        .expect_err("out-of-scope path must be rejected");
+    assert_eq!(err.code(), tonic::Code::PermissionDenied, "{err:?}");
+    assert!(engine.read().unwrap().search("outside_scope", 5).is_empty());
+
+    let ok = client
+        .index(IndexRequest {
+            paths: vec![inside.path().to_string_lossy().to_string()],
+        })
+        .await?
+        .into_inner();
+    assert_eq!(
+        ok.files_indexed, 1,
+        "node_modules is excluded by the default patterns"
+    );
+    assert_eq!(engine.read().unwrap().search("inside_scope", 5).len(), 1);
+    assert!(engine
+        .read()
+        .unwrap()
+        .search("excluded_by_pattern", 5)
+        .is_empty());
     Ok(())
 }
 
@@ -322,6 +461,353 @@ async fn test_http_search_finds_results() -> Result<()> {
         "Expected results array to have items"
     );
 
+    Ok(())
+}
+
+/// Roadmap 3.6: `/api/search` pages with `offset`, reports `total_matches`
+/// and derives `has_more` from it; regex and symbol searches report ranking
+/// info too.
+#[tokio::test]
+async fn test_http_search_offset_paging_and_totals() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let get = |q: &[(&str, &str)]| {
+        client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(q)
+            .send()
+    };
+
+    let all: serde_json::Value = get(&[("q", "def "), ("max", "100")]).await?.json().await?;
+    let total = all["total_matches"].as_u64().expect("total_matches") as usize;
+    assert!(total >= 2, "need at least two matches for paging: {all}");
+    assert!(!all["has_more"].as_bool().unwrap());
+    assert!(!all["truncated_by_budget"].as_bool().unwrap());
+    let all_keys: Vec<String> = all["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| format!("{}:{}", r["file_path"], r["line_number"]))
+        .collect();
+
+    let p1: serde_json::Value = get(&[("q", "def "), ("max", "1")]).await?.json().await?;
+    assert_eq!(p1["offset"].as_u64().unwrap(), 0);
+    assert!(p1["has_more"].as_bool().unwrap());
+    let p2: serde_json::Value = get(&[("q", "def "), ("max", "1"), ("offset", "1")])
+        .await?
+        .json()
+        .await?;
+    assert_eq!(p2["offset"].as_u64().unwrap(), 1);
+    let k = |v: &serde_json::Value| {
+        format!(
+            "{}:{}",
+            v["results"][0]["file_path"], v["results"][0]["line_number"]
+        )
+    };
+    assert_eq!(k(&p1), all_keys[0]);
+    assert_eq!(k(&p2), all_keys[1]);
+    let far: serde_json::Value = get(&[("q", "def "), ("max", "5"), ("offset", "1000")])
+        .await?
+        .json()
+        .await?;
+    assert_eq!(far["total_results"].as_u64().unwrap(), 0);
+    assert!(!far["has_more"].as_bool().unwrap());
+
+    // Regex and symbol modes now carry ranking info.
+    let rx: serde_json::Value = get(&[("q", "def\\s+\\w+"), ("regex", "true")])
+        .await?
+        .json()
+        .await?;
+    assert!(rx["rank_mode"].is_string(), "{rx}");
+    assert!(rx["total_matches"].is_number(), "{rx}");
+    let sy: serde_json::Value = get(&[("q", "TestStruct"), ("symbols", "true")])
+        .await?
+        .json()
+        .await?;
+    assert!(sy["total_matches"].is_number(), "{sy}");
+    Ok(())
+}
+
+/// Roadmap 4.8: a malformed query parameter gets the same JSON error
+/// envelope as every other API error, not axum's plain-text rejection.
+#[tokio::test]
+async fn test_http_bad_query_param_is_json_error() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let resp = reqwest::Client::new()
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "x"), ("max", "abc")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()?
+        .to_string();
+    assert!(ct.starts_with("application/json"), "{ct}");
+    let body: serde_json::Value = resp.json().await?;
+    assert!(body["error"].as_str().unwrap().contains("max"), "{body}");
+    Ok(())
+}
+
+/// Roadmap 4.6/4.9: `/api/diagnostics` reports the configured paths when
+/// the router was built with a config, and `force_refresh` is accepted.
+#[tokio::test]
+async fn test_http_diagnostics_reports_real_config() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+
+    let temp = TempDir::new()?;
+    std::fs::write(temp.path().join("d.rs"), "fn diag_token() {}\n")?;
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    engine
+        .write()
+        .unwrap()
+        .index_file(temp.path().join("d.rs"))?;
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let opts = RouterOptions {
+        indexer_config: Some(IndexerConfig {
+            paths: vec![temp.path().to_string_lossy().to_string()],
+            watch: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let client = reqwest::Client::new();
+    for force in ["false", "true"] {
+        let resp = client
+            .get(format!("http://{addr}/api/diagnostics"))
+            .query(&[("force_refresh", force), ("sample_count", "3")])
+            .send()
+            .await?;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await?;
+        let paths = body["config"]["indexed_paths"].as_array().unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0]
+            .as_str()
+            .unwrap()
+            .contains(&*temp.path().to_string_lossy()));
+        assert_eq!(body["config"]["watch_enabled"], true);
+        assert_eq!(body["index"]["num_files"].as_u64().unwrap(), 1);
+        let exts = body["index"]["files_by_extension"].as_array().unwrap();
+        assert!(exts.iter().any(|e| e["extension"] == "rs"), "{body}");
+    }
+    Ok(())
+}
+
+/// Roadmap 7: the REST API understands the query syntax and the explicit
+/// case/word parameters override the in-query switches.
+#[tokio::test]
+async fn test_http_query_syntax() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let get = |q: Vec<(&str, &str)>| {
+        client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(&q)
+            .send()
+    };
+    let files = |v: &serde_json::Value| -> Vec<String> {
+        let mut f: Vec<String> = v["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                r["file_path"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        f.sort();
+        f.dedup();
+        f
+    };
+    // "def " appears in the Python and JS fixtures; lang: narrows it.
+    let py: serde_json::Value = get(vec![("q", "def lang:python")]).await?.json().await?;
+    assert_eq!(files(&py), vec!["test_file.py"]);
+    let not_py: serde_json::Value = get(vec![("q", "def -lang:python")]).await?.json().await?;
+    assert!(
+        !files(&not_py).contains(&"test_file.py".to_string()),
+        "{not_py}"
+    );
+    // case=true parameter: "TESTSTRUCT" no longer matches "TestStruct"
+    let ci: serde_json::Value = get(vec![("q", "TESTSTRUCT")]).await?.json().await?;
+    assert!(ci["total_matches"].as_u64().unwrap() > 0);
+    let cs: serde_json::Value = get(vec![("q", "TESTSTRUCT"), ("case", "true")])
+        .await?
+        .json()
+        .await?;
+    assert_eq!(cs["total_matches"].as_u64().unwrap(), 0, "{cs}");
+    Ok(())
+}
+
+/// Roadmap 4.4: `/api/ready` reports readiness (200 once an index can
+/// serve), `/metrics` exposes request counters and index gauges in the
+/// Prometheus text format.
+#[tokio::test]
+async fn test_http_ready_and_metrics() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+
+    let ready = client
+        .get(format!("{}/api/ready", ctx.http_url))
+        .send()
+        .await?;
+    assert_eq!(ready.status(), 200, "3 files indexed, no build running");
+    let body: serde_json::Value = ready.json().await?;
+    assert_eq!(body["ready"], true);
+    assert_eq!(body["num_files"].as_u64().unwrap(), 3);
+
+    // One search, then the counters must reflect it.
+    client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "TestStruct")])
+        .send()
+        .await?;
+    client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "(unclosed"), ("regex", "true")])
+        .send()
+        .await?;
+    let metrics = client
+        .get(format!("{}/metrics", ctx.http_url))
+        .send()
+        .await?;
+    assert_eq!(metrics.status(), 200);
+    assert!(metrics
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/plain"));
+    let text = metrics.text().await?;
+    assert!(text.contains("fcs_search_requests_total 2"), "{text}");
+    assert!(
+        text.contains("fcs_search_errors_total{reason=\"client\"} 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("fcs_search_duration_seconds_count 2"),
+        "{text}"
+    );
+    assert!(text.contains("fcs_index_files 3"), "{text}");
+    assert!(text.contains("fcs_ready 1"), "{text}");
+    Ok(())
+}
+
+/// Roadmap 4.3: beyond `max_concurrent_searches` a search is refused with
+/// 503 + Retry-After instead of queueing on the blocking pool.
+#[tokio::test]
+async fn test_http_search_concurrency_limit() -> Result<()> {
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let opts = RouterOptions {
+        max_concurrent_searches: 0,
+        ..Default::default()
+    };
+    let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/api/search"))
+        .query(&[("q", "anything")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 503);
+    assert_eq!(resp.headers().get("retry-after").unwrap(), "1");
+    let body: serde_json::Value = resp.json().await?;
+    assert!(
+        body["error"].as_str().unwrap().contains("concurrent"),
+        "{body}"
+    );
+    Ok(())
+}
+
+/// Roadmap 1.9: `/api/context` must cap the window and never overflow.
+/// `context=usize::MAX` used to compute `match_idx + context + 1` (a panic in
+/// debug builds, a wrapped index in release) and could otherwise return the
+/// whole file through the "lightweight" endpoint.
+#[tokio::test]
+async fn test_http_context_caps_window_and_survives_overflow() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+
+    // Discover an indexed file path via search.
+    let body: serde_json::Value = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "TestStruct")])
+        .send()
+        .await?
+        .json()
+        .await?;
+    let file = body["results"][0]["file_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = client
+        .get(format!("{}/api/context", ctx.http_url))
+        .query(&[
+            ("file", file.as_str()),
+            ("line", "1"),
+            ("context", &usize::MAX.to_string()),
+        ])
+        .send()
+        .await?;
+    assert_eq!(response.status(), 200, "overflowing context must not fail");
+    let body: serde_json::Value = response.json().await?;
+    let n = body["lines"].as_array().unwrap().len();
+    assert!(n <= 401, "window must be capped (got {n} lines)");
+    assert_eq!(body["start_line"].as_u64().unwrap(), 1);
+    Ok(())
+}
+
+/// Roadmap 1.9: a pathological regex is rejected at compile time by the
+/// configured size limit and surfaces as a 400 JSON error, not a multi-hundred
+/// megabyte compilation on the search thread.
+#[tokio::test]
+async fn test_http_regex_size_limit_returns_400() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "(a{1000}){1000}"), ("regex", "true")])
+        .send()
+        .await?;
+    assert_eq!(response.status(), 400, "oversized regex must be rejected");
+    let body: serde_json::Value = response.json().await?;
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("regex"),
+        "error body should mention the regex: {body}"
+    );
     Ok(())
 }
 
@@ -574,6 +1060,7 @@ async fn test_grpc_search_symbols_only() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: true,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -646,6 +1133,7 @@ async fn test_grpc_regex_search() -> Result<()> {
         exclude_paths: vec![],
         is_regex: true,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -744,6 +1232,7 @@ async fn test_grpc_search_with_path_filters() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -811,6 +1300,7 @@ async fn test_grpc_search_max_results_limit() -> Result<()> {
         exclude_paths: vec![],
         is_regex: false,
         symbols_only: false,
+        ..Default::default()
     };
 
     let mut stream = client.search(request).await?.into_inner();
@@ -1506,6 +1996,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1570,6 +2061,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: true,
+            ..Default::default()
         };
         let mut stream_sym = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1641,6 +2133,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: true,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_regex = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1721,6 +2214,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_py = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1752,6 +2246,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec!["*.js".to_string()],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_nojs = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1796,6 +2291,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_max = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -1851,6 +2347,7 @@ async fn test_super_integration() -> Result<()> {
             exclude_paths: vec![],
             is_regex: false,
             symbols_only: false,
+            ..Default::default()
         };
         let mut stream_empty = client.search(req).await?.into_inner();
         let mut results = vec![];
@@ -2034,8 +2531,10 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
     }
 
     let index_path = temp.path().join("index.bin");
-    let mut config = IndexerConfig::default();
-    config.paths = vec![temp.path().to_string_lossy().to_string()];
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
 
     {
         let mut eng = SearchEngine::new();
@@ -2062,6 +2561,541 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
             results.iter().map(|m| &m.file_path).collect::<Vec<_>>()
         );
     }
+
+    Ok(())
+}
+
+/// Roadmap 1.8: directory rename and delete events (the watcher reports only
+/// the directory path) must remove every file under the old path and index
+/// every eligible file under the new one. Previously both were silent no-ops.
+#[tokio::test]
+async fn test_directory_rename_and_delete_update_index() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_change, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let old_dir = temp.path().join("old_mod");
+    std::fs::create_dir_all(old_dir.join("nested"))?;
+    std::fs::write(old_dir.join("a.rs"), "fn dir_token_a() {}\n")?;
+    std::fs::write(old_dir.join("b.rs"), "fn dir_token_b() {}\n")?;
+    std::fs::write(old_dir.join("nested/c.rs"), "fn dir_token_c() {}\n")?;
+    let other = temp.path().join("other.rs");
+    std::fs::write(&other, "fn other_token() {}\n")?;
+
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut eng = SearchEngine::new();
+    for p in [
+        old_dir.join("a.rs"),
+        old_dir.join("b.rs"),
+        old_dir.join("nested/c.rs"),
+        other.clone(),
+    ] {
+        eng.index_file(&p)?;
+    }
+    assert_eq!(eng.search("dir_token_c", 10).len(), 1);
+
+    // Rename the directory on disk, then apply the event the watcher emits.
+    let new_dir = temp.path().join("new_mod");
+    std::fs::rename(&old_dir, &new_dir)?;
+    let outcome = apply_change(
+        &mut eng,
+        &FileChange::Renamed {
+            from: old_dir.clone(),
+            to: new_dir.clone(),
+        },
+        &config,
+    );
+    assert_eq!((outcome.removed, outcome.indexed), (3, 3), "{outcome:?}");
+
+    for tok in ["dir_token_a", "dir_token_b", "dir_token_c"] {
+        let hits = eng.search(tok, 10);
+        assert_eq!(hits.len(), 1, "{tok}: {hits:?}");
+        assert!(
+            hits[0].file_path.contains("new_mod") && !hits[0].file_path.contains("old_mod"),
+            "{tok} must resolve under the new directory: {}",
+            hits[0].file_path
+        );
+    }
+    assert_eq!(
+        eng.search("other_token", 10).len(),
+        1,
+        "unrelated file untouched"
+    );
+
+    // Delete the directory; the watcher reports only the directory path.
+    std::fs::remove_dir_all(&new_dir)?;
+    let outcome = apply_change(&mut eng, &FileChange::Deleted(new_dir.clone()), &config);
+    assert_eq!(outcome.removed, 3, "{outcome:?}");
+    for tok in ["dir_token_a", "dir_token_b", "dir_token_c"] {
+        assert!(eng.search(tok, 10).is_empty(), "{tok} must be gone");
+    }
+    assert_eq!(eng.search("other_token", 10).len(), 1);
+    Ok(())
+}
+
+/// Roadmap 2.9: searches running concurrently with incremental updates must
+/// never panic or observe a half-applied state (a file is either fully old
+/// or fully new), and the final state must be correct.
+#[tokio::test]
+async fn test_concurrent_search_during_updates() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mut files = Vec::new();
+    for i in 0..20 {
+        let p = temp.path().join(format!("c{i}.rs"));
+        std::fs::write(&p, format!("fn conc_token_{i}_v0() {{}}\n"))?;
+        files.push(p);
+    }
+    let engine = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut e = engine.write().unwrap();
+        for p in &files {
+            e.index_file(p)?;
+        }
+        e.finalize();
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let searcher = {
+        let engine = engine.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let mut searches = 0usize;
+            while !stop.load(Ordering::Relaxed) {
+                if let Ok(e) = engine.try_read() {
+                    // Every version of every file has exactly one definition.
+                    // A file being rewritten on disk (truncate + write, as
+                    // editors do) may transiently read as empty, so 0 hits is
+                    // tolerated; 2+ would mean a duplicate id or stale postings.
+                    // Probe a rotating subset so each read-lock hold is short
+                    // (a debug-build search costs milliseconds).
+                    for i in (searches % 4..20).step_by(4) {
+                        let hits = e.search(&format!("conc_token_{i}_v"), 10);
+                        assert!(hits.len() <= 1, "file {i} has {} live versions", hits.len());
+                    }
+                    searches += 1;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            searches
+        })
+    };
+
+    for round in 1..=5 {
+        for (i, p) in files.iter().enumerate() {
+            std::fs::write(p, format!("fn conc_token_{i}_v{round}() {{}}\n"))?;
+            engine.write().unwrap().update_file(p)?;
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    let searches = searcher.join().expect("search thread panicked");
+    assert!(searches > 0, "search thread never got the lock");
+
+    let e = engine.read().unwrap();
+    for i in 0..20 {
+        let hits = e.search(&format!("conc_token_{i}_v5"), 10);
+        assert_eq!(hits.len(), 1, "final content for {i}");
+        assert!(e.search(&format!("conc_token_{i}_v0"), 10).is_empty());
+    }
+    assert_eq!(e.get_stats().num_files, 20, "no duplicate ids");
+    Ok(())
+}
+
+/// Roadmap 2.9: the real `notify` watcher reports create, modify, delete and
+/// rename as `FileChange`s (with a short debounce), and those changes applied
+/// through `apply_changes` leave the index matching the disk.
+#[tokio::test]
+async fn test_real_watcher_events_end_to_end() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{
+        apply_changes, FileChange, FileWatcher, SearchEngine, WatcherConfig,
+    };
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let root = temp.path().canonicalize()?;
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    let watcher = FileWatcher::new(WatcherConfig {
+        paths: vec![root.clone()],
+        debounce_duration: Duration::from_millis(150),
+        exclude_patterns: Vec::new(),
+    })?;
+
+    // Collect events for up to `wait`, returning as soon as `want` events landed.
+    let collect = |watcher: &FileWatcher, want: usize, wait: Duration| -> Vec<FileChange> {
+        let deadline = std::time::Instant::now() + wait;
+        let mut out = Vec::new();
+        while out.len() < want && std::time::Instant::now() < deadline {
+            if let Some(c) = watcher.recv_timeout(Duration::from_millis(200)) {
+                out.push(c);
+            }
+        }
+        out
+    };
+
+    // create
+    let a = root.join("w_a.rs");
+    std::fs::write(&a, "fn watch_created() {}\n")?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a create event");
+    apply_changes(&mut engine, &ev, &config);
+    assert_eq!(engine.search("watch_created", 5).len(), 1);
+
+    // modify
+    std::fs::write(&a, "fn watch_modified() {}\n")?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a modify event");
+    apply_changes(&mut engine, &ev, &config);
+    assert!(engine.search("watch_created", 5).is_empty());
+    assert_eq!(engine.search("watch_modified", 5).len(), 1);
+
+    // rename
+    let b = root.join("w_b.rs");
+    std::fs::rename(&a, &b)?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a rename event");
+    apply_changes(&mut engine, &ev, &config);
+    let hits = engine.search("watch_modified", 5);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert!(
+        hits[0].file_path.ends_with("w_b.rs"),
+        "{}",
+        hits[0].file_path
+    );
+
+    // delete
+    std::fs::remove_file(&b)?;
+    let ev = collect(&watcher, 1, Duration::from_secs(5));
+    assert!(!ev.is_empty(), "expected a delete event");
+    apply_changes(&mut engine, &ev, &config);
+    assert!(engine.search("watch_modified", 5).is_empty());
+    assert_eq!(engine.get_stats().num_files, 0, "live file count");
+    Ok(())
+}
+
+/// Roadmap 2.6: imports that were still unresolved at save time survive a
+/// checkpoint restore, so a file indexed after the reload still gains its
+/// incoming edge.
+#[tokio::test]
+async fn test_unresolved_imports_survive_reload() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let main_rs = temp.path().join("main.rs");
+    let helper_rs = temp.path().join("helper.rs");
+    std::fs::write(&main_rs, "mod helper;\nfn main() {}\n")?;
+    let index_path = temp.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    {
+        let mut eng = SearchEngine::new();
+        eng.index_file(&main_rs)?;
+        eng.resolve_imports();
+        assert_eq!(eng.waiting_imports_count(), 1);
+        eng.save_index(&index_path, &config)?;
+    }
+
+    let mut eng2 = SearchEngine::new();
+    eng2.load_index_with_reconciliation(&index_path, &config)?;
+    assert_eq!(eng2.waiting_imports_count(), 1, "parked import restored");
+
+    std::fs::write(&helper_rs, "pub fn help() {}\n")?;
+    eng2.index_file(&helper_rs)?;
+    eng2.resolve_imports_incremental();
+    let helper_id = eng2.find_file_id(&helper_rs.to_string_lossy()).unwrap();
+    let main_id = eng2.find_file_id(&main_rs.to_string_lossy()).unwrap();
+    assert_eq!(eng2.get_dependents(helper_id), vec![main_id]);
+    assert_eq!(eng2.waiting_imports_count(), 0);
+    Ok(())
+}
+
+/// Roadmap 4.1: display paths (what results and the UI round-trip) resolve
+/// through their root without a per-file scan, and unambiguously when two
+/// roots contain the same relative path.
+#[tokio::test]
+async fn test_find_file_id_by_display_path_across_roots() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let root_a = temp.path().join("alpha");
+    let root_b = temp.path().join("beta");
+    for r in [&root_a, &root_b] {
+        std::fs::create_dir_all(r.join("src"))?;
+    }
+    std::fs::write(root_a.join("src/main.rs"), "fn in_alpha() {}\n")?;
+    std::fs::write(root_b.join("src/main.rs"), "fn in_beta() {}\n")?;
+
+    let mut eng = SearchEngine::new();
+    eng.add_root_path(&root_a);
+    eng.add_root_path(&root_b);
+    eng.index_file(root_a.join("src/main.rs"))?;
+    eng.index_file(root_b.join("src/main.rs"))?;
+
+    let a = eng
+        .find_file_id("alpha/src/main.rs")
+        .expect("alpha display path");
+    let b = eng
+        .find_file_id("beta/src/main.rs")
+        .expect("beta display path");
+    assert_ne!(a, b);
+    assert_eq!(eng.get_file_path(a).as_deref(), Some("alpha/src/main.rs"));
+    assert_eq!(eng.get_file_path(b).as_deref(), Some("beta/src/main.rs"));
+    // Search results round-trip to the right file.
+    let hit = &eng.search("in_beta", 5)[0];
+    assert_eq!(eng.find_file_id(&hit.file_path), Some(b));
+    // Unknown display path under a known root is not found (no suffix guess).
+    assert_eq!(eng.find_file_id("beta/src/missing.rs"), None);
+    Ok(())
+}
+
+/// Roadmap 2.3: watcher paths are matched by canonical path, never by suffix.
+/// A non-canonical spelling of an indexed file must update it in place (no
+/// duplicate id, no trigram accumulation), and a different file whose path
+/// merely ends with the same suffix must not be mistaken for it.
+#[tokio::test]
+async fn test_update_file_uses_canonical_exact_match() -> Result<()> {
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    std::fs::create_dir_all(temp.path().join("sub"))?;
+    let file = temp.path().join("sub/main.rs");
+    std::fs::write(&file, "fn canon_v1() {}\n")?;
+    let mut eng = SearchEngine::new();
+    eng.index_file(&file)?;
+    let files_before = eng.get_stats().num_files;
+
+    // 50 updates through a non-canonical spelling of the same path.
+    let dotted = temp.path().join("sub").join(".").join("main.rs");
+    for i in 0..50 {
+        std::fs::write(&file, format!("fn canon_v{i}_more() {{}}\n"))?;
+        eng.update_file(&dotted)?;
+    }
+    assert_eq!(eng.get_stats().num_files, files_before, "no duplicate ids");
+    assert!(eng.search("canon_v1() ", 10).is_empty(), "old content gone");
+    assert_eq!(eng.search("canon_v49_more", 10).len(), 1);
+
+    // A path that only shares a suffix is NOT this file.
+    let other_dir = temp.path().join("elsewhere");
+    std::fs::create_dir_all(&other_dir)?;
+    let other = other_dir.join("main.rs");
+    std::fs::write(&other, "fn other_main_token() {}\n")?;
+    assert!(
+        !eng.remove_file(&other),
+        "an unindexed file with a matching suffix must not remove the indexed one"
+    );
+    assert_eq!(eng.search("canon_v49_more", 10).len(), 1);
+    Ok(())
+}
+
+/// Roadmap 2.1: a burst of watcher events is coalesced per path and applied
+/// as one batch: a rename followed by a modify of the new path indexes the
+/// file once, deletes are removed in one pass, and a delete after a modify of
+/// the same path wins.
+#[tokio::test]
+async fn test_apply_changes_batches_and_coalesces() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_changes, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mk = |name: &str, body: &str| -> Result<std::path::PathBuf> {
+        let p = temp.path().join(name);
+        std::fs::write(&p, body)?;
+        Ok(p)
+    };
+    let a = mk("a.rs", "fn batch_a() {}\n")?;
+    let b = mk("b.rs", "fn batch_b() {}\n")?;
+    let c = mk("c.rs", "fn batch_c() {}\n")?;
+    let d = mk("d.rs", "fn batch_d() {}\n")?;
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut eng = SearchEngine::new();
+    for p in [&a, &b, &c, &d] {
+        eng.index_file(p)?;
+    }
+    eng.finalize();
+
+    // Burst: delete a and b; rename c -> e then "modify" e; modify d then delete d.
+    let e = temp.path().join("e.rs");
+    std::fs::rename(&c, &e)?;
+    std::fs::write(&e, "fn batch_e_new() {}\n")?;
+    std::fs::remove_file(&a)?;
+    std::fs::remove_file(&b)?;
+    std::fs::remove_file(&d)?;
+    let changes = vec![
+        FileChange::Deleted(a.clone()),
+        FileChange::Modified(d.clone()),
+        FileChange::Renamed {
+            from: c.clone(),
+            to: e.clone(),
+        },
+        FileChange::Modified(e.clone()),
+        FileChange::Deleted(b.clone()),
+        FileChange::Deleted(d.clone()),
+    ];
+    let outcome = apply_changes(&mut eng, &changes, &config);
+    assert_eq!(outcome.removed, 4, "{outcome:?}"); // a, b, c(old), d
+    assert_eq!(outcome.indexed, 1, "{outcome:?}"); // e, once
+
+    for gone in ["batch_a", "batch_b", "batch_c", "batch_d"] {
+        assert!(eng.search(gone, 10).is_empty(), "{gone} must be gone");
+    }
+    let hits = eng.search("batch_e_new", 10);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].file_path.ends_with("e.rs"));
+    Ok(())
+}
+
+/// Roadmap 1.8 / 2.4: the watcher applies the same eligibility rules as the
+/// initial build. A changed file with a non-included extension is not indexed
+/// and an excluded path is dropped.
+#[tokio::test]
+async fn test_watcher_change_respects_eligibility() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_change, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let log = temp.path().join("run.log");
+    std::fs::write(&log, "log_only_token\n")?;
+    let rs = temp.path().join("keep.rs");
+    std::fs::write(&rs, "fn keep_token() {}\n")?;
+
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        include_extensions: vec!["rs".to_string()],
+        ..Default::default()
+    };
+    let mut eng = SearchEngine::new();
+    let o = apply_change(&mut eng, &FileChange::Modified(log.clone()), &config);
+    assert!(
+        !o.changed(),
+        "non-included extension must not be indexed: {o:?}"
+    );
+    assert!(eng.search("log_only_token", 10).is_empty());
+    let o = apply_change(&mut eng, &FileChange::Modified(rs.clone()), &config);
+    assert_eq!(o.indexed, 1);
+    assert_eq!(eng.search("keep_token", 10).len(), 1);
+    Ok(())
+}
+
+/// Roadmap 1.4: the persisted mtime/size must describe the content that was
+/// indexed, not the on-disk state at save time. A file edited between indexing
+/// and saving must be reported stale on reload (previously the fresh stat was
+/// persisted alongside the old trigrams and the edit was never detected).
+#[tokio::test]
+async fn test_edit_between_index_and_save_is_detected_as_stale() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let file = temp.path().join("edited.rs");
+    std::fs::write(&file, "fn before_token() {}\n")?;
+    let index_path = temp.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+
+    {
+        let mut eng = SearchEngine::new();
+        eng.index_file(&file)?;
+        // Edit AFTER indexing, BEFORE saving (different size so the check does
+        // not depend on second-granularity mtimes).
+        std::fs::write(&file, "fn after_token_with_longer_name() {}\n")?;
+        eng.save_index(&index_path, &config)?;
+    }
+
+    let mut eng2 = SearchEngine::new();
+    let result = eng2.load_index_with_reconciliation(&index_path, &config)?;
+    assert!(
+        result.stale_files.iter().any(|p| p.ends_with("edited.rs")),
+        "edited file must be reported stale; got stale={:?}",
+        result.stale_files
+    );
+    Ok(())
+}
+
+/// Roadmap 1.1 (P0): saving after `remove_file` must persist a consistent
+/// index. The file table is compacted over tombstones, so trigram bitmaps,
+/// symbols and dependency edges must be remapped onto positions; otherwise
+/// every file after the removed one is misattributed (or lost) on reload.
+#[tokio::test]
+async fn test_save_after_remove_keeps_ids_consistent() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::SearchEngine;
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let mut paths = Vec::new();
+    for i in 0..4 {
+        let p = temp.path().join(format!("file{}.rs", i));
+        std::fs::write(&p, format!("fn unique_token_{i}() {{ let x = {i}; }}\n"))?;
+        paths.push(p);
+    }
+    let index_path = temp.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![temp.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+
+    {
+        let mut eng = SearchEngine::new();
+        for p in &paths {
+            eng.index_file(p)?;
+        }
+        // Remove the middle file (id 1) the way the watcher does, then save.
+        assert!(eng.remove_file(&paths[1]));
+        std::fs::remove_file(&paths[1])?;
+        eng.save_index(&index_path, &config)?;
+    }
+
+    let mut eng2 = SearchEngine::new();
+    eng2.load_index_with_reconciliation(&index_path, &config)?;
+
+    for i in [0usize, 2, 3] {
+        let results = eng2.search(&format!("unique_token_{i}"), 10);
+        let got: Vec<&str> = results.iter().map(|m| m.file_path.as_str()).collect();
+        assert_eq!(
+            got.len(),
+            1,
+            "token {i} must hit exactly one file after reload; got {got:?}"
+        );
+        assert!(
+            got[0].ends_with(&format!("file{i}.rs")),
+            "token {i} must map to file{i}.rs after reload; got {got:?}"
+        );
+        // Symbols were persisted in the same compacted order.
+        let syms = eng2.search_symbols(&format!("unique_token_{i}"), "", "", 10)?;
+        assert!(
+            syms.iter()
+                .any(|m| m.file_path.ends_with(&format!("file{i}.rs"))),
+            "symbol unique_token_{i} must resolve to file{i}.rs; got {:?}",
+            syms.iter().map(|m| &m.file_path).collect::<Vec<_>>()
+        );
+    }
+    // The removed file must not come back.
+    assert!(eng2.search("unique_token_1", 10).is_empty());
 
     Ok(())
 }
@@ -2109,7 +3143,10 @@ async fn test_incremental_update_remove_rename() -> Result<()> {
     );
 
     // Delete b.rs.
-    assert!(eng.remove_file(&b), "remove_file should find and remove b.rs");
+    assert!(
+        eng.remove_file(&b),
+        "remove_file should find and remove b.rs"
+    );
     assert!(
         eng.search("beta_token", 10).is_empty(),
         "deleted file must not match"

@@ -10,7 +10,7 @@ Please be respectful and constructive in all interactions. We aim to maintain a 
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.89 or later (the pinned toolchain in `rust-toolchain.toml` is used by CI)
 - Protocol Buffers compiler (`protoc`)
 - Git
 
@@ -149,25 +149,26 @@ Describe how you tested your changes
 
 ## Areas for Contribution
 
-We welcome contributions in these areas:
+The current plan lives in [docs/plans/2026-09-04-keyword-engine-roadmap.md](docs/plans/2026-09-04-keyword-engine-roadmap.md);
+every task there has file references and an acceptance criterion. Open items as of
+September 2026:
 
-### High Priority
-- Additional language support (C++, Java, Go, etc.)
-- Performance optimizations
-- Bug fixes
-- Documentation improvements
+### Engine
+- Sectioned, mmap-able persistence format (lazy load, no double materialisation
+  on save/load) — roadmap 6.1.
+- Memory diet: intern paths once, collapse the per-file `OnceLock`s — roadmap 6.3.
+- Multi-line regex (`(?s)`, `\n`) and symbol *reference* results — roadmap Phase 7.
 
-### Features
-- Query syntax enhancements (regex, fuzzy search)
-- Additional scoring factors
-- Caching mechanisms
-- Web UI for search interface
+### Benchmarks and tests
+- A pinned mid-size real corpus for CI benchmarks (search, indexing, incremental
+  update, symbol search, reconciliation) — roadmap 6.5.
+- Explicit CORS-header and `/ws/progress` tests.
 
-### Testing
-- Additional unit tests
-- Integration tests
-- Performance benchmarks
-- Stress tests for large codebases
+### Languages
+- Symbol coverage is driven by each grammar's `tags.scm` plus a small
+  supplementary walker in `src/symbols/extractor.rs`; adding a language means
+  adding the grammar crate, mapping its extension, and (if the crate ships one)
+  its `TAGS_QUERY`. Bash has no tags query and relies on the walker.
 
 ## Architecture Overview
 

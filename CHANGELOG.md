@@ -7,6 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Persisted index corruption after a file removal**: `save_index` compacted the
+  file table over tombstoned ids but wrote trigram bitmaps, symbols and dependency
+  edges keyed by live id, so every file after a removed one was misattributed or
+  lost on reload. Ids are now remapped at save time.
+- Every match on line 1 of every file received the 3× symbol-definition boost
+  (the synthetic filename symbol at line 0 counted as a definition line).
+- Files with a line over 100 KB or extreme nesting were dropped from the whole
+  index; they are now text-searchable and only skip symbol extraction.
+- The persisted mtime/size described the on-disk state at *save* time, so a
+  file edited during a long build was never detected as stale. Both are now
+  captured when the content is read.
+- Symbols: `.tsx` is parsed with the TSX grammar; JS/TS class methods,
+  `const f = () => …`, generator functions, abstract classes and namespaces are
+  extracted; symbol line/column now come from the name node (Java `@Override`,
+  decorators, attributes and multi-line C signatures reported the wrong line).
+- Directory rename/delete events were silent no-ops in the watcher; every file
+  under the old path stayed indexed. The watcher now also applies the same
+  eligibility rules as the initial build (include extensions, excludes, size).
+- A panic on the watcher path poisoned the engine lock and turned every search
+  into a 500 until restart; the watcher path is now panic-guarded, runs on an
+  8 MB stack, and the REST/gRPC readers recover from a poisoned lock.
+- `/api/context` no longer overflows on a huge `context` value and is capped at
+  200 lines each side; user regexes have an explicit compile-size limit.
+- `DependencyIndex::remove_file` never pruned the filename index and every
+  watcher update pushed a duplicate path entry.
+
+### Added
+- `/api/search` paging and budgets: `offset` (deterministic ordering, so pages
+  are stable), `timeout_ms`, and `total_matches` / `truncated_by_budget` in the
+  response; `has_more` is now derived from the real total. Regex and symbol
+  searches report ranking info too.
+- Every result carries `line_match_start` / `line_match_end` (byte offsets into
+  the full line) and `match_column` (0-based character column) on REST and gRPC.
+
+### Added
+- Query syntax for plain-text searches: `"quoted phrases"`, several AND-ed
+  terms, `-term`, `file:` / `-file:`, `lang:` / `-lang:`, `case:yes`,
+  `word:yes` (REST `case` / `word` parameters and gRPC `case_sensitive` /
+  `whole_word` override the in-query switches).
+- `/api/ready` (readiness, distinct from `/api/health` liveness), `/metrics`
+  (Prometheus text: search counters by outcome, latency histogram, index gauges)
+  and the standard `grpc.health.v1` service.
+- Config: `server.cors_origins`, `server.max_concurrent_searches`,
+  `server.request_timeout_secs`, `indexer.respect_gitignore`; `--web-address`.
+- gRPC `SearchRequest.offset` / `rank` / `deadline_ms`; results carry
+  `dependency_count`.
+
+### Changed
+- Build: the semantic engine is behind the `semantic` Cargo feature (off by
+  default; `ml-models` implies it), release binaries use thin LTO and are
+  stripped, OpenTelemetry is on 0.32 (one tonic/axum stack), `md5` and `glob` are
+  gone (the config fingerprint format changed, so the first start after upgrading
+  rebuilds the index once), and `cargo-deny` + Dependabot are wired into CI.
+- Trigram extraction folds case per byte and dedupes through a bitset instead of
+  lowercasing a copy of every file and hashing every byte.
+- Symbols are extracted with each grammar's own `tags.scm` query (name-node
+  positions, upstream-maintained coverage), supplemented by the previous walker;
+  new symbol kinds Module, Macro, Field and Property; C++ `.h` headers are
+  detected; JSON/TOML/YAML/HTML/CSS/Markdown are no longer parsed; parses are
+  capped at 2 s.
+- Unknown config keys are rejected and the configuration is validated at
+  startup (addresses, limits, index path directory); `OTEL_SDK_DISABLED=true` can
+  no longer be overridden.
+- REST requests time out (default 30 s), bodies are capped, and searches beyond
+  `max_concurrent_searches` get 503 + Retry-After instead of queueing; gRPC has
+  a per-request timeout and per-connection concurrency limit.
+- gRPC `max_results = 0` now means the default page of 50 (was clamped to 1); the
+  `Index` RPC applies the indexer's eligibility rules and no longer holds the
+  engine lock for its whole walk.
+- `/api/diagnostics` reports the real indexer configuration and caches its
+  extension breakdown per index generation; malformed query parameters return the
+  JSON error envelope; display paths resolve through their root instead of a
+  per-file suffix scan.
+- Every query's work is bounded by a match budget (8× the page, minimum 512) and
+  an optional deadline; `rank=full` no longer materializes every match of every
+  candidate before truncating.
+- Regex searches are accelerated for `(?i)` literals and repeated suffixes
+  (`abc+`), and compiled patterns are cached; plain-text verification scans the
+  whole buffer with `memchr` and builds symbol maps only on the first hit.
+- Symbol search consults the symbol cache before reading any file, never drops
+  low-scoring files before matching, ranks exact > prefix > substring, and
+  returns one row per line.
+- **Retrieval no longer reads through a live memory map for files up to 1 MiB**:
+  a searcher touching a mapped file that an editor truncated in place was an
+  uncatchable SIGBUS that killed the server. Small files (essentially all source
+  files) are read into an owned buffer per access; only larger files are mapped.
+  This also keeps the mapping count far below `vm.max_map_count`.
+- `.gitignore` / `.ignore` files under the indexed paths are honoured by the
+  initial build and by the watcher (`indexer.respect_gitignore`, default true).
+- **Persisted index format v5** (`FCSIDX03`): unresolved imports are stored so a
+  checkpoint restore still gains the edge when the target file is indexed later;
+  mtimes are kept at nanosecond precision, paths are stored as raw bytes, and
+  posting bitmaps are run-optimised before writing. Index files written by
+  earlier versions are rebuilt automatically.
+- Import resolution is now per language (Rust crate/module paths, Python
+  relative and package imports, JS/TS extension and `index` probing, `@/`
+  aliases) and no longer guesses a same-named file anywhere in the repo for bare
+  package names; unresolved imports are retried only when a file with a matching
+  name appears instead of after every batch.
+- Watcher events are gathered for 200 ms and applied under one write lock with a
+  single posting-list pass; ranking metadata and the all-documents cache stay
+  current across incremental updates and after a persisted load.
+- **Graceful shutdown**: SIGINT/SIGTERM now stop both servers, stop the indexer
+  (persisting a checkpoint), save pending watcher updates, and flush telemetry.
+- **Security defaults**: both listeners bind to `127.0.0.1`; CORS is off unless
+  `server.cors_origins` is set; the gRPC `Index` RPC only accepts paths under the
+  configured `indexer.paths` and no longer follows symlinks; a web-UI bind
+  failure is fatal instead of silently leaving the server without a REST API.
+- Minimum supported Rust is 1.89 (was documented as 1.70); the toolchain is
+  pinned via `rust-toolchain.toml`; `reqwest` uses rustls so builds and tests no
+  longer need system OpenSSL.
+- CI lints all targets and features, checks docs, has an MSRV job, and releases
+  are gated on tests; the VS Code extension publishes on `ext-v*` tags only.
+
+### Repository
+- `.gitattributes` normalises line endings; the corrupted `.gitignore` is
+  repaired; `onnxruntime/` and the `test_corpus` gitlinks are no longer tracked.
+
 ## [0.9.0] - 2026-06-10
 
 ### Added

@@ -3,8 +3,11 @@ pub mod dependencies;
 pub mod diagnostics;
 pub mod index;
 pub mod search;
+#[cfg(feature = "semantic")]
 pub mod semantic;
+#[cfg(feature = "semantic")]
 pub mod semantic_server;
+#[cfg(feature = "semantic")]
 pub mod semantic_web;
 pub mod server;
 pub mod symbols;

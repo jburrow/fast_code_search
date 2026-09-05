@@ -36,6 +36,11 @@ pub struct BackgroundIndexerConfig {
 
     /// Broadcast channel for WebSocket progress updates.
     pub progress_tx: ProgressBroadcaster,
+
+    /// Set by the server on SIGINT/SIGTERM. The indexer stops discovering and
+    /// batching as soon as it observes this, then falls through to its normal
+    /// finalize + save so a partial checkpoint is persisted before exit.
+    pub shutdown: Arc<AtomicBool>,
 }
 
 /// Helper to update progress and broadcast to WebSocket clients.
@@ -168,6 +173,7 @@ pub fn run(config: BackgroundIndexerConfig) {
         engine: index_engine,
         progress: index_progress,
         progress_tx: index_progress_tx,
+        shutdown,
     } = config;
 
     let total_start = Instant::now();
@@ -277,7 +283,14 @@ pub fn run(config: BackgroundIndexerConfig) {
         &index_progress_tx,
         loaded_from_persistence,
         already_indexed_files,
+        &shutdown,
     );
+    if shutdown.load(Ordering::Acquire) {
+        info!(
+            files_indexed = total_indexed,
+            "Indexing interrupted by shutdown; saving what was indexed as a checkpoint"
+        );
+    }
 
     // Final import resolution
     finalize_imports(&index_engine, &index_progress, &index_progress_tx);
@@ -455,6 +468,7 @@ fn run_indexing_pipeline(
     index_progress_tx: &ProgressBroadcaster,
     loaded_from_persistence: bool,
     already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
+    shutdown: &Arc<AtomicBool>,
 ) -> (usize, usize, usize) {
     let (tx, rx) = mpsc::sync_channel::<PathBuf>(CHANNEL_BUFFER);
 
@@ -484,12 +498,14 @@ fn run_indexing_pipeline(
         indexer_config.exclude_patterns.clone(),
         indexer_config.include_extensions.clone(),
         indexer_config.max_file_size,
+        indexer_config.respect_gitignore,
         tx,
         files_discovered.clone(),
         discovery_done.clone(),
         index_progress.clone(),
         index_progress_tx.clone(),
         already_indexed_files,
+        shutdown.clone(),
     );
 
     // Update status and pre-seed files_discovered to match the atomic offset so
@@ -515,6 +531,7 @@ fn run_indexing_pipeline(
         index_progress_tx,
         indexer_config,
         loaded_from_persistence,
+        shutdown,
     );
 
     // Wait for discovery thread; log if it panicked
@@ -542,12 +559,14 @@ fn spawn_discovery_thread(
     exclude_patterns: Vec<String>,
     include_extensions: Vec<String>,
     max_file_size: u64,
+    respect_gitignore: bool,
     tx: SyncSender<PathBuf>,
     files_discovered: Arc<AtomicUsize>,
     discovery_done: Arc<AtomicBool>,
     discovery_progress: SharedIndexingProgress,
     discovery_progress_tx: ProgressBroadcaster,
     already_indexed_files: Arc<std::collections::HashSet<PathBuf>>,
+    shutdown: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // Compile exclude patterns into the SAME glob filter that
@@ -565,8 +584,15 @@ fn spawn_discovery_thread(
             crate::search::path_filter::PathFilter::default()
         });
 
-        // First, send stale files that need re-indexing
+        // First, send stale files that need re-indexing. Remember what was sent
+        // so the full scan below does not queue the same files a second time
+        // (they are not in `already_indexed_files`, which only holds files that
+        // were *valid* at load).
+        let mut sent_stale: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
         for stale_path in stale_files {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             if !stale_path.exists() {
                 continue;
             }
@@ -590,6 +616,10 @@ fn spawn_discovery_thread(
                 );
                 continue;
             }
+            if let Ok(canonical) = stale_path.canonicalize() {
+                sent_stale.insert(canonical);
+            }
+            sent_stale.insert(stale_path.clone());
             if tx.send(stale_path).is_err() {
                 return; // Receiver dropped
             }
@@ -604,20 +634,19 @@ fn spawn_discovery_thread(
             exclude_patterns,
             include_extensions,
             max_file_size: Some(max_file_size),
+            respect_gitignore,
             ..Default::default()
         };
 
         for path in FileDiscoveryIterator::new(&discovery_config) {
-            // Skip files already validly indexed from a checkpoint.  We try
-            // both the original path and its canonicalized form to match
-            // however the file_store stored the path.
-            if !already_indexed_files.is_empty() {
-                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-                if already_indexed_files.contains(&canonical)
-                    || already_indexed_files.contains(&path)
-                {
-                    continue;
-                }
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            // Skip files already validly indexed from a checkpoint, and stale
+            // files already queued above. We try both the original path and its
+            // canonicalized form to match however the file_store stored the path.
+            if should_skip_discovered(&path, &already_indexed_files, &sent_stale) {
+                continue;
             }
 
             if tx.send(path).is_err() {
@@ -643,6 +672,25 @@ fn spawn_discovery_thread(
     })
 }
 
+/// Whether a discovered `path` was already indexed (valid at checkpoint load)
+/// or already queued as a stale file, so the full scan must not re-send it.
+fn should_skip_discovered(
+    path: &Path,
+    already_indexed: &std::collections::HashSet<PathBuf>,
+    sent_stale: &std::collections::HashSet<PathBuf>,
+) -> bool {
+    if already_indexed.is_empty() && sent_stale.is_empty() {
+        return false;
+    }
+    if already_indexed.contains(path) || sent_stale.contains(path) {
+        return true;
+    }
+    match path.canonicalize() {
+        Ok(canonical) => already_indexed.contains(&canonical) || sent_stale.contains(&canonical),
+        Err(_) => false,
+    }
+}
+
 /// Process files in batches from the discovery channel.
 #[allow(clippy::too_many_arguments)]
 fn process_batches(
@@ -654,6 +702,7 @@ fn process_batches(
     index_progress_tx: &ProgressBroadcaster,
     indexer_config: &IndexerConfig,
     loaded_from_persistence: bool,
+    shutdown: &Arc<AtomicBool>,
 ) -> (usize, usize) {
     let batch_size = indexer_config.batch_size.max(1);
     let mut batch: Vec<PathBuf> = Vec::with_capacity(batch_size);
@@ -665,6 +714,11 @@ fn process_batches(
     let mut last_checkpoint_indexed = 0usize;
 
     loop {
+        if shutdown.load(Ordering::Acquire) {
+            // Stop pulling work; whatever is already in `batch` is indexed by
+            // the flush below so the checkpoint is as complete as possible.
+            break;
+        }
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(path) => {
                 batch.push(path);
@@ -994,6 +1048,29 @@ pub fn save_on_watcher_update(
     }
 }
 
+/// Save the index on shutdown if any watcher updates were applied since the
+/// last periodic save. Called by the watcher thread after it observes the
+/// shutdown flag so edits made while the server ran are not lost.
+pub fn save_after_watcher_shutdown(
+    indexer_config: &IndexerConfig,
+    engine: &Arc<RwLock<SearchEngine>>,
+    total_updates: usize,
+) {
+    if total_updates == 0 {
+        return;
+    }
+    let already_saved = indexer_config.save_after_updates > 0
+        && total_updates.is_multiple_of(indexer_config.save_after_updates);
+    if already_saved {
+        return;
+    }
+    info!(
+        updates = total_updates,
+        "Shutdown: saving index with pending watcher updates"
+    );
+    save_index_if_needed(indexer_config, engine, true, total_updates, 0);
+}
+
 /// Save the index to disk if configured and appropriate.
 fn save_index_if_needed(
     indexer_config: &IndexerConfig,
@@ -1045,5 +1122,168 @@ fn save_index_if_needed(
         Err(e) => {
             tracing::error!(error = %e, "Failed to acquire read lock to save index");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn test_engine() -> Arc<RwLock<SearchEngine>> {
+        Arc::new(RwLock::new(SearchEngine::new()))
+    }
+
+    /// Roadmap 2.9: the batch loop drains the channel in `batch_size` groups,
+    /// flushes the straggler tail, counts only files that actually indexed,
+    /// and honours the checkpoint cadence (a checkpoint after every N files
+    /// is a save; here index_path is unset so it is a no-op we can count via
+    /// batch numbering).
+    #[test]
+    fn test_process_batches_drains_and_flushes_tail() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut paths = Vec::new();
+        for i in 0..7 {
+            let p = temp.path().join(format!("f{i}.rs"));
+            std::fs::write(&p, format!("fn batch_fn_{i}() {{}}\n")).unwrap();
+            paths.push(p);
+        }
+        // A binary-looking file is skipped by process() and must not count.
+        let bin = temp.path().join("blob.rs");
+        std::fs::write(&bin, [0u8, 159, 146, 150, 0, 0, 1, 2]).unwrap();
+        paths.push(bin);
+
+        let (tx, rx) = mpsc::sync_channel::<PathBuf>(64);
+        for p in &paths {
+            tx.send(p.clone()).unwrap();
+        }
+        drop(tx);
+
+        let engine = test_engine();
+        let progress: SharedIndexingProgress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = crate::search::create_progress_broadcaster();
+        let config = IndexerConfig {
+            batch_size: 3,
+            ..Default::default()
+        };
+        let (indexed, batches) = process_batches(
+            rx,
+            &Arc::new(AtomicUsize::new(paths.len())),
+            &Arc::new(AtomicBool::new(true)),
+            &engine,
+            &progress,
+            &progress_tx,
+            &config,
+            false,
+            &Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(indexed, 7, "binary file must not be counted");
+        assert_eq!(batches, 3, "3 + 3 + tail of 2");
+        let eng = engine.read().unwrap();
+        assert_eq!(eng.get_stats().num_files, 7);
+        assert_eq!(eng.search("batch_fn_6", 5).len(), 1);
+    }
+
+    /// Roadmap 2.9: a shutdown flag observed mid-run stops pulling work but
+    /// still flushes what was already batched.
+    #[test]
+    fn test_process_batches_stops_on_shutdown() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let (tx, rx) = mpsc::sync_channel::<PathBuf>(64);
+        for i in 0..4 {
+            let p = temp.path().join(format!("s{i}.rs"));
+            std::fs::write(&p, format!("fn shut_{i}() {{}}\n")).unwrap();
+            tx.send(p).unwrap();
+        }
+        // Keep `tx` alive: the loop must exit because of the flag, not because
+        // the channel disconnected.
+        let engine = test_engine();
+        let progress: SharedIndexingProgress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = crate::search::create_progress_broadcaster();
+        let config = IndexerConfig {
+            batch_size: 100,
+            ..Default::default()
+        };
+        let shutdown = Arc::new(AtomicBool::new(true));
+        let (indexed, _) = process_batches(
+            rx,
+            &Arc::new(AtomicUsize::new(4)),
+            &Arc::new(AtomicBool::new(false)),
+            &engine,
+            &progress,
+            &progress_tx,
+            &config,
+            false,
+            &shutdown,
+        );
+        assert_eq!(indexed, 0, "flag was set before any recv; nothing pulled");
+        drop(tx);
+    }
+
+    /// Roadmap 2.9: a poisoned engine lock is recovered by the batch merge
+    /// rather than dropping the batch.
+    #[test]
+    fn test_process_batch_recovers_poisoned_lock() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let p = temp.path().join("after_poison.rs");
+        std::fs::write(&p, "fn survived_poison() {}\n").unwrap();
+
+        let engine = test_engine();
+        // Poison the lock: panic while holding the write guard.
+        let e2 = engine.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = e2.write().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert!(engine.write().is_err(), "lock should be poisoned");
+
+        let progress: SharedIndexingProgress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = crate::search::create_progress_broadcaster();
+        let mut batch = vec![p];
+        let mut batch_num = 0;
+        let indexed = process_batch(
+            &mut batch,
+            &mut batch_num,
+            &Arc::new(AtomicUsize::new(1)),
+            &engine,
+            &progress,
+            &progress_tx,
+            &[],
+            true,
+            true,
+            0,
+        );
+        assert_eq!(indexed, 1);
+        let eng = engine.read().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(eng.search("survived_poison", 5).len(), 1);
+    }
+
+    /// Roadmap 2.7: after a checkpoint load, stale files were sent explicitly
+    /// and then sent again by the full scan (they are not "already indexed").
+    #[test]
+    fn test_should_skip_discovered_covers_stale_and_indexed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let stale = temp.path().join("stale.rs");
+        let valid = temp.path().join("valid.rs");
+        let fresh = temp.path().join("fresh.rs");
+        for p in [&stale, &valid, &fresh] {
+            std::fs::write(p, "x").unwrap();
+        }
+        let indexed: HashSet<PathBuf> = [valid.canonicalize().unwrap()].into_iter().collect();
+        let sent: HashSet<PathBuf> = [stale.canonicalize().unwrap()].into_iter().collect();
+
+        assert!(should_skip_discovered(&valid, &indexed, &sent));
+        assert!(should_skip_discovered(&stale, &indexed, &sent));
+        // Non-canonical spelling of the same file is still recognised.
+        let dotted = temp.path().join(".").join("stale.rs");
+        assert!(should_skip_discovered(&dotted, &indexed, &sent));
+        assert!(!should_skip_discovered(&fresh, &indexed, &sent));
+        // Fast path: nothing to skip when both sets are empty.
+        assert!(!should_skip_discovered(
+            &valid,
+            &HashSet::new(),
+            &HashSet::new()
+        ));
     }
 }

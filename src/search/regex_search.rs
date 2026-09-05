@@ -6,6 +6,14 @@
 
 use anyhow::{Context, Result};
 use regex::Regex;
+
+/// Compiled-program size cap for user regexes (bytes). Patterns such as
+/// `(a{1000}){1000}` would otherwise compile into hundreds of megabytes; the
+/// `regex` crate rejects anything over this limit at build time, which the
+/// API surfaces as a 400.
+const REGEX_SIZE_LIMIT: usize = 4 * 1024 * 1024;
+/// Per-thread lazy DFA cache cap (bytes).
+const REGEX_DFA_SIZE_LIMIT: usize = 2 * 1024 * 1024;
 use regex_syntax::hir::{Hir, HirKind, Literal};
 
 /// Result of analyzing a regex pattern for trigram acceleration.
@@ -13,8 +21,6 @@ use regex_syntax::hir::{Hir, HirKind, Literal};
 pub struct RegexAnalysis {
     /// Compiled regex for matching
     pub regex: Regex,
-    /// Extracted literal strings (flattened, for diagnostics/back-compat)
-    pub literals: Vec<String>,
     /// Sound trigram constraints used to pre-filter candidate documents.
     ///
     /// The candidate set is the **intersection** of each constraint's matches;
@@ -40,12 +46,15 @@ impl RegexAnalysis {
     /// # Returns
     /// A `RegexAnalysis` containing the compiled regex and extracted literals.
     pub fn analyze(pattern: &str) -> Result<Self> {
-        let regex =
-            Regex::new(pattern).with_context(|| format!("Invalid regex pattern: {}", pattern))?;
+        let regex = regex::RegexBuilder::new(pattern)
+            .size_limit(REGEX_SIZE_LIMIT)
+            .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
+            .build()
+            .with_context(|| format!("Invalid regex pattern: {}", pattern))?;
 
-        let (literals, constraints) = match regex_syntax::parse(pattern) {
-            Ok(hir) => (extract_literals_from_hir(&hir), extract_constraints(&hir)),
-            Err(_) => (vec![], vec![]),
+        let constraints = match regex_syntax::parse(pattern) {
+            Ok(hir) => extract_constraints(&hir),
+            Err(_) => vec![],
         };
 
         // Accelerated only when we have at least one SOUND constraint (a literal
@@ -54,27 +63,10 @@ impl RegexAnalysis {
 
         Ok(Self {
             regex,
-            literals,
             constraints,
             is_accelerated,
         })
     }
-
-    /// Get the longest literal for use as primary trigram filter.
-    pub fn best_literal(&self) -> Option<&str> {
-        self.literals
-            .iter()
-            .filter(|l| l.len() >= 3)
-            .max_by_key(|l| l.len())
-            .map(|s| s.as_str())
-    }
-}
-
-/// Extract literal strings from a regex HIR (High-level Intermediate Representation).
-fn extract_literals_from_hir(hir: &Hir) -> Vec<String> {
-    let mut literals = Vec::new();
-    extract_literals_recursive(hir, &mut literals);
-    literals
 }
 
 /// Extract sound trigram constraints from a regex HIR.
@@ -89,16 +81,80 @@ fn extract_constraints(hir: &Hir) -> Vec<Vec<String>> {
     out
 }
 
+/// Text that MUST appear, contiguously, wherever `hir` matches — or `None`.
+///
+/// Covers plain literals, single-character case-insensitive classes (what
+/// `(?i)needle` compiles to: `[Nn][Ee]…`, returned lowercase, which is what
+/// the lowercased trigram index needs), and the first mandatory copy of a
+/// repetition (`c+` in `abc+`), so `(?i)needle` and `abc+` are accelerated
+/// instead of falling back to a full scan.
+fn mandatory_text(hir: &Hir) -> Option<String> {
+    match hir.kind() {
+        HirKind::Literal(lit) => literal_to_string(lit),
+        HirKind::Class(class) => single_char_class_lower(class).map(|c| c.to_string()),
+        HirKind::Capture(c) => mandatory_text(&c.sub),
+        HirKind::Repetition(rep) if rep.min >= 1 => mandatory_text(&rep.sub),
+        HirKind::Concat(subs) => {
+            // Only when EVERY child has mandatory text is the concatenation
+            // itself a contiguous mandatory string.
+            let mut s = String::new();
+            for sub in subs.iter() {
+                s.push_str(&mandatory_text(sub)?);
+            }
+            Some(s)
+        }
+        _ => None,
+    }
+}
+
+/// If `class` matches exactly the case variants of one character, that
+/// character in lowercase.
+fn single_char_class_lower(class: &regex_syntax::hir::Class) -> Option<char> {
+    use regex_syntax::hir::Class;
+    let mut lower: Option<char> = None;
+    let mut consider = |c: char| -> bool {
+        let mut it = c.to_lowercase();
+        let Some(l) = it.next() else {
+            return false;
+        };
+        if it.next().is_some() {
+            return false; // multi-char lowercase mapping: not a simple case pair
+        }
+        match lower {
+            None => {
+                lower = Some(l);
+                true
+            }
+            Some(existing) => existing == l,
+        }
+    };
+    match class {
+        Class::Unicode(u) => {
+            for r in u.ranges() {
+                if r.start() != r.end() || !consider(r.start()) {
+                    return None;
+                }
+            }
+        }
+        Class::Bytes(b) => {
+            for r in b.ranges() {
+                if r.start() != r.end() || !consider(r.start() as char) {
+                    return None;
+                }
+            }
+        }
+    }
+    lower
+}
+
 fn collect_constraints(hir: &Hir, out: &mut Vec<Vec<String>>) {
     match hir.kind() {
         HirKind::Concat(subs) => {
-            // Merge consecutive literal children into one required literal run.
+            // Merge consecutive mandatory-text children into one required run.
             let mut current = String::new();
             for sub in subs.iter() {
-                if let HirKind::Literal(lit) = sub.kind() {
-                    if let Some(s) = literal_to_string(lit) {
-                        current.push_str(&s);
-                    }
+                if let Some(s) = mandatory_text(sub) {
+                    current.push_str(&s);
                 } else {
                     if current.len() >= 3 {
                         out.push(vec![std::mem::take(&mut current)]);
@@ -125,8 +181,8 @@ fn collect_constraints(hir: &Hir, out: &mut Vec<Vec<String>>) {
                 collect_constraints(&rep.sub, out);
             }
         }
-        HirKind::Literal(lit) => {
-            if let Some(s) = literal_to_string(lit) {
+        HirKind::Literal(_) | HirKind::Class(_) => {
+            if let Some(s) = mandatory_text(hir) {
                 if s.len() >= 3 {
                     out.push(vec![s]);
                 }
@@ -159,22 +215,20 @@ fn alternation_constraint(hir: &Hir) -> Option<Vec<String>> {
 /// `hir` (a single alternation branch), or `None` if no such >= 3-char literal exists.
 fn branch_required_literal(hir: &Hir) -> Option<String> {
     fn consider(best: &mut Option<String>, candidate: &str) {
-        if candidate.len() >= 3 && best.as_ref().map_or(true, |b| candidate.len() > b.len()) {
+        if candidate.len() >= 3 && best.as_ref().is_none_or(|b| candidate.len() > b.len()) {
             *best = Some(candidate.to_string());
         }
     }
 
     match hir.kind() {
-        HirKind::Literal(lit) => literal_to_string(lit).filter(|s| s.len() >= 3),
+        HirKind::Literal(_) | HirKind::Class(_) => mandatory_text(hir).filter(|s| s.len() >= 3),
         HirKind::Concat(subs) => {
-            // Longest run of consecutive (mandatory) literal children.
+            // Longest run of consecutive mandatory-text children.
             let mut best: Option<String> = None;
             let mut current = String::new();
             for sub in subs.iter() {
-                if let HirKind::Literal(lit) = sub.kind() {
-                    if let Some(s) = literal_to_string(lit) {
-                        current.push_str(&s);
-                    }
+                if let Some(s) = mandatory_text(sub) {
+                    current.push_str(&s);
                 } else {
                     consider(&mut best, &current);
                     current.clear();
@@ -186,59 +240,6 @@ fn branch_required_literal(hir: &Hir) -> Option<String> {
         HirKind::Capture(c) => branch_required_literal(&c.sub),
         HirKind::Repetition(rep) if rep.min >= 1 => branch_required_literal(&rep.sub),
         _ => None,
-    }
-}
-
-/// Recursively extract literals from HIR nodes.
-fn extract_literals_recursive(hir: &Hir, literals: &mut Vec<String>) {
-    match hir.kind() {
-        HirKind::Literal(lit) => {
-            // In regex-syntax 0.8.x, Literal is a wrapper around Box<[u8]>
-            if let Some(s) = literal_to_string(lit) {
-                if !s.is_empty() {
-                    literals.push(s);
-                }
-            }
-        }
-        HirKind::Concat(subs) => {
-            // Concatenate consecutive literals
-            let mut current = String::new();
-            for sub in subs.iter() {
-                if let HirKind::Literal(lit) = sub.kind() {
-                    if let Some(s) = literal_to_string(lit) {
-                        current.push_str(&s);
-                    }
-                } else {
-                    // Hit non-literal - save what we have and recurse
-                    if current.len() >= 3 {
-                        literals.push(current.clone());
-                    }
-                    current.clear();
-                    extract_literals_recursive(sub, literals);
-                }
-            }
-            // Don't forget trailing literal
-            if current.len() >= 3 {
-                literals.push(current);
-            }
-        }
-        HirKind::Alternation(alts) => {
-            // For alternation, extract from all branches
-            for alt in alts.iter() {
-                extract_literals_recursive(alt, literals);
-            }
-        }
-        HirKind::Capture(capture) => {
-            // Recurse into capture groups (was Group in older versions)
-            extract_literals_recursive(&capture.sub, literals);
-        }
-        HirKind::Repetition(rep) => {
-            // Recurse into repetitions (the literal might still be useful)
-            extract_literals_recursive(&rep.sub, literals);
-        }
-        _ => {
-            // Other HIR kinds (Empty, Look, Class) don't contain extractable literals
-        }
     }
 }
 
@@ -256,67 +257,82 @@ fn literal_to_string(lit: &Literal) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn constraints(pattern: &str) -> Vec<Vec<String>> {
+        RegexAnalysis::analyze(pattern).unwrap().constraints
+    }
+
     #[test]
     fn test_simple_literal() {
-        let analysis = RegexAnalysis::analyze("hello").unwrap();
-        assert!(analysis.is_accelerated);
-        assert!(analysis.literals.contains(&"hello".to_string()));
+        assert_eq!(constraints("hello"), vec![vec!["hello".to_string()]]);
+        assert!(RegexAnalysis::analyze("hello").unwrap().is_accelerated);
     }
 
     #[test]
     fn test_literal_with_special_chars() {
-        let analysis = RegexAnalysis::analyze(r"fn\s+main").unwrap();
-        // Should extract "main" as a literal (fn is only 2 chars, below trigram threshold)
-        assert!(analysis.literals.iter().any(|l| l.contains("main")));
+        // `fn\s+main` -> "main" is required (and "fn" is too short)
+        assert_eq!(constraints(r"fn\s+main"), vec![vec!["main".to_string()]]);
     }
 
     #[test]
     fn test_regex_with_alternation() {
-        let analysis = RegexAnalysis::analyze(r"(hello|world)").unwrap();
-        assert!(analysis.is_accelerated);
-        // Should have both alternatives
-        assert!(analysis.literals.contains(&"hello".to_string()));
-        assert!(analysis.literals.contains(&"world".to_string()));
+        let c = constraints("hello|world");
+        assert_eq!(c, vec![vec!["hello".to_string(), "world".to_string()]]);
     }
 
     #[test]
     fn test_no_literals() {
-        let analysis = RegexAnalysis::analyze(r"[0-9]+").unwrap();
-        // No extractable literals >= 3 chars
+        let analysis = RegexAnalysis::analyze(r"\d+\s*\w+").unwrap();
+        assert!(analysis.constraints.is_empty());
         assert!(!analysis.is_accelerated);
     }
 
     #[test]
     fn test_short_literal() {
-        let analysis = RegexAnalysis::analyze(r"fn").unwrap();
-        // "fn" is only 2 chars, not enough for a trigram
-        assert!(!analysis.is_accelerated);
+        // "ab" is too short for a trigram
+        assert!(constraints("ab").is_empty());
     }
 
     #[test]
     fn test_complex_pattern() {
-        let analysis = RegexAnalysis::analyze(r"impl\s+Display\s+for").unwrap();
-        assert!(analysis.is_accelerated);
-        // Should extract "impl", "Display", "for" as literals
-        assert!(analysis.literals.iter().any(|l| l.contains("impl")));
-        assert!(analysis.literals.iter().any(|l| l.contains("Display")));
+        // Required runs: "impl", "Display", "for" (with their spaces merged)
+        let c = constraints(r"impl\s+Display\s+for\s+\w+");
+        let flat: Vec<String> = c.into_iter().flatten().collect();
+        assert!(flat.iter().any(|l| l.contains("impl")), "{flat:?}");
+        assert!(flat.iter().any(|l| l.contains("Display")), "{flat:?}");
     }
 
     #[test]
     fn test_escaped_chars() {
-        let analysis = RegexAnalysis::analyze(r"\.unwrap\(\)").unwrap();
-        assert!(analysis.is_accelerated);
-        // Should extract ".unwrap()" or parts of it
-        assert!(analysis.literals.iter().any(|l| l.contains("unwrap")));
+        let c = constraints(r"\.unwrap\(\)");
+        let flat: Vec<String> = c.into_iter().flatten().collect();
+        assert!(flat.iter().any(|l| l.contains(".unwrap()")), "{flat:?}");
     }
 
+    /// Roadmap 3.3: `(?i)literal` compiles to per-character case classes;
+    /// they are lowered to a lowercase literal so the search is accelerated.
     #[test]
-    fn test_best_literal() {
-        let analysis = RegexAnalysis::analyze(r"fn\s+handle_request").unwrap();
-        let best = analysis.best_literal();
-        assert!(best.is_some());
-        // The longest literal should be "handle_request"
-        assert!(best.unwrap().len() >= 3);
+    fn test_case_insensitive_literal_is_accelerated() {
+        assert_eq!(constraints("(?i)needle"), vec![vec!["needle".to_string()]]);
+        assert_eq!(
+            constraints("(?i)Hello World"),
+            vec![vec!["hello world".to_string()]]
+        );
+        assert_eq!(constraints("[Nn]eedle"), vec![vec!["needle".to_string()]]);
+        // A real class is not a literal.
+        assert!(constraints("[a-z]eedle")
+            .iter()
+            .flatten()
+            .all(|l| l == "eedle"));
+    }
+
+    /// Roadmap 3.3: the first mandatory copy of a repetition is contiguous
+    /// with its neighbours, so `abc+` requires "abc"; `abc*` only "ab".
+    #[test]
+    fn test_repetition_prefix_is_required() {
+        assert_eq!(constraints("abc+"), vec![vec!["abc".to_string()]]);
+        assert_eq!(constraints("abc{2,}"), vec![vec!["abc".to_string()]]);
+        assert!(constraints("abc*").is_empty(), "only 'ab' is mandatory");
+        assert_eq!(constraints("(abc)+d"), vec![vec!["abcd".to_string()]]);
     }
 
     #[test]
@@ -372,7 +388,10 @@ mod tests {
         let a = RegexAnalysis::analyze(r"(get|set)Value").unwrap();
         assert!(a.is_accelerated);
         // Required "Value"
-        assert!(a.constraints.iter().any(|g| g.len() == 1 && g[0] == "Value"));
+        assert!(a
+            .constraints
+            .iter()
+            .any(|g| g.len() == 1 && g[0] == "Value"));
         // Union {get,set}
         assert!(a
             .constraints

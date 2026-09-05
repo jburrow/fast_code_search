@@ -38,9 +38,12 @@ impl PersistedTrigramIndex {
 /// Serializable representation of file metadata
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PersistedFileMetadata {
-    /// Original file path
+    /// Original file path, stored as raw bytes so a non-UTF-8 name (Latin-1
+    /// on Unix) cannot make every checkpoint fail.
+    #[serde(with = "path_bytes")]
     pub path: PathBuf,
-    /// File modification time (for staleness check)
+    /// File modification time in nanoseconds since the Unix epoch (for the
+    /// staleness check; whole seconds missed same-size edits within a second)
     pub mtime: u64,
     /// File size
     pub size: u64,
@@ -71,6 +74,11 @@ pub struct PersistedIndex {
     /// where indices are positions in the `files` Vec
     #[serde(default)]
     pub dependency_edges: Vec<(u32, u32)>,
+    /// Imports that had not resolved when the index was saved, as
+    /// (file position, importing path, import strings). Restored so the
+    /// edge still appears once the target file is indexed after a reload.
+    /// (Format v4 / magic FCSIDX02.)
+    pub pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
 }
 
 /// Fixed magic header written before the bincode body.
@@ -79,7 +87,7 @@ pub struct PersistedIndex {
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX01";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX03";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -93,7 +101,7 @@ fn bincode_opts() -> impl Options {
 
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
-    pub const CURRENT_VERSION: u32 = 3;
+    pub const CURRENT_VERSION: u32 = 5;
 
     /// Create a new persisted index from the current state
     pub fn new(
@@ -103,6 +111,7 @@ impl PersistedIndex {
         trigram_to_docs: &FxHashMap<Trigram, RoaringBitmap>,
         symbols: Vec<Vec<Symbol>>,
         dependency_edges: Vec<(u32, u32)>,
+        pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
     ) -> Result<Self> {
         let mut serialized_trigrams = HashMap::with_capacity(trigram_to_docs.len());
 
@@ -122,6 +131,7 @@ impl PersistedIndex {
             },
             symbols,
             dependency_edges,
+            pending_imports,
         })
     }
 
@@ -150,7 +160,10 @@ impl PersistedIndex {
 
             // Acquire exclusive lock for writing
             file.lock_exclusive().with_context(|| {
-                format!("Failed to acquire exclusive lock on: {}", tmp_path.display())
+                format!(
+                    "Failed to acquire exclusive lock on: {}",
+                    tmp_path.display()
+                )
             })?;
 
             let mut writer = std::io::BufWriter::new(&file);
@@ -180,7 +193,10 @@ impl PersistedIndex {
             tracing::debug!(error = %e, "Direct rename failed; retrying after removing target");
             let _ = std::fs::remove_file(path);
             std::fs::rename(&tmp_path, path).with_context(|| {
-                format!("Failed to atomically replace index file: {}", path.display())
+                format!(
+                    "Failed to atomically replace index file: {}",
+                    path.display()
+                )
             })?;
         }
 
@@ -317,25 +333,71 @@ impl PersistedIndex {
 pub fn get_mtime(path: &Path) -> Result<u64> {
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("Failed to get metadata for: {}", path.display()))?;
-    let mtime = metadata
+    Ok(mtime_secs_of(&metadata))
+}
+
+/// Modification time in nanoseconds since the Unix epoch, as stored in the
+/// persisted index (0 if unavailable). Use this on metadata obtained *at read
+/// time* so the persisted value describes the content that was actually
+/// indexed, not whatever is on disk when the index is saved.
+pub fn mtime_secs_of(metadata: &std::fs::Metadata) -> u64 {
+    metadata
         .modified()
-        .with_context(|| format!("Failed to get mtime for: {}", path.display()))?;
-    Ok(mtime
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0))
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+/// Serialize a path as raw bytes (lossless on Unix; UTF-8 of the lossy
+/// string elsewhere) instead of failing on non-UTF-8 names.
+mod path_bytes {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::path::{Path, PathBuf};
+
+    pub fn serialize<S: Serializer>(path: &Path, s: S) -> Result<S::Ok, S::Error> {
+        #[cfg(unix)]
+        let bytes: &[u8] = {
+            use std::os::unix::ffi::OsStrExt;
+            path.as_os_str().as_bytes()
+        };
+        #[cfg(not(unix))]
+        let owned = path.to_string_lossy().into_owned();
+        #[cfg(not(unix))]
+        let bytes: &[u8] = owned.as_bytes();
+        serde_bytes_like::Bytes(bytes).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PathBuf, D::Error> {
+        let bytes: Vec<u8> = Vec::<u8>::deserialize(d)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(PathBuf::from(String::from_utf8_lossy(&bytes).into_owned()))
+        }
+    }
+
+    /// Minimal `serialize_bytes` wrapper (avoids a serde_bytes dependency).
+    mod serde_bytes_like {
+        pub struct Bytes<'a>(pub &'a [u8]);
+        impl serde::Serialize for Bytes<'_> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                // A Vec<u8> round-trips with the same bincode encoding.
+                self.0.to_vec().serialize(s)
+            }
+        }
+    }
 }
 
 /// Check if a file is stale (modified since indexing)
 pub fn is_file_stale(path: &Path, stored_mtime: u64, stored_size: u64) -> bool {
     match std::fs::metadata(path) {
         Ok(metadata) => {
-            let current_mtime = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            let current_mtime = mtime_secs_of(&metadata);
             let current_size = metadata.len();
 
             current_mtime != stored_mtime || current_size != stored_size
@@ -392,6 +454,56 @@ pub fn batch_check_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Roadmap 6.1: files written by earlier formats (older magic) are
+    /// rejected up front with a clear message, never decoded.
+    #[test]
+    fn test_load_rejects_older_magic() {
+        let temp = tempfile::TempDir::new().unwrap();
+        for old_magic in [b"FCSIDX01", b"FCSIDX02"] {
+            let p = temp
+                .path()
+                .join(format!("{}.bin", String::from_utf8_lossy(old_magic)));
+            let mut bytes = old_magic.to_vec();
+            bytes.extend_from_slice(&[0u8; 64]);
+            std::fs::write(&p, bytes).unwrap();
+            let err = match PersistedIndex::load(&p) {
+                Ok(_) => panic!("old magic must be rejected"),
+                Err(e) => e,
+            };
+            assert!(err.to_string().contains("rebuilt"), "{err}");
+        }
+    }
+
+    /// Roadmap 6.1: a non-UTF-8 path no longer makes save fail, and
+    /// round-trips exactly; mtimes are nanosecond-precise.
+    #[cfg(unix)]
+    #[test]
+    fn test_non_utf8_path_round_trips_and_nanosecond_mtime() {
+        use std::os::unix::ffi::OsStringExt;
+        let temp = tempfile::TempDir::new().unwrap();
+        let weird = PathBuf::from(std::ffi::OsString::from_vec(b"latin1_\xe9.rs".to_vec()));
+        let persisted = PersistedIndex::new(
+            "fp".to_string(),
+            vec![],
+            vec![PersistedFileMetadata {
+                path: weird.clone(),
+                mtime: 1_700_000_000_123_456_789,
+                size: 3,
+                source_base_path: None,
+            }],
+            &FxHashMap::default(),
+            vec![vec![]],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let p = temp.path().join("idx.bin");
+        persisted.save(&p).expect("non-UTF-8 path must be saveable");
+        let loaded = PersistedIndex::load(&p).unwrap();
+        assert_eq!(loaded.files[0].path, weird);
+        assert_eq!(loaded.files[0].mtime, 1_700_000_000_123_456_789);
+    }
     use tempfile::TempDir;
 
     #[test]
@@ -404,7 +516,7 @@ mod tests {
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
         bitmap.insert(1);
-        trigram_to_docs.insert(Trigram::new([b'h', b'e', b'l']), bitmap);
+        trigram_to_docs.insert(Trigram::new(*b"hel"), bitmap);
 
         let files = vec![PersistedFileMetadata {
             path: PathBuf::from("/test/file.rs"),
@@ -418,6 +530,7 @@ mod tests {
             vec!["/test".to_string()],
             files,
             &trigram_to_docs,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         )
@@ -438,7 +551,7 @@ mod tests {
             .restore_trigram_index()
             .expect("Failed to restore trigram index");
         let bitmap = restored
-            .get(&Trigram::new([b'h', b'e', b'l']))
+            .get(&Trigram::new(*b"hel"))
             .expect("Trigram not found");
         assert!(bitmap.contains(0));
         assert!(bitmap.contains(1));
@@ -448,7 +561,7 @@ mod tests {
         let mut trigram_to_docs: FxHashMap<Trigram, RoaringBitmap> = FxHashMap::default();
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
-        trigram_to_docs.insert(Trigram::new([b'h', b'e', b'l']), bitmap);
+        trigram_to_docs.insert(Trigram::new(*b"hel"), bitmap);
         PersistedIndex::new(
             "fp".to_string(),
             vec!["/test".to_string()],
@@ -459,6 +572,7 @@ mod tests {
                 source_base_path: Some("/test".to_string()),
             }],
             &trigram_to_docs,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         )

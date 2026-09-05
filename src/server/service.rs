@@ -1,13 +1,11 @@
 use crate::config::IndexerConfig;
-use crate::search::SearchEngine;
+use crate::search::{RankMode, SearchEngine, SearchLimits};
 use anyhow::Result;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::{debug, info, warn};
-use walkdir::WalkDir;
+use tracing::{info, warn};
 
 // Include the generated protobuf code
 pub mod search_proto {
@@ -21,183 +19,71 @@ use search_proto::{
 
 pub struct CodeSearchService {
     engine: Arc<RwLock<SearchEngine>>,
+    /// When set, the `Index` RPC only accepts paths under one of these
+    /// (canonical) roots. `None` means unrestricted (library/test use).
+    allowed_index_roots: Option<Vec<std::path::PathBuf>>,
+    /// Eligibility rules (excludes, extensions, size, gitignore, batch size)
+    /// for the `Index` RPC; defaults when the service was built without one.
+    indexer_config: Option<IndexerConfig>,
 }
 
 impl CodeSearchService {
     pub fn new() -> Self {
         Self {
             engine: Arc::new(RwLock::new(SearchEngine::new())),
+            allowed_index_roots: None,
+            indexer_config: None,
         }
     }
 
     /// Create a service with an existing shared engine
     pub fn with_engine(engine: Arc<RwLock<SearchEngine>>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            allowed_index_roots: None,
+            indexer_config: None,
+        }
+    }
+
+    /// Like [`Self::with_engine`], but the `Index` RPC only accepts paths under
+    /// `roots` (canonicalized here; non-existent roots are kept as given).
+    pub fn with_engine_scoped(
+        engine: Arc<RwLock<SearchEngine>>,
+        roots: Vec<std::path::PathBuf>,
+    ) -> Self {
+        let roots = roots
+            .into_iter()
+            .map(|r| crate::search::engine::canonicalize_lossy(&r))
+            .collect();
+        Self {
+            engine,
+            allowed_index_roots: Some(roots),
+            indexer_config: None,
+        }
+    }
+
+    /// The shipped configuration: `Index` scoped to `config.paths` and
+    /// applying the same eligibility rules as the initial build.
+    pub fn with_engine_config(engine: Arc<RwLock<SearchEngine>>, config: &IndexerConfig) -> Self {
+        let roots = config.paths.iter().map(std::path::PathBuf::from).collect();
+        let mut s = Self::with_engine_scoped(engine, roots);
+        s.indexer_config = Some(config.clone());
+        s
     }
 
     /// Get the shared engine reference
     pub fn engine(&self) -> Arc<RwLock<SearchEngine>> {
         Arc::clone(&self.engine)
     }
+}
 
-    /// Create a new service and perform initial indexing based on config
-    pub fn new_with_indexing(indexer_config: &IndexerConfig) -> Self {
-        let service = Self::new();
-
-        if indexer_config.paths.is_empty() {
-            info!("No paths configured for auto-indexing");
-            return service;
-        }
-
-        let total_start = Instant::now();
-        info!(
-            "Starting auto-indexing of {} path(s)",
-            indexer_config.paths.len()
-        );
-
-        let mut total_files = 0u64;
-        let mut total_size = 0u64;
-
-        for path_str in &indexer_config.paths {
-            let path = Path::new(path_str);
-            if !path.exists() {
-                warn!(path = %path_str, "Configured path does not exist, skipping");
-                continue;
-            }
-
-            info!(path = %path_str, "Indexing path");
-            let path_start = Instant::now();
-            let mut path_files = 0u64;
-            let mut path_size = 0u64;
-
-            let mut engine = match service.engine.write() {
-                Ok(engine) => engine,
-                Err(e) => {
-                    warn!(error = %e, "Search engine lock poisoned during auto-indexing");
-                    e.into_inner()
-                }
-            };
-
-            // Register as root so results are returned relative to this path
-            engine.add_root_path(path);
-
-            for entry in WalkDir::new(path)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-
-                let entry_path = entry.path();
-
-                // Check exclude patterns
-                let path_str_check = entry_path.to_string_lossy();
-                let should_exclude = indexer_config.exclude_patterns.iter().any(|pattern| {
-                    glob::Pattern::new(pattern)
-                        .map(|p| p.matches(&path_str_check))
-                        .unwrap_or(false)
-                        || path_str_check.contains(pattern.trim_matches('*').trim_matches('/'))
-                });
-
-                if should_exclude {
-                    debug!(path = %entry_path.display(), "Excluded by pattern");
-                    continue;
-                }
-
-                // Skip binary files
-                if let Some(ext) = entry_path.extension() {
-                    let ext = ext.to_string_lossy().to_lowercase();
-                    if matches!(
-                        ext.as_str(),
-                        "exe"
-                            | "so"
-                            | "dylib"
-                            | "dll"
-                            | "bin"
-                            | "o"
-                            | "a"
-                            | "lib"
-                            | "png"
-                            | "jpg"
-                            | "jpeg"
-                            | "gif"
-                            | "ico"
-                            | "bmp"
-                            | "zip"
-                            | "tar"
-                            | "gz"
-                            | "7z"
-                            | "rar"
-                            | "pdf"
-                            | "doc"
-                            | "docx"
-                    ) {
-                        continue;
-                    }
-                }
-
-                // Check file size
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.len() > indexer_config.max_file_size {
-                        debug!(
-                            path = %entry_path.display(),
-                            size = metadata.len(),
-                            max = indexer_config.max_file_size,
-                            "File too large, skipping"
-                        );
-                        continue;
-                    }
-                    path_size += metadata.len();
-                }
-
-                match engine.index_file(entry_path) {
-                    Ok(_) => {
-                        path_files += 1;
-                    }
-                    Err(e) => {
-                        debug!(path = %entry_path.display(), error = %e, "Failed to index file");
-                    }
-                }
-            }
-
-            drop(engine);
-
-            let path_duration = path_start.elapsed();
-            info!(
-                path = %path_str,
-                files = path_files,
-                size_mb = format!("{:.2}", path_size as f64 / 1_048_576.0),
-                duration_secs = format!("{:.2}", path_duration.as_secs_f64()),
-                "Completed indexing path"
-            );
-
-            total_files += path_files;
-            total_size += path_size;
-        }
-
-        let engine = match service.engine.read() {
-            Ok(engine) => engine,
-            Err(e) => {
-                warn!(error = %e, "Search engine lock poisoned while reading stats");
-                e.into_inner()
-            }
-        };
-        let stats = engine.get_stats();
-        drop(engine);
-
-        let total_duration = total_start.elapsed();
-        info!(
-            total_files = total_files,
-            total_size_mb = format!("{:.2}", total_size as f64 / 1_048_576.0),
-            trigrams = stats.num_trigrams,
-            duration_secs = format!("{:.2}", total_duration.as_secs_f64()),
-            "Auto-indexing complete"
-        );
-
-        service
-    }
+/// Take the engine write lock, recovering from poison (every writer is
+/// panic-guarded, so poison only means another thread panicked).
+fn write_engine(engine: &RwLock<SearchEngine>) -> std::sync::RwLockWriteGuard<'_, SearchEngine> {
+    engine.write().unwrap_or_else(|poisoned| {
+        warn!("Search engine lock poisoned during Index RPC; recovering");
+        poisoned.into_inner()
+    })
 }
 
 impl Default for CodeSearchService {
@@ -217,11 +103,31 @@ impl CodeSearch for CodeSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query.trim().to_string();
-        let max_results = req.max_results.clamp(1, 1000) as usize;
+        // proto3 default 0 = "unset": use the REST default page size rather
+        // than clamping to a single result.
+        let max_results = if req.max_results <= 0 {
+            50
+        } else {
+            req.max_results.min(1000) as usize
+        };
         let include_patterns = req.include_paths.join(";");
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
+        let case_sensitive = req.case_sensitive;
+        let whole_word = req.whole_word;
+        let rank_mode = RankMode::parse(&req.rank);
+        let mut limits = SearchLimits::new(max_results).with_offset(req.offset.max(0) as usize);
+        if req.deadline_ms > 0 {
+            limits = limits.with_timeout(std::time::Duration::from_millis(
+                (req.deadline_ms as u64).min(30_000),
+            ));
+        }
+        {
+            let span = tracing::Span::current();
+            span.record("query", query.as_str());
+            span.record("max_results", max_results);
+        }
 
         // Return empty stream immediately for empty queries, consistent with REST API.
         if query.is_empty() {
@@ -235,44 +141,59 @@ impl CodeSearch for CodeSearchService {
         let engine_arc = std::sync::Arc::clone(&self.engine);
         let matches = tokio::task::spawn_blocking(move || {
             // Use try_read to avoid blocking when a write lock is held during indexing.
-            let engine = engine_arc.try_read().map_err(|e| match e {
-                std::sync::TryLockError::WouldBlock => {
-                    Status::unavailable("Index is currently being updated, please retry shortly")
+            let engine = match engine_arc.try_read() {
+                Ok(guard) => guard,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    return Err(Status::unavailable(
+                        "Index is currently being updated, please retry shortly",
+                    ));
                 }
-                std::sync::TryLockError::Poisoned(e) => {
-                    Status::internal(format!("Lock error: {}", e))
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    warn!("Search engine lock was poisoned; recovering for search");
+                    poisoned.into_inner()
                 }
-            })?;
+            };
 
-            // Choose search method based on flags
-            let matches = if symbols_only {
-                // Search only in discovered symbols
+            // Same modes, syntax and limits as /api/search.
+            let mut parsed = crate::search::parse_query(&query);
+            if case_sensitive {
+                parsed.options.case_sensitive = true;
+            }
+            if whole_word {
+                parsed.options.whole_word = true;
+            }
+            let (matches, _info) = if symbols_only {
                 engine
-                    .search_symbols(&query, &include_patterns, &exclude_patterns, max_results)
+                    .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid filter pattern: {}", e))
                     })?
             } else if is_regex {
-                // Use regex search with optional path filtering
                 engine
-                    .search_regex(&query, &include_patterns, &exclude_patterns, max_results)
+                    .search_regex_with_limits(
+                        &query,
+                        &include_patterns,
+                        &exclude_patterns,
+                        limits,
+                        rank_mode,
+                    )
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid regex pattern: {}", e))
                     })?
-            } else if include_patterns.is_empty() && exclude_patterns.is_empty() {
-                // Plain text search without filtering
-                engine.search(&query, max_results)
             } else {
-                // Plain text search with path filtering
                 engine
-                    .search_with_filter(&query, &include_patterns, &exclude_patterns, max_results)
+                    .search_parsed(
+                        &parsed,
+                        &include_patterns,
+                        &exclude_patterns,
+                        limits,
+                        rank_mode,
+                    )
                     .map_err(|e| {
                         Status::invalid_argument(format!("Invalid filter pattern: {}", e))
                     })?
             };
 
-            // Evict fallback file bytes cached when the OS mmap limit was exceeded.
-            engine.evict_file_fallbacks();
             Ok::<_, Status>(matches)
         })
         .await
@@ -297,6 +218,10 @@ impl CodeSearch for CodeSearchService {
                     match_type: match_type as i32,
                     match_start: m.match_start as i32,
                     match_end: m.match_end as i32,
+                    line_match_start: m.line_match_start as i32,
+                    line_match_end: m.line_match_end as i32,
+                    match_column: m.match_column as i32,
+                    dependency_count: m.dependency_count,
                     content_truncated: m.content_truncated,
                 };
 
@@ -318,60 +243,88 @@ impl CodeSearch for CodeSearchService {
         info!(paths = ?req.paths, "Received index request");
         let start = Instant::now();
 
-        // Move the blocking write-lock acquisition and directory walk onto a
-        // dedicated blocking thread.  Calling .write() (which may block
-        // indefinitely while the background indexer holds the write lock) or
-        // running WalkDir inside an async fn starves the tokio worker pool.
-        let engine_arc = std::sync::Arc::clone(&self.engine);
-        let (files_indexed, total_size, stats) = tokio::task::spawn_blocking(move || {
-            let mut engine = engine_arc
-                .write()
-                .map_err(|e| Status::internal(format!("Lock error: {}", e)))?;
-
-            let mut files_indexed = 0i32;
-            let mut total_size = 0u64;
-
-            // Register each requested path as an index root so that search
-            // results are returned relative to the indexed directory.
+        // Scope check: a network client must not be able to index (and then
+        // read back via /api/file) arbitrary paths on the host.
+        if let Some(roots) = &self.allowed_index_roots {
             for path in &req.paths {
-                engine.add_root_path(std::path::Path::new(path));
+                let canonical = std::path::Path::new(path)
+                    .canonicalize()
+                    .map_err(|e| Status::invalid_argument(format!("Cannot index {path}: {e}")))?;
+                if !roots.iter().any(|root| canonical.starts_with(root)) {
+                    warn!(path = %path, "Rejected index request outside configured roots");
+                    return Err(Status::permission_denied(format!(
+                        "{path} is outside the configured index paths"
+                    )));
+                }
             }
+        }
 
-            for path in &req.paths {
-                // Walk the directory and index all files
-                for entry in WalkDir::new(path)
-                    .follow_links(true)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
-                    if entry.file_type().is_file() {
-                        // Skip binary files and common non-text extensions
-                        if let Some(ext) = entry.path().extension() {
-                            let ext = ext.to_string_lossy().to_lowercase();
-                            if matches!(
-                                ext.as_str(),
-                                "exe" | "so" | "dylib" | "dll" | "bin" | "o" | "a"
-                            ) {
-                                continue;
-                            }
-                        }
+        // Discover eligible files WITHOUT the engine lock (exclude patterns,
+        // include extensions, binary/size rules and .gitignore from the
+        // indexer config), then index in batches, taking the write lock only
+        // for each merge so searches keep being served in between.
+        let engine_arc = std::sync::Arc::clone(&self.engine);
+        let indexer_config = self.indexer_config.clone().unwrap_or_default();
+        let paths = req.paths.clone();
+        let (files_indexed, total_size, stats) = tokio::task::spawn_blocking(move || {
+            use crate::search::{
+                FileDiscoveryConfig, FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile,
+            };
+            use rayon::prelude::*;
 
-                        match engine.index_file(entry.path()) {
-                            Ok(_) => {
-                                files_indexed += 1;
-                                if let Ok(metadata) = entry.metadata() {
-                                    total_size += metadata.len();
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to index {}: {}", entry.path().display(), e);
-                            }
-                        }
-                    }
+            let discovery = FileDiscoveryConfig {
+                paths: paths.clone(),
+                exclude_patterns: indexer_config.exclude_patterns.clone(),
+                include_extensions: indexer_config.include_extensions.clone(),
+                max_file_size: Some(if indexer_config.max_file_size == 0 {
+                    PartialIndexedFile::DEFAULT_MAX_FILE_SIZE
+                } else {
+                    indexer_config.max_file_size
+                }),
+                respect_gitignore: indexer_config.respect_gitignore,
+                ..Default::default()
+            };
+            let files: Vec<std::path::PathBuf> = FileDiscoveryIterator::new(&discovery)
+                .filter(|p| !indexer_config.is_file_excluded(p))
+                .collect();
+
+            {
+                let mut engine = write_engine(&engine_arc);
+                for path in &paths {
+                    engine.add_root_path(std::path::Path::new(path));
                 }
             }
 
-            let stats = engine.get_stats();
+            let mut files_indexed = 0i32;
+            let mut total_size = 0u64;
+            for chunk in files.chunks(indexer_config.batch_size.max(1)) {
+                // Phase 1 (parallel, no lock): read + trigrams + symbols.
+                let pre: Vec<PreIndexedFile> = chunk
+                    .par_iter()
+                    .filter_map(|p| {
+                        let (partial, _) = PartialIndexedFile::process(
+                            p,
+                            indexer_config.transcode_non_utf8,
+                            indexer_config.max_file_size,
+                        )?;
+                        Some(PreIndexedFile::from_partial(
+                            partial,
+                            indexer_config.enable_symbols,
+                        ))
+                    })
+                    .collect();
+                total_size += pre.iter().map(|p| p.size).sum::<u64>();
+                // Phase 2 (short write lock): merge.
+                let mut engine = write_engine(&engine_arc);
+                files_indexed += engine.index_batch(pre) as i32;
+                engine.resolve_imports_incremental();
+            }
+            let stats = {
+                let mut engine = write_engine(&engine_arc);
+                engine.resolve_imports();
+                engine.finalize();
+                engine.get_stats()
+            };
             Ok::<_, Status>((files_indexed, total_size, stats))
         })
         .await
@@ -397,25 +350,26 @@ impl CodeSearch for CodeSearchService {
     }
 }
 
-pub fn create_server() -> CodeSearchServer<CodeSearchService> {
-    CodeSearchServer::new(CodeSearchService::new())
-}
-
-pub fn create_server_with_indexing(
-    indexer_config: &IndexerConfig,
-) -> CodeSearchServer<CodeSearchService> {
-    CodeSearchServer::new(CodeSearchService::new_with_indexing(indexer_config))
-}
-
-/// Create a shared engine with indexing, returns the Arc for sharing with web server
-pub fn create_indexed_engine(indexer_config: &IndexerConfig) -> Arc<RwLock<SearchEngine>> {
-    let service = CodeSearchService::new_with_indexing(indexer_config);
-    service.engine()
-}
-
 /// Create gRPC server with an existing shared engine
 pub fn create_server_with_engine(
     engine: Arc<RwLock<SearchEngine>>,
 ) -> CodeSearchServer<CodeSearchService> {
     CodeSearchServer::new(CodeSearchService::with_engine(engine))
+}
+
+/// Create the gRPC server the binary ships: `Index` scoped to the configured
+/// paths with the indexer's eligibility rules.
+pub fn create_server_with_engine_config(
+    engine: Arc<RwLock<SearchEngine>>,
+    config: &IndexerConfig,
+) -> CodeSearchServer<CodeSearchService> {
+    CodeSearchServer::new(CodeSearchService::with_engine_config(engine, config))
+}
+
+/// Create a gRPC server whose `Index` RPC is restricted to `roots`.
+pub fn create_server_with_engine_scoped(
+    engine: Arc<RwLock<SearchEngine>>,
+    roots: Vec<std::path::PathBuf>,
+) -> CodeSearchServer<CodeSearchService> {
+    CodeSearchServer::new(CodeSearchService::with_engine_scoped(engine, roots))
 }

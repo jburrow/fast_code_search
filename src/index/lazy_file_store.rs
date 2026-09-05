@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tracing::warn;
 
@@ -41,7 +41,25 @@ pub struct LazyMappedFile {
     transcoded: OnceLock<Option<String>>,
     /// Detected encoding name for diagnostics (None if natively UTF-8)
     detected_encoding: OnceLock<Option<&'static str>>,
+    /// How this file's content is served: 0 = not decided yet, 1 = small
+    /// (owned `fs::read` per access, never mmapped), 2 = large (mmap).
+    size_class: AtomicU8,
 }
+
+/// Files at or below this size are read into an owned buffer on every access
+/// instead of being memory-mapped.
+///
+/// Reading through a live mapping is unsafe against concurrent truncation:
+/// an editor rewriting a file in place shrinks it, and the next touch of a
+/// mapped page past the new EOF is an uncatchable SIGBUS that kills the whole
+/// server. Owned reads are also what keeps the number of mappings far below
+/// `vm.max_map_count` (65 530 by default) on large trees. Files above the
+/// threshold (rare in code) keep the zero-copy mapping.
+pub const MMAP_THRESHOLD_BYTES: u64 = 1024 * 1024;
+
+const SIZE_CLASS_UNKNOWN: u8 = 0;
+const SIZE_CLASS_SMALL: u8 = 1;
+const SIZE_CLASS_LARGE: u8 = 2;
 
 impl LazyMappedFile {
     /// Create a new lazy file entry (does NOT open or map the file)
@@ -52,6 +70,59 @@ impl LazyMappedFile {
             content_fallback: Mutex::new(None),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
+            size_class: AtomicU8::new(SIZE_CLASS_UNKNOWN),
+        }
+    }
+
+    /// Create an entry that is known to be small: served by owned reads.
+    pub fn new_small(path: impl AsRef<Path>) -> Self {
+        let f = Self::new(path);
+        f.size_class.store(SIZE_CLASS_SMALL, Ordering::Relaxed);
+        f
+    }
+
+    /// If this file is small (by a one-time stat, or by construction), read
+    /// it into an owned buffer. `None` means "large: use the mapping".
+    fn read_small(&self) -> Result<Option<Vec<u8>>> {
+        let class = match self.size_class.load(Ordering::Relaxed) {
+            SIZE_CLASS_UNKNOWN => {
+                let meta = std::fs::metadata(&self.path)
+                    .with_context(|| format!("Failed to stat {}", self.path.display()))?;
+                let class = if meta.len() <= MMAP_THRESHOLD_BYTES {
+                    SIZE_CLASS_SMALL
+                } else {
+                    SIZE_CLASS_LARGE
+                };
+                self.size_class.store(class, Ordering::Relaxed);
+                class
+            }
+            c => c,
+        };
+        if class != SIZE_CLASS_SMALL {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&self.path)
+            .with_context(|| format!("Failed to read {}", self.path.display()))?;
+        Ok(Some(bytes))
+    }
+
+    /// Validate / transcode an owned buffer into text.
+    fn owned_to_str(&self, bytes: Vec<u8>) -> Result<Cow<'_, str>> {
+        match String::from_utf8(bytes) {
+            Ok(s) => Ok(Cow::Owned(s)),
+            Err(e) => {
+                let raw = e.into_bytes();
+                match crate::utils::transcode_to_utf8(&raw) {
+                    Ok(Some(result)) => {
+                        let _ = self.detected_encoding.set(Some(result.encoding_name));
+                        Ok(Cow::Owned(result.content))
+                    }
+                    _ => {
+                        let _ = self.detected_encoding.set(None);
+                        anyhow::bail!("File is not valid text: {}", self.path.display())
+                    }
+                }
+            }
         }
     }
 
@@ -63,6 +134,7 @@ impl LazyMappedFile {
             content_fallback: Mutex::new(None),
             transcoded: OnceLock::new(),
             detected_encoding: OnceLock::new(),
+            size_class: AtomicU8::new(SIZE_CLASS_LARGE),
         };
         let _ = file.mmap.set(Ok(mmap));
         file
@@ -117,9 +189,11 @@ impl LazyMappedFile {
     /// Call this (or `LazyFileStore::evict_all_fallbacks`) after each search
     /// request completes to prevent unbounded heap growth in long-running servers.
     pub fn evict_fallback(&self) {
-        // Fast path: if mmap is already successfully established, the fallback
-        // cache is never populated, so there is nothing to evict.
-        if matches!(self.mmap.get(), Some(Ok(_))) {
+        // Fast paths (no lock): small files are never cached (owned reads),
+        // and a successfully mapped file never populates the fallback cache.
+        if self.size_class.load(Ordering::Relaxed) == SIZE_CLASS_SMALL
+            || matches!(self.mmap.get(), Some(Ok(_)))
+        {
             return;
         }
         match self.content_fallback.lock() {
@@ -141,6 +215,10 @@ impl LazyMappedFile {
     /// into the returned value.  Call `evict_fallback` when the caller no
     /// longer needs the bytes.
     fn get_bytes(&self) -> Result<Cow<'_, [u8]>> {
+        // Small files: an owned read (safe against concurrent truncation).
+        if let Some(bytes) = self.read_small()? {
+            return Ok(Cow::Owned(bytes));
+        }
         // Fast path: mmap already established
         if let Ok(mmap) = self.ensure_mapped() {
             return Ok(Cow::Borrowed(&mmap[..]));
@@ -164,6 +242,10 @@ impl LazyMappedFile {
     ///
     /// Falls back to direct `fs::read` when mmap is unavailable.
     pub fn as_str(&self) -> Result<Cow<'_, str>> {
+        // Small files: an owned read, validated fresh every time.
+        if let Some(bytes) = self.read_small()? {
+            return self.owned_to_str(bytes);
+        }
         match self.ensure_mapped() {
             Ok(mmap) => {
                 let bytes = &mmap[..];
@@ -206,24 +288,7 @@ impl LazyMappedFile {
                 // `String::from_utf8` avoids the use-after-change UB that a cached
                 // flag + `from_utf8_unchecked` would introduce.
                 let bytes = self.load_fallback_bytes()?;
-
-                match String::from_utf8(bytes) {
-                    Ok(s) => Ok(Cow::Owned(s)),
-                    Err(e) => {
-                        // Non-UTF-8 fallback: transcode (rare path)
-                        let raw = e.into_bytes();
-                        match crate::utils::transcode_to_utf8(&raw) {
-                            Ok(Some(result)) => {
-                                let _ = self.detected_encoding.set(Some(result.encoding_name));
-                                Ok(Cow::Owned(result.content))
-                            }
-                            _ => {
-                                let _ = self.detected_encoding.set(None);
-                                anyhow::bail!("File is not valid text: {}", self.path.display())
-                            }
-                        }
-                    }
-                }
+                self.owned_to_str(bytes)
             }
         }
     }
@@ -420,7 +485,20 @@ impl LazyFileStore {
             return Ok(id);
         }
 
-        // Normal path: open and map the file immediately
+        // Small files (the overwhelming majority of source files) are never
+        // mapped: they are served by owned reads. See MMAP_THRESHOLD_BYTES.
+        let size = std::fs::metadata(path)
+            .with_context(|| format!("Failed to stat file: {}", path.display()))?
+            .len();
+        if size <= MMAP_THRESHOLD_BYTES {
+            let id = self.files.len() as u32;
+            self.path_to_id.insert(canonical.clone(), id);
+            self.files.push(LazyMappedFile::new_small(&canonical));
+            self.total_content_bytes.fetch_add(size, Ordering::Relaxed);
+            return Ok(id);
+        }
+
+        // Large file: open and map immediately (zero-copy retrieval).
         let file =
             File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
         let mmap = unsafe {
@@ -546,6 +624,25 @@ impl LazyFileStore {
         })
     }
 
+    /// Ids of all live files whose canonical path is under `prefix`
+    /// (directory semantics: `prefix` must match whole path components).
+    /// Used to apply directory deletes / renames from the watcher.
+    pub fn ids_under(&self, prefix: &Path) -> Vec<u32> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(id, f)| {
+                !self.tombstoned.contains(&(*id as u32)) && f.path.starts_with(prefix)
+            })
+            .map(|(id, _)| id as u32)
+            .collect()
+    }
+
+    /// Number of live (non-tombstoned) files.
+    pub fn live_len(&self) -> usize {
+        self.files.len().saturating_sub(self.tombstoned.len())
+    }
+
     /// Get all file paths (no I/O needed; excludes tombstoned/removed files)
     pub fn get_all_paths(&self) -> Vec<PathBuf> {
         self.files
@@ -604,6 +701,9 @@ impl LazyMappedFile {
     /// exercise the eviction path without requiring a real OS mmap limit.
     pub(crate) fn with_mmap_failure(path: impl AsRef<Path>) -> Self {
         let file = Self::new(path);
+        // Simulates a LARGE file (small ones never map): the mmap failed, so
+        // content goes through the evictable fallback cache.
+        file.size_class.store(SIZE_CLASS_LARGE, Ordering::Relaxed);
         let _ = file.mmap.set(Err("simulated mmap failure".to_string()));
         file
     }
@@ -644,10 +744,20 @@ mod tests {
         assert!(!lazy.is_mapped());
         assert!(lazy.len_if_mapped().is_none());
 
-        // Access triggers mapping
+        // A small file is served by owned reads and is NEVER mapped (see
+        // MMAP_THRESHOLD_BYTES): safe against concurrent truncation.
         assert_eq!(lazy.as_str().unwrap(), "hello world");
-        assert!(lazy.is_mapped());
-        assert_eq!(lazy.len_if_mapped(), Some(11));
+        assert!(!lazy.is_mapped());
+        assert_eq!(lazy.len().unwrap(), 11);
+
+        // A file above the threshold is mapped on first access.
+        let big_path = temp_dir.path().join("big.txt");
+        let big = "x".repeat(MMAP_THRESHOLD_BYTES as usize + 1);
+        std::fs::write(&big_path, &big).unwrap();
+        let lazy_big = LazyMappedFile::new(&big_path);
+        assert_eq!(lazy_big.as_str().unwrap().len(), big.len());
+        assert!(lazy_big.is_mapped());
+        assert_eq!(lazy_big.len_if_mapped(), Some(big.len()));
     }
 
     #[test]
@@ -669,13 +779,12 @@ mod tests {
         assert_eq!(store.len(), 2);
         assert_eq!(store.mapped_count(), 0); // Nothing mapped yet!
 
-        // Access one file
+        // Access one file: small files are read, not mapped.
         let f1 = store.get(id1).unwrap();
         assert_eq!(f1.as_str().unwrap(), "hello");
-
-        // Now one file is mapped
-        assert!(store.get(id1).unwrap().is_mapped());
+        assert!(!store.get(id1).unwrap().is_mapped());
         assert!(!store.get(id2).unwrap().is_mapped());
+        assert_eq!(store.mapped_count(), 0);
     }
 
     #[test]
@@ -735,11 +844,9 @@ mod tests {
         let lazy = LazyMappedFile::new("/nonexistent/path/to/file.txt");
         assert!(!lazy.is_mapped());
 
-        // Trying to access will fail
+        // Trying to access will fail (the stat fails before any mapping).
         assert!(lazy.as_str().is_err());
-
-        // But it's now "mapped" (with an error cached)
-        assert!(lazy.is_mapped());
+        assert!(!lazy.is_mapped());
     }
 
     // ---------------------------------------------------------------------------
@@ -905,7 +1012,7 @@ mod tests {
         // (we access internal test API via LazyMappedFile::with_mmap_failure)
         let fallback_files: Vec<LazyMappedFile> = paths
             .iter()
-            .map(|p| LazyMappedFile::with_mmap_failure(p))
+            .map(LazyMappedFile::with_mmap_failure)
             .collect();
 
         // Access all files to populate the Mutex caches
@@ -936,23 +1043,45 @@ mod tests {
         }
     }
 
-    /// Evicting a memory-mapped file is a no-op (no crash, no behaviour change).
+    /// Evicting a memory-mapped (large) file is a no-op (no crash, no
+    /// behaviour change); so is evicting a small owned-read file.
     #[test]
     fn test_evict_mmap_file_is_noop() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let file_path = temp_dir.path().join("test.txt");
-        std::fs::write(&file_path, "mmap content").unwrap();
+        let file_path = temp_dir.path().join("big.txt");
+        let content = format!("mmap content{}", "x".repeat(MMAP_THRESHOLD_BYTES as usize));
+        std::fs::write(&file_path, &content).unwrap();
 
         let lazy = LazyMappedFile::new(&file_path);
 
         // Access via mmap
-        assert_eq!(lazy.as_str().unwrap(), "mmap content");
+        assert_eq!(lazy.as_str().unwrap().len(), content.len());
         assert!(lazy.is_mapped());
 
         // Evict should be a no-op
         lazy.evict_fallback();
+        assert_eq!(lazy.as_str().unwrap().len(), content.len());
 
-        // Content still accessible
-        assert_eq!(lazy.as_str().unwrap(), "mmap content");
+        let small_path = temp_dir.path().join("small.txt");
+        std::fs::write(&small_path, "small content").unwrap();
+        let small = LazyMappedFile::new(&small_path);
+        assert_eq!(small.as_str().unwrap(), "small content");
+        small.evict_fallback();
+        assert_eq!(small.as_str().unwrap(), "small content");
+        assert!(!small.is_mapped());
+    }
+
+    /// The reason small files are not mapped: truncating a file that a
+    /// searcher is reading must not crash the process. With owned reads the
+    /// reader simply sees the new content.
+    #[test]
+    fn test_small_file_survives_concurrent_truncation() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("t.txt");
+        std::fs::write(&file_path, "a".repeat(8192)).unwrap();
+        let lazy = LazyMappedFile::new(&file_path);
+        assert_eq!(lazy.as_str().unwrap().len(), 8192);
+        std::fs::write(&file_path, "b").unwrap(); // in-place truncate + rewrite
+        assert_eq!(lazy.as_str().unwrap(), "b");
     }
 }
