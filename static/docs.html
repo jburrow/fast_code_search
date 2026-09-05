@@ -219,6 +219,12 @@
             <h3>Regex Search</h3>
             <p>Enable the <code>Regex</code> checkbox to search with regular expression patterns. When possible,
                 literals in the regex are used to accelerate the search via trigram filtering.</p>
+            <p>Patterns are matched one line at a time, so <code>\s</code> and <code>.</code> never cross a
+                line break. To match across lines, mention a newline in the pattern (<code>\n</code>,
+                <code>\r</code>, <code>\x0a</code>) or set the <code>s</code> flag, e.g.
+                <code>(?s)begin.*?end</code> or <code>fn \w+\(\)\s*\{\n\s*todo!</code>. Such a pattern is
+                matched against the whole file and each match is reported once, on the line where it
+                starts, with the highlighted range clamped to that line.</p>
 
             <h3>Symbols Only</h3>
             <p>Enable <code>Symbols Only</code> to search only in symbol definitions (functions, classes, methods,

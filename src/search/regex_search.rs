@@ -35,6 +35,45 @@ pub struct RegexAnalysis {
     pub constraints: Vec<Vec<String>>,
     /// Whether this regex can be accelerated (has at least one sound constraint)
     pub is_accelerated: bool,
+    /// Whether the pattern is matched against whole file content rather than
+    /// line by line. See [`needs_multiline`].
+    pub multiline: bool,
+}
+
+/// Does `pattern` ask to match across lines?
+///
+/// Searches are line-oriented by default (`\s` never sees a newline, `.`
+/// never crosses one). A pattern opts into whole-content matching by
+/// mentioning a newline explicitly (`\n`, `\r`, `\x0a`) or by setting the
+/// `s` (dot-matches-newline) flag, e.g. `(?s)start.*end`. Matches are then
+/// reported on the line where they start.
+pub fn needs_multiline(pattern: &str) -> bool {
+    if pattern.contains("\\n") || pattern.contains("\\r") || pattern.contains('\n') {
+        return true;
+    }
+    let lower = pattern.to_ascii_lowercase();
+    if lower.contains("\\x0a") || lower.contains("\\x0d") {
+        return true;
+    }
+    // Flag groups: `(?s)`, `(?is)`, `(?s:...)`, but not `(?-s)`.
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while let Some(off) = pattern[i..].find("(?") {
+        let start = i + off + 2;
+        let mut j = start;
+        let mut negated = false;
+        while j < bytes.len() {
+            match bytes[j] {
+                b'-' => negated = true,
+                b's' if !negated => return true,
+                b'a'..=b'z' | b'A'..=b'Z' => {}
+                _ => break,
+            }
+            j += 1;
+        }
+        i = start;
+    }
+    false
 }
 
 impl RegexAnalysis {
@@ -65,6 +104,7 @@ impl RegexAnalysis {
             regex,
             constraints,
             is_accelerated,
+            multiline: needs_multiline(pattern),
         })
     }
 }

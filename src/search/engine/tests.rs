@@ -711,6 +711,53 @@ fn test_query_syntax_search() {
     assert_eq!(run("\"dog here\""), vec![("a.rs".into(), 3)]);
 }
 
+/// Roadmap 7: a pattern that mentions a newline or sets the `s` flag is
+/// matched against the whole file and reported on the line where the match
+/// starts; ordinary patterns stay line-oriented.
+#[test]
+fn test_multiline_regex() {
+    use crate::search::regex_search::needs_multiline;
+    assert!(needs_multiline(r"foo\n\s*bar"));
+    assert!(needs_multiline(r"(?s)start.*end"));
+    assert!(needs_multiline(r"(?is:a.b)"));
+    assert!(needs_multiline(r"a\x0Ab"));
+    assert!(!needs_multiline(r"foo\s+bar"));
+    assert!(!needs_multiline(r"(?i)foo"));
+    assert!(!needs_multiline(r"(?-s)a.b"));
+
+    let temp_dir = TempDir::new().unwrap();
+    fs::write(
+        temp_dir.path().join("a.rs"),
+        "fn alpha() {\n    beta();\n}\nfn gamma() {\n\n    beta();\n}\nstart middle\nend\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(temp_dir.path().join("a.rs")).unwrap();
+    engine.finalize();
+
+    // Line-oriented: `\s+` never crosses a line.
+    assert!(engine
+        .search_regex(r"\{\s+beta", "", "", 10)
+        .unwrap()
+        .is_empty());
+    // Explicit newline: matches across lines, reported on the first line.
+    // (`\s+` also spans the blank line inside `gamma`.)
+    let hits = engine.search_regex(r"\{\n\s+beta", "", "", 10).unwrap();
+    let lines: Vec<usize> = hits.iter().map(|h| h.line_number).collect();
+    assert_eq!(lines, vec![1, 4], "{hits:?}");
+    assert_eq!(hits[0].line_match_start, 11);
+    assert_eq!(hits[0].line_match_end, 12, "clamped to the first line");
+    // `(?s)` lets `.` cross lines.
+    let hits = engine.search_regex(r"(?s)start.*end", "", "", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].line_number, 8);
+    assert_eq!(hits[0].content, "start middle");
+    // One result per starting line even if several matches start there.
+    let hits = engine.search_regex(r"(?s)b.", "", "", 10).unwrap();
+    let lines: Vec<usize> = hits.iter().map(|h| h.line_number).collect();
+    assert_eq!(lines, vec![2, 6]);
+}
+
 /// Roadmap 7: `line_hits` agrees with the ASCII scanner for the default
 /// options and handles word boundaries around multi-byte characters.
 #[test]

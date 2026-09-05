@@ -488,12 +488,13 @@ impl SearchEngine {
         };
         let candidates = self.apply_path_filter(candidate_docs, &path_filter);
         let regex = &analysis.regex;
+        let multiline = analysis.multiline;
         Ok(self.run_candidates(
             &candidates,
             rank_mode,
             limits,
             |meta| meta.base_score,
-            |doc_id, run| self.search_in_document_regex(doc_id, regex, run),
+            |doc_id, run| self.search_in_document_regex(doc_id, regex, multiline, run),
         ))
     }
 
@@ -739,6 +740,7 @@ impl SearchEngine {
         &self,
         doc_id: u32,
         regex: &Regex,
+        multiline: bool,
         run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
@@ -793,17 +795,15 @@ impl SearchEngine {
         let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
 
-        // Search in each line using regex
-        for (line_num, line) in content.lines().enumerate() {
-            // Bail out early once we have enough matches from this document to
-            // prevent unbounded memory growth when a broad regex matches
-            // thousands of lines (OOM fix).
-            if matches.len() >= Self::MAX_MATCHES_PER_DOC {
-                break;
-            }
-            if let Some(m) = regex.find(line) {
-                if !run.take_match() {
-                    break;
+        {
+            // Turn one matching line into a result. Returns false once the
+            // query's match budget is exhausted.
+            let mut emit = |line_num: usize, line: &str, m_start: usize, m_end: usize| -> bool {
+                // Cap per-document results (a broad regex matching thousands
+                // of lines must not grow memory unboundedly) and honour the
+                // query's match budget.
+                if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
+                    return false;
                 }
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = display_path.get_or_insert_with(|| {
@@ -837,7 +837,7 @@ impl SearchEngine {
                     .unwrap_or(false);
 
                 // Truncate long lines around the match
-                let truncated = truncate_around_match(line, m.start(), m.end());
+                let truncated = truncate_around_match(line, m_start, m_end);
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
@@ -847,13 +847,56 @@ impl SearchEngine {
                     match_start: truncated.match_start,
                     match_end: truncated.match_end,
                     content_truncated: truncated.was_truncated,
-                    line_match_start: m.start(),
-                    line_match_end: m.end(),
-                    match_column: char_column(line, m.start()),
+                    line_match_start: m_start,
+                    line_match_end: m_end,
+                    match_column: char_column(line, m_start),
                     score,
                     is_symbol,
                     dependency_count,
                 });
+                true
+            };
+
+            if multiline {
+                // Whole-content matching: each match is reported on the line
+                // where it starts (one result per line), with the in-line
+                // offsets clamped to that line.
+                let text: &str = &content;
+                let mut line_num = 0usize;
+                let mut scan_pos = 0usize;
+                let mut last_line: Option<usize> = None;
+                for m in regex.find_iter(text) {
+                    line_num += text[scan_pos..m.start()]
+                        .bytes()
+                        .filter(|&b| b == b'\n')
+                        .count();
+                    scan_pos = m.start();
+                    if last_line == Some(line_num) {
+                        continue;
+                    }
+                    let line_start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+                    let line_end = text[m.start()..]
+                        .find('\n')
+                        .map_or(text.len(), |i| i + m.start());
+                    let line = text[line_start..line_end]
+                        .strip_suffix('\r')
+                        .unwrap_or(&text[line_start..line_end]);
+                    let m_start = m.start() - line_start;
+                    let m_end = (m.end().min(line_end) - line_start).min(line.len());
+                    if !emit(line_num, line, m_start, m_end) {
+                        break;
+                    }
+                    last_line = Some(line_num);
+                }
+            } else {
+                // Search in each line using regex
+                for (line_num, line) in content.lines().enumerate() {
+                    if let Some(m) = regex.find(line) {
+                        if !emit(line_num, line, m.start(), m.end()) {
+                            break;
+                        }
+                    }
+                }
             }
         }
 

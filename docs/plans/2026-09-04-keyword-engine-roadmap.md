@@ -794,8 +794,11 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
   terms must be in the file, lines matching any term are returned).
 - [x] `file:` / `lang:` / `-term` syntax — DONE (`search::query_syntax`,
   merged with the explicit include/exclude parameters; REST and gRPC).
-- [ ] Multi-line regex (`\n`, `(?s)`) via whole-content matching with line
-  resolution.
+- [x] Multi-line regex — DONE (commit "feat(search): multi-line regex"): a
+  pattern that mentions a newline (`\n`, `\r`, `\x0a`) or sets the `s`
+  flag is matched against whole file content; each match is reported once
+  on the line where it starts with in-line offsets clamped to that line.
+  Other patterns stay line-oriented, so existing queries are unchanged.
 - [ ] Symbol-reference results (`SYMBOL_REFERENCE`): the tags queries carry
   `@reference.*` captures (currently disabled for speed), so this is now a
   matter of capturing and persisting them.

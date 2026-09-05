@@ -63,6 +63,8 @@ default build is the keyword server only; see
 - **Regex search** accelerated by literal pre-filtering: required literals are
   extracted from the pattern and intersected through the trigram index before the
   regex runs.
+  Patterns are line-oriented unless they mention a newline or set the `s`
+  flag (`(?s)begin.*?end`), which matches across lines.
 - **Symbols-only mode** for finding definitions without wading through call sites.
 - **Incremental indexing.** A file watcher applies edits, deletes, and renames to the
   live index; no rebuild, no restart.

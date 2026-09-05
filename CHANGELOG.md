@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full line) and `match_column` (0-based character column) on REST and gRPC.
 
 ### Added
+- Multi-line regex: a pattern that mentions a newline (`\n`, `\r`, `\x0a`) or
+  sets the `s` flag (`(?s)begin.*?end`) is matched across lines and reported on
+  the line where each match starts. Other patterns stay line-oriented.
 - Query syntax for plain-text searches: `"quoted phrases"`, several AND-ed
   terms, `-term`, `file:` / `-file:`, `lang:` / `-lang:`, `case:yes`,
   `word:yes` (REST `case` / `word` parameters and gRPC `case_sensitive` /
