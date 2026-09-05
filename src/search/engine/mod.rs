@@ -1034,26 +1034,6 @@ impl SearchEngine {
             .collect()
     }
 
-    /// Release over-allocated backing memory accumulated during incremental batch indexing.
-    ///
-    /// Vec and HashMap growth is doubling; after N inserts the backing store may hold
-    /// capacity for 2N entries.  Calling this periodically (e.g. every 50 batches) and
-    /// once in `finalize()` can reclaim tens to hundreds of MB on large codebases.
-    ///
-    /// This is a best-effort operation — it does NOT force the OS to reclaim pages
-    /// (that depends on the allocator), but it does return capacity to the allocator
-    /// so subsequent allocations can reuse the freed slots instead of growing the heap.
-    pub fn compact_memory(&mut self) {
-        // Shrink the outer symbol-cache Vec and every inner Vec<Symbol>.
-        // Tree-sitter extraction uses push(), so inner Vecs often carry 2× over-allocation.
-        for syms in &mut self.symbol_cache {
-            syms.shrink_to_fit();
-        }
-        self.symbol_cache.shrink_to_fit();
-        self.pending_imports.shrink_to_fit();
-        self.trigram_index.shrink_to_fit();
-    }
-
     /// Finalize the index after all files have been indexed.
     /// This pre-computes caches for optimal query performance.
     /// Call this after indexing is complete and before serving queries.

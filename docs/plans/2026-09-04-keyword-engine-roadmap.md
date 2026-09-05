@@ -747,8 +747,12 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   `all_documents()` by reference.
 - [x] **6.4 Indexing throughput.** DONE (commit `perf(index): fold case during trigram extraction`):
   per-byte ASCII fold + bitset dedupe (no lowercase copy, no per-byte hash
-  insert); `shrink_to_fit` mid-build and off-thread checkpoint saves are
-  still open.
+  insert). Follow-up (commit "perf(index): compact once, in finalize"):
+  the every-50-batches `compact_memory` (a trigram-map rehash the next
+  batch undid) is gone; capacity is released once in `finalize`.
+  Checkpoint saves already run under a *read* lock (searches continue,
+  only the next batch merge waits ~0.1 s per 40 MB), which is judged
+  sufficient; a snapshot-and-save-off-thread would double peak memory.
   Original text: Bitset-based unique-trigram extraction with
   on-the-fly ASCII lowercasing (no `to_lowercase()` copy, no per-byte hash
   insert); drop the mid-build `shrink_to_fit`; checkpoint saves on a separate
