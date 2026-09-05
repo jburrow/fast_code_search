@@ -363,11 +363,6 @@ pub fn discover_files(paths: &[String], exclude_patterns: &[String]) -> FileDisc
     FileDiscoveryIterator::new(&config)
 }
 
-/// Convenience function to discover files with full configuration options.
-pub fn discover_files_with_config(config: &FileDiscoveryConfig) -> FileDiscoveryIterator {
-    FileDiscoveryIterator::new(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

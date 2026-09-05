@@ -615,16 +615,6 @@ impl SystemLimits {
         self.max_map_count.map(|max| ((max as f64) * 0.85) as usize)
     }
 
-    /// Check if we can safely add more mmaps
-    pub fn can_allocate_more(&self, additional: usize) -> bool {
-        if let (Some(current), Some(safe_limit)) = (self.current_map_count, self.safe_mmap_limit())
-        {
-            return current + additional < safe_limit;
-        }
-        // If we can't determine limits (non-Linux), allow it
-        true
-    }
-
     /// Log current system limits
     pub fn log_limits(&self) {
         tracing::info!(
@@ -672,64 +662,4 @@ impl SystemLimits {
         }
         None
     }
-}
-
-/// Check if an error is a memory mapping limit error and provide helpful context
-pub fn diagnose_mmap_error(error: &std::io::Error, file_path: &str) -> String {
-    let error_str = error.to_string().to_lowercase();
-    let is_mmap_limit = error_str.contains("cannot allocate memory")
-        || error_str.contains("out of memory")
-        || error_str.contains("too many open files")
-        || error_str.contains("resource temporarily unavailable");
-
-    if !is_mmap_limit {
-        return format!("Failed to mmap {}: {}", file_path, error);
-    }
-
-    // This looks like a resource limit issue
-    let _limits = SystemLimits::collect();
-    let mut msg = format!("Memory mapping failed for {}: {}", file_path, error);
-
-    #[cfg(target_os = "linux")]
-    {
-        msg.push_str("\n\n=== SYSTEM RESOURCE LIMITS ===");
-
-        if let Some(max_map) = _limits.max_map_count {
-            msg.push_str(&format!("\nvm.max_map_count: {}", max_map));
-            if max_map < 262144 {
-                msg.push_str(" (TOO LOW - recommend 524288)");
-            }
-        }
-
-        if let Some(current) = _limits.current_map_count {
-            msg.push_str(&format!("\nCurrent mmap count: {}", current));
-            if let Some(max_map) = _limits.max_map_count {
-                let pct = (current as f64 / max_map as f64) * 100.0;
-                msg.push_str(&format!(" ({:.1}% of limit)", pct));
-            }
-        }
-
-        if let Some(open) = _limits.open_fds {
-            msg.push_str(&format!("\nOpen file descriptors: {}", open));
-        }
-
-        msg.push_str("\n\n=== RECOMMENDED FIXES ===");
-        msg.push_str("\n1. WITH sudo - Increase mmap limit:");
-        msg.push_str("\n   sudo sysctl -w vm.max_map_count=524288");
-        msg.push_str("\n   echo 'vm.max_map_count=524288' | sudo tee -a /etc/sysctl.conf");
-        msg.push_str("\n\n2. WITHOUT sudo - Enable low_memory_mode in config.toml:");
-        msg.push_str("\n   [indexer]");
-        msg.push_str("\n   low_memory_mode = true");
-        msg.push_str("\n   max_file_size = 2097152  # 2MB");
-        msg.push_str("\n\n3. Reduce scope with exclude_patterns in config.toml");
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        msg.push_str(
-            "\n\nThis appears to be a system resource limit. Check your OS documentation.",
-        );
-    }
-
-    msg
 }

@@ -14,14 +14,6 @@ impl Trigram {
         Trigram(bytes)
     }
 
-    pub fn from_slice(slice: &[u8]) -> Option<Self> {
-        if slice.len() >= 3 {
-            Some(Trigram([slice[0], slice[1], slice[2]]))
-        } else {
-            None
-        }
-    }
-
     /// Get the underlying bytes
     pub fn as_bytes(&self) -> [u8; 3] {
         self.0
@@ -281,19 +273,6 @@ impl TrigramIndex {
     /// Get total number of trigrams in the index
     pub fn num_trigrams(&self) -> usize {
         self.trigram_to_docs.len()
-    }
-
-    /// Get total number of documents in the index
-    pub fn num_documents(&self) -> u32 {
-        if let Some(ref cached) = self.all_docs_cache {
-            return cached.len() as u32;
-        }
-        // Fallback: compute on the fly
-        let mut all_docs = RoaringBitmap::new();
-        for docs in self.trigram_to_docs.values() {
-            all_docs |= docs;
-        }
-        all_docs.len() as u32
     }
 
     /// All document IDs in the index.

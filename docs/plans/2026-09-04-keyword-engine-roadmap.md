@@ -817,8 +817,9 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
   share one implementation (`load_index_inner`; commit "refactor(engine):
   one load path behind the three public loaders") — this also fixed a
   freshly loaded index showing absolute display paths until the next
-  finalize, because roots were registered after the metadata pass. Still
-  open: the remaining uncalled `pub fn`s have not been pruned.
+  finalize, because roots were registered after the metadata pass. The
+  uncalled `pub fn`s (nine, found by a whole-tree reference scan) are
+  pruned (commit "chore: remove unreferenced public functions").
 - [x] Docs — DONE: `DEVELOPMENT.md` rewritten against the code (module tree,
   pipelines, threading, scoring, logging, adding a language, release targets);
   `REVIEW.md` and the June plan archived; `CONTRIBUTING.md` refreshed;

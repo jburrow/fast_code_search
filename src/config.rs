@@ -368,15 +368,6 @@ impl IndexerConfig {
             }
         }
     }
-
-    /// Check if a path is within the configured index paths
-    pub fn is_path_in_scope(&self, path: &std::path::Path) -> bool {
-        let path_str = path.to_string_lossy().replace('\\', "/").to_lowercase();
-        self.paths.iter().any(|base| {
-            let base_normalized = base.replace('\\', "/").to_lowercase();
-            path_str.starts_with(&base_normalized)
-        })
-    }
 }
 
 impl Config {

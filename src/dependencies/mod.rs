@@ -454,11 +454,6 @@ impl DependencyIndex {
         self.imports.values().map(|s| s.len()).sum()
     }
 
-    /// Get total number of files with at least one dependent
-    pub fn files_with_dependents(&self) -> usize {
-        self.imported_by.len()
-    }
-
     /// Get all import edges as (from_file_id, to_file_id) pairs
     pub fn get_all_edges(&self) -> Vec<(u32, u32)> {
         self.imports
