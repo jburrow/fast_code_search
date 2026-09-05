@@ -351,7 +351,7 @@ impl SearchEngine {
                 };
 
                 files.push(PersistedFileMetadata {
-                    path: mapped_file.path.clone(),
+                    path: mapped_file.path.to_path_buf(),
                     mtime,
                     size: size as u64,
                     source_base_path: source_base,

@@ -232,7 +232,6 @@ impl SearchEngine {
             .collect();
         let found = matches.len();
         Self::sort_and_page(&mut matches, &limits);
-        self.file_store.evict_all_fallbacks();
 
         let truncated = run.was_truncated();
         (
