@@ -809,9 +809,14 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
   flag is matched against whole file content; each match is reported once
   on the line where it starts with in-line offsets clamped to that line.
   Other patterns stay line-oriented, so existing queries are unchanged.
-- [ ] Symbol-reference results (`SYMBOL_REFERENCE`): the tags queries carry
-  `@reference.*` captures (currently disabled for speed), so this is now a
-  matter of capturing and persisting them.
+- [x] Symbol-reference results — DONE (commit "feat(symbols): symbol
+  references"): `@reference.*` captures kept (Rust supplemented with path /
+  generic calls), stored per file as (interned name, line, column) and
+  persisted (format v6), `search_references` / REST `references=true` /
+  gRPC `references`, results tagged `SYMBOL_REFERENCE`. Known gap: the
+  TypeScript tags query in the crate carries only class/type references
+  (its call patterns live in the JavaScript query), so TS call sites are
+  not captured yet.
 
 ### Cross-cutting: structure and documentation (spread across phases)
 

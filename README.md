@@ -65,7 +65,9 @@ default build is the keyword server only; see
   regex runs.
   Patterns are line-oriented unless they mention a newline or set the `s`
   flag (`(?s)begin.*?end`), which matches across lines.
-- **Symbols-only mode** for finding definitions without wading through call sites.
+- **Symbols-only mode** for finding definitions without wading through call sites,
+  and **reference search** for the opposite: every call site or type mention of an
+  identifier, as reported by the grammars' tags queries.
 - **Incremental indexing.** A file watcher applies edits, deletes, and renames to the
   live index; no rebuild, no restart.
 - **Persistent index.** Atomic save/load with integrity checks — restarts skip
@@ -250,6 +252,7 @@ Search parameters:
 | `max` | 50 | Result cap, 1–1000; response sets `has_more` when hit |
 | `regex` | false | Treat the query as a regex |
 | `symbols` | false | Match symbol names only |
+| `references` | false | Return the uses (call sites, type mentions) of the identifier in `q` |
 | `include` / `exclude` | — | Semicolon-delimited path globs |
 | `rank` | auto | `auto`, `fast`, or `full` ranking |
 | `context` | 0 | Context lines per match, 0–10 |

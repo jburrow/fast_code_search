@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full line) and `match_column` (0-based character column) on REST and gRPC.
 
 ### Added
+- Symbol references: `/api/search?references=true` (gRPC
+  `SearchRequest.references`) returns the call sites, type mentions and
+  implemented traits of an identifier as `SYMBOL_REFERENCE` results, from the
+  grammars' tags queries (the Rust query is supplemented with path and generic
+  calls). References are stored compactly (12 bytes each, names interned) and
+  persisted; the index format is now v6, so the first start rebuilds once.
 - Multi-line regex: a pattern that mentions a newline (`\n`, `\r`, `\x0a`) or
   sets the `s` flag (`(?s)begin.*?end`) is matched across lines and reported on
   the line where each match starts. Other patterns stay line-oriented.

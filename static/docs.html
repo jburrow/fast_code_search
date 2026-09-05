@@ -327,6 +327,15 @@
                     <td>Treat query as regex pattern</td>
                 </tr>
                 <tr>
+                    <td><code>references</code></td>
+                    <td>boolean</td>
+                    <td>false</td>
+                    <td>Return the references (call sites, type mentions, implemented traits) of the
+                        identifier in <code>q</code>; results have <code>match_type</code>
+                        <code>SYMBOL_REFERENCE</code>. Exact, case-sensitive name; <code>file:</code> /
+                        <code>lang:</code> operators still narrow the files.</td>
+                </tr>
+                <tr>
                     <td><code>symbols</code></td>
                     <td>boolean</td>
                     <td>false</td>
