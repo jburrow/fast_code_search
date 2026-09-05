@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds the index once), and `cargo-deny` + Dependabot are wired into CI.
 - Trigram extraction folds case per byte and dedupes through a bitset instead of
   lowercasing a copy of every file and hashing every byte.
+- Memory diet: each indexed file stores its path once (shared with the
+  path lookup map) and keeps at most 64 bytes of inline state; only files
+  above the mmap threshold allocate mapping state. The evictable fallback
+  cache for unmapped large files is gone (they are read per access), and
+  the all-documents bitmap is borrowed rather than cloned per short or
+  unconstrained query.
 - Symbols are extracted with each grammar's own `tags.scm` query (name-node
   positions, upstream-maintained coverage), supplemented by the previous walker;
   new symbol kinds Module, Macro, Field and Property; C++ `.h` headers are

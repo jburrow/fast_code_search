@@ -733,7 +733,15 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   (the overwhelming majority) with mmap only above a threshold, or a segmented
   blob store — removes the SIGBUS exposure and the `max_map_count` ceiling
   together. Own the mmap accounting in `LazyFileStore` if mmap stays.
-- **6.3 Memory diet.** Intern paths once (`Arc<Path>` or arena) and stop
+- [x] **6.3 Memory diet.** DONE (commits "perf(index): intern paths and
+  shrink the per-file entry" and "perf(search): borrow the all-documents
+  bitmap"): paths are one `Arc<Path>` shared with the path map; the
+  per-file entry is one lazily created cell for large files only and is
+  asserted to be at most 64 bytes; the fallback cache and its eviction API
+  are gone (unmapped large files are read per access); `all_documents()`
+  returns a `Cow` borrowed from the finalize-time cache and candidate sets
+  flow by reference.
+  Original text: Intern paths once (`Arc<Path>` or arena) and stop
   duplicating them in `path_to_id`; collapse the three `OnceLock`s + `Mutex`
   per file into one state cell; delete the fallback Mutex cache; return
   `all_documents()` by reference.
