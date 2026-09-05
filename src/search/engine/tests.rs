@@ -758,6 +758,92 @@ fn test_multiline_regex() {
     assert_eq!(lines, vec![2, 6]);
 }
 
+/// Roadmap 7: reference search returns the lines where an identifier is
+/// used, not where it is defined; survives a save/load round trip with the
+/// name table intact; and follows updates and removals.
+#[test]
+fn test_search_references() {
+    use crate::config::IndexerConfig;
+    let temp_dir = TempDir::new().unwrap();
+    let a = temp_dir.path().join("a.rs");
+    let b = temp_dir.path().join("b.rs");
+    fs::write(
+        &a,
+        "pub fn widget() {}\nfn run() {\n    widget();\n    widget(); widget();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &b,
+        "fn other() {\n    crate::widget();\n}\nfn widgets() {}\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&a).unwrap();
+    engine.index_file(&b).unwrap();
+    engine.finalize();
+    assert_eq!(engine.reference_count(), 4);
+
+    let hits = |e: &SearchEngine, name: &str| -> Vec<(String, usize, usize)> {
+        let (m, _) = e
+            .search_references(name, "", "", SearchLimits::new(50))
+            .unwrap();
+        let mut v: Vec<(String, usize, usize)> = m
+            .iter()
+            .map(|m| {
+                assert!(m.is_reference && !m.is_symbol);
+                (
+                    m.file_path.rsplit('/').next().unwrap().to_string(),
+                    m.line_number,
+                    m.line_match_start,
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    // Two call lines in a.rs (line 4 has two calls -> one result), one in b.rs.
+    // The definition (a.rs:1) and the unrelated `widgets` are not references.
+    assert_eq!(
+        hits(&engine, "widget"),
+        vec![
+            ("a.rs".into(), 3, 4),
+            ("a.rs".into(), 4, 4),
+            ("b.rs".into(), 2, 11)
+        ]
+    );
+    assert!(hits(&engine, "Widget").is_empty(), "case-sensitive");
+    assert!(hits(&engine, "nothing_here").is_empty());
+    // file: operators apply through the parsed form.
+    let parsed = crate::search::query_syntax::parse("widget file:b.rs");
+    let (m, _) = engine
+        .search_references_parsed(&parsed, "", "", SearchLimits::new(50))
+        .unwrap();
+    assert_eq!(m.len(), 1);
+    assert!(m[0].file_path.ends_with("b.rs"));
+
+    // Persistence round trip keeps the references and their names.
+    let config = IndexerConfig {
+        paths: vec![temp_dir.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let index_path = temp_dir.path().join("index.bin");
+    engine.save_index(&index_path, &config).unwrap();
+    let mut reloaded = SearchEngine::new();
+    reloaded
+        .load_index_with_reconciliation(&index_path, &config)
+        .unwrap();
+    assert_eq!(reloaded.reference_count(), 4);
+    assert_eq!(hits(&reloaded, "widget"), hits(&engine, "widget"));
+
+    // Update: b.rs no longer calls widget; remove: a.rs goes away.
+    fs::write(&b, "fn other() {}\n").unwrap();
+    engine.update_file(&b).unwrap();
+    assert_eq!(hits(&engine, "widget").len(), 2);
+    assert!(engine.remove_file(&a));
+    assert!(hits(&engine, "widget").is_empty());
+    assert_eq!(engine.reference_count(), 0);
+}
+
 /// Roadmap 7: `line_hits` agrees with the ASCII scanner for the default
 /// options and handles word boundaries around multi-byte characters.
 #[test]

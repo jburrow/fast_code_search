@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::trigram::Trigram;
-use crate::symbols::extractor::Symbol;
+use crate::symbols::extractor::{PackedRef, Symbol};
 use crate::utils::normalize_path_for_comparison;
 
 /// Serializable representation of the trigram index
@@ -79,6 +79,11 @@ pub struct PersistedIndex {
     /// edge still appears once the target file is indexed after a reload.
     /// (Format v4 / magic FCSIDX02.)
     pub pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
+    /// Interned reference names; `PackedRef::name` indexes this table.
+    /// (Format v6 / magic FCSIDX04.)
+    pub reference_names: Vec<String>,
+    /// Per-file symbol references (parallel to `files`, by position).
+    pub references: Vec<Vec<PackedRef>>,
 }
 
 /// Fixed magic header written before the bincode body.
@@ -87,7 +92,7 @@ pub struct PersistedIndex {
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX03";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX04";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -101,9 +106,10 @@ fn bincode_opts() -> impl Options {
 
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
-    pub const CURRENT_VERSION: u32 = 5;
+    pub const CURRENT_VERSION: u32 = 6;
 
     /// Create a new persisted index from the current state
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config_fingerprint: String,
         indexed_paths: Vec<String>,
@@ -112,6 +118,8 @@ impl PersistedIndex {
         symbols: Vec<Vec<Symbol>>,
         dependency_edges: Vec<(u32, u32)>,
         pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
+        reference_names: Vec<String>,
+        references: Vec<Vec<PackedRef>>,
     ) -> Result<Self> {
         let mut serialized_trigrams = HashMap::with_capacity(trigram_to_docs.len());
 
@@ -132,6 +140,8 @@ impl PersistedIndex {
             symbols,
             dependency_edges,
             pending_imports,
+            reference_names,
+            references,
         })
     }
 
@@ -460,7 +470,7 @@ mod tests {
     #[test]
     fn test_load_rejects_older_magic() {
         let temp = tempfile::TempDir::new().unwrap();
-        for old_magic in [b"FCSIDX01", b"FCSIDX02"] {
+        for old_magic in [b"FCSIDX01", b"FCSIDX02", b"FCSIDX03"] {
             let p = temp
                 .path()
                 .join(format!("{}.bin", String::from_utf8_lossy(old_magic)));
@@ -496,6 +506,8 @@ mod tests {
             vec![vec![]],
             vec![],
             vec![],
+            Vec::new(),
+            Vec::new(),
         )
         .unwrap();
         let p = temp.path().join("idx.bin");
@@ -530,6 +542,8 @@ mod tests {
             vec!["/test".to_string()],
             files,
             &trigram_to_docs,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -572,6 +586,8 @@ mod tests {
                 source_base_path: Some("/test".to_string()),
             }],
             &trigram_to_docs,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),

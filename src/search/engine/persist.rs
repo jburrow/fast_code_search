@@ -114,6 +114,7 @@ impl SearchEngine {
         // Size the symbol cache to the number of files actually registered.
         let total_new_files = self.file_store.len();
         self.symbol_cache = vec![Vec::new(); total_new_files];
+        self.install_references(persisted.reference_names.clone(), total_new_files);
 
         // Register files in dependency_index for future import resolution
         // and restore per-file symbol caches, keyed by the real new ids.
@@ -126,6 +127,9 @@ impl SearchEngine {
             }
             if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
                 self.symbol_cache[new_id as usize] = syms.clone();
+            }
+            if let Some(refs) = persisted.references.get(orig_idx as usize) {
+                self.set_packed_references(new_id, refs.clone());
             }
         }
 
@@ -167,6 +171,7 @@ impl SearchEngine {
 
         // Reset derived state
         self.symbol_cache = vec![Vec::new(); total_files];
+        self.install_references(Vec::new(), total_files);
         self.pending_imports.clear();
         self.waiting_imports.clear();
         self.waiting_keys.clear();
@@ -192,6 +197,7 @@ impl SearchEngine {
 
                 let mut symbols = Vec::new();
                 let mut imports = Vec::new();
+                let mut references = Vec::new();
                 let mut had_content = false;
 
                 if let Some(file) = file_store.get(file_id) {
@@ -211,19 +217,22 @@ impl SearchEngine {
                             } else {
                                 let extractor = SymbolExtractor::new(&path);
 
-                                let (extracted_symbols, extracted_imports) =
+                                let (extracted_symbols, extracted_imports, extracted_refs) =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        extractor.extract_all(&content).unwrap_or_default()
+                                        extractor
+                                            .extract_all_with_refs(&content)
+                                            .unwrap_or_default()
                                     }))
                                     .unwrap_or_else(|_| {
                                         warn!(
                                             "Symbol/import extraction panicked for file '{}'. Continuing without symbols.",
                                             path.display()
                                         );
-                                        (Vec::new(), Vec::new())
+                                        (Vec::new(), Vec::new(), Vec::new())
                                     });
 
                                 symbols = extracted_symbols;
+                                references = extracted_refs;
                                 imports = extracted_imports
                                     .into_iter()
                                     .map(|i| i.path)
@@ -251,6 +260,7 @@ impl SearchEngine {
                     path,
                     symbols,
                     imports,
+                    references,
                     had_content,
                 })
             })
@@ -273,6 +283,7 @@ impl SearchEngine {
                     .resize(entry.file_id as usize + 1, Vec::new());
             }
             self.symbol_cache[entry.file_id as usize] = entry.symbols;
+            self.store_references(entry.file_id, entry.references);
 
             if !entry.imports.is_empty() {
                 self.pending_imports
@@ -370,6 +381,12 @@ impl SearchEngine {
             })
             .collect();
 
+        // Per-file references, by position; the name table is global.
+        let references: Vec<Vec<crate::symbols::extractor::PackedRef>> = live_ids
+            .iter()
+            .map(|&id| self.references_of(id).to_vec())
+            .collect();
+
         // Collect resolved dependency edges, remapped onto positions; edges that
         // touch a removed file are dropped.
         let dependency_edges: Vec<(u32, u32)> = self
@@ -408,6 +425,8 @@ impl SearchEngine {
             symbols,
             dependency_edges,
             pending_imports,
+            self.reference_names().to_vec(),
+            references,
         )?;
         persisted.save(path)?;
 

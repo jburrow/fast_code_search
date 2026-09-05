@@ -4,6 +4,7 @@ use crate::search::path_filter::PathFilter;
 use crate::search::query_syntax::{ParsedQuery, SearchOptions};
 use crate::search::ranking::{FileScoreWeights, RankingWeights};
 use crate::search::regex_search::RegexAnalysis;
+use crate::symbols::extractor::{PackedRef, SymbolRef};
 use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
 use anyhow::Result;
 use memchr::memmem;
@@ -43,6 +44,9 @@ pub struct SearchMatch {
     pub match_column: usize,
     pub score: f64,
     pub is_symbol: bool,
+    /// The match is a symbol *reference* (call site, type mention) found by
+    /// [`SearchEngine::search_references`], not a text or definition hit.
+    pub is_reference: bool,
     pub dependency_count: u32,
 }
 
@@ -397,6 +401,8 @@ pub struct PreIndexedFile {
     pub symbols: Vec<Symbol>,
     /// Extracted import paths
     pub imports: Vec<String>,
+    /// References (call sites, type mentions) reported by the tags query
+    pub references: Vec<SymbolRef>,
     /// Modification time (seconds since epoch) of the content that was indexed
     pub mtime: u64,
     /// Size in bytes of the content that was indexed
@@ -418,14 +424,15 @@ impl PreIndexedFile {
     ///   entirely to reduce CPU and memory usage. The filename symbol is always added
     ///   regardless, since it is used for path-based search scoring without tree-sitter.
     pub fn from_partial(partial: PartialIndexedFile, enable_symbols: bool) -> Self {
-        let (mut symbols, imports) = if enable_symbols && partial.tree_sitter_safe {
+        let (mut symbols, imports, references) = if enable_symbols && partial.tree_sitter_safe {
             let extractor = SymbolExtractor::new_for_source(&partial.path, Some(&partial.content));
 
-            // Extract symbols and imports in a single parse with panic protection.
-            // tree-sitter can stack overflow on deeply nested or malformed files.
+            // Extract symbols, imports and references in a single parse with
+            // panic protection: tree-sitter can stack overflow on deeply
+            // nested or malformed files.
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 extractor
-                    .extract_all(&partial.content)
+                    .extract_all_with_refs(&partial.content)
                     .unwrap_or_default()
             }))
             .unwrap_or_else(|_| {
@@ -433,10 +440,10 @@ impl PreIndexedFile {
                     "Symbol/import extraction panicked for file '{}'. This typically occurs with deeply nested or malformed syntax. Continuing without symbols.",
                     partial.path.display()
                 );
-                (Vec::new(), Vec::new())
+                (Vec::new(), Vec::new(), Vec::new())
             })
         } else {
-            (Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new())
         };
 
         // Add filename as a FileName symbol (line 0, gets symbol scoring boost)
@@ -455,6 +462,7 @@ impl PreIndexedFile {
             trigrams: partial.trigrams,
             symbols,
             imports: imports.into_iter().map(|i| i.path).collect(),
+            references,
             mtime: partial.mtime,
             size: partial.size,
         }
@@ -595,6 +603,13 @@ pub struct SearchEngine {
     pub trigram_index: TrigramIndex,
     pub dependency_index: DependencyIndex,
     symbol_cache: Vec<Vec<Symbol>>,
+    /// Per-file symbol references (call sites, type mentions), names
+    /// interned through `ref_names` / `ref_name_ids`. Parallel to
+    /// `symbol_cache`; a slot is cleared when its file is removed.
+    reference_cache: Vec<Vec<PackedRef>>,
+    /// Interned reference names, indexed by `PackedRef::name`.
+    ref_names: Vec<String>,
+    ref_name_ids: FxHashMap<String, u32>,
     /// (mtime secs, size) of each file's content *as indexed*, by file id.
     /// `(0, 0)` means unknown (fall back to a stat at save time).
     indexed_meta: Vec<(u64, u64)>,
@@ -633,6 +648,9 @@ impl SearchEngine {
             trigram_index: TrigramIndex::new(),
             dependency_index: DependencyIndex::new(),
             symbol_cache: Vec::new(),
+            reference_cache: Vec::new(),
+            ref_names: Vec::new(),
+            ref_name_ids: FxHashMap::default(),
             indexed_meta: Vec::new(),
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
@@ -763,6 +781,7 @@ impl SearchEngine {
                 self.symbol_cache.push(Vec::new());
             }
             self.symbol_cache[file_id as usize] = pre_indexed.symbols;
+            self.store_references(file_id, pre_indexed.references);
 
             // Store imports for later resolution
             if !pre_indexed.imports.is_empty() {
@@ -1159,6 +1178,9 @@ impl SearchEngine {
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
             slot.clear();
         }
+        if let Some(slot) = self.reference_cache.get_mut(id as usize) {
+            slot.clear();
+        }
         self.dependency_index.remove_file(id);
 
         // Read fresh owned content + safety check (no live mmap — avoids SIGBUS if
@@ -1188,6 +1210,7 @@ impl SearchEngine {
             self.symbol_cache.push(Vec::new());
         }
         self.symbol_cache[id as usize] = pre.symbols;
+        self.store_references(id, pre.references);
 
         if !pre.imports.is_empty() {
             self.pending_imports
@@ -1273,11 +1296,83 @@ impl SearchEngine {
         doomed.len() as usize
     }
 
+    /// Intern a reference name, returning its id.
+    fn intern_ref_name(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.ref_name_ids.get(name) {
+            return id;
+        }
+        let id = self.ref_names.len() as u32;
+        self.ref_names.push(name.to_string());
+        self.ref_name_ids.insert(name.to_string(), id);
+        id
+    }
+
+    /// Replace the reference list of `id` with `refs` (names interned).
+    pub(super) fn store_references(&mut self, id: u32, refs: Vec<SymbolRef>) {
+        let packed: Vec<PackedRef> = refs
+            .into_iter()
+            .map(|r| PackedRef {
+                name: self.intern_ref_name(&r.name),
+                line: r.line,
+                column: r.column,
+            })
+            .collect();
+        while self.reference_cache.len() <= id as usize {
+            self.reference_cache.push(Vec::new());
+        }
+        self.reference_cache[id as usize] = packed;
+    }
+
+    /// Install a persisted name table and per-file reference lists (fresh
+    /// engine only: ids in `references` must index `names`).
+    pub(super) fn install_references(&mut self, names: Vec<String>, slots: usize) {
+        self.ref_name_ids = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), i as u32))
+            .collect();
+        self.ref_names = names;
+        self.reference_cache = vec![Vec::new(); slots];
+    }
+
+    pub(super) fn set_packed_references(&mut self, id: u32, refs: Vec<PackedRef>) {
+        while self.reference_cache.len() <= id as usize {
+            self.reference_cache.push(Vec::new());
+        }
+        self.reference_cache[id as usize] = refs;
+    }
+
+    /// The interned id of a reference name, if any file references it.
+    pub fn reference_name_id(&self, name: &str) -> Option<u32> {
+        self.ref_name_ids.get(name).copied()
+    }
+
+    /// References recorded for a file (empty for unknown / removed ids).
+    pub fn references_of(&self, id: u32) -> &[PackedRef] {
+        self.reference_cache
+            .get(id as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// The persisted view of the reference name table.
+    pub(super) fn reference_names(&self) -> &[String] {
+        &self.ref_names
+    }
+
+    /// Total number of recorded references across live files.
+    pub fn reference_count(&self) -> usize {
+        self.reference_cache.iter().map(Vec::len).sum()
+    }
+
     /// Everything except the trigram postings: symbols, metadata, dependency
     /// edges and the store slot (tombstoned so the id is never reused).
     fn forget_id(&mut self, id: u32) {
         self.generation += 1;
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        if let Some(slot) = self.reference_cache.get_mut(id as usize) {
             slot.clear();
         }
         if let Some(meta) = self.file_metadata.get_mut(id as usize) {

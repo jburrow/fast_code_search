@@ -3403,3 +3403,68 @@ async fn test_ws_progress_handshake_and_updates() -> Result<()> {
     );
     Ok(())
 }
+
+/// `/api/search?references=true` returns call sites of the identifier with
+/// `match_type = SYMBOL_REFERENCE`, and `symbols=true` still returns only the
+/// definition.
+#[tokio::test]
+async fn test_http_search_references() -> Result<()> {
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+
+    let temp = TempDir::new()?;
+    std::fs::write(
+        temp.path().join("r.rs"),
+        "fn target() {}\nfn caller() {\n    target();\n}\n",
+    )?;
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut e = engine.write().unwrap();
+        e.add_root_path(temp.path());
+        e.index_file(temp.path().join("r.rs"))?;
+        e.finalize();
+    }
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let router = create_router_with_options(
+        engine,
+        progress,
+        progress_tx,
+        None,
+        &RouterOptions::default(),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let body: serde_json::Value = client
+        .get(format!("http://{addr}/api/search"))
+        .query(&[("q", "target"), ("references", "true")])
+        .send()
+        .await?
+        .json()
+        .await?;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1, "{body}");
+    assert_eq!(results[0]["match_type"], "SYMBOL_REFERENCE");
+    assert_eq!(results[0]["line_number"], 3);
+    assert_eq!(results[0]["match_column"], 4);
+
+    let body: serde_json::Value = client
+        .get(format!("http://{addr}/api/search"))
+        .query(&[("q", "target"), ("symbols", "true")])
+        .send()
+        .await?
+        .json()
+        .await?;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1, "{body}");
+    assert_eq!(results[0]["match_type"], "SYMBOL_DEFINITION");
+    assert_eq!(results[0]["line_number"], 1);
+    Ok(())
+}
