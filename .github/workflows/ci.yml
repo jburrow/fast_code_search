@@ -5,6 +5,7 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,8 +38,10 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      # Failed test names are echoed as workflow annotations so they show up
-      # in the checks API and the PR without opening the (login-only) log.
+      # Failed test names, panics and crashes are echoed as workflow
+      # annotations so they show up in the checks API and the PR without
+      # opening the (login-only) log. If nothing matched (e.g. a test binary
+      # died from a signal), the tail of the log is echoed instead.
       - name: Run tests
         shell: bash
         run: |
@@ -46,8 +49,7 @@ jobs:
           cargo test --verbose --no-fail-fast 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            grep -E '^test .* FAILED$' test.log | sort -u | sed 's/^/::error title=Failed test::/'
-            grep -E "panicked at|assertion .* failed|left:|right:" test.log | head -40 | sed 's/^/::error::/'
+            bash .github/scripts/annotate-test-log.sh test.log
           fi
           exit "$status"
 
@@ -58,8 +60,7 @@ jobs:
           cargo test --verbose --features semantic --lib --no-fail-fast 2>&1 | tee test-semantic.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            grep -E '^test .* FAILED$' test-semantic.log | sort -u | sed 's/^/::error title=Failed test::/'
-            grep -E "panicked at|assertion .* failed|left:|right:" test-semantic.log | head -40 | sed 's/^/::error::/'
+            bash .github/scripts/annotate-test-log.sh test-semantic.log
           fi
           exit "$status"
 

@@ -56,11 +56,18 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # rust-cache restores target/ but prunes files it does not recognise,
+      # which can leave Criterion baseline directories without their
+      # sample.json; Criterion then logs errors into the bencher output and
+      # the trend action finds nothing to parse. Start from no baselines.
+      - name: Reset Criterion state
+        run: rm -rf target/criterion
+
       - name: Run search benchmarks
-        run: cargo bench --bench search_benchmark -- --output-format bencher | tee bench_output.txt
+        run: cargo bench --bench search_benchmark -- --output-format bencher --noplot | tee bench_output.txt
 
       - name: Run persistence benchmarks
-        run: cargo bench --bench persistence_benchmark -- --output-format bencher | tee -a bench_output.txt
+        run: cargo bench --bench persistence_benchmark -- --output-format bencher --noplot | tee -a bench_output.txt
 
       - name: Run real-corpus benchmark (tokio + django)
         run: |
@@ -82,6 +89,11 @@ jobs:
             validator_output.json
             corpus_summary.md
 
+      - name: Keep only bencher lines for trend tracking
+        run: |
+          grep -E '^test .+ \.\.\. bench: ' bench_output.txt > bench_results.txt
+          wc -l bench_results.txt
+
       - name: Reset local changes before branch switch
         run: git checkout -- .
 
@@ -90,7 +102,7 @@ jobs:
         with:
           name: fast_code_search Benchmarks
           tool: cargo
-          output-file-path: bench_output.txt
+          output-file-path: bench_results.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
