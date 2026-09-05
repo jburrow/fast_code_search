@@ -198,7 +198,16 @@ cargo +nightly udeps
 4. **Merge, under the engine write lock**: `index_batch` registers files,
    inserts postings, stores symbols, queues imports; unresolved imports are
    parked and retried only when a file with a matching name appears.
-5. **Checkpoints and final save**: atomic temp+fsync+rename, format v5.
+5. **Checkpoints and final save**: atomic temp+fsync+rename, format v7
+   (`src/index/persistence.rs`): a 36-byte header (magic `FCSIDX05`, version,
+   CRC-32, section lengths), then a bincode metadata section (file table,
+   symbols, edges, parked imports, reference names and per-file references),
+   a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
+   back to back. Save streams bitmaps from the live map; load memory-maps the
+   file, checks bounds and checksum, and deserializes bitmaps in parallel from
+   the mapping. `tests/fixtures/index-v7.fcsidx` pins the format byte for
+   byte; regenerate it with `FCS_WRITE_GOLDEN=1 cargo test golden` after a
+   deliberate format change (and bump the version).
 
 ### Search Pipeline
 

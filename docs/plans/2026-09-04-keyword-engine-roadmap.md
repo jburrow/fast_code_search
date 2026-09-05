@@ -721,10 +721,18 @@ handshake so no WebSocket client dependency is needed.
 
 Goal: make the README's "multi-gigabyte" claim true and measured.
 
-- [~] **6.1 Persistence format v4.** PARTIAL (commit `b573c5f`): nanosecond mtimes, byte-encoded
-  paths, run-optimized bitmaps, magic FCSIDX03 / v5 with an older-magic
-  rejection test. Still open: the sectioned mmap-able layout (lazy load, no
-  double materialization) and a golden-file fixture.
+- [x] **6.1 Persistence format.** DONE. Commit `b573c5f`: nanosecond mtimes,
+  byte-encoded paths, run-optimized bitmaps, older-magic rejection. Commit
+  "feat(index): sectioned, checksummed persisted index (format v7)": header
+  (magic, version, CRC-32, section lengths), metadata section, fixed-width
+  sorted trigram directory, bitmap region; save streams from the live map
+  and load reads bitmaps straight out of the mapping (no double
+  materialisation either way; reconciling load 0.31 s -> 0.21 s on the
+  22 MB corpus index); golden fixture `tests/fixtures/index-v7.fcsidx`
+  with byte-identity, load and corruption tests. Not done: *lazy* posting
+  lists (deserialize on first use) — every query path and incremental
+  removal touches the whole map, so laziness would need a different
+  TrigramIndex; judged not worth it at current sizes.
   Original text: Sectioned, mmap-able layout: header (magic,
   version, CRC), file table (paths as bytes, nanosecond mtime, size), trigram
   directory, bitmap region. Lazy load; no double materialisation on save or

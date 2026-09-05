@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implemented traits of an identifier as `SYMBOL_REFERENCE` results, from the
   grammars' tags queries (the Rust query is supplemented with path and generic
   calls). References are stored compactly (12 bytes each, names interned) and
-  persisted; the index format is now v6, so the first start rebuilds once.
+  persisted.
 - Multi-line regex: a pattern that mentions a newline (`\n`, `\r`, `\x0a`) or
   sets the `s` flag (`(?s)begin.*?end`) is matched across lines and reported on
   the line where each match starts. Other patterns stay line-oriented.
@@ -127,11 +127,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This also keeps the mapping count far below `vm.max_map_count`.
 - `.gitignore` / `.ignore` files under the indexed paths are honoured by the
   initial build and by the watcher (`indexer.respect_gitignore`, default true).
-- **Persisted index format v5** (`FCSIDX03`): unresolved imports are stored so a
-  checkpoint restore still gains the edge when the target file is indexed later;
-  mtimes are kept at nanosecond precision, paths are stored as raw bytes, and
-  posting bitmaps are run-optimised before writing. Index files written by
-  earlier versions are rebuilt automatically.
+- **Persisted index format v7** (`FCSIDX05`): a sectioned layout (header with
+  version, CRC-32 and section lengths; metadata; fixed-width sorted trigram
+  directory; bitmap region). Saving streams the posting lists without an
+  intermediate copy and loading memory-maps the file, validates it before
+  decoding, and deserializes bitmaps in parallel from the mapping. The format
+  also stores unresolved imports (so a checkpoint restore still gains the edge
+  when the target file is indexed later), nanosecond mtimes, byte paths,
+  run-optimised bitmaps and symbol references. Index files written by earlier
+  versions are rebuilt automatically; a golden fixture pins the format.
 - Import resolution is now per language (Rust crate/module paths, Python
   relative and package imports, JS/TS extension and `index` probing, `@/`
   aliases) and no longer guesses a same-named file anywhere in the repo for bare
