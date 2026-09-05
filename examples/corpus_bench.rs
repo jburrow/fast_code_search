@@ -270,6 +270,16 @@ fn main() -> Result<()> {
         ));
     }
 
+    // Symbol references of a very common identifier (method call sites).
+    metrics.push(measure(
+        "symbol/references",
+        n,
+        |r: &Result<(Vec<_>, SearchRankingInfo)>| {
+            format!("{} results", r.as_ref().map(|(v, _)| v.len()).unwrap_or(0))
+        },
+        || engine.search_references("unwrap", "", "", SearchLimits::new(page)),
+    ));
+
     // Incremental update: rewrite a spread of small files and apply each
     // change as the watcher would; restore afterwards.
     let mut incremental: Vec<Duration> = Vec::new();
@@ -332,6 +342,7 @@ fn main() -> Result<()> {
         bytes as f64 / (1024.0 * 1024.0) / build_took.as_secs_f64().max(1e-9)
     );
     let _ = writeln!(md, "| trigrams | {} |", stats.num_trigrams);
+    let _ = writeln!(md, "| symbol references | {} |", engine.reference_count());
     let _ = writeln!(md, "| dependency edges | {} |", stats.dependency_edges);
     let _ = writeln!(
         md,

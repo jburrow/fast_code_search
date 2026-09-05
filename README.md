@@ -157,12 +157,13 @@ each commit on `main` carries the authoritative values.
 |---------|-------|
 | files indexed | 6,240 (38.9 MB of text) |
 | full build (read, trigrams, symbols, imports, merge) | 3.1 s, ~2,000 files/s, ~12 MB/s |
-| resident memory after build | 143 MB |
-| index save / reconciling load | 0.11 s / 0.24 s (18.6 MB on disk) |
+| resident memory after build | 149 MB (of which symbol references: about 6 MB) |
+| index save / reconciling load | 0.14 s / 0.31 s (21.4 MB on disk) |
 | text search, common word (`return`), p50 / p95 | 0.51 ms / 0.60 ms |
 | text search, identifier, p50 | 0.6 ms |
 | regex with literal / case-insensitive / no literal, p50 | 1.5 ms / 1.2 ms / 0.8 ms |
 | symbol search, p50 | 1.7 ms |
+| reference search (`unwrap`, 220k references indexed), p50 | 0.5 ms |
 | incremental update of one file, p50 / p95 | 4.3 ms / 8.0 ms |
 
 Tree-sitter symbol extraction is about three quarters of build time (the same
