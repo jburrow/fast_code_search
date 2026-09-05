@@ -3210,3 +3210,196 @@ async fn test_regex_alternation_returns_all_branches() -> Result<()> {
 
     Ok(())
 }
+
+/// Roadmap 4.x: `server.cors_origins` controls the `Access-Control-Allow-Origin`
+/// header. Empty (the default) means no CORS headers at all; a listed origin is
+/// echoed back only for that origin; `"*"` allows any origin.
+#[tokio::test]
+async fn test_cors_headers_follow_configuration() -> Result<()> {
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+
+    async fn serve(cors_origins: Vec<String>) -> Result<std::net::SocketAddr> {
+        let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+        let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+        let progress_tx = create_progress_broadcaster();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let opts = RouterOptions {
+            cors_origins,
+            ..Default::default()
+        };
+        let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+        tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("HTTP server failed");
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Ok(addr)
+    }
+    let client = reqwest::Client::new();
+    let allow_origin = |resp: &reqwest::Response| {
+        resp.headers()
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().unwrap().to_string())
+    };
+
+    // Default: same-origin only, no CORS header even with an Origin.
+    let addr = serve(Vec::new()).await?;
+    let resp = client
+        .get(format!("http://{addr}/api/health"))
+        .header("Origin", "https://app.example")
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(allow_origin(&resp), None, "no CORS layer by default");
+
+    // A listed origin is echoed; an unlisted one gets nothing; preflight works.
+    let addr = serve(vec!["https://app.example".to_string()]).await?;
+    let resp = client
+        .get(format!("http://{addr}/api/health"))
+        .header("Origin", "https://app.example")
+        .send()
+        .await?;
+    assert_eq!(allow_origin(&resp).as_deref(), Some("https://app.example"));
+    let resp = client
+        .get(format!("http://{addr}/api/health"))
+        .header("Origin", "https://evil.example")
+        .send()
+        .await?;
+    assert_eq!(
+        allow_origin(&resp),
+        None,
+        "unlisted origin must not be allowed"
+    );
+    let resp = client
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("http://{addr}/api/search"),
+        )
+        .header("Origin", "https://app.example")
+        .header("Access-Control-Request-Method", "GET")
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 200, "preflight");
+    assert_eq!(allow_origin(&resp).as_deref(), Some("https://app.example"));
+
+    // Wildcard.
+    let addr = serve(vec!["*".to_string()]).await?;
+    let resp = client
+        .get(format!("http://{addr}/api/health"))
+        .header("Origin", "https://anywhere.example")
+        .send()
+        .await?;
+    assert_eq!(allow_origin(&resp).as_deref(), Some("*"));
+    Ok(())
+}
+
+/// `/ws/progress` completes the WebSocket handshake and immediately pushes the
+/// current status as a JSON text frame, then relays broadcast progress updates.
+#[tokio::test]
+async fn test_ws_progress_handshake_and_updates() -> Result<()> {
+    use fast_code_search::web::{create_router_with_options, RouterOptions};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let router = create_router_with_options(
+        engine,
+        progress.clone(),
+        progress_tx.clone(),
+        None,
+        &RouterOptions::default(),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Raw handshake: no websocket client dependency needed.
+    let mut stream = tokio::net::TcpStream::connect(addr).await?;
+    stream
+        .write_all(
+            format!(
+                "GET /ws/progress HTTP/1.1\r\nHost: {addr}\r\nUpgrade: websocket\r\n\
+                 Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                 Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await?;
+
+    // Read until the end of the HTTP response headers.
+    let mut buf = Vec::new();
+    let header_end = loop {
+        let mut chunk = [0u8; 1024];
+        let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk)).await??;
+        assert!(n > 0, "connection closed during handshake");
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    assert!(
+        head.to_ascii_lowercase().contains("sec-websocket-accept:"),
+        "{head}"
+    );
+    buf.drain(..header_end);
+
+    // Minimal server-to-client frame reader (unmasked, FIN, text).
+    async fn read_text_frame(
+        stream: &mut tokio::net::TcpStream,
+        buf: &mut Vec<u8>,
+    ) -> Result<String> {
+        loop {
+            if buf.len() >= 2 {
+                let opcode = buf[0] & 0x0f;
+                let mut len = (buf[1] & 0x7f) as usize;
+                let mut hdr = 2;
+                if len == 126 && buf.len() >= 4 {
+                    len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+                    hdr = 4;
+                } else if len == 127 && buf.len() >= 10 {
+                    len = u64::from_be_bytes(buf[2..10].try_into().unwrap()) as usize;
+                    hdr = 10;
+                }
+                if (len < 126 || hdr > 2) && buf.len() >= hdr + len {
+                    let payload = buf[hdr..hdr + len].to_vec();
+                    buf.drain(..hdr + len);
+                    assert_eq!(opcode, 0x1, "expected a text frame");
+                    return Ok(String::from_utf8(payload)?);
+                }
+            }
+            let mut chunk = [0u8; 4096];
+            let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk)).await??;
+            anyhow::ensure!(n > 0, "connection closed before a frame arrived");
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    // Initial status pushed on connect.
+    let first: serde_json::Value =
+        serde_json::from_str(&read_text_frame(&mut stream, &mut buf).await?)?;
+    assert!(first.is_object(), "{first}");
+
+    // A broadcast progress update is relayed.
+    {
+        let mut p = progress.write().unwrap();
+        p.files_discovered = 4242;
+        p.message = "ws relay probe".to_string();
+        let _ = progress_tx.send(p.clone());
+    }
+    let second = read_text_frame(&mut stream, &mut buf).await?;
+    assert!(
+        second.contains("ws relay probe") || second.contains("4242"),
+        "{second}"
+    );
+    Ok(())
+}

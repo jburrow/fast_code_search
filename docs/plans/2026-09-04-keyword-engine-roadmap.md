@@ -673,6 +673,12 @@ set, never to the corpus.
   held write lock, CORS, gRPC default `max_results`, gRPC `Index` scope
   rejection, config precedence and unknown keys.
 
+Follow-up (commit "test(web): CORS headers and /ws/progress"): explicit
+integration tests for `server.cors_origins` (default = no header, listed
+origin echoed, unlisted refused, preflight, wildcard) and for the progress
+WebSocket (handshake, initial status frame, relayed update), using a raw
+handshake so no WebSocket client dependency is needed.
+
 ### Phase 5 — Symbols and dependencies v2 → 0.13 (2–3 weeks)
 
 - [x] **5.1 Migrate to tree-sitter `tags.scm` queries** DONE: each grammar's `TAGS_QUERY` (C# vendored) drives extraction;
