@@ -762,7 +762,8 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   0.27 -> 0.32`): thin LTO + strip, `semantic` feature (off by default,
   implied by `ml-models`), md5/glob dropped, sysinfo/criterion bumped, single
   tonic/axum stack, deny.toml + cargo-deny CI step, Dependabot. Debug
-  archives are still produced by release.yml.
+  archives dropped from release.yml (commit "ci: stop shipping debug
+  archives with releases").
   Original text: `[profile.release] lto = "thin", codegen-units = 1,
   strip = true`; stop shipping debug archives by default; add a `semantic`
   feature gating `src/semantic*`, `ndarray`, `hnsw_rs`, `sha2` and the

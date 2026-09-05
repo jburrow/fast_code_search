@@ -130,6 +130,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer need system OpenSSL.
 - CI lints all targets and features, checks docs, has an MSRV job, and releases
   are gated on tests; the VS Code extension publishes on `ext-v*` tags only.
+  Failing test names are surfaced as workflow annotations.
+- Releases no longer ship the `-debug` archives (an unoptimised binary per
+  platform); release binaries are built with thin LTO and stripped.
 
 ### Repository
 - `.gitattributes` normalises line endings; the corrupted `.gitignore` is
