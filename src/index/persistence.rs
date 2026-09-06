@@ -27,6 +27,11 @@ pub struct DirEntry {
 
 const DIR_ENTRY_LEN: usize = 16;
 
+/// Serializes [`PersistedIndex::save`] within the process (see there).
+static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Makes every temp file name unique within the process.
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The posting lists of a *loaded* index: the directory plus the mapped
 /// bitmap region they point into. Bitmaps are deserialized straight from
 /// the mapping by [`PersistedIndex::restore_trigram_index`]; nothing is
@@ -255,7 +260,11 @@ impl PersistedIndex {
     /// so a reader holding a shared lock never observes a truncated file and
     /// a crash mid-write leaves the previous index intact.
     pub fn save(&self, path: &Path, trigrams: &FxHashMap<Trigram, RoaringBitmap>) -> Result<()> {
-        use std::io::{Seek, SeekFrom, Write};
+        // Saves are serialized process-wide. The watcher's shutdown save, the
+        // indexer's final save and periodic checkpoints can all fire at once;
+        // letting them race meant two writers sharing a temp file, and the
+        // remove-then-rename fallback could delete the index outright.
+        let _serialize = SAVE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -264,10 +273,31 @@ impl PersistedIndex {
             })?;
         }
 
-        let tmp_path = path.with_extension("bin.tmp");
+        // Unique per process and per call so a concurrent writer (another
+        // process sharing `index_path`) can never truncate our in-flight file.
+        let tmp_path = path.with_extension(format!(
+            "bin.tmp.{}.{}",
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+
+        let result = self.write_then_rename(path, &tmp_path, trigrams);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        result
+    }
+
+    fn write_then_rename(
+        &self,
+        path: &Path,
+        tmp_path: &Path,
+        trigrams: &FxHashMap<Trigram, RoaringBitmap>,
+    ) -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
 
         {
-            let file = std::fs::File::create(&tmp_path).with_context(|| {
+            let file = std::fs::File::create(tmp_path).with_context(|| {
                 format!("Failed to create temp index file: {}", tmp_path.display())
             })?;
 
@@ -346,11 +376,20 @@ impl PersistedIndex {
         }
 
         // Atomic replace. On Windows, rename onto an existing file can fail, so
-        // fall back to remove-then-rename.
-        if let Err(e) = std::fs::rename(&tmp_path, path) {
+        // fall back to remove-then-rename — but only while our temp file still
+        // exists; if the source is gone there is nothing to put in place of
+        // the target and removing it would destroy the last good index.
+        if let Err(e) = std::fs::rename(tmp_path, path) {
+            if !tmp_path.exists() {
+                return Err(anyhow::Error::new(e).context(format!(
+                    "Failed to atomically replace index file: {} (temp file {} vanished)",
+                    path.display(),
+                    tmp_path.display()
+                )));
+            }
             tracing::debug!(error = %e, "Direct rename failed; retrying after removing target");
             let _ = std::fs::remove_file(path);
-            std::fs::rename(&tmp_path, path).with_context(|| {
+            std::fs::rename(tmp_path, path).with_context(|| {
                 format!(
                     "Failed to atomically replace index file: {}",
                     path.display()
@@ -996,12 +1035,67 @@ mod tests {
         assert!(PersistedIndex::load(&index_path).is_ok());
 
         // A temp file must not be left behind after a successful save.
-        let tmp = index_path.with_extension("bin.tmp");
-        assert!(!tmp.exists(), "temp file should be cleaned up by rename");
+        assert!(
+            leftover_temp_files(temp_dir.path()).is_empty(),
+            "temp file should be cleaned up by rename: {:?}",
+            leftover_temp_files(temp_dir.path())
+        );
 
         // Re-saving over an existing index works (covers Windows rename-over path).
         save_sample(&index_path);
         assert!(PersistedIndex::load(&index_path).is_ok());
+    }
+
+    fn leftover_temp_files(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().contains(".tmp"))
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
+    /// Regression: the watcher's shutdown save, the indexer's final save and
+    /// checkpoint saves can all run at once. With a shared temp name the
+    /// losers truncated each other's file and the rename fallback deleted
+    /// the index; now saves are serialized and use unique temp names.
+    #[test]
+    fn test_concurrent_saves_never_lose_the_index() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let index_path = temp_dir.path().join("index.bin");
+        save_sample(&index_path);
+
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let path = index_path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..6 {
+                        save_sample(&path);
+                        assert!(
+                            PersistedIndex::load(&path).is_ok(),
+                            "index must stay loadable between concurrent saves"
+                        );
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("save thread panicked");
+        }
+
+        assert!(
+            index_path.exists(),
+            "index file was deleted by a racing save"
+        );
+        assert!(PersistedIndex::load(&index_path).is_ok());
+        assert!(
+            leftover_temp_files(temp_dir.path()).is_empty(),
+            "no temp files may remain after concurrent saves: {:?}",
+            leftover_temp_files(temp_dir.path())
+        );
     }
 
     #[test]
