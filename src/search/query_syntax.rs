@@ -183,9 +183,18 @@ fn tokenize(raw: &str) -> Vec<Token> {
 }
 
 /// `file:` argument to a glob understood by `PathFilter`.
+///
+/// A trailing `/` means "everything under this directory": `src/` becomes
+/// `**/src/**` (a glob ending in `/` would only match paths that end in
+/// `src/`, i.e. nothing). A pattern that is only slashes selects everything.
 fn file_glob(pat: &str) -> String {
+    let dir = pat.ends_with('/');
+    let pat = pat.trim_end_matches('/');
+    if pat.is_empty() {
+        return "**".to_string();
+    }
     let has_glob = pat.contains(['*', '?', '[']);
-    if pat.contains('/') {
+    let base = if pat.contains('/') || dir {
         if pat.starts_with("**/") || pat.starts_with('/') {
             pat.to_string()
         } else {
@@ -195,6 +204,11 @@ fn file_glob(pat: &str) -> String {
         format!("**/{pat}")
     } else {
         format!("**/*{pat}*")
+    };
+    if dir {
+        format!("{base}/**")
+    } else {
+        base
     }
 }
 
@@ -245,7 +259,7 @@ mod tests {
         let q = parse("needle lang:rust file:src/ -file:test case:yes word:y -haystack -lang:py");
         assert_eq!(q.terms, vec!["needle"]);
         assert_eq!(q.exclude_terms, vec!["haystack"]);
-        assert_eq!(q.include_globs, vec!["**/*.rs", "**/src/"]);
+        assert_eq!(q.include_globs, vec!["**/*.rs", "**/src/**"]);
         assert_eq!(
             q.exclude_globs,
             vec!["**/*test*", "**/*.py", "**/*.pyi", "**/*.pyw"]
@@ -255,6 +269,34 @@ mod tests {
         assert_eq!(parse("lang:xyz").include_globs, vec!["**/*.xyz"]);
         // A negative number is a term, not an exclusion.
         assert_eq!(parse("-1 x").terms, vec!["-1", "x"]);
+    }
+
+    /// Review 1.7: `file:src/` selects everything under a `src` directory
+    /// (the old glob `**/src/` matched only paths *ending* in `src/`).
+    #[test]
+    fn trailing_slash_selects_a_directory() {
+        use crate::search::path_filter::PathFilter;
+        assert_eq!(parse("x file:src/").include_globs, vec!["**/src/**"]);
+        assert_eq!(
+            parse("x file:src/search/").include_globs,
+            vec!["**/src/search/**"]
+        );
+        assert_eq!(parse("x file:/abs/dir/").include_globs, vec!["/abs/dir/**"]);
+        assert_eq!(parse("x file:///").include_globs, vec!["**"]);
+        assert_eq!(parse("x -file:target/").exclude_globs, vec!["**/target/**"]);
+        let filter = |q: &str| {
+            let p = parse(q);
+            PathFilter::from_delimited(&p.include_globs.join(";"), &p.exclude_globs.join(";"))
+                .unwrap()
+        };
+        let src = filter("x file:src/");
+        assert!(src.matches("/proj/src/main.rs"));
+        assert!(src.matches("/proj/src/engine/mod.rs"));
+        assert!(!src.matches("/proj/tests/main.rs"));
+        assert!(!src.matches("/proj/srcs/main.rs"));
+        let not_target = filter("x -file:target/");
+        assert!(!not_target.matches("/proj/target/debug/a.rs"));
+        assert!(not_target.matches("/proj/src/a.rs"));
     }
 
     /// Review 1.6: operator-looking text the user means literally is not
