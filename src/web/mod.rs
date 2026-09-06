@@ -45,6 +45,9 @@ pub struct WebState {
     pub indexer_config: Option<Arc<crate::config::IndexerConfig>>,
     /// Extension breakdown cached per engine generation.
     pub diagnostics_cache: Arc<std::sync::Mutex<Option<api::DiagnosticsCache>>>,
+    /// Last file count observed by `/api/ready`, used while the engine's
+    /// write lock is briefly held.
+    pub last_known_files: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Knobs for [`create_router_with_options`].
@@ -141,6 +144,7 @@ pub fn create_router_with_options(
         metrics: Arc::new(metrics::Metrics::new()),
         indexer_config: opts.indexer_config.clone().map(Arc::new),
         diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
+        last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     };
 
     let router = Router::new()
@@ -173,6 +177,7 @@ pub fn create_router_with_options(
             state.clone(),
             request_timeout_middleware,
         ))
+        .layer(axum::middleware::from_fn(security_headers_middleware))
         // 5xx responses are logged at debug rather than error: a readiness
         // probe answering 503 while the index builds is expected, and the
         // handlers already log genuine failures.
@@ -182,6 +187,43 @@ pub fn create_router_with_options(
             ),
         )
         .with_state(state)
+}
+
+/// Cache policy for an embedded asset. The HTML, scripts and stylesheets
+/// are served under unversioned URLs and fetched independently, so they
+/// must revalidate on every load (the ETag makes that a cheap 304) or a
+/// client can run a new page against an hour-old script after an upgrade.
+/// Fonts and images may be held for an hour.
+fn cache_policy(mime: &str) -> &'static str {
+    if mime.starts_with("text/")
+        || mime.starts_with("application/javascript")
+        || mime.starts_with("application/json")
+    {
+        "no-cache"
+    } else {
+        "public, max-age=3600, must-revalidate"
+    }
+}
+
+/// Conservative security headers on every response: the UI renders
+/// arbitrary indexed file content, so never let a browser sniff a
+/// content type or frame the app.
+async fn security_headers_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    headers
+        .entry(header::X_CONTENT_TYPE_OPTIONS)
+        .or_insert(axum::http::HeaderValue::from_static("nosniff"));
+    headers
+        .entry(header::X_FRAME_OPTIONS)
+        .or_insert(axum::http::HeaderValue::from_static("DENY"));
+    headers
+        .entry(header::REFERRER_POLICY)
+        .or_insert(axum::http::HeaderValue::from_static("same-origin"));
+    resp
 }
 
 /// Whole-request timeout that answers with the API's JSON error envelope
@@ -328,15 +370,13 @@ fn serve_static_file(
 
             // Honor conditional requests: return 304 when the client's cached
             // ETag matches, so unchanged assets aren't resent.
+            let cache_control = cache_policy(mime.as_ref());
             if let Some(inm) = req_headers.get(header::IF_NONE_MATCH) {
                 if inm.to_str().map(|v| v == etag).unwrap_or(false) {
                     return Response::builder()
                         .status(StatusCode::NOT_MODIFIED)
                         .header(header::ETAG, etag)
-                        .header(
-                            header::CACHE_CONTROL,
-                            "public, max-age=3600, must-revalidate",
-                        )
+                        .header(header::CACHE_CONTROL, cache_control)
                         .body(Body::empty())
                         .unwrap();
                 }
@@ -345,12 +385,11 @@ fn serve_static_file(
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime.as_ref())
-                .header(
-                    header::CACHE_CONTROL,
-                    "public, max-age=3600, must-revalidate",
-                )
+                .header(header::CACHE_CONTROL, cache_control)
                 .header(header::ETAG, etag)
-                .body(Body::from(content.data.to_vec()))
+                // `data` is a `Cow<'static, [u8]>`: no copy of the (multi-MB
+                // font) asset per request.
+                .body(Body::from(content.data))
                 .unwrap()
         }
         None => Response::builder()
@@ -390,6 +429,7 @@ mod tests {
             metrics: Arc::new(metrics::Metrics::new()),
             indexer_config: None,
             diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
+            last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         };
         let router = Router::new()
             .route(
@@ -422,6 +462,17 @@ mod tests {
         assert!(
             body["error"].as_str().unwrap_or("").contains("timed out"),
             "{body}"
+        );
+    }
+
+    #[test]
+    fn cache_policy_revalidates_code_and_holds_fonts() {
+        assert_eq!(cache_policy("text/html"), "no-cache");
+        assert_eq!(cache_policy("application/javascript"), "no-cache");
+        assert_eq!(cache_policy("text/css; charset=utf-8"), "no-cache");
+        assert_eq!(
+            cache_policy("font/woff2"),
+            "public, max-age=3600, must-revalidate"
         );
     }
 }

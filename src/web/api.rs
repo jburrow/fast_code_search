@@ -316,14 +316,28 @@ fn readiness(state: &WebState) -> (bool, String, usize) {
         .try_read()
         .map(|p| p.status)
         .unwrap_or_default();
-    let num_files = state
-        .engine
-        .try_read()
-        .map(|e| e.get_stats().num_files)
-        .unwrap_or(0);
+    // A momentarily held write lock (a watcher batch, a checkpoint) must not
+    // read as "no files": fall back to the last count we saw.
+    let num_files = match state.engine.try_read() {
+        Ok(e) => {
+            let n = e.get_stats().num_files;
+            state
+                .last_known_files
+                .store(n, std::sync::atomic::Ordering::Relaxed);
+            n
+        }
+        Err(_) => state
+            .last_known_files
+            .load(std::sync::atomic::Ordering::Relaxed),
+    };
+    // Searches are served between batches while a persisted index is
+    // reconciled or imports are resolved, so those states are ready too
+    // once there is something to search.
     let ready = match status {
         IndexingStatus::Completed => true,
-        IndexingStatus::Idle => num_files > 0,
+        IndexingStatus::Idle | IndexingStatus::Reconciling | IndexingStatus::ResolvingImports => {
+            num_files > 0
+        }
         _ => false,
     };
     (ready, format!("{status:?}").to_lowercase(), num_files)
@@ -384,7 +398,12 @@ pub async fn search_handler(
         }));
     }
 
-    let max_results = params.max.clamp(1, 1000);
+    // `max=0` means "the default page size" (as it does over gRPC).
+    let max_results = if params.max == 0 {
+        default_max_results()
+    } else {
+        params.max.min(1000)
+    };
     let offset = params.offset;
     if offset > SearchLimits::MAX_OFFSET {
         return Err(ApiError::from((
@@ -416,6 +435,14 @@ pub async fn search_handler(
     let is_regex = params.regex;
     let symbols_only = params.symbols;
     let references = params.references;
+    // `references` is its own mode: combining it with regex or symbols-only
+    // used to silently ignore the other flag (and swallow invalid regexes).
+    if references && (is_regex || symbols_only) {
+        return Err(ApiError::from((
+            StatusCode::BAD_REQUEST,
+            "references=true cannot be combined with regex=true or symbols=true".to_string(),
+        )));
+    }
     let context_lines = params.context.min(MAX_CONTEXT_LINES);
 
     // Parse ranking mode
@@ -499,12 +526,8 @@ pub async fn search_handler(
                     limits,
                     rank_mode,
                 )
-                .map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        format!("Invalid regex pattern: {}", e),
-                    )
-                })?
+                // The engine's error already reads "Invalid regex pattern: …".
+                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
         } else {
             engine
                 .search_parsed(
@@ -969,7 +992,9 @@ pub async fn context_handler(
         let start_line = start_idx + 1; // 1-based
 
         Ok(Json(ContextResponse {
-            file: mapped.path.to_string_lossy().to_string(),
+            // The same workspace-relative form search results and /api/file
+            // use, not the absolute host path.
+            file: engine.make_display_path(&mapped.path),
             start_line,
             lines,
             match_line: params.line,
@@ -1167,6 +1192,21 @@ fn progress_to_status(
 
 /// Truncate a string to at most `max_bytes` bytes, ensuring the cut point falls
 /// on a UTF-8 character boundary to avoid panics with multi-byte characters.
+/// Plain-text search for `term` restricted to `file_path` (an absolute
+/// stored path), for the diagnostics self-tests.
+fn search_within_file(
+    engine: &SearchEngine,
+    term: &str,
+    file_path: &str,
+) -> Vec<crate::search::SearchMatch> {
+    let display = engine.make_display_path(std::path::Path::new(file_path));
+    let parsed = crate::search::parse_query(term);
+    engine
+        .search_parsed(&parsed, &display, "", SearchLimits::new(5), RankMode::Full)
+        .map(|(matches, _)| matches)
+        .unwrap_or_default()
+}
+
 fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
@@ -1302,10 +1342,11 @@ pub async fn diagnostics_handler(
             // Take first 8 bytes or full name if shorter, respecting UTF-8 boundaries
             let search_term = safe_truncate(file_name, 8);
 
-            let search_results = engine.search(search_term, 100);
-            let found = search_results.iter().any(|r| {
-                r.file_path.contains(&test_file_path) || test_file_path.contains(&r.file_path)
-            });
+            // Restrict the search to the sampled file: the test asks "is this
+            // file findable?", not "does it outrank every other file for a
+            // common prefix" (which a healthy 60k-file index rightly fails).
+            let search_results = search_within_file(&engine, search_term, &test_file_path);
+            let found = !search_results.is_empty();
 
             let test = if found {
                 TestResult::passed(
@@ -1368,11 +1409,9 @@ pub async fn diagnostics_handler(
                         let search_term = sample_line.trim();
                         let search_term_slice = safe_truncate(search_term, 30);
 
-                        let search_results = engine.search(search_term_slice, 50);
-                        let found = search_results.iter().any(|r| {
-                            r.file_path.contains(&test_file_path)
-                                || test_file_path.contains(&r.file_path)
-                        });
+                        let search_results =
+                            search_within_file(&engine, search_term_slice, &test_file_path);
+                        let found = !search_results.is_empty();
 
                         test_result = Some(if found {
                             TestResult::passed(

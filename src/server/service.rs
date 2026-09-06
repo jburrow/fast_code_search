@@ -137,6 +137,11 @@ impl CodeSearch for CodeSearchService {
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
         let references = req.references;
+        if references && (is_regex || symbols_only) {
+            return Err(Status::invalid_argument(
+                "references cannot be combined with is_regex or symbols_only",
+            ));
+        }
         let case_sensitive = req.case_sensitive;
         let whole_word = req.whole_word;
         let rank_mode = RankMode::parse(&req.rank);
@@ -231,9 +236,7 @@ impl CodeSearch for CodeSearchService {
                         limits,
                         rank_mode,
                     )
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid regex pattern: {}", e))
-                    })?
+                    .map_err(|e| Status::invalid_argument(e.to_string()))?
             } else {
                 engine
                     .search_parsed(

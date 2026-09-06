@@ -3601,3 +3601,82 @@ async fn test_grpc_search_rejects_deep_offset() -> Result<()> {
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_http_rejects_conflicting_modes_and_reports_display_paths() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+
+    for (a, b) in [("regex", "true"), ("symbols", "true")] {
+        let resp = client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(&[("q", "find_me_in_search"), ("references", "true"), (a, b)])
+            .send()
+            .await?;
+        assert_eq!(resp.status(), 400, "references + {a}");
+    }
+
+    // The regex error is reported once, not with a doubled prefix.
+    let resp = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "[unclosed"), ("regex", "true")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await?;
+    let msg = body["error"].as_str().unwrap_or("");
+    assert_eq!(msg.matches("Invalid regex pattern").count(), 1, "{msg}");
+
+    // /api/context reports the same display path as search results.
+    let resp = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "find_me_in_search")])
+        .send()
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
+    let file = body["results"][0]["file_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let resp = client
+        .get(format!("{}/api/context", ctx.http_url))
+        .query(&[("file", file.as_str()), ("line", "1"), ("context", "1")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 200);
+    let ctx_body: serde_json::Value = resp.json().await?;
+    assert_eq!(ctx_body["file"].as_str(), Some(file.as_str()));
+
+    // Security headers on API and UI responses; the UI shell revalidates.
+    for path in ["/api/search?q=x", "/", "/keyword.js"] {
+        let resp = client
+            .get(format!("{}{}", ctx.http_url, path))
+            .send()
+            .await?;
+        assert_eq!(
+            resp.headers()
+                .get("x-content-type-options")
+                .map(|v| v.to_str().unwrap()),
+            Some("nosniff"),
+            "{path}"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-frame-options")
+                .map(|v| v.to_str().unwrap()),
+            Some("DENY"),
+            "{path}"
+        );
+    }
+    let resp = client
+        .get(format!("{}/keyword.js", ctx.http_url))
+        .send()
+        .await?;
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .map(|v| v.to_str().unwrap()),
+        Some("no-cache")
+    );
+    Ok(())
+}

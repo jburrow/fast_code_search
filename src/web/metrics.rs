@@ -28,9 +28,11 @@ impl Metrics {
     /// A completed search (any outcome).
     pub fn record_search(&self, elapsed: std::time::Duration) {
         self.searches_total.fetch_add(1, Ordering::Relaxed);
-        let ms = elapsed.as_millis() as u64;
+        // Compare in seconds: truncating to whole milliseconds put a 1.9 ms
+        // search in the 1 ms bucket.
+        let secs = elapsed.as_secs_f64();
         for (i, &bound) in LATENCY_BUCKETS_MS.iter().enumerate() {
-            if ms <= bound {
+            if secs <= bound as f64 / 1000.0 {
                 self.latency_buckets[i].fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -52,7 +54,10 @@ impl Metrics {
     }
 
     /// A search that got 503 because the concurrency limit was reached.
+    /// Counted in `requests_total` too: it was a request, it just never
+    /// reached the engine (so `record_search` is not called for it).
     pub fn record_rejected(&self) {
+        self.searches_total.fetch_add(1, Ordering::Relaxed);
         self.search_rejected_total.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -169,4 +174,29 @@ pub struct IndexGauges {
     pub content_bytes: u64,
     pub indexing: bool,
     pub ready: bool,
+}
+
+#[cfg(test)]
+mod bucket_tests {
+    use super::*;
+
+    #[test]
+    fn latency_buckets_use_fractional_milliseconds() {
+        let m = Metrics::new();
+        m.record_search(std::time::Duration::from_micros(1_900));
+        let out = m.render(&IndexGauges::default());
+        // 1.9 ms must not land in the 1 ms bucket.
+        assert!(
+            out.contains("fcs_search_duration_seconds_bucket{le=\"0.001\"} 0"),
+            "{out}"
+        );
+        assert!(
+            out.contains("fcs_search_duration_seconds_bucket{le=\"0.005\"} 1"),
+            "{out}"
+        );
+        m.record_rejected();
+        assert!(out.contains("fcs_search_requests_total 1"), "{out}");
+        let out2 = m.render(&IndexGauges::default());
+        assert!(out2.contains("fcs_search_requests_total 2"), "{out2}");
+    }
 }
