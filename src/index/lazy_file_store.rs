@@ -543,25 +543,29 @@ impl LazyFileStore {
     /// Find a file ID whose stored path ends with the given suffix (O(n)).
     ///
     /// This supports partial path lookups such as `"src/main.rs"` matching
-    /// `/home/user/project/src/main.rs`.  Suffix matching is used instead of
-    /// substring matching to avoid false positives: for example, looking for
-    /// `"bar.rs"` will NOT match `"bar_extra.rs"`.
+    /// `/home/user/project/src/main.rs`. The suffix must be aligned to a
+    /// path component: `"bar.rs"` does not match `"bar_extra.rs"` and
+    /// `"e/mod.rs"` does not match `".../message/mod.rs"`. An empty suffix
+    /// matches nothing.
     ///
     /// Returns the ID of the first file whose path ends with `suffix`, or
     /// `None` if no file matches.
     pub fn find_by_path_suffix(&self, suffix: &str) -> Option<u32> {
         // Normalize to forward slashes so callers can use either separator.
         let normalized = suffix.replace('\\', "/");
+        let normalized = normalized.trim_start_matches('/');
+        if normalized.is_empty() {
+            return None;
+        }
         self.files.iter().enumerate().find_map(|(id, f)| {
             if self.tombstoned.contains(&(id as u32)) {
                 return None;
             }
             let file_path = f.path.to_string_lossy().replace('\\', "/");
-            if file_path.ends_with(normalized.as_str()) {
-                Some(id as u32)
-            } else {
-                None
-            }
+            let aligned = file_path
+                .strip_suffix(normalized)
+                .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'));
+            aligned.then_some(id as u32)
         })
     }
 
@@ -666,6 +670,39 @@ mod tests {
         assert_eq!(lazy_big.as_str().unwrap().len(), big.len());
         assert!(lazy_big.is_mapped());
         assert_eq!(lazy_big.len_if_mapped(), Some(big.len()));
+    }
+
+    /// Review 1.10: a suffix lookup only matches whole path components, so
+    /// `e/mod.rs` does not resolve to `message/mod.rs`; an empty suffix
+    /// resolves to nothing rather than to an arbitrary file.
+    #[test]
+    fn test_find_by_path_suffix_is_component_aligned() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path().join("message");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mod_rs = dir.join("mod.rs");
+        let bar_extra = dir.join("bar_extra.rs");
+        std::fs::write(&mod_rs, "a").unwrap();
+        std::fs::write(&bar_extra, "b").unwrap();
+        let mut store = LazyFileStore::new();
+        let mod_id = store.add_file(&mod_rs).unwrap();
+        let bar_id = store.add_file(&bar_extra).unwrap();
+
+        assert_eq!(store.find_by_path_suffix("mod.rs"), Some(mod_id));
+        assert_eq!(store.find_by_path_suffix("message/mod.rs"), Some(mod_id));
+        assert_eq!(store.find_by_path_suffix("/message/mod.rs"), Some(mod_id));
+        assert_eq!(store.find_by_path_suffix("message\\mod.rs"), Some(mod_id));
+        assert_eq!(store.find_by_path_suffix("bar_extra.rs"), Some(bar_id));
+        let full = mod_rs.canonicalize().unwrap();
+        assert_eq!(
+            store.find_by_path_suffix(&full.to_string_lossy()),
+            Some(mod_id)
+        );
+        assert_eq!(store.find_by_path_suffix("e/mod.rs"), None);
+        assert_eq!(store.find_by_path_suffix("bar.rs"), None);
+        assert_eq!(store.find_by_path_suffix(".rs"), None);
+        assert_eq!(store.find_by_path_suffix(""), None);
+        assert_eq!(store.find_by_path_suffix("/"), None);
     }
 
     #[test]
