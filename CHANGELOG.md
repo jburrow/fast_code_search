@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Fixes from the 2026-09-06 engine and UI review
+(`docs/plans/2026-09-06-keyword-engine-and-ui-review.md`).
+
+### Fixed
+- Two concurrent saves (the watcher's shutdown save racing the indexer's
+  final save, a checkpoint racing a watcher save, or two processes sharing
+  `index_path`) could delete the index file. Saves are serialized and use
+  unique temp files; the rename fallback never removes the target unless the
+  temp file still exists.
+- `offset` above 10,000 is rejected instead of raising the match budget
+  without bound; the derived budget is capped and uses saturating maths.
+- Every search runs under an engine deadline just under the request
+  timeout, so a scan whose response the HTTP layer abandoned stops on its
+  own. The timeout answers 504 with the JSON error envelope and
+  `Retry-After` instead of an empty 408, and the concurrency permit and
+  latency metric follow the search's real lifetime.
+- gRPC shares the REST search semaphore (per-connection limits let N
+  connections run N × limit searches), rejects `Index` with no paths, runs
+  one `Index` at a time and skips `finalize` when nothing was indexed.
+- A config change (exclude pattern, extension list, size cap, `.gitignore`
+  rule) now removes newly ineligible files on reload instead of being logged
+  and ignored.
+- Discovery no longer descends into excluded directories (`.git/objects`,
+  `target/`, `node_modules/`), honours `.gitignore` in trees that are not
+  git repositories (so it agrees with the watcher), and treats
+  `max_file_size = 0` as the default like every other code path.
+- On Linux the watcher adds one non-recursive watch per kept directory, so
+  excluded trees consume no inotify watches; the change queue is bounded.
+- Reload only treats a missing file as removed; a permission or I/O error
+  (an unmounted share at boot) keeps the entry instead of wiping the root.
+- Configured roots match files at path-component boundaries and the longest
+  root wins, so `/x/proj` no longer claims `/x/proj2/...`.
+- Config: `~` is expanded, relative paths resolve against the config file's
+  directory, `include_extensions` accepts `".rs"`, and an `FCS_CONFIG`
+  pointing at a missing file is an error rather than a silent fallback.
+- `save_after_updates` counts files rather than watcher batches; checkpoints
+  follow `save_after_build`; a second Ctrl+C during a slow shutdown save
+  exits immediately.
+- REST/gRPC: `references=true` combined with `regex` or `symbols` is a 400;
+  the invalid-regex message is no longer doubled; `max=0` means the default
+  page size on both surfaces; `/api/context` returns the same
+  workspace-relative path as search results; an empty `file=` is a 400
+  instead of resolving to an arbitrary file; `/api/ready` stays ready while
+  a persisted index is reconciled and no longer reports zero files while
+  the write lock is briefly held; the diagnostics self-tests look for the
+  sampled file with a file filter, so a healthy large index is no longer
+  reported as degraded.
+- Metrics: latency buckets compare fractional seconds (1.9 ms counted as
+  1 ms); concurrency rejections count in `fcs_search_requests_total`.
+- HTML, scripts and stylesheets are served `no-cache` with ETag
+  revalidation so an upgrade cannot mix old and new bundles; every response
+  carries `X-Content-Type-Options`, `X-Frame-Options` and
+  `Referrer-Policy`; `/ws/progress` caps inbound frames.
+- Web UI: server-side strings on the diagnostics page are escaped (a file
+  extension could inject markup); match highlighting uses the server's
+  match offsets and highlights every query term, honouring `case:` and
+  regex mode; URL parameters fully determine the search modes (`regex=false`
+  turns regex off; stored settings no longer override shared links) and
+  toggle visuals follow the real state; `max` and `context` are validated
+  (no more `max=NaN`), with 500 and 1000 available; searches get history
+  entries so Back restores the previous query; results page with
+  `offset` ("Load more"), show `total_matches`, mark truncated lines and
+  label filename hits; a REFERENCES toggle; 503 while indexing is retried;
+  the progress socket keeps reconnecting; the compact header search no
+  longer overlaps the stats; the hover preview dismisses on Escape, scroll
+  and outside clicks; dialogs have proper semantics, focus management and a
+  focus trap; results are keyboard-navigable with real focus; contrast
+  meets AA; the file viewer highlights once and windows large files;
+  docs.html matches the API; the "INDEX" header stat is labelled as mapped
+  content.
+
+
 ## [0.10.1] - 2026-09-06
 
 ### Fixed
