@@ -99,27 +99,35 @@ pub fn apply_changes(
         outcome.indexed += o.indexed;
         outcome.removed += o.removed;
     }
+
+    // Phase 3: a backend may have dropped the delete / rename-away half of
+    // what just happened (FSEvents does), so check the siblings of every
+    // changed path and drop entries whose file is gone.
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for path in &order {
+        let dir = if path.is_dir() {
+            path.clone()
+        } else if let Some(parent) = path.parent() {
+            parent.to_path_buf()
+        } else {
+            continue;
+        };
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    outcome.removed += engine.prune_vanished_in(&dirs);
     outcome
 }
 
-/// Apply one file-system change to the engine under the caller's write lock.
+/// Apply one file-system change to the engine under the caller's write lock
+/// (a one-element [`apply_changes`], including the vanished-sibling check).
 pub fn apply_change(
     engine: &mut SearchEngine,
     change: &FileChange,
     config: &IndexerConfig,
 ) -> ChangeOutcome {
-    match change {
-        FileChange::Modified(path) => index_path(engine, path, config),
-        FileChange::Deleted(path) => ChangeOutcome {
-            indexed: 0,
-            removed: remove_path(engine, path),
-        },
-        FileChange::Renamed { from, to } => {
-            let removed = remove_path(engine, from);
-            let indexed = index_path(engine, to, config).indexed;
-            ChangeOutcome { indexed, removed }
-        }
-    }
+    apply_changes(engine, std::slice::from_ref(change), config)
 }
 
 /// Remove `path` from the index: a single file, or — when no file id matches

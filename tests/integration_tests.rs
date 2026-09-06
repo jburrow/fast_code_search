@@ -3470,3 +3470,52 @@ async fn test_http_search_references() -> Result<()> {
     assert_eq!(results[0]["line_number"], 1);
     Ok(())
 }
+
+/// A watcher backend can drop the rename-away / delete half of an operation
+/// (FSEvents on macOS does). Applying only the surviving event must still
+/// drop the entry whose file is gone, instead of leaving a zombie that
+/// search can never retrieve.
+#[tokio::test]
+async fn test_lost_delete_event_is_healed_by_sibling_check() -> Result<()> {
+    use fast_code_search::config::IndexerConfig;
+    use fast_code_search::search::{apply_change, apply_changes, FileChange, SearchEngine};
+    use tempfile::TempDir;
+
+    let temp = TempDir::new()?;
+    let root = temp.path().canonicalize()?;
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let a = root.join("zombie_a.rs");
+    let keep = root.join("keep.rs");
+    std::fs::write(&a, "fn zombie_token() {}\n")?;
+    std::fs::write(&keep, "fn keep_token() {}\n")?;
+    let mut engine = SearchEngine::new();
+    engine.index_file(&a)?;
+    engine.index_file(&keep)?;
+    engine.finalize();
+    assert_eq!(engine.get_stats().num_files, 2);
+
+    // Rename on disk, but deliver only the destination half.
+    let b = root.join("zombie_b.rs");
+    std::fs::rename(&a, &b)?;
+    let out = apply_changes(&mut engine, &[FileChange::Modified(b.clone())], &config);
+    assert_eq!(out.indexed, 1);
+    assert_eq!(out.removed, 1, "the vanished old name must be pruned");
+    assert_eq!(engine.get_stats().num_files, 2);
+    let hits = engine.search("zombie_token", 5);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].file_path.ends_with("zombie_b.rs"));
+
+    // Delete on disk with no event at all for it; any later event in the
+    // same directory heals the index.
+    std::fs::remove_file(&b)?;
+    std::fs::write(&keep, "fn keep_token_v2() {}\n")?;
+    let out = apply_change(&mut engine, &FileChange::Modified(keep.clone()), &config);
+    assert_eq!(out.removed, 1);
+    assert_eq!(engine.get_stats().num_files, 1);
+    assert!(engine.search("zombie_token", 5).is_empty());
+    assert_eq!(engine.search("keep_token_v2", 5).len(), 1);
+    Ok(())
+}

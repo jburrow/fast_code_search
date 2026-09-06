@@ -1270,6 +1270,30 @@ impl SearchEngine {
         self.remove_files_by_ids(&ids)
     }
 
+    /// Drop every indexed file that is a direct child of one of `dirs` and no
+    /// longer exists on disk. Returns how many were removed.
+    ///
+    /// Watcher backends lose events: FSEvents on macOS may report only the
+    /// destination half of a rename, leaving the old name indexed as a
+    /// zombie whose content can never be read again. Checking the siblings
+    /// of every changed path costs one stat per file in those directories
+    /// and makes the index self-healing against lost deletes.
+    pub fn prune_vanished_in(&mut self, dirs: &[PathBuf]) -> usize {
+        let mut doomed = Vec::new();
+        for dir in dirs {
+            let prefix = canonicalize_lossy(dir);
+            for id in self.file_store.ids_under(&prefix) {
+                let Some(path) = self.file_store.get_path(id) else {
+                    continue;
+                };
+                if path.parent() == Some(prefix.as_path()) && !path.exists() {
+                    doomed.push(id);
+                }
+            }
+        }
+        self.remove_files_by_ids(&doomed)
+    }
+
     /// Ids of every live file under directory `dir` (any form of the path;
     /// it is canonicalized lossily so it need not still exist).
     pub fn file_ids_under(&self, dir: &std::path::Path) -> Vec<u32> {
