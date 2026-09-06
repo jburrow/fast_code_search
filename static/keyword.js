@@ -1125,16 +1125,52 @@ function buildSearchParams(s) {
     return params;
 }
 
+// How many times a 503 + Retry-After (write lock held while the index is
+// updated) is retried before the error is shown.
+const SEARCH_RETRY_MAX = 2;
+
+/** A delay that rejects with an AbortError when `signal` fires. */
+function abortableDelay(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+        const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        function onAbort() {
+            clearTimeout(timer);
+            reject(new DOMException('Aborted', 'AbortError'));
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
 /**
  * Fetch one page of results. Non-OK responses surface the server's error
  * body (e.g. "Invalid regex pattern: …") instead of a bare status text.
+ *
+ * A 503 with Retry-After means the index is being updated (the write lock
+ * is briefly held per batch); it is retried up to SEARCH_RETRY_MAX times
+ * under the same AbortController after the indicated delay, so a search
+ * typed during indexing does not stick as a red error until the next key.
+ * @param {URLSearchParams} params
+ * @param {AbortSignal} signal
+ * @param {(attempt: number, max: number) => void} [onRetry] - called before each wait
  */
-async function fetchSearchPage(params, signal) {
-    const response = await fetch(`${API_BASE}/api/search?${params}`, { signal });
-    if (!response.ok) {
+async function fetchSearchPage(params, signal, onRetry) {
+    for (let attempt = 0; ; attempt++) {
+        const response = await fetch(`${API_BASE}/api/search?${params}`, { signal });
+        if (response.ok) return response.json();
+        const retryAfter = response.headers.get('Retry-After');
+        if (response.status === 503 && retryAfter !== null && attempt < SEARCH_RETRY_MAX) {
+            const secs = parseFloat(retryAfter);
+            const delayMs = Number.isFinite(secs) ? Math.min(5000, Math.max(250, secs * 1000)) : 1000;
+            if (onRetry) onRetry(attempt + 1, SEARCH_RETRY_MAX);
+            await abortableDelay(delayMs, signal);
+            continue;
+        }
         throw new Error(await readErrorBody(response));
     }
-    return response.json();
 }
 
 /**
@@ -1199,7 +1235,10 @@ async function performSearch(opts = {}) {
 
     try {
         search.params = buildSearchParams(search);
-        const data = await fetchSearchPage(search.params, signal);
+        const data = await fetchSearchPage(search.params, signal, (attempt, max) => {
+            resultsContainer.innerHTML =
+                `<div class="loading">Index updating, retrying… (${attempt}/${max})</div>`;
+        });
         if (signal.aborted) return;
         search.results = data.results.slice();
         search.last = data;
@@ -1234,7 +1273,10 @@ async function loadMoreResults() {
     try {
         const params = new URLSearchParams(search.params);
         params.set('offset', String(search.results.length));
-        const data = await fetchSearchPage(params, signal);
+        const data = await fetchSearchPage(params, signal, (attempt, max) => {
+            const b = document.getElementById('load-more-btn');
+            if (b) b.textContent = `INDEX UPDATING, RETRYING… (${attempt}/${max})`;
+        });
         if (signal.aborted || _currentSearch !== search) return;
         const firstNewGroup = groupResultsByFile(search.results).length;
         search.results = search.results.concat(data.results);

@@ -475,18 +475,28 @@ class ProgressWebSocket {
         this.onServerOffline = options.onServerOffline || (() => {});
         this.ws = null;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 10;
         this.reconnectDelay = 1000;
+        // Backoff ceiling. Reconnection never gives up: the offline banner
+        // promises automatic reconnection, so a server restarted after a long
+        // outage must still be picked up.
+        this.maxReconnectDelay = 30000;
         this.shouldReconnect = true;
         // Number of failed reconnect attempts before calling onServerOffline
         this.offlineThreshold = options.offlineThreshold ?? 3;
         this._reportedOffline = false;
+        this._reconnectTimer = null;
+        this._onVisible = () => {
+            if (document.visibilityState === 'visible') this.reconnectNow();
+        };
+        this._onOnline = () => this.reconnectNow();
     }
 
     connect() {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            return; // Already connected
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return; // Already connected or connecting
         }
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
 
         try {
             this.ws = new WebSocket(this.wsUrl);
@@ -511,7 +521,7 @@ class ProgressWebSocket {
 
             this.ws.onclose = (event) => {
                 this.onDisconnected();
-                if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+                if (this.shouldReconnect) {
                     this.scheduleReconnect();
                 }
             };
@@ -535,17 +545,40 @@ class ProgressWebSocket {
             this._reportedOffline = true;
             this.onServerOffline();
         }
-        const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
-        setTimeout(() => this.connect(), delay);
+        // Exponential backoff, capped (the exponent too, so it never overflows).
+        const exp = Math.min(this.reconnectAttempts - 1, 10);
+        const delay = Math.min(this.reconnectDelay * Math.pow(2, exp), this.maxReconnectDelay);
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            this.connect();
+        }, delay);
+    }
+
+    /**
+     * Skip the backoff and reconnect immediately (tab became visible, network
+     * came back). No-op when already connected or connecting.
+     */
+    reconnectNow() {
+        if (!this.shouldReconnect) return;
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+        this.reconnectAttempts = 0;
+        this.connect();
     }
 
     start() {
         this.shouldReconnect = true;
+        document.addEventListener('visibilitychange', this._onVisible);
+        window.addEventListener('online', this._onOnline);
         this.connect();
     }
 
     stop() {
         this.shouldReconnect = false;
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+        document.removeEventListener('visibilitychange', this._onVisible);
+        window.removeEventListener('online', this._onOnline);
         if (this.ws) {
             this.ws.close();
             this.ws = null;
