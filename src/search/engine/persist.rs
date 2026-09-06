@@ -340,18 +340,25 @@ impl SearchEngine {
                 };
 
                 // Determine which base path this file belongs to
+                // Longest root that contains the file at a path-component
+                // boundary: `/x/proj` must not claim `/x/proj2/b.rs`, or
+                // dropping `proj` from the config would report every
+                // `proj2` file removed.
+                let file_normalized = mapped_file
+                    .path
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .to_lowercase();
                 let source_base = config
                     .paths
                     .iter()
-                    .find(|base| {
+                    .filter(|base| {
                         let base_normalized = base.replace('\\', "/").to_lowercase();
-                        let file_normalized = mapped_file
-                            .path
-                            .to_string_lossy()
-                            .replace('\\', "/")
-                            .to_lowercase();
-                        file_normalized.starts_with(&base_normalized)
+                        let base_trimmed = base_normalized.trim_end_matches('/');
+                        file_normalized == base_trimmed
+                            || file_normalized.starts_with(&format!("{base_trimmed}/"))
                     })
+                    .max_by_key(|base| base.len())
                     .cloned();
 
                 // Use len_if_mapped() to avoid triggering lazy loading during save
@@ -565,8 +572,46 @@ impl SearchEngine {
             Some(0),
             &format!("Checking {} files for changes...", total_files),
         );
-        let file_statuses = batch_check_files(&persisted.files, &removed_paths);
+        let mut file_statuses = batch_check_files(&persisted.files, &removed_paths);
         mark("check_files");
+
+        // The stat pass only sees "changed on disk". A file that is unchanged
+        // but no longer eligible — a new exclude pattern, extension list,
+        // size cap or .gitignore rule — must be dropped too, or a config
+        // change never takes effect for files already in the index.
+        if let Some(config) = config {
+            use rayon::prelude::*;
+            let probe = crate::search::EligibilityProbe::new(&crate::search::FileDiscoveryConfig {
+                paths: Vec::new(),
+                exclude_patterns: config.exclude_patterns.clone(),
+                include_extensions: config.include_extensions.clone(),
+                max_file_size: Some(crate::search::incremental::effective_max_size(config)),
+                respect_gitignore: config.respect_gitignore,
+                ..Default::default()
+            });
+            let ineligible = file_statuses
+                .par_iter_mut()
+                .filter(|(_, status)| matches!(status, FileStatus::Valid))
+                .map(|(idx, status)| {
+                    let meta = &persisted.files[*idx];
+                    if config.is_file_excluded(&meta.path)
+                        || !probe.is_eligible_path(&meta.path, Some(meta.size))
+                    {
+                        *status = FileStatus::Removed;
+                        1
+                    } else {
+                        0
+                    }
+                })
+                .sum::<usize>();
+            if ineligible > 0 {
+                tracing::info!(
+                    files = ineligible,
+                    "Dropping indexed files that the current configuration excludes"
+                );
+            }
+            mark("check_eligibility");
+        }
         progress(
             LoadingPhase::CheckingFiles,
             Some(total_files),

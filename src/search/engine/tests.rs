@@ -1715,3 +1715,123 @@ fn test_search_limits_offset_is_clamped_and_budget_capped() {
     let unbounded = SearchLimits::new(50).with_match_budget(usize::MAX);
     assert_eq!(unbounded.match_budget, usize::MAX);
 }
+
+// ---------------------------------------------------------------------------
+// Reload reconciliation: configuration changes, root boundaries
+// ---------------------------------------------------------------------------
+
+/// A file that is unchanged on disk but excluded by the *current* config
+/// (new exclude pattern, extension list, .gitignore rule) is dropped on
+/// reload instead of staying indexed forever.
+#[test]
+fn test_reload_drops_files_the_current_config_excludes() {
+    use crate::config::IndexerConfig;
+
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    fs::create_dir_all(root.join("vendor")).unwrap();
+    fs::write(root.join("keep.rs"), "fn keep_marker() {}\n").unwrap();
+    fs::write(root.join("vendor/dep.rs"), "fn vendor_marker() {}\n").unwrap();
+    fs::write(root.join("notes.py"), "def python_marker(): pass\n").unwrap();
+    let index_path = root.join("index.bin");
+
+    let open_config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        exclude_patterns: Vec::new(),
+        respect_gitignore: false,
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    engine.index_file(root.join("keep.rs")).unwrap();
+    engine.index_file(root.join("vendor/dep.rs")).unwrap();
+    engine.index_file(root.join("notes.py")).unwrap();
+    engine.finalize();
+    engine.save_index(&index_path, &open_config).unwrap();
+
+    // Reload with a stricter config: vendor excluded, only Rust files, and a
+    // fresh .gitignore rule that hides keep.rs — none of the files changed.
+    fs::write(root.join(".gitignore"), "keep.rs\n").unwrap();
+    let strict = IndexerConfig {
+        exclude_patterns: vec!["**/vendor/**".to_string()],
+        include_extensions: vec!["rs".to_string()],
+        respect_gitignore: true,
+        ..open_config.clone()
+    };
+    let mut reloaded = SearchEngine::new();
+    let result = reloaded
+        .load_index_with_reconciliation(&index_path, &strict)
+        .unwrap();
+    assert_eq!(
+        result.removed_files.len(),
+        3,
+        "all three files are now ineligible: {:?}",
+        result.removed_files
+    );
+    assert_eq!(reloaded.get_stats().num_files, 0);
+    assert!(reloaded.search("vendor_marker", 5).is_empty());
+    assert!(reloaded.search("python_marker", 5).is_empty());
+    assert!(reloaded.search("keep_marker", 5).is_empty());
+
+    // The same index reloaded with the original config keeps everything.
+    let mut same = SearchEngine::new();
+    let result = same
+        .load_index_with_reconciliation(&index_path, &open_config)
+        .unwrap();
+    assert!(result.removed_files.is_empty());
+    assert_eq!(same.get_stats().num_files, 3);
+}
+
+/// `source_base_path` is the longest configured root containing the file at
+/// a path-component boundary, so `/x/proj` never claims `/x/proj2/...`.
+#[test]
+fn test_source_base_path_respects_component_boundaries() {
+    use crate::config::IndexerConfig;
+    use crate::index::persistence::PersistedIndex;
+
+    let temp_dir = TempDir::new().unwrap();
+    let proj = temp_dir.path().join("proj");
+    let proj2 = temp_dir.path().join("proj2");
+    fs::create_dir_all(&proj).unwrap();
+    fs::create_dir_all(&proj2).unwrap();
+    fs::write(proj.join("a.rs"), "fn a() {}\n").unwrap();
+    fs::write(proj2.join("b.rs"), "fn b() {}\n").unwrap();
+    let index_path = temp_dir.path().join("index.bin");
+
+    let config = IndexerConfig {
+        paths: vec![
+            proj.to_string_lossy().to_string(),
+            proj2.to_string_lossy().to_string(),
+        ],
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    engine.index_file(proj.join("a.rs")).unwrap();
+    engine.index_file(proj2.join("b.rs")).unwrap();
+    engine.finalize();
+    engine.save_index(&index_path, &config).unwrap();
+
+    let persisted = PersistedIndex::load(&index_path).unwrap();
+    for f in &persisted.files {
+        let name = f.path.file_name().unwrap().to_string_lossy().to_string();
+        let base = f.source_base_path.clone().unwrap_or_default();
+        let expected = if name == "a.rs" { &proj } else { &proj2 };
+        assert_eq!(
+            std::path::Path::new(&base),
+            expected.as_path(),
+            "{name} recorded under the wrong root"
+        );
+    }
+
+    // Dropping `proj` from the config must not report proj2's file removed.
+    let only_proj2 = IndexerConfig {
+        paths: vec![proj2.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut reloaded = SearchEngine::new();
+    let result = reloaded
+        .load_index_with_reconciliation(&index_path, &only_proj2)
+        .unwrap();
+    assert_eq!(result.removed_files.len(), 1);
+    assert!(result.removed_files[0].ends_with("a.rs"));
+    assert_eq!(reloaded.search("fn b", 5).len(), 1);
+}
