@@ -122,41 +122,6 @@
             font-size: 0.875rem;
         }
 
-        .refresh-btn {
-            margin-left: auto;
-            padding: 0.5rem 1rem;
-            background: var(--accent);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.825rem;
-            font-family: 'Space Grotesk', sans-serif;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .refresh-btn:hover {
-            background: var(--accent-hover);
-        }
-
-        .refresh-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .refresh-btn.loading::after {
-            content: '';
-            width: 14px;
-            height: 14px;
-            border: 2px solid transparent;
-            border-top-color: currentColor;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
         @keyframes spin {
             to {
                 transform: rotate(360deg);
@@ -435,7 +400,7 @@
                 content.innerHTML = `
                     <div class="error-state">
                         <h2>Failed to load diagnostics</h2>
-                        <p>${error.message}</p>
+                        <p>${escapeHtml(error.message)}</p>
                         <button class="refresh-btn" onclick="loadDiagnostics(true)">🔄 Retry</button>
                     </div>
                 `;
@@ -449,18 +414,24 @@
         }
 
         function renderDiagnostics(data) {
-            const statusIcon = data.status === 'healthy' ? '✅' :
-                data.status === 'degraded' ? '⚠️' : '❌';
-            const statusText = data.status === 'healthy' ? 'All Systems Operational' :
-                data.status === 'degraded' ? 'Degraded Performance' : 'System Unhealthy';
+            // Every string below comes from the server and, through it, from
+            // file names in arbitrary indexed repositories: escape all of them.
+            const status = ['healthy', 'degraded', 'unhealthy'].includes(data.status) ? data.status : 'unhealthy';
+            const statusIcon = status === 'healthy' ? '✅' :
+                status === 'degraded' ? '⚠️' : '❌';
+            const statusText = status === 'healthy' ? 'All Systems Operational' :
+                status === 'degraded' ? 'Degraded Performance' : 'System Unhealthy';
+            const index = data.index || {};
+            const config = data.config || {};
+            const summary = data.test_summary || {};
 
             const content = document.getElementById('content');
             content.innerHTML = `
-                <div class="status-banner ${data.status}">
+                <div class="status-banner ${status}">
                     <span class="status-icon">${statusIcon}</span>
                     <div class="status-text">
                         <h2>${statusText}</h2>
-                        <p>Version ${data.version} • Uptime: ${data.uptime_human}</p>
+                        <p>Version ${escapeHtml(data.version)} • Uptime: ${escapeHtml(data.uptime_human)}</p>
                     </div>
                     <button id="refresh-btn" class="refresh-btn" onclick="loadDiagnostics(true)">
                         🔄 Refresh
@@ -472,19 +443,19 @@
                         <h3>📊 Index Statistics</h3>
                         <div class="stat-grid">
                             <div class="stat-item">
-                                <div class="value">${data.index.num_files.toLocaleString()}</div>
+                                <div class="value">${fmtNum(index.num_files)}</div>
                                 <div class="label">Files Indexed</div>
                             </div>
                             <div class="stat-item">
-                                <div class="value">${data.index.total_size_human}</div>
+                                <div class="value">${escapeHtml(index.total_size_human)}</div>
                                 <div class="label">Total Size</div>
                             </div>
                             <div class="stat-item">
-                                <div class="value">${data.index.num_trigrams.toLocaleString()}</div>
+                                <div class="value">${fmtNum(index.num_trigrams)}</div>
                                 <div class="label">Trigrams</div>
                             </div>
                             <div class="stat-item">
-                                <div class="value">${data.index.dependency_edges.toLocaleString()}</div>
+                                <div class="value">${fmtNum(index.dependency_edges)}</div>
                                 <div class="label">Dependencies</div>
                             </div>
                         </div>
@@ -493,10 +464,10 @@
                     <div class="card">
                         <h3>📁 Files by Extension</h3>
                         <div class="extension-list">
-                            ${data.index.files_by_extension.slice(0, 10).map(ext => `
+                            ${(index.files_by_extension || []).slice(0, 10).map(ext => `
                                 <div class="extension-item">
-                                    <span class="extension-name">.${ext.extension}</span>
-                                    <span class="extension-count">${ext.count.toLocaleString()} files</span>
+                                    <span class="extension-name">${escapeHtml(extensionLabel(ext.extension))}</span>
+                                    <span class="extension-count">${fmtNum(ext.count)} files</span>
                                 </div>
                             `).join('')}
                         </div>
@@ -505,7 +476,7 @@
                     <div class="card">
                         <h3>📂 Sample Indexed Files</h3>
                         <div class="sample-files">
-                            ${data.index.sample_files.map(f => `
+                            ${(index.sample_files || []).map(f => `
                                 <div class="sample-file">${escapeHtml(f)}</div>
                             `).join('')}
                         </div>
@@ -515,17 +486,17 @@
                         <h3>⚙️ Configuration</h3>
                         <div class="sample-files">
                             <div class="sample-file"><strong>Indexed Paths:</strong></div>
-                            ${data.config.indexed_paths.map(p => `
+                            ${(config.indexed_paths || []).map(p => `
                                 <div class="sample-file">&nbsp;&nbsp;${escapeHtml(p)}</div>
                             `).join('')}
-                            ${data.config.exclude_patterns.length > 0 ? `
+                            ${(config.exclude_patterns || []).length > 0 ? `
                                 <div class="sample-file" style="margin-top: 0.5rem;"><strong>Exclusions:</strong></div>
-                                ${data.config.exclude_patterns.slice(0, 5).map(p => `
+                                ${config.exclude_patterns.slice(0, 5).map(p => `
                                     <div class="sample-file">&nbsp;&nbsp;${escapeHtml(p)}</div>
                                 `).join('')}
                             ` : ''}
                             <div class="sample-file" style="margin-top: 0.5rem;">
-                                <strong>File Watcher:</strong> ${data.config.watch_enabled ? 'Enabled' : 'Disabled'}
+                                <strong>File Watcher:</strong> ${config.watch_enabled ? 'Enabled' : 'Disabled'}
                             </div>
                         </div>
                     </div>
@@ -535,13 +506,13 @@
                     <div class="test-results-header">
                         <h3>🧪 Self-Test Results</h3>
                         <div class="test-summary">
-                            <span class="passed">✓ ${data.test_summary.passed} passed</span>
-                            <span class="failed">${data.test_summary.failed > 0 ? '✗ ' + data.test_summary.failed + ' failed' : ''}</span>
-                            <span>• ${data.test_summary.total_duration_ms.toFixed(1)}ms total</span>
+                            <span class="passed">✓ ${fmtNum(summary.passed)} passed</span>
+                            <span class="failed">${summary.failed > 0 ? '✗ ' + fmtNum(summary.failed) + ' failed' : ''}</span>
+                            <span>• ${fmtNum(summary.total_duration_ms, 1)}ms total</span>
                         </div>
                     </div>
                     <ul class="test-list">
-                        ${data.self_tests.map(test => `
+                        ${(data.self_tests || []).map(test => `
                             <li class="test-item">
                                 <span class="test-icon ${test.passed ? 'pass' : 'fail'}">
                                     ${test.passed ? '✓' : '✗'}
@@ -551,23 +522,43 @@
                                     <div class="test-message">${escapeHtml(test.message)}</div>
                                     ${test.details ? `<div class="test-details">${escapeHtml(test.details)}</div>` : ''}
                                 </div>
-                                <span class="test-duration">${test.duration_ms.toFixed(1)}ms</span>
+                                <span class="test-duration">${fmtNum(test.duration_ms, 1)}ms</span>
                             </li>
                         `).join('')}
                     </ul>
                 </div>
 
                 <div class="meta-info">
-                    <span>Generated: ${data.generated_at}</span>
+                    <span>Generated: ${escapeHtml(data.generated_at)}</span>
                     <span>Server Type: Keyword Search (Trigram-based)</span>
                 </div>
             `;
         }
 
+        // Quote-escaping (same as common.js, which this page does not load) so a
+        // value is safe both as element text and inside an attribute value. The
+        // textContent/innerHTML trick did not escape quotes.
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Numbers go through this so a missing or non-numeric field renders as
+        // "-" instead of throwing inside the template.
+        function fmtNum(n, digits) {
+            if (typeof n !== 'number' || !isFinite(n)) return '-';
+            return digits === undefined ? n.toLocaleString() : n.toFixed(digits);
+        }
+
+        // The server buckets files without an extension under "(none)".
+        function extensionLabel(ext) {
+            if (!ext || ext === '(none)') return 'no extension';
+            return '.' + ext;
         }
 
         // Load on page load
