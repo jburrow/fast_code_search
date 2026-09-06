@@ -2063,3 +2063,42 @@ fn test_multi_term_lines_rank_by_terms_matched() {
     assert_eq!(big_only.len(), SearchEngine::MAX_MATCHES_PER_DOC);
     assert!(!big_only.contains(&151), "cut off by the cap, as before");
 }
+
+/// Review 1.10: a needle containing a newline matches across lines; the
+/// hit is reported on its first line with the match range clamped to that
+/// line instead of `match_end` pointing past it.
+#[test]
+fn test_needle_with_newline_is_clamped_to_first_line() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("a.txt");
+    fs::write(&path, "alpha\nbeta\ngamma\nAlpha\nbeta\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&path).unwrap();
+    engine.finalize();
+
+    let check = |hits: Vec<SearchMatch>, expected_lines: &[usize]| {
+        let mut lines: Vec<usize> = hits.iter().map(|h| h.line_number).collect();
+        lines.sort_unstable();
+        assert_eq!(lines, expected_lines, "{hits:?}");
+        for h in &hits {
+            assert_eq!(
+                h.content,
+                if h.line_number == 1 { "alpha" } else { "Alpha" }
+            );
+            assert_eq!((h.line_match_start, h.line_match_end), (0, 5), "{h:?}");
+            assert_eq!((h.match_start, h.match_end), (0, 5), "{h:?}");
+        }
+    };
+    // ASCII case-insensitive scan (single term).
+    check(engine.search("alpha\nbeta", 10), &[1, 4]);
+    // Generic scanner: case-sensitive, and whole-word.
+    let run = |q: &str| {
+        engine
+            .search_parsed(&parse(q), "", "", SearchLimits::new(10), RankMode::Full)
+            .unwrap()
+            .0
+    };
+    check(run("\"alpha\nbeta\" case:yes"), &[1]);
+    check(run("\"alpha\nbeta\" word:yes"), &[1, 4]);
+}

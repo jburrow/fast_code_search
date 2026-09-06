@@ -421,11 +421,14 @@ pub(super) fn ascii_ci_line_hits<'a>(content: &'a str, needle_lower: &str) -> Ve
         // Both bounds sit on newline bytes (or the buffer edges), which are
         // always char boundaries in valid UTF-8.
         let line = &content[line_start..line_end];
+        // A needle containing `\n` matches across lines; the hit is reported
+        // on the line where it starts, with the range clamped to that line.
+        let end = (pos - line_start + needle.len()).min(line.len());
         hits.push(LineHit {
             line_num,
             line,
             start: pos - line_start,
-            end: pos - line_start + needle.len(),
+            end,
         });
     }
     hits
@@ -499,7 +502,9 @@ pub(super) fn line_hits<'a>(
             line_end -= 1;
         }
         let line = &content[line_start..line_end];
-        let (s, e) = (pos - line_start, pos - line_start + len);
+        // A needle containing `\n` matches across lines; the hit is reported
+        // on the line where it starts, with the range clamped to that line.
+        let (s, e) = (pos - line_start, (pos - line_start + len).min(line.len()));
         if opts.whole_word && !is_whole_word(line, s, e) {
             return false; // keep scanning this line
         }
