@@ -260,7 +260,10 @@ fn disable_unused_patterns(query: &mut tree_sitter::Query) {
 }
 
 /// The Rust grammar's `tags.scm` plus references it leaves out: calls
-/// through a path (`crate::run()`, `Type::new()`) and generic calls.
+/// through a path (`crate::run()`, `Type::new()`), generic calls, and type
+/// mentions (`fn f(e: &SearchEngine)`, `Vec<Item>`, `impl Trait for T`).
+/// A type's own definition is also a `type_identifier`; those positions are
+/// dropped again in `extract_with_tags`.
 fn rust_tags_source() -> &'static str {
     use std::sync::OnceLock;
     static SRC: OnceLock<String> = OnceLock::new();
@@ -269,7 +272,9 @@ fn rust_tags_source() -> &'static str {
             "{}\n\n; fast_code_search supplement: scoped and generic calls\n\
              (call_expression\n    function: (scoped_identifier\n        name: (identifier) @name)) @reference.call\n\n\
              (call_expression\n    function: (generic_function\n        function: (identifier) @name)) @reference.call\n\n\
-             (call_expression\n    function: (generic_function\n        function: (scoped_identifier\n            name: (identifier) @name))) @reference.call\n",
+             (call_expression\n    function: (generic_function\n        function: (scoped_identifier\n            name: (identifier) @name))) @reference.call\n\n\
+             ; fast_code_search supplement: type mentions\n\
+             (type_identifier) @name @reference.type\n",
             tree_sitter_rust::TAGS_QUERY
         )
     })
@@ -469,6 +474,12 @@ impl SymbolExtractor {
             std::collections::HashSet::new();
         let mut seen_refs: std::collections::HashSet<(usize, usize)> =
             std::collections::HashSet::new();
+        // Byte range of each reference pushed below, so references that
+        // coincide with a definition's name (a bare `(type_identifier)`
+        // pattern also matches `struct Foo`) can be dropped afterwards,
+        // whatever order the two patterns matched in.
+        let mut ref_ranges: Vec<(usize, usize)> = Vec::new();
+        let first_ref = refs.len();
         while let Some(m) = matches.next() {
             let mut name_node: Option<tree_sitter::Node> = None;
             let mut def: Option<(&str, tree_sitter::Node)> = None;
@@ -509,12 +520,23 @@ impl SymbolExtractor {
                 if !seen_refs.insert((range.start, range.end)) {
                     continue;
                 }
+                ref_ranges.push((range.start, range.end));
                 refs.push(SymbolRef {
                     name: name.to_string(),
                     line: start.row as u32,
                     column: start.column as u32,
                 });
             }
+        }
+        // A definition's name is never a reference to itself.
+        if ref_ranges.iter().any(|r| seen_defs.contains(r)) {
+            let tail: Vec<SymbolRef> = refs.drain(first_ref..).collect();
+            refs.extend(
+                tail.into_iter()
+                    .zip(ref_ranges)
+                    .filter(|(_, r)| !seen_defs.contains(r))
+                    .map(|(r, _)| r),
+            );
         }
     }
 
@@ -2238,6 +2260,47 @@ void regular_function() {
         let names: Vec<(&str, u32)> = refs.iter().map(|r| (r.name.as_str(), r.line)).collect();
         assert!(names.contains(&("f", 2)), "{names:?}");
         assert!(names.contains(&("method", 3)), "{names:?}");
+    }
+
+    /// Review 1.4: Rust type mentions (parameters, fields, generics, paths,
+    /// impl targets) are references; a type's own definition is not.
+    #[test]
+    fn test_rust_type_mentions_are_references() {
+        let source = "pub struct SearchEngine {\n    items: Vec<Item>,\n}\n\
+                      fn run(e: &SearchEngine) -> Option<Item> { None }\n\
+                      impl SearchEngine {}\n\
+                      impl fmt::Display for Item {}\n\
+                      enum Item { A }\n\
+                      type Alias = crate::search::SearchEngine;\n";
+        let extractor = SymbolExtractor::new(Path::new("types.rs"));
+        let (symbols, _imports, refs) = extractor.extract_all_with_refs(source).unwrap();
+        let mentions = |name: &str| -> Vec<(u32, u32)> {
+            refs.iter()
+                .filter(|r| r.name == name)
+                .map(|r| (r.line, r.column))
+                .collect()
+        };
+        // Definitions stay definitions and are not their own references.
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "SearchEngine" && s.line == 0 && s.is_definition));
+        assert!(!mentions("SearchEngine").contains(&(0, 11)), "{refs:?}");
+        assert!(!mentions("Item").contains(&(6, 5)), "{refs:?}");
+        assert!(!mentions("Alias").contains(&(7, 5)), "{refs:?}");
+        // Parameter, impl target and scoped path.
+        assert_eq!(
+            mentions("SearchEngine"),
+            vec![(3, 11), (4, 5), (7, 28)],
+            "{refs:?}"
+        );
+        // Field generic argument, return generic argument, impl-for target.
+        assert_eq!(
+            mentions("Item"),
+            vec![(1, 15), (3, 35), (5, 22)],
+            "{refs:?}"
+        );
+        assert_eq!(mentions("Vec"), vec![(1, 11)]);
+        assert_eq!(mentions("Display"), vec![(5, 10)]);
     }
 
     #[test]
