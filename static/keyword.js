@@ -12,6 +12,7 @@ const includeFilterInput = document.getElementById('include-filter');
 const excludeFilterInput = document.getElementById('exclude-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
+const referencesModeCheckbox = document.getElementById('references-mode');
 const rankModeSelect = document.getElementById('rank-mode');
 const contextLinesSelect = document.getElementById('context-lines');
 const resultsContainer = document.getElementById('results');
@@ -58,6 +59,7 @@ function saveSettingsToStorage() {
             exclude: excludeFilterInput?.value.trim() || '',
             regex: regexModeCheckbox?.checked || false,
             symbols: symbolsModeCheckbox?.checked || false,
+            references: referencesModeCheckbox?.checked || false,
         };
         localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings));
     } catch (_) { /* storage unavailable */ }
@@ -79,6 +81,7 @@ function loadSettingsFromStorage() {
         if (excludeFilterInput && s.exclude) excludeFilterInput.value = s.exclude;
         if (regexModeCheckbox) regexModeCheckbox.checked = s.regex === true;
         if (symbolsModeCheckbox) symbolsModeCheckbox.checked = s.symbols === true;
+        if (referencesModeCheckbox) referencesModeCheckbox.checked = s.references === true;
     } catch (_) { /* ignore parse errors */ }
     syncToggleVisuals();
 }
@@ -140,7 +143,7 @@ function parseBoolParam(value) {
 
 /** The mode checkboxes; each is mutually exclusive with the others. */
 function modeCheckboxes() {
-    return [regexModeCheckbox, symbolsModeCheckbox].filter(Boolean);
+    return [regexModeCheckbox, symbolsModeCheckbox, referencesModeCheckbox].filter(Boolean);
 }
 
 /**
@@ -241,6 +244,7 @@ function applyUrlState(params, opts = {}) {
     select(contextLinesSelect, 'context', '0');
     mode(regexModeCheckbox, 'regex');
     mode(symbolsModeCheckbox, 'symbols');
+    mode(referencesModeCheckbox, 'references');
     syncToggleVisuals();
 
     // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
@@ -271,6 +275,7 @@ function currentUrlParams() {
 
     if (regexModeCheckbox?.checked) params.set('regex', 'true');
     if (symbolsModeCheckbox?.checked) params.set('symbols', 'true');
+    if (referencesModeCheckbox?.checked) params.set('references', 'true');
 
     const rank = rankModeSelect?.value || 'auto';
     if (rank !== 'auto') params.set('rank', rank);
@@ -321,7 +326,7 @@ const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     resultsContainerId: 'results',
     searchSectionId: 'search-section',
-    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'rank-mode', 'context-lines'],
+    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'references-mode', 'rank-mode', 'context-lines'],
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
@@ -862,7 +867,7 @@ function currentQueryMatcher() {
     const query = queryInput.value.trim();
     return buildQueryMatcher(query, {
         regex: regexModeCheckbox?.checked || false,
-        references: false,
+        references: referencesModeCheckbox?.checked || false,
     });
 }
 
@@ -1099,6 +1104,40 @@ let _searchAbort = null;
 let _selectedGroupIndex = -1;
 
 /**
+ * The search whose results are on screen: its request parameters (without
+ * `offset`), the hits loaded so far across pages, and the last response.
+ * "Load more" appends the next page to `results` and re-renders.
+ */
+let _currentSearch = null;
+
+/** Build the /api/search query string for the current form state. */
+function buildSearchParams(s) {
+    const params = new URLSearchParams({ q: s.query, max: String(s.maxResults) });
+    if (s.includeFilter) params.set('include', s.includeFilter);
+    if (s.excludeFilter) params.set('exclude', s.excludeFilter);
+    // The three modes are mutually exclusive in the UI (the server lets
+    // references and symbols silently win over regex).
+    if (s.isReferences) params.set('references', 'true');
+    else if (s.symbolsOnly) params.set('symbols', 'true');
+    else if (s.isRegex) params.set('regex', 'true');
+    if (s.rankMode !== 'auto') params.set('rank', s.rankMode);
+    if (s.contextLines > 0) params.set('context', String(s.contextLines));
+    return params;
+}
+
+/**
+ * Fetch one page of results. Non-OK responses surface the server's error
+ * body (e.g. "Invalid regex pattern: …") instead of a bare status text.
+ */
+async function fetchSearchPage(params, signal) {
+    const response = await fetch(`${API_BASE}/api/search?${params}`, { signal });
+    if (!response.ok) {
+        throw new Error(await readErrorBody(response));
+    }
+    return response.json();
+}
+
+/**
  * Run the search for the current form state.
  * @param {{trigger?: 'input'|'submit'|'option'|'history'}} [opts]
  *   `trigger` decides how the URL/history is written (see writeUrlState);
@@ -1119,13 +1158,20 @@ async function performSearch(opts = {}) {
     const signal = _searchAbort.signal;
 
     const query = queryInput.value.trim();
-    const maxResults = currentMaxResults();
-    const includeFilter = includeFilterInput?.value.trim() || '';
-    const excludeFilter = excludeFilterInput?.value.trim() || '';
-    const isRegex = regexModeCheckbox?.checked || false;
-    const symbolsOnly = symbolsModeCheckbox?.checked || false;
-    const rankMode = rankModeSelect?.value || 'auto';
-    const contextLines = currentContextLines();
+    const search = {
+        query,
+        maxResults: currentMaxResults(),
+        includeFilter: includeFilterInput?.value.trim() || '',
+        excludeFilter: excludeFilterInput?.value.trim() || '',
+        isRegex: regexModeCheckbox?.checked || false,
+        symbolsOnly: symbolsModeCheckbox?.checked || false,
+        isReferences: referencesModeCheckbox?.checked || false,
+        rankMode: rankModeSelect?.value || 'auto',
+        contextLines: currentContextLines(),
+        results: [],
+        last: null,
+        loading: false,
+    };
 
     // Keep URL/history in sync so searches can be shared and navigated
     writeUrlState(trigger);
@@ -1133,12 +1179,14 @@ async function performSearch(opts = {}) {
     saveSettingsToStorage();
 
     if (!query) {
+        _currentSearch = null;
         resultsHeader.style.display = 'none';
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter a search query to find code</p></div>';
         return;
     }
 
     if (query.length < 3) {
+        _currentSearch = null;
         resultsHeader.style.display = 'none';
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter at least 3 characters to search</p></div>';
         return;
@@ -1150,257 +1198,344 @@ async function performSearch(opts = {}) {
     const startTime = performance.now();
 
     try {
-        const params = new URLSearchParams({ q: query, max: String(maxResults) });
-        if (includeFilter) params.set('include', includeFilter);
-        if (excludeFilter) params.set('exclude', excludeFilter);
-        if (isRegex) params.set('regex', 'true');
-        if (symbolsOnly) params.set('symbols', 'true');
-        if (rankMode !== 'auto') params.set('rank', rankMode);
-        if (contextLines > 0) params.set('context', String(contextLines));
-        
-        const response = await fetch(`${API_BASE}/api/search?${params}`, { signal });
-        if (!response.ok) {
-            // Surface the server's actual error body (e.g. "Invalid regex pattern: …"
-            // or the 503 "index is updating" message) instead of a bare status text.
-            throw new Error(await readErrorBody(response));
-        }
-
-        const data = await response.json();
+        search.params = buildSearchParams(search);
+        const data = await fetchSearchPage(search.params, signal);
+        if (signal.aborted) return;
+        search.results = data.results.slice();
+        search.last = data;
+        _currentSearch = search;
         const duration = data.elapsed_ms !== undefined ? data.elapsed_ms : (performance.now() - startTime);
-
-        resultsHeader.style.display = 'flex';
-        // Communicate truncation: prefer the server's has_more flag; fall back to
-        // "results filled the page" so the user knows to raise MAX RESULTS.
-        const n = data.results.length;
-        const truncated = data.has_more === true || (data.has_more === undefined && n >= maxResults);
-        resultsCount.textContent = truncated
-            ? `${n}+ RESULTS (raise MAX RESULTS)`
-            : `${n} RESULT${n !== 1 ? 'S' : ''} FOUND`;
-        searchTimeEl.textContent = `LATENCY: ${duration.toFixed(1)}ms`;
-
-        // Show ranking info if available
-        if (data.rank_mode && data.total_candidates !== undefined) {
-            // Plain mono labels (no emoji) to match the brutalist design language.
-            const modeLabel = data.rank_mode === 'fast' ? 'FAST' : (data.rank_mode === 'full' ? 'FULL' : 'AUTO');
-            const candidateInfo = data.candidates_searched !== data.total_candidates 
-                ? `${data.candidates_searched.toLocaleString()}/${data.total_candidates.toLocaleString()} files`
-                : `${data.total_candidates.toLocaleString()} files`;
-            rankingInfoEl.textContent = `${modeLabel} (${candidateInfo})`;
-            rankingInfoEl.title = `Ranking mode: ${data.rank_mode}\nTotal candidates: ${data.total_candidates}\nSearched: ${data.candidates_searched}`;
-        } else {
-            rankingInfoEl.textContent = '';
-            rankingInfoEl.title = '';
-        }
-
-        if (data.results.length === 0) {
-            resultsContainer.innerHTML = `<div class="empty-state"><p>No results found for "${escapeHtml(query)}"</p></div>`;
-            return;
-        }
-
-        const groupedResults = groupResultsByFile(data.results);
-        _selectedGroupIndex = -1; // reset keyboard selection on each render
-        // Matcher for lines without server offsets (context lines, previews).
-        _currentMatcher = buildQueryMatcher(query, { regex: isRegex });
-
-        resultsContainer.innerHTML = groupedResults.map(group => {
-            const firstHit = group.hits[0];
-            const depCount = Math.max(...group.hits.map(hit => hit.dependency_count || 0));
-            const lang = hljsLangForPath(group.filePath);
-            const ext = (group.filePath.split('.').pop() || '').toLowerCase();
-            const langClass = langClassForPath(group.filePath);
-
-            // Split path into directory + filename for display
-            const pathParts = group.filePath.split('/');
-            const fileName = pathParts.pop();
-            const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
-
-            // File type icon based on extension
-            const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'settings_suggest' : 'code');
-
-            // Language badge style
-            const langBadgeStyle = getLangBadgeStyle(langClass);
-
-            // Dependency badge
-            const depBadge = depCount > 0
-                ? `<span class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                    data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</span>`
-                : '';
-
-            const hitsHtml = group.hits.map((result, idx) => {
-                const matchType = getMatchTypeLabel(result.match_type);
-                const typeBadgeStyle = matchType.isSymbol
-                    ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
-                    : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
-
-                // Build code content — with context lines if available, otherwise just the match line
-                let codeContent;
-                if (result.context_lines && result.context_lines.length > 0) {
-                    const startLine = result.context_start_line || 1;
-                    codeContent = result.context_lines.map((line, i) => {
-                        const lineNum = startLine + i;
-                        const isMatch = lineNum === result.line_number;
-                        const lineStyle = isMatch
-                            ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
-                            : 'display:flex;border-left:3px solid transparent';
-                        // The match line carries the server's byte offsets into the
-                        // full line so the highlight pass can mark the exact hit.
-                        const offsetAttrs = isMatch
-                            ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
-                            : '';
-                        return `<div style="${lineStyle}">` +
-                            `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
-                            `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
-                            `</div>`;
-                    }).join('');
-                } else {
-                    codeContent = escapeHtml(result.content);
-                }
-                const matchOffsetAttrs = result.context_lines
-                    ? ''
-                    : ` data-ms="${Number(result.match_start) || 0}" data-me="${Number(result.match_end) || 0}"`;
-
-                const preClass = result.context_lines
-                    ? `result-code result-code-ctx language-${lang}`
-                    : `result-code language-${lang}`;
-
-                const hitContainerStyle = idx === 0
-                    ? 'background:#fff'
-                    : 'background:#fff;border-top:1px solid #d4d0ba';
-
-                return `
-                    <div style="${hitContainerStyle}">
-                        <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
-                            <div class="flex items-center gap-2 min-w-0">
-                                <span class="font-label text-xs" style="color:#7a785f;flex-shrink:0">line ${result.line_number}</span>
-                                <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
-                            </div>
-                            <div class="flex items-center gap-3 flex-shrink-0">
-                                <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7a785f;text-transform:uppercase"
-                                    title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + log10(import count)&#10;&#10;Higher scores rank first.">
-                                    ${result.score.toFixed(2)}
-                                </span>
-                                <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
-                                    style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
-                                    data-file-path="${escapeHtml(result.file_path)}"
-                                    data-line-number="${result.line_number}"
-                                    title="View full file at this line">open_in_new</button>
-                            </div>
-                        </div>
-                        <div class="overflow-x-auto" style="background:#fff">
-                            <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${firstHit.line_number}">
-                    <!-- File header -->
-                    <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
-                        <div class="flex items-center gap-2 min-w-0">
-                            <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">${fileIcon}</span>
-                            <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
-                                ${dirPath ? `<span style="color:#7a785f;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
-                            </span>
-                            <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
-                        </div>
-                        <div class="flex items-center gap-2 flex-shrink-0">
-                            ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
-                            ${depBadge}
-                            <button class="copy-path-btn material-symbols-outlined hover:text-primary transition-colors"
-                                style="font-size:16px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
-                                data-file-path="${escapeHtml(group.filePath)}"
-                                title="Copy file path">content_copy</button>
-                            <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
-                                style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
-                                data-file-path="${escapeHtml(group.filePath)}"
-                                data-line-number="${firstHit.line_number}"
-                                title="View full file">open_in_new</button>
-                        </div>
-                    </div>
-                    ${hitsHtml}
-                </div>
-            `;
-        }).join('');
-
-        // Syntax-highlight each result, then mark the hit: the match line from
-        // the server's byte offsets, every line from the query terms.
-        resultsContainer.querySelectorAll('pre.result-code').forEach(pre => {
-            const hasContext = pre.dataset.hasContext === 'true';
-            const lang = pre.dataset.lang || 'plaintext';
-            if (hasContext) {
-                pre.querySelectorAll('.ctx-line-content').forEach(span => {
-                    const text = span.textContent;
-                    applyHljsToInline(span, lang);
-                    const extra = span.dataset.lms !== undefined
-                        ? [byteRangeToCharRange(text, Number(span.dataset.lms), Number(span.dataset.lme))]
-                        : [];
-                    highlightTermsIn(span, _currentMatcher, extra);
-                });
-            } else {
-                const text = pre.textContent;
-                if (typeof hljs !== 'undefined') {
-                    try { hljs.highlightElement(pre); } catch (_) { /* leave plain */ }
-                }
-                const extra = pre.dataset.ms !== undefined
-                    ? [byteRangeToCharRange(text, Number(pre.dataset.ms), Number(pre.dataset.me))]
-                    : [];
-                highlightTermsIn(pre, _currentMatcher, extra);
-            }
-        });
-
-        // Attach View button click handler and context tooltip
-        resultsContainer.querySelectorAll('.view-file-btn').forEach(btn => {
-            const filePath = btn.dataset.filePath;
-            const lineNumber = parseInt(btn.dataset.lineNumber, 10);
-            btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
-            // Hover-intent delay: only fetch a preview if the cursor lingers ~200ms,
-            // so sweeping down a results list doesn't fire a burst of requests.
-            btn.addEventListener('mouseenter', () => {
-                clearTimeout(_ctxHoverTimer);
-                _ctxHoverTimer = setTimeout(
-                    () => showContextTooltip(btn, filePath, lineNumber),
-                    200
-                );
-            });
-            btn.addEventListener('mouseleave', () => {
-                clearTimeout(_ctxHoverTimer);
-                hideContextTooltip();
-            });
-        });
-
-        // Copy-path buttons: copy the file path to the clipboard with brief feedback.
-        resultsContainer.querySelectorAll('.copy-path-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                try {
-                    await navigator.clipboard.writeText(btn.dataset.filePath || '');
-                    const prev = btn.textContent;
-                    btn.textContent = 'check';
-                    setTimeout(() => { btn.textContent = prev; }, 1200);
-                } catch (e) {
-                    console.error('Copy failed:', e);
-                }
-            });
-        });
-
-        // Attach dependency-badge handlers via dataset (no inline JS handlers, so
-        // file paths containing quotes can never inject code).
-        resultsContainer.querySelectorAll('.deps-badge').forEach(badge => {
-            const filePath = badge.dataset.filePath;
-            badge.addEventListener('mouseenter', () => showDepsTooltip(badge, filePath));
-            badge.addEventListener('mouseleave', hideDepsTooltip);
-            badge.addEventListener('click', () => {
-                hideDepsTooltipImmediately();
-                showDependents(filePath);
-            });
-        });
-
+        renderSearch(search, duration);
     } catch (error) {
         // A superseded request was aborted on purpose — ignore it so the newer
         // search's results/UI are not clobbered by a stale error.
         if (error.name === 'AbortError') return;
         console.error('Search error:', error);
         showError('results', error.message);
+    }
+}
+
+/** Fetch the next page (`offset` = hits loaded so far) and append it. */
+async function loadMoreResults() {
+    const search = _currentSearch;
+    if (!search || search.loading || !search.last?.has_more) return;
+    search.loading = true;
+
+    const btn = document.getElementById('load-more-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'LOADING…';
+    }
+
+    if (_searchAbort) _searchAbort.abort();
+    _searchAbort = new AbortController();
+    const signal = _searchAbort.signal;
+
+    try {
+        const params = new URLSearchParams(search.params);
+        params.set('offset', String(search.results.length));
+        const data = await fetchSearchPage(params, signal);
+        if (signal.aborted || _currentSearch !== search) return;
+        const firstNewGroup = groupResultsByFile(search.results).length;
+        search.results = search.results.concat(data.results);
+        search.last = data;
+        renderSearch(search, data.elapsed_ms, { preserveSelection: true });
+        // Move focus to the first newly loaded group so keyboard users land
+        // where the new content starts.
+        const groups = getResultGroups();
+        const target = groups[Math.min(firstNewGroup, groups.length - 1)];
+        if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    } catch (error) {
+        if (error.name === 'AbortError') return;
+        console.error('Load more error:', error);
+        const row = document.getElementById('load-more-row');
+        if (row) {
+            row.innerHTML = `<div class="error-message"><strong>Error:</strong> ${escapeHtml(error.message)}</div>`;
+        }
+    } finally {
+        search.loading = false;
+    }
+}
+
+/**
+ * The results-count label. `total_matches` is present when the scan ran to
+ * completion; when the match budget or deadline stopped it early the server
+ * sets `truncated_by_budget` and the total is unknown, which is not something
+ * a bigger page size fixes.
+ */
+function resultsCountLabel(search) {
+    const data = search.last;
+    const n = search.results.length;
+    const plural = (k) => `${k} RESULT${k !== 1 ? 'S' : ''}`;
+    if (typeof data.total_matches === 'number') {
+        return n < data.total_matches
+            ? { text: `${n} OF ${data.total_matches.toLocaleString()} RESULTS`, title: 'Use LOAD MORE to fetch the next page' }
+            : { text: `${plural(n)} FOUND`, title: '' };
+    }
+    if (data.truncated_by_budget) {
+        return {
+            text: `${n}+ RESULTS (SCAN BUDGET REACHED)`,
+            title: 'The search stopped at its match budget or deadline, so the total is unknown. LOAD MORE continues from where it stopped.',
+        };
+    }
+    return data.has_more
+        ? { text: `${n}+ RESULTS`, title: 'More results are available' }
+        : { text: `${plural(n)} FOUND`, title: '' };
+}
+
+/** Render the current search (all pages loaded so far) into the results area. */
+function renderSearch(search, durationMs, opts = {}) {
+    const data = search.last;
+    const query = search.query;
+
+    resultsHeader.style.display = 'flex';
+    const label = resultsCountLabel(search);
+    resultsCount.textContent = label.text;
+    resultsCount.title = label.title;
+    searchTimeEl.textContent = `LATENCY: ${Number(durationMs || 0).toFixed(1)}ms`;
+
+    // Show ranking info if available
+    if (data.rank_mode && data.total_candidates !== undefined) {
+        // Plain mono labels (no emoji) to match the brutalist design language.
+        const modeLabel = data.rank_mode === 'fast' ? 'FAST' : (data.rank_mode === 'full' ? 'FULL' : 'AUTO');
+        const candidateInfo = data.candidates_searched !== data.total_candidates
+            ? `${data.candidates_searched.toLocaleString()}/${data.total_candidates.toLocaleString()} files`
+            : `${data.total_candidates.toLocaleString()} files`;
+        rankingInfoEl.textContent = `${modeLabel} (${candidateInfo})`;
+        rankingInfoEl.title = `Ranking mode: ${data.rank_mode}\nTotal candidates: ${data.total_candidates}\nSearched: ${data.candidates_searched}`;
+    } else {
+        rankingInfoEl.textContent = '';
+        rankingInfoEl.title = '';
+    }
+
+    if (search.results.length === 0) {
+        resultsContainer.innerHTML = `<div class="empty-state no-results"><p>No results found for "${escapeHtml(query)}"</p></div>`;
+        return;
+    }
+
+    const groupedResults = groupResultsByFile(search.results);
+    if (!opts.preserveSelection) _selectedGroupIndex = -1; // reset keyboard selection on each new search
+    // Matcher for lines without server offsets (context lines, previews).
+    _currentMatcher = buildQueryMatcher(query, { regex: search.isRegex, references: search.isReferences });
+
+    const groupsHtml = groupedResults.map(group => {
+        const firstHit = group.hits[0];
+        const depCount = Math.max(...group.hits.map(hit => hit.dependency_count || 0));
+        const lang = hljsLangForPath(group.filePath);
+        const ext = (group.filePath.split('.').pop() || '').toLowerCase();
+        const langClass = langClassForPath(group.filePath);
+
+        // Split path into directory + filename for display
+        const pathParts = group.filePath.split('/');
+        const fileName = pathParts.pop();
+        const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
+
+        // File type icon based on extension
+        const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'settings_suggest' : 'code');
+
+        // Language badge style
+        const langBadgeStyle = getLangBadgeStyle(langClass);
+
+        // Dependency badge
+        const depBadge = depCount > 0
+            ? `<span class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+                data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</span>`
+            : '';
+
+        // A filename hit has line_number 0: the viewer opens at line 1 for it.
+        const groupViewLine = Math.max(1, firstHit.line_number || 0);
+
+        const hitsHtml = group.hits.map((result, idx) => {
+            const matchType = getMatchTypeLabel(result.match_type);
+            const typeBadgeStyle = matchType.isSymbol
+                ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
+                : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
+            const isFilenameHit = !result.line_number;
+            const viewLine = isFilenameHit ? 1 : result.line_number;
+            const lineLabel = isFilenameHit ? 'filename' : `line ${result.line_number}`;
+            const truncatedBadge = result.content_truncated
+                ? `<span class="truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
+                : '';
+
+            // Build code content — with context lines if available, otherwise just the match line
+            let codeContent;
+            if (result.context_lines && result.context_lines.length > 0) {
+                const startLine = result.context_start_line || 1;
+                codeContent = result.context_lines.map((line, i) => {
+                    const lineNum = startLine + i;
+                    const isMatch = lineNum === result.line_number;
+                    const lineStyle = isMatch
+                        ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
+                        : 'display:flex;border-left:3px solid transparent';
+                    // The match line carries the server's byte offsets into the
+                    // full line so the highlight pass can mark the exact hit.
+                    const offsetAttrs = isMatch
+                        ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
+                        : '';
+                    return `<div style="${lineStyle}">` +
+                        `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
+                        `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
+                        `</div>`;
+                }).join('');
+            } else {
+                codeContent = escapeHtml(result.content);
+            }
+            const matchOffsetAttrs = result.context_lines
+                ? ''
+                : ` data-ms="${Number(result.match_start) || 0}" data-me="${Number(result.match_end) || 0}"`;
+
+            const preClass = result.context_lines
+                ? `result-code result-code-ctx language-${lang}`
+                : `result-code language-${lang}`;
+
+            const hitContainerStyle = idx === 0
+                ? 'background:#fff'
+                : 'background:#fff;border-top:1px solid #d4d0ba';
+
+            return `
+                <div style="${hitContainerStyle}">
+                    <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="font-label text-xs" style="color:#7a785f;flex-shrink:0">${lineLabel}</span>
+                            <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
+                            ${truncatedBadge}
+                        </div>
+                        <div class="flex items-center gap-3 flex-shrink-0">
+                            <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7a785f;text-transform:uppercase"
+                                title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)&#10;&#10;Higher scores rank first.">
+                                ${result.score.toFixed(2)}
+                            </span>
+                            <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
+                                style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                                data-file-path="${escapeHtml(result.file_path)}"
+                                data-line-number="${viewLine}"
+                                title="View full file at this line">open_in_new</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto" style="background:#fff">
+                        <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
+                <!-- File header -->
+                <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">${fileIcon}</span>
+                        <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
+                            ${dirPath ? `<span style="color:#7a785f;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
+                        </span>
+                        <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
+                        ${depBadge}
+                        <button class="copy-path-btn material-symbols-outlined hover:text-primary transition-colors"
+                            style="font-size:16px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                            data-file-path="${escapeHtml(group.filePath)}"
+                            title="Copy file path">content_copy</button>
+                        <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
+                            style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                            data-file-path="${escapeHtml(group.filePath)}"
+                            data-line-number="${groupViewLine}"
+                            title="View full file">open_in_new</button>
+                    </div>
+                </div>
+                ${hitsHtml}
+            </div>
+        `;
+    }).join('');
+
+    // Paging: the next page starts at offset = hits loaded so far.
+    const loadMoreHtml = data.has_more
+        ? `<div id="load-more-row" class="load-more-row">
+                <button id="load-more-btn" type="button" class="load-more-btn"
+                    title="Fetch the next ${search.maxResults} results (offset ${search.results.length})">LOAD MORE</button>
+           </div>`
+        : '';
+
+    resultsContainer.innerHTML = groupsHtml + loadMoreHtml;
+
+    const loadMoreBtn = document.getElementById('load-more-btn');
+    if (loadMoreBtn) loadMoreBtn.addEventListener('click', loadMoreResults);
+
+    // Syntax-highlight each result, then mark the hit: the match line from
+    // the server's byte offsets, every line from the query terms.
+    resultsContainer.querySelectorAll('pre.result-code').forEach(pre => {
+        const hasContext = pre.dataset.hasContext === 'true';
+        const lang = pre.dataset.lang || 'plaintext';
+        if (hasContext) {
+            pre.querySelectorAll('.ctx-line-content').forEach(span => {
+                const text = span.textContent;
+                applyHljsToInline(span, lang);
+                const extra = span.dataset.lms !== undefined
+                    ? [byteRangeToCharRange(text, Number(span.dataset.lms), Number(span.dataset.lme))]
+                    : [];
+                highlightTermsIn(span, _currentMatcher, extra);
+            });
+        } else {
+            const text = pre.textContent;
+            if (typeof hljs !== 'undefined') {
+                try { hljs.highlightElement(pre); } catch (_) { /* leave plain */ }
+            }
+            const extra = pre.dataset.ms !== undefined
+                ? [byteRangeToCharRange(text, Number(pre.dataset.ms), Number(pre.dataset.me))]
+                : [];
+            highlightTermsIn(pre, _currentMatcher, extra);
+        }
+    });
+
+    // Attach View button click handler and context tooltip
+    resultsContainer.querySelectorAll('.view-file-btn').forEach(btn => {
+        const filePath = btn.dataset.filePath;
+        const lineNumber = parseInt(btn.dataset.lineNumber, 10) || 1;
+        btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
+        // Hover-intent delay: only fetch a preview if the cursor lingers ~200ms,
+        // so sweeping down a results list doesn't fire a burst of requests.
+        btn.addEventListener('mouseenter', () => {
+            clearTimeout(_ctxHoverTimer);
+            _ctxHoverTimer = setTimeout(
+                () => showContextTooltip(btn, filePath, lineNumber),
+                200
+            );
+        });
+        btn.addEventListener('mouseleave', () => {
+            clearTimeout(_ctxHoverTimer);
+            hideContextTooltip();
+        });
+    });
+
+    // Copy-path buttons: copy the file path to the clipboard with brief feedback.
+    resultsContainer.querySelectorAll('.copy-path-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(btn.dataset.filePath || '');
+                const prev = btn.textContent;
+                btn.textContent = 'check';
+                setTimeout(() => { btn.textContent = prev; }, 1200);
+            } catch (e) {
+                console.error('Copy failed:', e);
+            }
+        });
+    });
+
+    // Attach dependency-badge handlers via dataset (no inline JS handlers, so
+    // file paths containing quotes can never inject code).
+    resultsContainer.querySelectorAll('.deps-badge').forEach(badge => {
+        const filePath = badge.dataset.filePath;
+        badge.addEventListener('mouseenter', () => showDepsTooltip(badge, filePath));
+        badge.addEventListener('mouseleave', hideDepsTooltip);
+        badge.addEventListener('click', () => {
+            hideDepsTooltipImmediately();
+            showDependents(filePath);
+        });
+    });
+
+    if (opts.preserveSelection && _selectedGroupIndex >= 0) {
+        highlightSelectedGroup(getResultGroups());
     }
 }
 

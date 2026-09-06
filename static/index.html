@@ -331,6 +331,33 @@
         #query:disabled { opacity: 0.6; cursor: not-allowed; }
         /* Mode toggle "on" look — set only by syncToggleVisuals() in keyword.js */
         .mode-toggle.toggle-on { background: #fff900; color: #000; }
+        /* Paging */
+        .load-more-row { display: flex; justify-content: center; padding: 0.5rem 0 1rem; }
+        .load-more-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            padding: 0.6rem 1.5rem;
+            background: #fff900;
+            color: #000;
+            border: 1px solid #000;
+            box-shadow: 2px 2px 0 #000;
+            cursor: pointer;
+        }
+        .load-more-btn:hover { background: #000; color: #fff900; }
+        .load-more-btn:disabled { opacity: 0.6; cursor: wait; }
+        /* Hit whose content was cut at the 500-byte window */
+        .truncated-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            padding: 2px 6px;
+            background: #ffdad6;
+            color: #93000a;
+            border: 1px solid #ba1a1a;
+            cursor: help;
+            white-space: nowrap;
+        }
         /* Filter panel */
         #filter-panel { display: none; }
         #filter-panel.open { display: block; }
@@ -504,6 +531,11 @@
                         <input type="checkbox" id="symbols-mode" class="sr-only">
                         <span class="material-symbols-outlined text-sm">function</span>
                         <span>SYMBOLS</span>
+                    </label>
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Find references (call sites, type mentions) of the identifier in the query">
+                        <input type="checkbox" id="references-mode" class="sr-only">
+                        <span class="material-symbols-outlined text-sm">link</span>
+                        <span>REFERENCES</span>
                     </label>
                     <!-- Always-visible FILTER toggle so filters can be set BEFORE the
                          first search (the one in the results bar only appears after a search). -->
