@@ -30,6 +30,31 @@ pub struct DependencyIndex {
     id_to_path: FxHashMap<u32, PathBuf>,
 }
 
+/// Resolve `.` and `..` components without touching the file system.
+///
+/// Correct for paths whose existing prefix is already canonical (no
+/// symlinked directories), which is what every candidate built from a
+/// registered path is. A `..` that would climb above the root is dropped.
+pub fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !matches!(
+                    out.components().next_back(),
+                    None | Some(Component::RootDir) | Some(Component::Prefix(_))
+                ) {
+                    out.pop();
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 impl DependencyIndex {
     pub fn new() -> Self {
         Self::default()
@@ -41,14 +66,25 @@ impl DependencyIndex {
     /// previous path mapping for that id is dropped first, so repeated edits
     /// of one file never accumulate duplicate `filename_to_paths` entries.
     pub fn register_file(&mut self, file_id: u32, path: &Path) {
-        // Store normalized path for matching
-        let stored_path = if let Ok(canonical) = path.canonicalize() {
-            canonical
-        } else {
+        // Only a path we have not seen needs the realpath walk.
+        if self.path_to_id.get(path) == Some(&file_id) {
+            return;
+        }
+        let stored_path = match path.canonicalize() {
+            Ok(canonical) => canonical,
             // Fallback to the path as-is if canonicalization fails
-            path.to_path_buf()
+            Err(_) => path.to_path_buf(),
         };
+        self.register_canonical_file(file_id, stored_path);
+    }
 
+    /// [`Self::register_file`] for a path that is already canonical (the
+    /// file store's key, a persisted path): no file-system access at all.
+    /// Restoring a 61k-file index spent 16 s in realpath walks here.
+    pub fn register_canonical_file(&mut self, file_id: u32, stored_path: PathBuf) {
+        if self.path_to_id.get(&stored_path) == Some(&file_id) {
+            return;
+        }
         if let Some(previous) = self.id_to_path.get(&file_id) {
             if *previous == stored_path {
                 return; // already registered under exactly this path
@@ -141,16 +177,22 @@ impl DependencyIndex {
         }
     }
 
-    /// Is `candidate` an indexed file? Compares the canonical form (the
-    /// store's key) and falls back to the path as given for non-canonical
-    /// registrations.
+    /// Is `candidate` an indexed file?
+    ///
+    /// Candidates are built by joining import segments onto a registered
+    /// (canonical) path, so the only thing standing between them and the
+    /// map key is `.` / `..` components. Those are resolved lexically; the
+    /// file system is never consulted. Resolving on disk here used to cost a
+    /// `realpath` walk (one `readlink` per component) for every probe, and
+    /// Python's ancestor search alone probes dozens of paths per import:
+    /// a 6k-file corpus made 17 million `readlink` calls during its build.
     fn indexed(&self, candidate: &Path) -> Option<PathBuf> {
         if self.path_to_id.contains_key(candidate) {
             return Some(candidate.to_path_buf());
         }
-        let canonical = candidate.canonicalize().ok()?;
-        if self.path_to_id.contains_key(&canonical) {
-            return Some(canonical);
+        let normalized = normalize_lexically(candidate);
+        if normalized != candidate && self.path_to_id.contains_key(&normalized) {
+            return Some(normalized);
         }
         None
     }
@@ -420,11 +462,6 @@ impl DependencyIndex {
         self.imports.values().map(|s| s.len()).sum()
     }
 
-    /// Get total number of files with at least one dependent
-    pub fn files_with_dependents(&self) -> usize {
-        self.imported_by.len()
-    }
-
     /// Get all import edges as (from_file_id, to_file_id) pairs
     pub fn get_all_edges(&self) -> Vec<(u32, u32)> {
         self.imports
@@ -664,6 +701,44 @@ mod tests {
             "must not bind to the local merge.ts"
         );
         assert_eq!(r("src/app.tsx", "./missing"), None);
+    }
+
+    /// Roadmap 6.5 finding: candidate probing must not touch the file
+    /// system. `..` / `.` in a candidate are resolved lexically and a
+    /// candidate that is not indexed is simply absent from the map.
+    #[test]
+    fn test_normalize_lexically() {
+        let n = |s: &str| normalize_lexically(Path::new(s));
+        assert_eq!(n("/a/b/../c/./d.rs"), PathBuf::from("/a/c/d.rs"));
+        assert_eq!(n("/a/../../b"), PathBuf::from("/b"));
+        assert_eq!(n("a/./b/../c"), PathBuf::from("a/c"));
+        assert_eq!(n("/a/b"), PathBuf::from("/a/b"));
+    }
+
+    #[test]
+    fn test_relative_candidates_resolve_without_disk_probing() {
+        let (temp, idx) = setup(&[
+            ("src/util.ts", ""),
+            ("src/x/y.ts", ""),
+            ("pkg/__init__.py", ""),
+            ("pkg/sub/mod.py", ""),
+        ]);
+        let from = |rel: &str| temp.path().join(rel).canonicalize().unwrap();
+        let id_of = |rel: &str| idx.get_file_id(&temp.path().join(rel).canonicalize().unwrap());
+        assert_eq!(
+            idx.resolve_import_path(&from("src/x/y.ts"), "../util")
+                .and_then(|p| idx.get_file_id(&p)),
+            id_of("src/util.ts")
+        );
+        assert_eq!(
+            idx.resolve_import_path(&from("pkg/sub/mod.py"), "..")
+                .and_then(|p| idx.get_file_id(&p)),
+            id_of("pkg/__init__.py")
+        );
+        // A candidate that would exist on disk but is not indexed resolves
+        // to nothing (the file system is not consulted).
+        std::fs::write(temp.path().join("src/x/z.ts"), "").unwrap();
+        assert_eq!(idx.resolve_import_path(&from("src/x/y.ts"), "./z"), None);
     }
 
     /// Roadmap 1.11: re-registering an id (watcher update path) must not

@@ -161,7 +161,14 @@ pub fn create_router_with_options(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             opts.request_timeout,
         ))
-        .layer(TraceLayer::new_for_http())
+        // 5xx responses are logged at debug rather than error: a readiness
+        // probe answering 503 while the index builds is expected, and the
+        // handlers already log genuine failures.
+        .layer(
+            TraceLayer::new_for_http().on_failure(
+                tower_http::trace::DefaultOnFailure::new().level(tracing::Level::DEBUG),
+            ),
+        )
         .with_state(state)
 }
 

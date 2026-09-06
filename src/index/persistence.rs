@@ -9,29 +9,126 @@ use fs2::FileExt;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::trigram::Trigram;
-use crate::symbols::extractor::Symbol;
+use crate::symbols::extractor::{PackedRef, Symbol};
 use crate::utils::normalize_path_for_comparison;
 
-/// Serializable representation of the trigram index
-#[derive(Serialize, Deserialize)]
+/// One entry of the on-disk trigram directory: where a posting list lives
+/// in the bitmap region. Fixed 16 bytes on disk (trigram, pad, offset, len).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirEntry {
+    pub trigram: Trigram,
+    pub offset: u64,
+    pub len: u32,
+}
+
+const DIR_ENTRY_LEN: usize = 16;
+
+/// The posting lists of a *loaded* index: the directory plus the mapped
+/// bitmap region they point into. Bitmaps are deserialized straight from
+/// the mapping by [`PersistedIndex::restore_trigram_index`]; nothing is
+/// copied in between. Empty for an index built in memory for saving (the
+/// live map is passed to [`PersistedIndex::save`] instead).
+#[derive(Default)]
 pub struct PersistedTrigramIndex {
-    /// Map from trigram bytes to serialized roaring bitmap
-    trigram_to_docs: HashMap<[u8; 3], Vec<u8>>,
+    dir: Vec<DirEntry>,
+    region: Option<Arc<memmap2::Mmap>>,
+    region_start: usize,
 }
 
 impl PersistedTrigramIndex {
-    /// Get the number of trigrams in the index (for benchmarking)
+    /// Number of trigrams in the loaded directory.
     pub fn len(&self) -> usize {
-        self.trigram_to_docs.len()
+        self.dir.len()
     }
 
-    /// Check if the index is empty
+    /// Whether the loaded directory is empty.
     pub fn is_empty(&self) -> bool {
-        self.trigram_to_docs.is_empty()
+        self.dir.is_empty()
+    }
+
+    /// The directory, sorted by trigram.
+    pub fn entries(&self) -> &[DirEntry] {
+        &self.dir
+    }
+
+    fn bitmap_bytes(&self, e: &DirEntry) -> &[u8] {
+        let region = self
+            .region
+            .as_deref()
+            .map(|m| &m[self.region_start..])
+            .unwrap_or(&[]);
+        &region[e.offset as usize..e.offset as usize + e.len as usize]
+    }
+}
+
+// ---------------------------------------------------------------- CRC32
+
+/// CRC-32 (IEEE 802.3, as in zlib/PNG), table driven.
+fn crc32_table() -> &'static [u32; 256] {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = [0u32; 256];
+        for (i, slot) in t.iter_mut().enumerate() {
+            let mut c = i as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+            *slot = c;
+        }
+        t
+    })
+}
+
+fn crc32_update(mut crc: u32, bytes: &[u8]) -> u32 {
+    let t = crc32_table();
+    for &b in bytes {
+        crc = t[((crc ^ b as u32) & 0xff) as usize] ^ (crc >> 8);
+    }
+    crc
+}
+
+/// CRC-32 of `bytes`.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    !crc32_update(!0, bytes)
+}
+
+/// A writer that counts bytes and folds them into a CRC as they pass.
+struct CrcWriter<W: std::io::Write> {
+    inner: W,
+    crc: u32,
+    written: u64,
+}
+
+impl<W: std::io::Write> CrcWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            crc: !0,
+            written: 0,
+        }
+    }
+    fn crc(&self) -> u32 {
+        !self.crc
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for CrcWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.crc = crc32_update(self.crc, &buf[..n]);
+        self.written += n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -65,7 +162,8 @@ pub struct PersistedIndex {
     pub indexed_paths: Vec<String>,
     /// File metadata for staleness detection
     pub files: Vec<PersistedFileMetadata>,
-    /// Trigram index data
+    /// Posting lists of a loaded index (not part of the metadata section).
+    #[serde(skip)]
     pub trigram_index: PersistedTrigramIndex,
     /// Per-file symbol caches (parallel to `files`, indexed by position)
     #[serde(default)]
@@ -79,7 +177,27 @@ pub struct PersistedIndex {
     /// edge still appears once the target file is indexed after a reload.
     /// (Format v4 / magic FCSIDX02.)
     pub pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
+    /// Interned reference names; `PackedRef::name` indexes this table.
+    /// (Format v6 / magic FCSIDX04.)
+    pub reference_names: Vec<String>,
+    /// Per-file symbol references (parallel to `files`, by position).
+    pub references: Vec<Vec<PackedRef>>,
 }
+
+/// On-disk layout (all integers little-endian):
+///
+/// ```text
+/// magic[8] version:u32 crc:u32 meta_len:u64 dir_count:u32 bitmaps_len:u64   (36-byte header)
+/// META    bincode of `PersistedIndex` (everything but the posting lists)
+/// DIR     dir_count x { trigram[3], pad[1], offset:u64, len:u32 }, sorted by trigram
+/// BITMAPS the roaring bitmaps back to back; DIR offsets index this region
+/// ```
+///
+/// `crc` covers META + DIR + BITMAPS. The directory is fixed-width and
+/// sorted so it can be binary-searched in place, and bitmaps are read
+/// directly out of the mapped file: neither saving nor loading materializes
+/// a second copy of the posting lists.
+const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 4 + 8;
 
 /// Fixed magic header written before the bincode body.
 ///
@@ -87,7 +205,7 @@ pub struct PersistedIndex {
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX03";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX05";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -101,48 +219,43 @@ fn bincode_opts() -> impl Options {
 
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
-    pub const CURRENT_VERSION: u32 = 5;
+    pub const CURRENT_VERSION: u32 = 7;
 
     /// Create a new persisted index from the current state
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config_fingerprint: String,
         indexed_paths: Vec<String>,
         files: Vec<PersistedFileMetadata>,
-        trigram_to_docs: &FxHashMap<Trigram, RoaringBitmap>,
         symbols: Vec<Vec<Symbol>>,
         dependency_edges: Vec<(u32, u32)>,
         pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
+        reference_names: Vec<String>,
+        references: Vec<Vec<PackedRef>>,
     ) -> Result<Self> {
-        let mut serialized_trigrams = HashMap::with_capacity(trigram_to_docs.len());
-
-        for (trigram, bitmap) in trigram_to_docs {
-            let mut buf = Vec::new();
-            bitmap.serialize_into(&mut buf)?;
-            serialized_trigrams.insert(trigram.as_bytes(), buf);
-        }
-
         Ok(Self {
             version: Self::CURRENT_VERSION,
             config_fingerprint,
             indexed_paths,
             files,
-            trigram_index: PersistedTrigramIndex {
-                trigram_to_docs: serialized_trigrams,
-            },
+            trigram_index: PersistedTrigramIndex::default(),
             symbols,
             dependency_edges,
             pending_imports,
+            reference_names,
+            references,
         })
     }
 
     /// Save the index atomically.
     ///
-    /// Writes to a sibling temp file (with an exclusive lock), flushes and fsyncs
-    /// it, then renames over the target. This guarantees a reader holding a shared
-    /// lock never observes a truncated file, and a crash mid-write leaves the
-    /// previous index intact (the temp file is simply discarded).
-    pub fn save(&self, path: &Path) -> Result<()> {
-        use std::io::Write;
+    /// `trigrams` are the live posting lists (borrowed: nothing is copied
+    /// before it is written). Writes to a sibling temp file (with an
+    /// exclusive lock), flushes and fsyncs it, then renames over the target,
+    /// so a reader holding a shared lock never observes a truncated file and
+    /// a crash mid-write leaves the previous index intact.
+    pub fn save(&self, path: &Path, trigrams: &FxHashMap<Trigram, RoaringBitmap>) -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -166,22 +279,67 @@ impl PersistedIndex {
                 )
             })?;
 
-            let mut writer = std::io::BufWriter::new(&file);
+            // Directory: sorted, with each bitmap's offset in the region.
+            let mut entries: Vec<(&Trigram, &RoaringBitmap)> = trigrams.iter().collect();
+            entries.sort_by_key(|(t, _)| t.as_bytes());
+            let mut dir = Vec::with_capacity(entries.len());
+            let mut offset = 0u64;
+            for (t, bm) in &entries {
+                let len = bm.serialized_size();
+                dir.push(DirEntry {
+                    trigram: **t,
+                    offset,
+                    len: u32::try_from(len).context("posting list too large")?,
+                });
+                offset += len as u64;
+            }
+            let bitmaps_len = offset;
 
-            // Fixed header first, then the bincode body.
+            let err = |what: &str| format!("Failed to write index {what}: {}", tmp_path.display());
+
+            // Header placeholder; the real one is written once the body
+            // length and CRC are known.
+            let mut writer = std::io::BufWriter::new(&file);
             writer
-                .write_all(INDEX_MAGIC)
-                .with_context(|| format!("Failed to write index header: {}", tmp_path.display()))?;
+                .write_all(&[0u8; HEADER_LEN])
+                .with_context(|| err("header"))?;
+
+            let mut body = CrcWriter::new(writer);
             bincode_opts()
-                .serialize_into(&mut writer, self)
-                .with_context(|| format!("Failed to serialize index: {}", tmp_path.display()))?;
+                .serialize_into(&mut body, self)
+                .with_context(|| err("metadata"))?;
+            let meta_len = body.written;
+            for e in &dir {
+                body.write_all(&e.trigram.as_bytes())
+                    .with_context(|| err("directory"))?;
+                body.write_all(&[0u8]).with_context(|| err("directory"))?;
+                body.write_all(&e.offset.to_le_bytes())
+                    .with_context(|| err("directory"))?;
+                body.write_all(&e.len.to_le_bytes())
+                    .with_context(|| err("directory"))?;
+            }
+            for (_, bm) in &entries {
+                bm.serialize_into(&mut body)
+                    .with_context(|| err("posting lists"))?;
+            }
+            let crc = body.crc();
+            let mut writer = body.inner;
 
             // Flush the BufWriter explicitly so I/O errors (e.g. disk full) surface
             // here instead of being silently swallowed when the writer is dropped.
-            writer
-                .flush()
-                .with_context(|| format!("Failed to flush index: {}", tmp_path.display()))?;
+            writer.flush().with_context(|| err("body"))?;
             drop(writer);
+
+            let mut header = Vec::with_capacity(HEADER_LEN);
+            header.extend_from_slice(INDEX_MAGIC);
+            header.extend_from_slice(&Self::CURRENT_VERSION.to_le_bytes());
+            header.extend_from_slice(&crc.to_le_bytes());
+            header.extend_from_slice(&meta_len.to_le_bytes());
+            header.extend_from_slice(&(dir.len() as u32).to_le_bytes());
+            header.extend_from_slice(&bitmaps_len.to_le_bytes());
+            let mut f = &file;
+            f.seek(SeekFrom::Start(0)).with_context(|| err("header"))?;
+            f.write_all(&header).with_context(|| err("header"))?;
             file.sync_all()
                 .with_context(|| format!("Failed to fsync index: {}", tmp_path.display()))?;
             // Exclusive lock released as `file` drops at end of scope.
@@ -203,10 +361,13 @@ impl PersistedIndex {
         Ok(())
     }
 
-    /// Load an index from a file with shared lock (allows multiple readers)
+    /// Load an index from a file with shared lock (allows multiple readers).
+    ///
+    /// The file is memory-mapped and validated (magic, version, section
+    /// bounds, CRC) before anything is decoded. The metadata section is
+    /// decoded eagerly; posting lists stay in the mapping until
+    /// [`Self::restore_trigram_index`] deserializes them.
     pub fn load(path: &Path) -> Result<Self> {
-        use std::io::Read;
-
         let file = std::fs::File::open(path)
             .with_context(|| format!("Failed to open index file: {}", path.display()))?;
 
@@ -214,42 +375,96 @@ impl PersistedIndex {
         file.lock_shared()
             .with_context(|| format!("Failed to acquire shared lock on: {}", path.display()))?;
 
-        // Upper bound for the bincode byte limit: the body can never be larger
-        // than the file itself.
-        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let rebuilt = |why: String| {
+            anyhow::anyhow!("{why} in {}; the index will be rebuilt.", path.display())
+        };
 
-        let mut reader = std::io::BufReader::new(&file);
-
-        // Validate the fixed header BEFORE decoding the body so a corrupt or
-        // foreign file is rejected without ever allocating from a bogus length.
-        let mut magic = [0u8; INDEX_MAGIC.len()];
-        reader
-            .read_exact(&mut magic)
-            .with_context(|| format!("Failed to read index header: {}", path.display()))?;
-        if magic != *INDEX_MAGIC {
-            anyhow::bail!(
-                "Index header mismatch (corrupt or old format) in {}; the index will be rebuilt.",
-                path.display()
-            );
+        // Header first, from a plain read: a foreign or truncated file is
+        // rejected before it is mapped or anything is allocated for it.
+        let mut header = [0u8; HEADER_LEN];
+        {
+            use std::io::Read;
+            let mut r = &file;
+            if r.read_exact(&mut header).is_err() {
+                return Err(rebuilt(
+                    "Index file too short (corrupt or old format)".into(),
+                ));
+            }
         }
-
-        // Decode with a byte limit so a corrupt length prefix returns an Err
-        // instead of aborting the process on a huge allocation.
-        let index: Self = bincode_opts()
-            .with_limit(file_len.max(1))
-            .deserialize_from(&mut reader)
-            .with_context(|| format!("Failed to deserialize index: {}", path.display()))?;
-
-        // Lock is automatically released when file is dropped
-
-        if index.version != Self::CURRENT_VERSION {
-            anyhow::bail!(
-                "Index version mismatch: found {}, expected {}. The index will be rebuilt.",
-                index.version,
+        if header[..8] != *INDEX_MAGIC {
+            return Err(rebuilt(
+                "Index header mismatch (corrupt or old format)".into(),
+            ));
+        }
+        let u32_at = |i: usize| u32::from_le_bytes(header[i..i + 4].try_into().unwrap());
+        let u64_at = |i: usize| u64::from_le_bytes(header[i..i + 8].try_into().unwrap());
+        let version = u32_at(8);
+        if version != Self::CURRENT_VERSION {
+            return Err(rebuilt(format!(
+                "Index version mismatch: found {version}, expected {}",
                 Self::CURRENT_VERSION
-            );
+            )));
+        }
+        let crc = u32_at(12);
+        let meta_len = u64_at(16) as usize;
+        let dir_count = u32_at(24) as usize;
+        let bitmaps_len = u64_at(28) as usize;
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0) as usize;
+        let body_len = meta_len
+            .checked_add(dir_count.saturating_mul(DIR_ENTRY_LEN))
+            .and_then(|n| n.checked_add(bitmaps_len))
+            .unwrap_or(usize::MAX);
+        if body_len == usize::MAX || HEADER_LEN + body_len != file_len {
+            return Err(rebuilt(
+                "Index section lengths do not match the file size".into(),
+            ));
         }
 
+        // SAFETY: the file is only ever replaced by rename, never truncated
+        // or rewritten in place, so the mapping stays valid for its lifetime.
+        let mmap = unsafe { memmap2::Mmap::map(&file) }
+            .with_context(|| format!("Failed to map index file: {}", path.display()))?;
+        let body = &mmap[HEADER_LEN..];
+        if crc32(body) != crc {
+            return Err(rebuilt("Index checksum mismatch".into()));
+        }
+
+        let meta_bytes = &body[..meta_len];
+        let mut index: Self = bincode_opts()
+            .with_limit(meta_len.max(1) as u64)
+            .deserialize(meta_bytes)
+            .with_context(|| format!("Failed to deserialize index: {}", path.display()))?;
+        if index.version != version {
+            return Err(rebuilt(
+                "Index version mismatch between header and body".into(),
+            ));
+        }
+
+        let dir_bytes = &body[meta_len..meta_len + dir_count * DIR_ENTRY_LEN];
+        let mut dir = Vec::with_capacity(dir_count);
+        let mut prev: Option<[u8; 3]> = None;
+        for rec in dir_bytes.as_chunks::<DIR_ENTRY_LEN>().0 {
+            let trigram = Trigram::new([rec[0], rec[1], rec[2]]);
+            let offset = u64::from_le_bytes(rec[4..12].try_into().unwrap());
+            let len = u32::from_le_bytes(rec[12..16].try_into().unwrap());
+            let end = offset.saturating_add(len as u64);
+            if end > bitmaps_len as u64 || prev.is_some_and(|p| p >= trigram.as_bytes()) {
+                return Err(rebuilt("Index trigram directory is corrupt".into()));
+            }
+            prev = Some(trigram.as_bytes());
+            dir.push(DirEntry {
+                trigram,
+                offset,
+                len,
+            });
+        }
+        index.trigram_index = PersistedTrigramIndex {
+            dir,
+            region: Some(Arc::new(mmap)),
+            region_start: HEADER_LEN + meta_len + dir_count * DIR_ENTRY_LEN,
+        };
+
+        // Lock is released when `file` drops; the mapping outlives it.
         Ok(index)
     }
 
@@ -308,23 +523,20 @@ impl PersistedIndex {
             .collect()
     }
 
-    /// Restore the trigram index from persisted data (parallelized for performance)
+    /// Deserialize the posting lists straight out of the mapped bitmap
+    /// region (in parallel) into a live map.
     pub fn restore_trigram_index(&self) -> Result<FxHashMap<Trigram, RoaringBitmap>> {
         use rayon::prelude::*;
-
-        // Parallel deserialization of trigrams
-        let results: Result<Vec<_>> = self
-            .trigram_index
-            .trigram_to_docs
+        let ti = &self.trigram_index;
+        let results: Result<Vec<_>> = ti
+            .dir
             .par_iter()
-            .map(|(trigram_bytes, bitmap_data)| {
-                let trigram = Trigram::new(*trigram_bytes);
-                let bitmap = RoaringBitmap::deserialize_from(&bitmap_data[..])?;
-                Ok((trigram, bitmap))
+            .map(|e| {
+                let bitmap = RoaringBitmap::deserialize_from(ti.bitmap_bytes(e))
+                    .with_context(|| format!("corrupt posting list for {:?}", e.trigram))?;
+                Ok((e.trigram, bitmap))
             })
             .collect();
-
-        // Collect into FxHashMap
         Ok(results?.into_iter().collect())
     }
 }
@@ -439,13 +651,15 @@ pub fn batch_check_files(
                 }
             }
 
-            // Check if file exists and is stale
-            if !file_meta.path.exists() {
-                (idx, FileStatus::Removed)
-            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
-                (idx, FileStatus::Stale)
-            } else {
-                (idx, FileStatus::Valid)
+            // One stat answers both "still there?" and "changed?".
+            match std::fs::metadata(&file_meta.path) {
+                Err(_) => (idx, FileStatus::Removed),
+                Ok(meta)
+                    if mtime_secs_of(&meta) != file_meta.mtime || meta.len() != file_meta.size =>
+                {
+                    (idx, FileStatus::Stale)
+                }
+                Ok(_) => (idx, FileStatus::Valid),
             }
         })
         .collect()
@@ -460,7 +674,7 @@ mod tests {
     #[test]
     fn test_load_rejects_older_magic() {
         let temp = tempfile::TempDir::new().unwrap();
-        for old_magic in [b"FCSIDX01", b"FCSIDX02"] {
+        for old_magic in [b"FCSIDX01", b"FCSIDX02", b"FCSIDX03", b"FCSIDX04"] {
             let p = temp
                 .path()
                 .join(format!("{}.bin", String::from_utf8_lossy(old_magic)));
@@ -492,14 +706,17 @@ mod tests {
                 size: 3,
                 source_base_path: None,
             }],
-            &FxHashMap::default(),
             vec![vec![]],
             vec![],
             vec![],
+            Vec::new(),
+            Vec::new(),
         )
         .unwrap();
         let p = temp.path().join("idx.bin");
-        persisted.save(&p).expect("non-UTF-8 path must be saveable");
+        persisted
+            .save(&p, &FxHashMap::default())
+            .expect("non-UTF-8 path must be saveable");
         let loaded = PersistedIndex::load(&p).unwrap();
         assert_eq!(loaded.files[0].path, weird);
         assert_eq!(loaded.files[0].mtime, 1_700_000_000_123_456_789);
@@ -529,7 +746,8 @@ mod tests {
             "test_fingerprint".to_string(),
             vec!["/test".to_string()],
             files,
-            &trigram_to_docs,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -537,7 +755,9 @@ mod tests {
         .expect("Failed to create persisted index");
 
         // Save
-        persisted.save(&index_path).expect("Failed to save index");
+        persisted
+            .save(&index_path, &trigram_to_docs)
+            .expect("Failed to save index");
 
         // Load
         let loaded = PersistedIndex::load(&index_path).expect("Failed to load index");
@@ -557,12 +777,12 @@ mod tests {
         assert!(bitmap.contains(1));
     }
 
-    fn sample_index() -> PersistedIndex {
+    fn sample_index() -> (PersistedIndex, FxHashMap<Trigram, RoaringBitmap>) {
         let mut trigram_to_docs: FxHashMap<Trigram, RoaringBitmap> = FxHashMap::default();
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
         trigram_to_docs.insert(Trigram::new(*b"hel"), bitmap);
-        PersistedIndex::new(
+        let idx = PersistedIndex::new(
             "fp".to_string(),
             vec!["/test".to_string()],
             vec![PersistedFileMetadata {
@@ -571,19 +791,165 @@ mod tests {
                 size: 1,
                 source_base_path: Some("/test".to_string()),
             }],
-            &trigram_to_docs,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
         )
-        .expect("create persisted index")
+        .expect("create persisted index");
+        (idx, trigram_to_docs)
+    }
+
+    fn save_sample(path: &Path) {
+        let (idx, map) = sample_index();
+        idx.save(path, &map).expect("save sample index");
+    }
+
+    /// A fixed index used for the golden-file tests: every field populated,
+    /// nothing environment-dependent.
+    fn golden_index() -> (PersistedIndex, FxHashMap<Trigram, RoaringBitmap>) {
+        use crate::symbols::extractor::SymbolType;
+        let mut map: FxHashMap<Trigram, RoaringBitmap> = FxHashMap::default();
+        map.insert(Trigram::new(*b"fn "), [0u32, 1].into_iter().collect());
+        map.insert(Trigram::new(*b"hel"), [0u32].into_iter().collect());
+        map.insert(Trigram::new(*b"wor"), (1u32..40).collect());
+        let files = vec![
+            PersistedFileMetadata {
+                path: PathBuf::from("/fixture/src/lib.rs"),
+                mtime: 1_700_000_000_000_000_001,
+                size: 42,
+                source_base_path: Some("/fixture".to_string()),
+            },
+            PersistedFileMetadata {
+                path: PathBuf::from("/fixture/src/main.rs"),
+                mtime: 1_700_000_000_000_000_002,
+                size: 7,
+                source_base_path: Some("/fixture".to_string()),
+            },
+        ];
+        let symbols = vec![
+            vec![Symbol {
+                name: "hello".into(),
+                symbol_type: SymbolType::Function,
+                line: 3,
+                column: 3,
+                is_definition: true,
+            }],
+            vec![],
+        ];
+        let references = vec![
+            vec![],
+            vec![PackedRef {
+                name: 0,
+                line: 5,
+                column: 4,
+            }],
+        ];
+        let idx = PersistedIndex::new(
+            "golden-fingerprint".to_string(),
+            vec!["/fixture".to_string()],
+            files,
+            symbols,
+            vec![(1, 0)],
+            vec![(
+                1,
+                PathBuf::from("/fixture/src/main.rs"),
+                vec!["missing".into()],
+            )],
+            vec!["hello".to_string()],
+            references,
+        )
+        .unwrap();
+        (idx, map)
+    }
+
+    fn golden_path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v7.fcsidx")
+    }
+
+    /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
+    /// Saving the fixed index must produce the fixture byte for byte; a
+    /// format change must bump the version and regenerate the fixture
+    /// (`FCS_WRITE_GOLDEN=1 cargo test golden`).
+    #[test]
+    fn test_golden_fixture_is_bit_identical() {
+        let temp = TempDir::new().unwrap();
+        let p = temp.path().join("golden.fcsidx");
+        let (idx, map) = golden_index();
+        idx.save(&p, &map).unwrap();
+        let bytes = std::fs::read(&p).unwrap();
+        if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
+            std::fs::write(golden_path(), &bytes).unwrap();
+        }
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v7.fcsidx");
+        assert_eq!(&bytes[..8], INDEX_MAGIC);
+        assert!(
+            bytes == golden,
+            "on-disk format drifted from the fixture (bump the version and regenerate)"
+        );
+    }
+
+    /// The committed fixture loads with every section intact.
+    #[test]
+    fn test_golden_fixture_loads() {
+        let loaded = PersistedIndex::load(&golden_path()).unwrap();
+        assert_eq!(loaded.version, PersistedIndex::CURRENT_VERSION);
+        assert_eq!(loaded.config_fingerprint, "golden-fingerprint");
+        assert_eq!(loaded.indexed_paths, vec!["/fixture".to_string()]);
+        assert_eq!(loaded.files.len(), 2);
+        assert_eq!(loaded.files[1].path, PathBuf::from("/fixture/src/main.rs"));
+        assert_eq!(loaded.files[0].mtime, 1_700_000_000_000_000_001);
+        assert_eq!(loaded.symbols[0][0].name, "hello");
+        assert_eq!(loaded.dependency_edges, vec![(1, 0)]);
+        assert_eq!(loaded.pending_imports.len(), 1);
+        assert_eq!(loaded.reference_names, vec!["hello".to_string()]);
+        assert_eq!(loaded.references[1][0].line, 5);
+        let dir = loaded.trigram_index.entries();
+        assert_eq!(dir.len(), 3);
+        assert!(dir
+            .windows(2)
+            .all(|w| w[0].trigram.as_bytes() < w[1].trigram.as_bytes()));
+        let map = loaded.restore_trigram_index().unwrap();
+        assert_eq!(map[&Trigram::new(*b"wor")].len(), 39);
+        assert_eq!(
+            map[&Trigram::new(*b"fn ")].iter().collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    /// A flipped byte anywhere in the body fails the checksum; a wrong
+    /// section length fails the bounds check; both are reported as rebuild.
+    #[test]
+    fn test_load_rejects_corruption() {
+        let temp = TempDir::new().unwrap();
+        let p = temp.path().join("c.fcsidx");
+        let good = std::fs::read(golden_path()).unwrap();
+        for pos in [HEADER_LEN + 3, good.len() - 2] {
+            let mut bad = good.clone();
+            bad[pos] ^= 0x55;
+            std::fs::write(&p, &bad).unwrap();
+            let err = match PersistedIndex::load(&p) {
+                Ok(_) => panic!("corrupt body must be rejected"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains("checksum") && err.contains("rebuilt"), "{err}");
+        }
+        let mut bad = good.clone();
+        bad[24] = bad[24].wrapping_add(1); // dir_count
+        std::fs::write(&p, &bad).unwrap();
+        let err = match PersistedIndex::load(&p) {
+            Ok(_) => panic!("bad section length must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("section lengths"), "{err}");
     }
 
     #[test]
     fn test_load_rejects_truncated_file() {
         let temp_dir = TempDir::new().expect("temp dir");
         let index_path = temp_dir.path().join("index.bin");
-        sample_index().save(&index_path).expect("save");
+        save_sample(&index_path);
 
         // Truncate the file to a few bytes — header partial / body missing.
         let full = std::fs::read(&index_path).expect("read");
@@ -626,7 +992,7 @@ mod tests {
         let index_path = temp_dir.path().join("index.bin");
 
         // First save succeeds and is loadable.
-        sample_index().save(&index_path).expect("first save");
+        save_sample(&index_path);
         assert!(PersistedIndex::load(&index_path).is_ok());
 
         // A temp file must not be left behind after a successful save.
@@ -634,7 +1000,7 @@ mod tests {
         assert!(!tmp.exists(), "temp file should be cleaned up by rename");
 
         // Re-saving over an existing index works (covers Windows rename-over path).
-        sample_index().save(&index_path).expect("second save");
+        save_sample(&index_path);
         assert!(PersistedIndex::load(&index_path).is_ok());
     }
 

@@ -114,6 +114,7 @@ impl CodeSearch for CodeSearchService {
         let exclude_patterns = req.exclude_paths.join(";");
         let is_regex = req.is_regex;
         let symbols_only = req.symbols_only;
+        let references = req.references;
         let case_sensitive = req.case_sensitive;
         let whole_word = req.whole_word;
         let rank_mode = RankMode::parse(&req.rank);
@@ -162,7 +163,13 @@ impl CodeSearch for CodeSearchService {
             if whole_word {
                 parsed.options.whole_word = true;
             }
-            let (matches, _info) = if symbols_only {
+            let (matches, _info) = if references {
+                engine
+                    .search_references_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
+                    })?
+            } else if symbols_only {
                 engine
                     .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
                     .map_err(|e| {
@@ -204,7 +211,9 @@ impl CodeSearch for CodeSearchService {
         // Spawn a task to stream results
         tokio::spawn(async move {
             for m in matches {
-                let match_type = if m.is_symbol {
+                let match_type = if m.is_reference {
+                    MatchType::SymbolReference
+                } else if m.is_symbol {
                     MatchType::SymbolDefinition
                 } else {
                     MatchType::Text

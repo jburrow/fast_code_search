@@ -1,9 +1,15 @@
 # Keyword Engine Roadmap — 2026-09-04
 
-Status: IMPLEMENTED on branch `keyword-roadmap` (2026-09-04). Tasks are ticked
-`[x]` (done) or `[~]` (partial) with a DONE note; each task is one commit.
-Open: 6.1 sectioned layout, 6.3 memory diet, 6.5 real-corpus benchmarks,
-multi-line regex and symbol references (Phase 7), the load-path merge. Produced from a full read of the keyword engine at v0.9.0 (commit
+Status: COMPLETE. Phases 0–5 and the cross-cutting work landed via PR #104
+(branch `keyword-roadmap`, merged 2026-09-05); the remaining Phase 6 and 7
+items, the load-path merge and the pruning landed on branch
+`keyword-roadmap-2` (2026-09-05). Tasks are ticked `[x]` with a DONE note;
+each task is one commit. Known gaps, all noted inline: TypeScript call-site
+references (the crate's TS tags query lacks call patterns), lazy posting
+lists (judged not worth a TrigramIndex redesign), and the macOS CI job,
+which was failing before this work and whose log is not readable without a
+token (the branch adds failing-test annotations and a likely fix to the
+watcher test). Produced from a full read of the keyword engine at v0.9.0 (commit
 `241d01a`), verified by building and running the suite on Linux (Rust 1.98.1):
 lib 166 passed, integration 35 passed, benches compile, clippy 3 warnings,
 `cargo fmt --check` 13 hunks in 6 files.
@@ -673,6 +679,12 @@ set, never to the corpus.
   held write lock, CORS, gRPC default `max_results`, gRPC `Index` scope
   rejection, config precedence and unknown keys.
 
+Follow-up (commit "test(web): CORS headers and /ws/progress"): explicit
+integration tests for `server.cors_origins` (default = no header, listed
+origin echoed, unlisted refused, preflight, wildcard) and for the progress
+WebSocket (handshake, initial status frame, relayed update), using a raw
+handshake so no WebSocket client dependency is needed.
+
 ### Phase 5 — Symbols and dependencies v2 → 0.13 (2–3 weeks)
 
 - [x] **5.1 Migrate to tree-sitter `tags.scm` queries** DONE: each grammar's `TAGS_QUERY` (C# vendored) drives extraction;
@@ -715,10 +727,18 @@ set, never to the corpus.
 
 Goal: make the README's "multi-gigabyte" claim true and measured.
 
-- [~] **6.1 Persistence format v4.** PARTIAL (commit `b573c5f`): nanosecond mtimes, byte-encoded
-  paths, run-optimized bitmaps, magic FCSIDX03 / v5 with an older-magic
-  rejection test. Still open: the sectioned mmap-able layout (lazy load, no
-  double materialization) and a golden-file fixture.
+- [x] **6.1 Persistence format.** DONE. Commit `b573c5f`: nanosecond mtimes,
+  byte-encoded paths, run-optimized bitmaps, older-magic rejection. Commit
+  "feat(index): sectioned, checksummed persisted index (format v7)": header
+  (magic, version, CRC-32, section lengths), metadata section, fixed-width
+  sorted trigram directory, bitmap region; save streams from the live map
+  and load reads bitmaps straight out of the mapping (no double
+  materialisation either way; reconciling load 0.31 s -> 0.21 s on the
+  22 MB corpus index); golden fixture `tests/fixtures/index-v7.fcsidx`
+  with byte-identity, load and corruption tests. Not done: *lazy* posting
+  lists (deserialize on first use) — every query path and incremental
+  removal touches the whole map, so laziness would need a different
+  TrigramIndex; judged not worth it at current sizes.
   Original text: Sectioned, mmap-able layout: header (magic,
   version, CRC), file table (paths as bytes, nanosecond mtime, size), trigram
   directory, bitmap region. Lazy load; no double materialisation on save or
@@ -747,13 +767,29 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   `all_documents()` by reference.
 - [x] **6.4 Indexing throughput.** DONE (commit `perf(index): fold case during trigram extraction`):
   per-byte ASCII fold + bitset dedupe (no lowercase copy, no per-byte hash
-  insert); `shrink_to_fit` mid-build and off-thread checkpoint saves are
-  still open.
+  insert). Follow-up (commit "perf(index): compact once, in finalize"):
+  the every-50-batches `compact_memory` (a trigram-map rehash the next
+  batch undid) is gone; capacity is released once in `finalize`.
+  Checkpoint saves already run under a *read* lock (searches continue,
+  only the next batch merge waits ~0.1 s per 40 MB), which is judged
+  sufficient; a snapshot-and-save-off-thread would double peak memory.
   Original text: Bitset-based unique-trigram extraction with
   on-the-fly ASCII lowercasing (no `to_lowercase()` copy, no per-byte hash
   insert); drop the mid-build `shrink_to_fit`; checkpoint saves on a separate
   thread from a snapshot.
-- **6.5 Benchmarks that match the claim.** A pinned, CI-cacheable mid-size real
+- [x] **6.5 Benchmarks that match the claim.** DONE (commit "bench: real-corpus
+  benchmark in CI, nightly large-corpus run"): `examples/corpus_bench.rs`
+  builds an index the way the server does over pinned checkouts of tokio
+  1.45.0 + Django 5.2 (6,240 files, 39 MB) on every push to `main`, feeds
+  build/save/load/query/incremental/RSS metrics into the existing trend
+  chart and the job summary; a nightly job does the same over
+  `rust-lang/rust` 1.89.0. The README carries the table. The first run
+  found three real problems that were fixed alongside: import candidate
+  probing through `realpath` (17.6 M `readlink` calls per build, 25 s ->
+  3 s), sequential posting-list removal on update (13 ms -> 2.7 ms), and
+  `.gitignore` matchers rebuilt per watcher event (10 ms -> µs). One-file
+  update went 55 ms -> 4.3 ms.
+  Original text: A pinned, CI-cacheable mid-size real
   corpus (50–100 MB) for search, indexing, incremental update, symbol search
   and reconciliation benches; a nightly large-corpus run with memory and
   file-count reporting; publish "files / GB indexed / RSS / p50 latency" in
@@ -762,7 +798,8 @@ Goal: make the README's "multi-gigabyte" claim true and measured.
   0.27 -> 0.32`): thin LTO + strip, `semantic` feature (off by default,
   implied by `ml-models`), md5/glob dropped, sysinfo/criterion bumped, single
   tonic/axum stack, deny.toml + cargo-deny CI step, Dependabot. Debug
-  archives are still produced by release.yml.
+  archives dropped from release.yml (commit "ci: stop shipping debug
+  archives with releases").
   Original text: `[profile.release] lto = "thin", codegen-units = 1,
   strip = true`; stop shipping debug archives by default; add a `semantic`
   feature gating `src/semantic*`, `ndarray`, `hnsw_rs`, `sha2` and the
@@ -781,24 +818,33 @@ Each of these needs only the candidate-set plumbing that Phase 3 creates:
   terms must be in the file, lines matching any term are returned).
 - [x] `file:` / `lang:` / `-term` syntax — DONE (`search::query_syntax`,
   merged with the explicit include/exclude parameters; REST and gRPC).
-- [ ] Multi-line regex (`\n`, `(?s)`) via whole-content matching with line
-  resolution.
-- [ ] Symbol-reference results (`SYMBOL_REFERENCE`): the tags queries carry
-  `@reference.*` captures (currently disabled for speed), so this is now a
-  matter of capturing and persisting them.
+- [x] Multi-line regex — DONE (commit "feat(search): multi-line regex"): a
+  pattern that mentions a newline (`\n`, `\r`, `\x0a`) or sets the `s`
+  flag is matched against whole file content; each match is reported once
+  on the line where it starts with in-line offsets clamped to that line.
+  Other patterns stay line-oriented, so existing queries are unchanged.
+- [x] Symbol-reference results — DONE (commit "feat(symbols): symbol
+  references"): `@reference.*` captures kept (Rust supplemented with path /
+  generic calls), stored per file as (interned name, line, column) and
+  persisted (format v6), `search_references` / REST `references=true` /
+  gRPC `references`, results tagged `SYMBOL_REFERENCE`. Known gap: the
+  TypeScript tags query in the crate carries only class/type references
+  (its call patterns live in the JavaScript query), so TS call sites are
+  not captured yet.
 
 ### Cross-cutting: structure and documentation (spread across phases)
 
 - [x] Split `engine.rs` — DONE: `search/engine/{mod,query,text,persist,progress,
   tests}.rs` (mod.rs 1.4k lines; query 1.1k). `search/ranking.rs` holds the
   weights. Persistence stayed under `engine/persist.rs` rather than `index/`.
-- [~] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
+- [x] Dead code — DONE: `index/file_store.rs`, `service.rs` `create_*` /
   `new_with_indexing`, `RegexAnalysis::literals`. The three load paths now
   share one implementation (`load_index_inner`; commit "refactor(engine):
   one load path behind the three public loaders") — this also fixed a
   freshly loaded index showing absolute display paths until the next
-  finalize, because roots were registered after the metadata pass. Still
-  open: the remaining uncalled `pub fn`s have not been pruned.
+  finalize, because roots were registered after the metadata pass. The
+  uncalled `pub fn`s (nine, found by a whole-tree reference scan) are
+  pruned (commit "chore: remove unreferenced public functions").
 - [x] Docs — DONE: `DEVELOPMENT.md` rewritten against the code (module tree,
   pipelines, threading, scoring, logging, adding a language, release targets);
   `REVIEW.md` and the June plan archived; `CONTRIBUTING.md` refreshed;

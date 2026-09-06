@@ -19,6 +19,7 @@ message SearchRequest {
   int64 deadline_ms = 9;              // Stop scanning after this many ms and return the best so far (0 = none; capped at 30000)
   bool case_sensitive = 10;           // Exact-case matching (overrides case: in the query)
   bool whole_word = 11;               // Whole-word matching (overrides word: in the query)
+  bool references = 12;               // Return the references (call sites, type mentions) of the identifier in query
 }
 
 // Plain-text queries understand: file:PAT, -file:PAT, lang:NAME, -lang:NAME,
@@ -44,7 +45,7 @@ message SearchResult {
 enum MatchType {
   TEXT = 0;
   SYMBOL_DEFINITION = 1;
-  SYMBOL_REFERENCE = 2;  // Reserved: not emitted yet (needs reference captures)
+  SYMBOL_REFERENCE = 2;  // A use of the identifier (references = true)
 }
 
 message IndexRequest {

@@ -111,6 +111,11 @@ pub struct SearchQuery {
     /// Whether to search only in symbols (function/class names)
     #[serde(default)]
     symbols: bool,
+    /// Find references (call sites, type mentions) of the identifier in
+    /// `q` instead of text matches. Results have `match_type`
+    /// `SYMBOL_REFERENCE`.
+    #[serde(default)]
+    references: bool,
     /// Ranking mode: "auto" (default), "fast", or "full"
     #[serde(default)]
     rank: String,
@@ -380,6 +385,7 @@ pub async fn search_handler(
     let exclude_patterns = params.exclude;
     let is_regex = params.regex;
     let symbols_only = params.symbols;
+    let references = params.references;
     let context_lines = params.context.min(MAX_CONTEXT_LINES);
 
     // Parse ranking mode
@@ -427,7 +433,16 @@ pub async fn search_handler(
 
         // Choose search method based on flags. Every mode reports ranking
         // info (regex/symbols included) and honours the limits.
-        let (matches, ranking_info) = if symbols_only {
+        let (matches, ranking_info) = if references {
+            engine
+                .search_references_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid filter pattern: {}", e),
+                    )
+                })?
+        } else if symbols_only {
             engine
                 .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
                 .map_err(|e| {
@@ -513,7 +528,9 @@ pub async fn search_handler(
                     line_match_end: m.line_match_end,
                     match_column: m.match_column,
                     score: m.score,
-                    match_type: if m.is_symbol {
+                    match_type: if m.is_reference {
+                        "SYMBOL_REFERENCE"
+                    } else if m.is_symbol {
                         "SYMBOL_DEFINITION"
                     } else {
                         "TEXT"

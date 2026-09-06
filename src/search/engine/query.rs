@@ -488,12 +488,13 @@ impl SearchEngine {
         };
         let candidates = self.apply_path_filter(candidate_docs, &path_filter);
         let regex = &analysis.regex;
+        let multiline = analysis.multiline;
         Ok(self.run_candidates(
             &candidates,
             rank_mode,
             limits,
             |meta| meta.base_score,
-            |doc_id, run| self.search_in_document_regex(doc_id, regex, run),
+            |doc_id, run| self.search_in_document_regex(doc_id, regex, multiline, run),
         ))
     }
 
@@ -552,6 +553,120 @@ impl SearchEngine {
             |meta| meta.base_score,
             |doc_id, run| self.search_symbols_in_document(doc_id, query, &query_lower, run),
         ))
+    }
+
+    /// Symbol references: the lines where the identifier `name` is used
+    /// (called, mentioned as a type, implemented), as reported by the
+    /// grammars' tags queries. Exact, case-sensitive identifier match;
+    /// definitions are not included (symbol search finds those). One result
+    /// per line, ordered by file score then position.
+    pub fn search_references(
+        &self,
+        name: &str,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
+        Ok(self.run_references(name, path_filter, limits))
+    }
+
+    /// [`Self::search_references`] for a parsed query: the first term is the
+    /// identifier, `file:` / `lang:` operators narrow the files.
+    pub fn search_references_parsed(
+        &self,
+        parsed: &ParsedQuery,
+        include_patterns: &str,
+        exclude_patterns: &str,
+        limits: SearchLimits,
+    ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+        let Some(name) = parsed.terms.iter().find(|t| !t.trim().is_empty()) else {
+            return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
+        };
+        let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
+        Ok(self.run_references(name, path_filter, limits))
+    }
+
+    fn run_references(
+        &self,
+        name: &str,
+        path_filter: PathFilter,
+        limits: SearchLimits,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo) {
+        let name = name.trim();
+        let Some(name_id) = (!name.is_empty())
+            .then(|| self.reference_name_id(name))
+            .flatten()
+        else {
+            return (Vec::new(), SearchRankingInfo::empty(RankMode::Full));
+        };
+        // The identifier's text must occur in the file, so the trigram index
+        // narrows the candidates before any reference list is scanned.
+        let candidates =
+            self.apply_path_filter(self.text_candidates(&name.to_lowercase()), &path_filter);
+        self.run_candidates(
+            &candidates,
+            RankMode::Full,
+            limits,
+            |meta| meta.base_score,
+            |doc_id, run| self.references_in_document(doc_id, name_id, name.len(), run),
+        )
+    }
+
+    fn references_in_document(
+        &self,
+        doc_id: u32,
+        name_id: u32,
+        name_len: usize,
+        run: &QueryRun,
+    ) -> Option<Vec<SearchMatch>> {
+        // Consult the reference list before touching file content: most
+        // candidates mention the text without referencing the symbol.
+        let refs = self.references_of(doc_id);
+        if !refs.iter().any(|r| r.name == name_id) {
+            return None;
+        }
+        let file = self.file_store.get(doc_id)?;
+        let content = file.as_str().ok()?;
+        let dependency_count = self.dependency_index.get_import_count(doc_id);
+        let display_path = self.make_display_path(&file.path);
+        let lines: Vec<&str> = content.lines().collect();
+        let mut matches = Vec::new();
+        let mut last_line = usize::MAX;
+        for r in refs.iter().filter(|r| r.name == name_id) {
+            let line_num = r.line as usize;
+            if line_num == last_line {
+                continue; // one result per line
+            }
+            let Some(line) = lines.get(line_num) else {
+                continue; // file changed under us; the watcher will refresh it
+            };
+            if !run.take_match() {
+                break;
+            }
+            last_line = line_num;
+            // tree-sitter columns are byte offsets.
+            let start = (r.column as usize).min(line.len());
+            let end = (start + name_len).min(line.len());
+            let truncated = truncate_around_match(line, start, end);
+            matches.push(SearchMatch {
+                file_id: doc_id,
+                file_path: display_path.clone(),
+                line_number: line_num + 1,
+                content: truncated.content,
+                match_start: truncated.match_start,
+                match_end: truncated.match_end,
+                content_truncated: truncated.was_truncated,
+                line_match_start: start,
+                line_match_end: end,
+                match_column: char_column(line, start),
+                score: 1.0,
+                is_symbol: false,
+                is_reference: true,
+                dependency_count,
+            });
+        }
+        (!matches.is_empty()).then_some(matches)
     }
 
     /// Search for symbols matching the query in a document.
@@ -646,6 +761,7 @@ impl SearchEngine {
                     match_column,
                     score: RankingWeights::DEFAULT.filename_hit * dependency_boost,
                     is_symbol: true,
+                    is_reference: false,
                     dependency_count,
                 });
                 continue;
@@ -723,6 +839,7 @@ impl SearchEngine {
                 match_column: char_column(line, match_start),
                 score,
                 is_symbol: true,
+                is_reference: false,
                 dependency_count,
             });
         }
@@ -739,6 +856,7 @@ impl SearchEngine {
         &self,
         doc_id: u32,
         regex: &Regex,
+        multiline: bool,
         run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
         let file = self.file_store.get(doc_id)?;
@@ -793,17 +911,15 @@ impl SearchEngine {
         let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
 
-        // Search in each line using regex
-        for (line_num, line) in content.lines().enumerate() {
-            // Bail out early once we have enough matches from this document to
-            // prevent unbounded memory growth when a broad regex matches
-            // thousands of lines (OOM fix).
-            if matches.len() >= Self::MAX_MATCHES_PER_DOC {
-                break;
-            }
-            if let Some(m) = regex.find(line) {
-                if !run.take_match() {
-                    break;
+        {
+            // Turn one matching line into a result. Returns false once the
+            // query's match budget is exhausted.
+            let mut emit = |line_num: usize, line: &str, m_start: usize, m_end: usize| -> bool {
+                // Cap per-document results (a broad regex matching thousands
+                // of lines must not grow memory unboundedly) and honour the
+                // query's match budget.
+                if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
+                    return false;
                 }
                 // Lazy initialize path info only when we have at least one match
                 let path_ref = display_path.get_or_insert_with(|| {
@@ -837,7 +953,7 @@ impl SearchEngine {
                     .unwrap_or(false);
 
                 // Truncate long lines around the match
-                let truncated = truncate_around_match(line, m.start(), m.end());
+                let truncated = truncate_around_match(line, m_start, m_end);
 
                 matches.push(SearchMatch {
                     file_id: doc_id,
@@ -847,13 +963,57 @@ impl SearchEngine {
                     match_start: truncated.match_start,
                     match_end: truncated.match_end,
                     content_truncated: truncated.was_truncated,
-                    line_match_start: m.start(),
-                    line_match_end: m.end(),
-                    match_column: char_column(line, m.start()),
+                    line_match_start: m_start,
+                    line_match_end: m_end,
+                    match_column: char_column(line, m_start),
                     score,
                     is_symbol,
+                    is_reference: false,
                     dependency_count,
                 });
+                true
+            };
+
+            if multiline {
+                // Whole-content matching: each match is reported on the line
+                // where it starts (one result per line), with the in-line
+                // offsets clamped to that line.
+                let text: &str = &content;
+                let mut line_num = 0usize;
+                let mut scan_pos = 0usize;
+                let mut last_line: Option<usize> = None;
+                for m in regex.find_iter(text) {
+                    line_num += text[scan_pos..m.start()]
+                        .bytes()
+                        .filter(|&b| b == b'\n')
+                        .count();
+                    scan_pos = m.start();
+                    if last_line == Some(line_num) {
+                        continue;
+                    }
+                    let line_start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+                    let line_end = text[m.start()..]
+                        .find('\n')
+                        .map_or(text.len(), |i| i + m.start());
+                    let line = text[line_start..line_end]
+                        .strip_suffix('\r')
+                        .unwrap_or(&text[line_start..line_end]);
+                    let m_start = m.start() - line_start;
+                    let m_end = (m.end().min(line_end) - line_start).min(line.len());
+                    if !emit(line_num, line, m_start, m_end) {
+                        break;
+                    }
+                    last_line = Some(line_num);
+                }
+            } else {
+                // Search in each line using regex
+                for (line_num, line) in content.lines().enumerate() {
+                    if let Some(m) = regex.find(line) {
+                        if !emit(line_num, line, m.start(), m.end()) {
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -885,6 +1045,7 @@ impl SearchEngine {
                     match_column,
                     score: RankingWeights::DEFAULT.filename_hit * dependency_boost,
                     is_symbol: true,
+                    is_reference: false,
                     dependency_count,
                 });
             }
@@ -1002,6 +1163,7 @@ impl SearchEngine {
                     match_column: char_column(line, match_start),
                     score,
                     is_symbol,
+                    is_reference: false,
                     dependency_count,
                 });
                 true
@@ -1062,6 +1224,7 @@ impl SearchEngine {
                     match_column,
                     score: RankingWeights::DEFAULT.filename_hit * dependency_boost, // Symbol def boost (3×) for filename matches
                     is_symbol: true,
+                    is_reference: false,
                     dependency_count,
                 });
             }

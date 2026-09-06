@@ -114,6 +114,7 @@ impl SearchEngine {
         // Size the symbol cache to the number of files actually registered.
         let total_new_files = self.file_store.len();
         self.symbol_cache = vec![Vec::new(); total_new_files];
+        self.install_references(persisted.reference_names.clone(), total_new_files);
 
         // Register files in dependency_index for future import resolution
         // and restore per-file symbol caches, keyed by the real new ids.
@@ -122,10 +123,15 @@ impl SearchEngine {
                 continue;
             }
             if let Some(path) = self.file_store.get_path(new_id) {
-                self.dependency_index.register_file(new_id, path);
+                let canonical = path.to_path_buf();
+                self.dependency_index
+                    .register_canonical_file(new_id, canonical);
             }
             if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
                 self.symbol_cache[new_id as usize] = syms.clone();
+            }
+            if let Some(refs) = persisted.references.get(orig_idx as usize) {
+                self.set_packed_references(new_id, refs.clone());
             }
         }
 
@@ -167,6 +173,7 @@ impl SearchEngine {
 
         // Reset derived state
         self.symbol_cache = vec![Vec::new(); total_files];
+        self.install_references(Vec::new(), total_files);
         self.pending_imports.clear();
         self.waiting_imports.clear();
         self.waiting_keys.clear();
@@ -176,7 +183,9 @@ impl SearchEngine {
         // Re-register all files for import resolution
         for file_id in 0..total_files as u32 {
             if let Some(path) = self.file_store.get_path(file_id) {
-                self.dependency_index.register_file(file_id, path);
+                let canonical = path.to_path_buf();
+                self.dependency_index
+                    .register_canonical_file(file_id, canonical);
             }
         }
 
@@ -192,6 +201,7 @@ impl SearchEngine {
 
                 let mut symbols = Vec::new();
                 let mut imports = Vec::new();
+                let mut references = Vec::new();
                 let mut had_content = false;
 
                 if let Some(file) = file_store.get(file_id) {
@@ -211,19 +221,22 @@ impl SearchEngine {
                             } else {
                                 let extractor = SymbolExtractor::new(&path);
 
-                                let (extracted_symbols, extracted_imports) =
+                                let (extracted_symbols, extracted_imports, extracted_refs) =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        extractor.extract_all(&content).unwrap_or_default()
+                                        extractor
+                                            .extract_all_with_refs(&content)
+                                            .unwrap_or_default()
                                     }))
                                     .unwrap_or_else(|_| {
                                         warn!(
                                             "Symbol/import extraction panicked for file '{}'. Continuing without symbols.",
                                             path.display()
                                         );
-                                        (Vec::new(), Vec::new())
+                                        (Vec::new(), Vec::new(), Vec::new())
                                     });
 
                                 symbols = extracted_symbols;
+                                references = extracted_refs;
                                 imports = extracted_imports
                                     .into_iter()
                                     .map(|i| i.path)
@@ -251,6 +264,7 @@ impl SearchEngine {
                     path,
                     symbols,
                     imports,
+                    references,
                     had_content,
                 })
             })
@@ -273,6 +287,7 @@ impl SearchEngine {
                     .resize(entry.file_id as usize + 1, Vec::new());
             }
             self.symbol_cache[entry.file_id as usize] = entry.symbols;
+            self.store_references(entry.file_id, entry.references);
 
             if !entry.imports.is_empty() {
                 self.pending_imports
@@ -370,6 +385,12 @@ impl SearchEngine {
             })
             .collect();
 
+        // Per-file references, by position; the name table is global.
+        let references: Vec<Vec<crate::symbols::extractor::PackedRef>> = live_ids
+            .iter()
+            .map(|&id| self.references_of(id).to_vec())
+            .collect();
+
         // Collect resolved dependency edges, remapped onto positions; edges that
         // touch a removed file are dropped.
         let dependency_edges: Vec<(u32, u32)> = self
@@ -404,12 +425,13 @@ impl SearchEngine {
             config.fingerprint(),
             config.paths.clone(),
             files,
-            trigram_map,
             symbols,
             dependency_edges,
             pending_imports,
+            self.reference_names().to_vec(),
+            references,
         )?;
-        persisted.save(path)?;
+        persisted.save(path, trigram_map)?;
 
         tracing::info!(
             path = %path.display(),
@@ -490,6 +512,17 @@ impl SearchEngine {
     ) -> anyhow::Result<LoadIndexResult> {
         use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
+        // Per-phase wall time, reported in the final log line so a slow load
+        // says which step was slow.
+        let started = std::time::Instant::now();
+        let mut last = started;
+        let mut phase_ms: Vec<(&'static str, u128)> = Vec::new();
+        let mut mark = |name: &'static str| {
+            let now = std::time::Instant::now();
+            phase_ms.push((name, (now - last).as_millis()));
+            last = now;
+        };
+
         progress(
             LoadingPhase::ReadingFile,
             None,
@@ -504,6 +537,7 @@ impl SearchEngine {
         );
         let persisted = PersistedIndex::load(path)?;
         let total_files = persisted.files.len();
+        mark("read_and_decode");
 
         let (config_compatible, new_paths, removed_paths) = match config {
             Some(config) => {
@@ -532,6 +566,7 @@ impl SearchEngine {
             &format!("Checking {} files for changes...", total_files),
         );
         let file_statuses = batch_check_files(&persisted.files, &removed_paths);
+        mark("check_files");
         progress(
             LoadingPhase::CheckingFiles,
             Some(total_files),
@@ -579,6 +614,7 @@ impl SearchEngine {
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
             self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
             self.file_store.add_content_bytes(total_content_bytes);
+            mark("register_files");
 
             progress(
                 LoadingPhase::MappingFiles,
@@ -598,6 +634,7 @@ impl SearchEngine {
                 Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
             self.trigram_index.finalize();
+            mark("trigrams");
         }
 
         if !self.file_store.is_empty() {
@@ -640,6 +677,7 @@ impl SearchEngine {
                 Some(loaded),
                 "Symbol and dependency caches ready",
             );
+            mark("symbols_and_imports");
         }
 
         // Configured paths are the roots for display-path computation. They
@@ -655,6 +693,7 @@ impl SearchEngine {
         // loaded index ranks by id order until the background finalize runs.
         self.compute_all_file_metadata();
         self.generation += 1;
+        mark("file_metadata");
 
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
@@ -670,6 +709,8 @@ impl SearchEngine {
             removed_paths = removed_paths.len(),
             config_compatible,
             reconciled = config.is_some(),
+            total_ms = started.elapsed().as_millis(),
+            phases_ms = ?phase_ms,
             "Index loaded from disk"
         );
 

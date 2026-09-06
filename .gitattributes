@@ -21,3 +21,6 @@
 *.exe binary
 *.zip binary
 *.bin binary
+
+# Persisted-index golden fixtures are binary
+*.fcsidx binary

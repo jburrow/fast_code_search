@@ -104,11 +104,6 @@ impl LazyMappedFile {
         }
     }
 
-    /// Create an entry that is known to be small: served by owned reads.
-    pub fn new_small(path: impl AsRef<Path>) -> Self {
-        Self::new(path).into_small()
-    }
-
     fn into_small(self) -> Self {
         self.size_class.store(SIZE_CLASS_SMALL, Ordering::Relaxed);
         self

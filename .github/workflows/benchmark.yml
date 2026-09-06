@@ -3,6 +3,9 @@ name: Benchmarks
 on:
   push:
     branches: [main, master]
+  schedule:
+    # Nightly large-corpus run (see the large-corpus job).
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 env:
@@ -15,6 +18,7 @@ concurrency:
 jobs:
   benchmark:
     name: Performance Benchmarks
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,6 +26,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # Pinned real-world corpora for examples/corpus_bench.rs (about 40 MB
+      # of Rust and Python source). Shallow checkouts; bench-corpus/ is
+      # gitignored so the results push below is unaffected.
+      - name: Check out tokio (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: tokio-rs/tokio
+          ref: tokio-1.45.0
+          path: bench-corpus/tokio
+          fetch-depth: 1
+      - name: Check out django (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: django/django
+          ref: "5.2"
+          path: bench-corpus/django
+          fetch-depth: 1
 
       - name: Install Protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -34,11 +56,26 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # rust-cache restores target/ but prunes files it does not recognise,
+      # which can leave Criterion baseline directories without their
+      # sample.json; Criterion then logs errors into the bencher output and
+      # the trend action finds nothing to parse. Start from no baselines.
+      - name: Reset Criterion state
+        run: rm -rf target/criterion
+
       - name: Run search benchmarks
-        run: cargo bench --bench search_benchmark -- --output-format bencher | tee bench_output.txt
+        run: cargo bench --bench search_benchmark -- --output-format bencher --noplot | tee bench_output.txt
 
       - name: Run persistence benchmarks
-        run: cargo bench --bench persistence_benchmark -- --output-format bencher | tee -a bench_output.txt
+        run: cargo bench --bench persistence_benchmark -- --output-format bencher --noplot | tee -a bench_output.txt
+
+      - name: Run real-corpus benchmark (tokio + django)
+        run: |
+          cargo run --release --example corpus_bench -- \
+            bench-corpus/tokio bench-corpus/django \
+            --label tokio+django --iterations 30 --bencher \
+            --markdown corpus_summary.md | tee -a bench_output.txt
+          cat corpus_summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run validator (functional performance test)
         run: cargo run --release --bin fast_code_search_validator -- --json --corpus-size 200 | tee validator_output.json
@@ -50,6 +87,12 @@ jobs:
           path: |
             bench_output.txt
             validator_output.json
+            corpus_summary.md
+
+      - name: Keep only bencher lines for trend tracking
+        run: |
+          grep -E '^test .+ \.\.\. bench: ' bench_output.txt > bench_results.txt
+          wc -l bench_results.txt
 
       - name: Reset local changes before branch switch
         run: git checkout -- .
@@ -59,9 +102,50 @@ jobs:
         with:
           name: fast_code_search Benchmarks
           tool: cargo
-          output-file-path: bench_output.txt
+          output-file-path: bench_results.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
           alert-threshold: '200%'
           fail-on-alert: false
+
+  # Nightly: a large corpus (the Rust compiler tree, hundreds of MB and
+  # tens of thousands of files) with file count, throughput and resident
+  # memory in the job summary. Not pushed to the trend chart.
+  large-corpus:
+    name: Large corpus (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out rust-lang/rust 1.89.0 (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: rust-lang/rust
+          ref: "1.89.0"
+          path: bench-corpus/rust
+          fetch-depth: 1
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run real-corpus benchmark (rust-lang/rust)
+        run: |
+          cargo run --release --example corpus_bench -- bench-corpus/rust \
+            --label rust-1.89.0 --iterations 20 --markdown corpus_summary.md
+          cat corpus_summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: large-corpus-results
+          path: corpus_summary.md

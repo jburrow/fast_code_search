@@ -37,6 +37,26 @@ pub struct Symbol {
     pub is_definition: bool,
 }
 
+/// A use of a name that the grammar's tags query marks as a reference
+/// (`@reference.call`, `@reference.class`, `@reference.implementation`, ...):
+/// a call site, a type mention, an implemented interface. Positions are the
+/// name node's, 0-based.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolRef {
+    pub name: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+/// A reference as the engine stores it: the name interned to an id, so a
+/// call site costs 12 bytes rather than a `String`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackedRef {
+    pub name: u32,
+    pub line: u32,
+    pub column: u32,
+}
+
 /// Represents an import statement found in source code
 #[derive(Debug, Clone)]
 pub struct ImportStatement {
@@ -214,29 +234,45 @@ fn symbol_type_for(capture_kind: &str, node: tree_sitter::Node) -> SymbolType {
     }
 }
 
-/// Tags queries also describe *references* (`@reference.call` on every call
-/// expression, `@doc` comments, ...). Those patterns match far more nodes
-/// than the definitions do and we ignore them, so switch them off once at
-/// compile time: only patterns that capture some `@definition.*` stay.
-fn disable_non_definition_patterns(query: &mut tree_sitter::Query) {
+/// Tags queries describe definitions (`@definition.*`) and references
+/// (`@reference.call` on every call expression, `@reference.class`, ...);
+/// some also carry `@doc` patterns we never use. Switch off, once at compile
+/// time, every pattern that captures neither a definition nor a reference.
+fn disable_unused_patterns(query: &mut tree_sitter::Query) {
     let names = query.capture_names().to_vec();
-    let definition_captures: Vec<usize> = names
+    let wanted: Vec<usize> = names
         .iter()
         .enumerate()
-        .filter(|(_, n)| n.starts_with("definition."))
+        .filter(|(_, n)| n.starts_with("definition.") || n.starts_with("reference."))
         .map(|(i, _)| i)
         .collect();
     for pattern in 0..query.pattern_count() {
         let quantifiers = query.capture_quantifiers(pattern);
-        let defines = definition_captures.iter().any(|&c| {
+        let used = wanted.iter().any(|&c| {
             quantifiers
                 .get(c)
                 .is_some_and(|q| *q != tree_sitter::CaptureQuantifier::Zero)
         });
-        if !defines {
+        if !used {
             query.disable_pattern(pattern);
         }
     }
+}
+
+/// The Rust grammar's `tags.scm` plus references it leaves out: calls
+/// through a path (`crate::run()`, `Type::new()`) and generic calls.
+fn rust_tags_source() -> &'static str {
+    use std::sync::OnceLock;
+    static SRC: OnceLock<String> = OnceLock::new();
+    SRC.get_or_init(|| {
+        format!(
+            "{}\n\n; fast_code_search supplement: scoped and generic calls\n\
+             (call_expression\n    function: (scoped_identifier\n        name: (identifier) @name)) @reference.call\n\n\
+             (call_expression\n    function: (generic_function\n        function: (identifier) @name)) @reference.call\n\n\
+             (call_expression\n    function: (generic_function\n        function: (scoped_identifier\n            name: (identifier) @name))) @reference.call\n",
+            tree_sitter_rust::TAGS_QUERY
+        )
+    })
 }
 
 /// Compile-once registry of the grammars' `tags.scm` queries.
@@ -248,7 +284,7 @@ fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree
             $cell
                 .get_or_init(|| match tree_sitter::Query::new(&$lang.into(), $src) {
                     Ok(mut q) => {
-                        disable_non_definition_patterns(&mut q);
+                        disable_unused_patterns(&mut q);
                         Some(q)
                     }
                     Err(e) => {
@@ -261,11 +297,7 @@ fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree
     }
     let _ = language;
     match extension {
-        "rs" => once!(
-            RUST,
-            tree_sitter_rust::LANGUAGE,
-            tree_sitter_rust::TAGS_QUERY
-        ),
+        "rs" => once!(RUST, tree_sitter_rust::LANGUAGE, rust_tags_source()),
         "py" | "pyi" | "pyw" => once!(
             PY,
             tree_sitter_python::LANGUAGE,
@@ -382,10 +414,21 @@ impl SymbolExtractor {
     /// (Rust consts, C# properties, trait signatures, ...). Deduplicated on
     /// (name, line), sorted by line.
     fn symbols_from_tree(&self, tree: &tree_sitter::Tree, source: &str) -> Vec<Symbol> {
+        self.symbols_and_refs_from_tree(tree, source).0
+    }
+
+    /// Definitions (tags query + walker, merged on (line, name)) and the
+    /// references the tags query reports.
+    fn symbols_and_refs_from_tree(
+        &self,
+        tree: &tree_sitter::Tree,
+        source: &str,
+    ) -> (Vec<Symbol>, Vec<SymbolRef>) {
         let root_node = tree.root_node();
         let mut symbols = Vec::new();
+        let mut refs = Vec::new();
         if let Some(query) = self.tags_query() {
-            Self::extract_with_tags(query, &root_node, source, &mut symbols);
+            Self::extract_with_tags(query, &root_node, source, &mut symbols, &mut refs);
         }
         let mut walker_symbols = Vec::new();
         Self::extract_functions(&root_node, source, &mut walker_symbols);
@@ -397,7 +440,8 @@ impl SymbolExtractor {
             }
         }
         symbols.sort_by_key(|s| s.line);
-        symbols
+        refs.sort_by_key(|r| (r.line, r.column));
+        (symbols, refs)
     }
 
     /// The compiled `tags.scm` query for this file's grammar, if it has one.
@@ -407,51 +451,70 @@ impl SymbolExtractor {
     }
 
     /// Run the tags query and collect every `@definition.*` capture with its
-    /// `@name`. Several patterns may match one node (Rust methods match both
-    /// the method and the function pattern); the first pattern wins.
+    /// `@name` as a symbol, and every `@reference.*` capture as a reference.
+    /// Several patterns may match one node (Rust methods match both the
+    /// method and the function pattern); the first pattern wins.
     fn extract_with_tags(
         query: &tree_sitter::Query,
         root: &tree_sitter::Node,
         source: &str,
         symbols: &mut Vec<Symbol>,
+        refs: &mut Vec<SymbolRef>,
     ) {
         use tree_sitter::StreamingIterator;
         let names = query.capture_names();
         let mut cursor = tree_sitter::QueryCursor::new();
         let mut matches = cursor.matches(query, *root, source.as_bytes());
-        let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        let mut seen_defs: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
+        let mut seen_refs: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
         while let Some(m) = matches.next() {
             let mut name_node: Option<tree_sitter::Node> = None;
             let mut def: Option<(&str, tree_sitter::Node)> = None;
+            let mut is_ref = false;
             for cap in m.captures {
                 let cap_name = names[cap.index as usize];
                 if cap_name == "name" {
                     name_node = Some(cap.node);
                 } else if let Some(kind) = cap_name.strip_prefix("definition.") {
                     def = Some((kind, cap.node));
+                } else if cap_name.starts_with("reference.") {
+                    is_ref = true;
                 }
             }
-            let (Some(name_node), Some((kind, def_node))) = (name_node, def) else {
+            let Some(name_node) = name_node else {
                 continue;
             };
             let range = name_node.byte_range();
-            if !seen.insert((range.start, range.end)) {
-                continue;
-            }
-            let Some(name) = source.get(range) else {
+            let Some(name) = source.get(range.clone()) else {
                 continue;
             };
             if name.is_empty() {
                 continue;
             }
             let start = name_node.start_position();
-            symbols.push(Symbol {
-                name: name.to_string(),
-                symbol_type: symbol_type_for(kind, def_node),
-                line: start.row,
-                column: start.column,
-                is_definition: true,
-            });
+            if let Some((kind, def_node)) = def {
+                if !seen_defs.insert((range.start, range.end)) {
+                    continue;
+                }
+                symbols.push(Symbol {
+                    name: name.to_string(),
+                    symbol_type: symbol_type_for(kind, def_node),
+                    line: start.row,
+                    column: start.column,
+                    is_definition: true,
+                });
+            } else if is_ref {
+                if !seen_refs.insert((range.start, range.end)) {
+                    continue;
+                }
+                refs.push(SymbolRef {
+                    name: name.to_string(),
+                    line: start.row as u32,
+                    column: start.column as u32,
+                });
+            }
         }
     }
 
@@ -989,15 +1052,26 @@ impl SymbolExtractor {
     /// only parses the source file once, making it roughly 2× faster when both
     /// are needed.
     pub fn extract_all(&self, source: &str) -> Result<(Vec<Symbol>, Vec<ImportStatement>)> {
+        let (symbols, imports, _) = self.extract_all_with_refs(source)?;
+        Ok((symbols, imports))
+    }
+
+    /// [`Self::extract_all`] plus the references (call sites, type mentions)
+    /// the grammar's tags query reports, from the same single parse.
+    #[allow(clippy::type_complexity)]
+    pub fn extract_all_with_refs(
+        &self,
+        source: &str,
+    ) -> Result<(Vec<Symbol>, Vec<ImportStatement>, Vec<SymbolRef>)> {
         let language = match self.language {
             Some(lang) => lang,
-            None => return Ok((Vec::new(), Vec::new())),
+            None => return Ok((Vec::new(), Vec::new(), Vec::new())),
         };
         let Some(tree) = parse_with_reused_parser(language, source)? else {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok((Vec::new(), Vec::new(), Vec::new()));
         };
         let root_node = tree.root_node();
-        let symbols = self.symbols_from_tree(&tree, source);
+        let (symbols, refs) = self.symbols_and_refs_from_tree(&tree, source);
 
         let mut imports = Vec::new();
         match self.extension.as_str() {
@@ -1010,7 +1084,7 @@ impl SymbolExtractor {
         }
         imports.sort_by_key(|i| i.line);
 
-        Ok((symbols, imports))
+        Ok((symbols, imports, refs))
     }
 
     /// Extract Rust use statements and mod declarations
@@ -2131,6 +2205,39 @@ void regular_function() {
                 .any(|s| s.name == "regular_function" && s.symbol_type == SymbolType::Function),
             "Should find regular_function"
         );
+    }
+
+    /// Roadmap 7: the tags queries' `@reference.*` captures are kept: call
+    /// sites, type mentions and implemented traits come back as references
+    /// with the name node's position, never as definitions.
+    #[test]
+    fn test_references_are_captured() {
+        let source = "fn helper() {}\nfn main() {\n    helper();\n    other::helper();\n}\nimpl Display for Foo {}\n";
+        let extractor = SymbolExtractor::new(Path::new("refs.rs"));
+        let (symbols, _imports, refs) = extractor.extract_all_with_refs(source).unwrap();
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "helper" && s.line == 0 && s.is_definition));
+        let calls: Vec<(u32, u32)> = refs
+            .iter()
+            .filter(|r| r.name == "helper")
+            .map(|r| (r.line, r.column))
+            .collect();
+        assert_eq!(calls, vec![(2, 4), (3, 11)], "{refs:?}");
+        assert!(
+            refs.iter().any(|r| r.name == "Display" && r.line == 5),
+            "{refs:?}"
+        );
+        // The definition line is not a reference.
+        assert!(!refs.iter().any(|r| r.name == "helper" && r.line == 0));
+
+        let py = "def f():\n    pass\nf()\nobj.method(f)\n";
+        let (_, _, refs) = SymbolExtractor::new(Path::new("a.py"))
+            .extract_all_with_refs(py)
+            .unwrap();
+        let names: Vec<(&str, u32)> = refs.iter().map(|r| (r.name.as_str(), r.line)).collect();
+        assert!(names.contains(&("f", 2)), "{names:?}");
+        assert!(names.contains(&("method", 3)), "{names:?}");
     }
 
     #[test]

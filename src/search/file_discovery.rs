@@ -7,6 +7,7 @@ use crate::search::path_filter::PathFilter;
 use crate::utils::{get_binary_extensions, has_binary_extension};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use walkdir::WalkDir;
 
 /// Configuration for file discovery.
@@ -299,27 +300,61 @@ pub fn is_gitignored(path: &Path) -> bool {
     // Check from the file's own directory outwards; the nearest explicit
     // decision (ignore or whitelist) wins.
     for dir in dirs {
-        let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
-        let mut any = false;
-        for name in [".gitignore", ".ignore"] {
-            let f = dir.join(name);
-            if f.is_file() {
-                builder.add(f);
-                any = true;
-            }
-        }
-        if !any {
+        let Some(gi) = gitignore_for_dir(dir) else {
             continue;
-        }
-        if let Ok(gi) = builder.build() {
-            match gi.matched_path_or_any_parents(path, false) {
-                ignore::Match::Ignore(_) => return true,
-                ignore::Match::Whitelist(_) => return false,
-                ignore::Match::None => {}
-            }
+        };
+        match gi.matched_path_or_any_parents(path, false) {
+            ignore::Match::Ignore(_) => return true,
+            ignore::Match::Whitelist(_) => return false,
+            ignore::Match::None => {}
         }
     }
     false
+}
+
+/// Compiled ignore matchers per directory, keyed by the modification times
+/// of that directory's `.gitignore` / `.ignore`.
+///
+/// Compiling a matcher means parsing the file and building a regex per
+/// pattern; doing that for every ancestor on every watcher event cost about
+/// 10 ms per event on a repository with a typical root `.gitignore`. A
+/// changed ignore file is picked up because its mtime is part of the key.
+type IgnoreKey = (Option<std::time::SystemTime>, Option<std::time::SystemTime>);
+type IgnoreCache =
+    std::collections::HashMap<PathBuf, (IgnoreKey, Arc<ignore::gitignore::Gitignore>)>;
+static IGNORE_CACHE: OnceLock<Mutex<IgnoreCache>> = OnceLock::new();
+
+fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
+    let mtime = |name: &str| {
+        std::fs::metadata(dir.join(name))
+            .ok()
+            .filter(|m| m.is_file())
+            .and_then(|m| m.modified().ok())
+    };
+    let key: IgnoreKey = (mtime(".gitignore"), mtime(".ignore"));
+    if key.0.is_none() && key.1.is_none() {
+        return None;
+    }
+    let cache = IGNORE_CACHE.get_or_init(|| Mutex::new(IgnoreCache::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some((k, gi)) = guard.get(dir) {
+            if *k == key {
+                return Some(gi.clone());
+            }
+        }
+    }
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
+    if key.0.is_some() {
+        builder.add(dir.join(".gitignore"));
+    }
+    if key.1.is_some() {
+        builder.add(dir.join(".ignore"));
+    }
+    let gi = Arc::new(builder.build().ok()?);
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(dir.to_path_buf(), (key, gi.clone()));
+    }
+    Some(gi)
 }
 
 /// Convenience function to discover files from paths with exclude patterns.
@@ -328,17 +363,31 @@ pub fn discover_files(paths: &[String], exclude_patterns: &[String]) -> FileDisc
     FileDiscoveryIterator::new(&config)
 }
 
-/// Convenience function to discover files with full configuration options.
-pub fn discover_files_with_config(config: &FileDiscoveryConfig) -> FileDiscoveryIterator {
-    FileDiscoveryIterator::new(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Roadmap 2.8: `.gitignore` is honoured by discovery and by the single
     /// path check the watcher uses, and can be switched off.
+    /// The per-directory matcher cache must notice an edited ignore file.
+    #[test]
+    fn test_gitignore_cache_follows_edits() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let file = root.join("gen.rs");
+        std::fs::write(&file, "x").unwrap();
+        std::fs::write(root.join(".gitignore"), "gen.rs\n").unwrap();
+        assert!(is_gitignored(&file));
+        // Repeated lookups hit the cache and agree.
+        assert!(is_gitignored(&file));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(root.join(".gitignore"), "other.rs\n").unwrap();
+        assert!(!is_gitignored(&file), "edited .gitignore must be re-read");
+        std::fs::remove_file(root.join(".gitignore")).unwrap();
+        assert!(!is_gitignored(&file));
+    }
+
     #[test]
     fn test_gitignore_is_respected_and_optional() {
         let temp = tempfile::TempDir::new().unwrap();

@@ -46,3 +46,6 @@ node_modules/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Pinned real-world corpora checked out by the benchmark workflow
+bench-corpus/

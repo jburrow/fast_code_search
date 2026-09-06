@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   watcher update pushed a duplicate path entry.
 
 ### Added
+- A real-corpus benchmark (`examples/corpus_bench.rs`, run in CI over pinned
+  tokio and Django checkouts, nightly over the Rust compiler tree) reporting
+  build throughput, resident memory, query latency percentiles, incremental
+  update cost and index save/load.
 - `/api/search` paging and budgets: `offset` (deterministic ordering, so pages
   are stable), `timeout_ms`, and `total_matches` / `truncated_by_budget` in the
   response; `has_more` is now derived from the real total. Regex and symbol
@@ -46,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full line) and `match_column` (0-based character column) on REST and gRPC.
 
 ### Added
+- Symbol references: `/api/search?references=true` (gRPC
+  `SearchRequest.references`) returns the call sites, type mentions and
+  implemented traits of an identifier as `SYMBOL_REFERENCE` results, from the
+  grammars' tags queries (the Rust query is supplemented with path and generic
+  calls). References are stored compactly (12 bytes each, names interned) and
+  persisted.
+- Multi-line regex: a pattern that mentions a newline (`\n`, `\r`, `\x0a`) or
+  sets the `s` flag (`(?s)begin.*?end`) is matched across lines and reported on
+  the line where each match starts. Other patterns stay line-oriented.
 - Query syntax for plain-text searches: `"quoted phrases"`, several AND-ed
   terms, `-term`, `file:` / `-file:`, `lang:` / `-lang:`, `case:yes`,
   `word:yes` (REST `case` / `word` parameters and gRPC `case_sensitive` /
@@ -66,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds the index once), and `cargo-deny` + Dependabot are wired into CI.
 - Trigram extraction folds case per byte and dedupes through a bitset instead of
   lowercasing a copy of every file and hashing every byte.
+- Import resolution no longer probes candidate paths through `realpath`
+  (17.6 million failing `readlink` calls while building a 6k-file corpus);
+  candidates are resolved lexically against the indexed path table. Full
+  build of tokio + Django: 25 s -> 3 s.
+- Updating one file from the watcher went from 55 ms to 4 ms on that corpus:
+  posting-list removal is parallel with a membership fast path, and compiled
+  `.gitignore` matchers are cached per directory (keyed by mtime) instead of
+  rebuilt per event.
 - Memory diet: each indexed file stores its path once (shared with the
   path lookup map) and keeps at most 64 bytes of inline state; only files
   above the mmap threshold allocate mapping state. The evictable fallback
@@ -106,11 +127,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This also keeps the mapping count far below `vm.max_map_count`.
 - `.gitignore` / `.ignore` files under the indexed paths are honoured by the
   initial build and by the watcher (`indexer.respect_gitignore`, default true).
-- **Persisted index format v5** (`FCSIDX03`): unresolved imports are stored so a
-  checkpoint restore still gains the edge when the target file is indexed later;
-  mtimes are kept at nanosecond precision, paths are stored as raw bytes, and
-  posting bitmaps are run-optimised before writing. Index files written by
-  earlier versions are rebuilt automatically.
+- **Persisted index format v7** (`FCSIDX05`): a sectioned layout (header with
+  version, CRC-32 and section lengths; metadata; fixed-width sorted trigram
+  directory; bitmap region). Saving streams the posting lists without an
+  intermediate copy and loading memory-maps the file, validates it before
+  decoding, and deserializes bitmaps in parallel from the mapping. The format
+  also stores unresolved imports (so a checkpoint restore still gains the edge
+  when the target file is indexed later), nanosecond mtimes, byte paths,
+  run-optimised bitmaps and symbol references. Index files written by earlier
+  versions are rebuilt automatically; a golden fixture pins the format.
 - Import resolution is now per language (Rust crate/module paths, Python
   relative and package imports, JS/TS extension and `index` probing, `@/`
   aliases) and no longer guesses a same-named file anywhere in the repo for bare
@@ -130,6 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer need system OpenSSL.
 - CI lints all targets and features, checks docs, has an MSRV job, and releases
   are gated on tests; the VS Code extension publishes on `ext-v*` tags only.
+  Failing test names are surfaced as workflow annotations.
+- Releases no longer ship the `-debug` archives (an unoptimised binary per
+  platform); release binaries are built with thin LTO and stripped.
 
 ### Repository
 - `.gitattributes` normalises line endings; the corrupted `.gitignore` is

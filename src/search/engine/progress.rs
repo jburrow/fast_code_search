@@ -25,6 +25,7 @@ pub(super) struct RebuildEntry {
     pub(super) path: std::path::PathBuf,
     pub(super) symbols: Vec<Symbol>,
     pub(super) imports: Vec<String>,
+    pub(super) references: Vec<crate::symbols::extractor::SymbolRef>,
     pub(super) had_content: bool,
 }
 
