@@ -121,19 +121,29 @@ fn extract_constraints(hir: &Hir) -> Vec<Vec<String>> {
     out
 }
 
+/// Most copies of a repeated subexpression that are expanded into a literal.
+/// Fewer copies than `min` is still sound (a prefix of a required string is
+/// itself required); more would only grow the literal.
+const MAX_REPEAT_EXPANSION: u32 = 16;
+
 /// Text that MUST appear, contiguously, wherever `hir` matches — or `None`.
 ///
 /// Covers plain literals, single-character case-insensitive classes (what
 /// `(?i)needle` compiles to: `[Nn][Ee]…`, returned lowercase, which is what
-/// the lowercased trigram index needs), and the first mandatory copy of a
-/// repetition (`c+` in `abc+`), so `(?i)needle` and `abc+` are accelerated
-/// instead of falling back to a full scan.
+/// the lowercased trigram index needs) and repetitions with a fixed count
+/// (`a{3}` is exactly `aaa`).
+///
+/// A repetition with a variable count (`X+`, `X{2,5}`) is **not** contiguous
+/// text: `P X+ S` matches `PXXS`, which contains `PX` and `XS` but never
+/// `PXS`. Those are run boundaries, handled by [`required_runs`]; here they
+/// yield `None`, so a concatenation containing one is never merged into a
+/// single literal.
 fn mandatory_text(hir: &Hir) -> Option<String> {
     match hir.kind() {
         HirKind::Literal(lit) => literal_to_string(lit),
         HirKind::Class(class) => single_char_class_lower(class).map(|c| c.to_string()),
         HirKind::Capture(c) => mandatory_text(&c.sub),
-        HirKind::Repetition(rep) if rep.min >= 1 => mandatory_text(&rep.sub),
+        HirKind::Repetition(rep) if rep.max == Some(rep.min) => repetition_text(rep),
         HirKind::Concat(subs) => {
             // Only when EVERY child has mandatory text is the concatenation
             // itself a contiguous mandatory string.
@@ -145,6 +155,62 @@ fn mandatory_text(hir: &Hir) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The text a repetition is guaranteed to contain: its subexpression's
+/// mandatory text `min` times (capped). `None` when `min == 0` or the
+/// subexpression has no mandatory text.
+fn repetition_text(rep: &regex_syntax::hir::Repetition) -> Option<String> {
+    if rep.min == 0 {
+        return None;
+    }
+    let sub = mandatory_text(&rep.sub)?;
+    if sub.is_empty() {
+        return None;
+    }
+    Some(sub.repeat(rep.min.min(MAX_REPEAT_EXPANSION) as usize))
+}
+
+/// Contiguous strings that every match of the concatenation `subs` must
+/// contain, in order. Children with mandatory text extend the current run;
+/// a child without any ends it and is handed to `on_other` (e.g. to recurse
+/// into a nested alternation).
+///
+/// A variable repetition `X{min,}` with mandatory text `T = X^min` ends the
+/// run *after* appending `T` (the prefix is followed by at least `min`
+/// copies) and starts the next run *with* `T` (at least `min` copies precede
+/// the suffix): for `fo+bar` the runs are `fo` and `obar`, so `foobar` is a
+/// candidate. The `prefix + T` run is skipped when the prefix is empty — it
+/// would only be a prefix of the run that follows.
+fn required_runs(subs: &[Hir], mut on_other: impl FnMut(&Hir)) -> Vec<String> {
+    let mut runs = Vec::new();
+    let mut current = String::new();
+    for sub in subs {
+        if let Some(text) = mandatory_text(sub) {
+            current.push_str(&text);
+            continue;
+        }
+        let variable_rep = match sub.kind() {
+            HirKind::Repetition(rep) => repetition_text(rep),
+            _ => None,
+        };
+        if let Some(text) = variable_rep {
+            if !current.is_empty() {
+                current.push_str(&text);
+                runs.push(std::mem::take(&mut current));
+            }
+            current = text;
+        } else {
+            if !current.is_empty() {
+                runs.push(std::mem::take(&mut current));
+            }
+            on_other(sub);
+        }
+    }
+    if !current.is_empty() {
+        runs.push(current);
+    }
+    runs
 }
 
 /// If `class` matches exactly the case variants of one character, that
@@ -190,22 +256,10 @@ fn single_char_class_lower(class: &regex_syntax::hir::Class) -> Option<char> {
 fn collect_constraints(hir: &Hir, out: &mut Vec<Vec<String>>) {
     match hir.kind() {
         HirKind::Concat(subs) => {
-            // Merge consecutive mandatory-text children into one required run.
-            let mut current = String::new();
-            for sub in subs.iter() {
-                if let Some(s) = mandatory_text(sub) {
-                    current.push_str(&s);
-                } else {
-                    if current.len() >= 3 {
-                        out.push(vec![std::mem::take(&mut current)]);
-                    }
-                    current.clear();
-                    collect_constraints(sub, out);
-                }
-            }
-            if current.len() >= 3 {
-                out.push(vec![current]);
-            }
+            // Each required run is a constraint of its own; children without
+            // mandatory text (alternations, nested groups) contribute theirs.
+            let runs = required_runs(subs, |other| collect_constraints(other, out));
+            out.extend(runs.into_iter().filter(|r| r.len() >= 3).map(|r| vec![r]));
         }
         HirKind::Alternation(_) => {
             // Usable only if EVERY branch contributes a required literal, so that
@@ -216,8 +270,14 @@ fn collect_constraints(hir: &Hir, out: &mut Vec<Vec<String>>) {
         }
         HirKind::Capture(c) => collect_constraints(&c.sub, out),
         HirKind::Repetition(rep) => {
-            // Only required when the subexpression must appear at least once.
-            if rep.min >= 1 {
+            // `sub^min` is required text of its own; otherwise (a subexpression
+            // without mandatory text) its constraints are still required when
+            // it must appear at least once.
+            if let Some(text) = repetition_text(rep) {
+                if text.len() >= 3 {
+                    out.push(vec![text]);
+                }
+            } else if rep.min >= 1 {
                 collect_constraints(&rep.sub, out);
             }
         }
@@ -254,28 +314,14 @@ fn alternation_constraint(hir: &Hir) -> Option<Vec<String>> {
 /// Return the longest literal that is guaranteed to appear in any string matching
 /// `hir` (a single alternation branch), or `None` if no such >= 3-char literal exists.
 fn branch_required_literal(hir: &Hir) -> Option<String> {
-    fn consider(best: &mut Option<String>, candidate: &str) {
-        if candidate.len() >= 3 && best.as_ref().is_none_or(|b| candidate.len() > b.len()) {
-            *best = Some(candidate.to_string());
-        }
-    }
-
     match hir.kind() {
         HirKind::Literal(_) | HirKind::Class(_) => mandatory_text(hir).filter(|s| s.len() >= 3),
         HirKind::Concat(subs) => {
-            // Longest run of consecutive mandatory-text children.
-            let mut best: Option<String> = None;
-            let mut current = String::new();
-            for sub in subs.iter() {
-                if let Some(s) = mandatory_text(sub) {
-                    current.push_str(&s);
-                } else {
-                    consider(&mut best, &current);
-                    current.clear();
-                }
-            }
-            consider(&mut best, &current);
-            best
+            // Longest required run (repetitions split runs, see `required_runs`).
+            required_runs(subs, |_| {})
+                .into_iter()
+                .filter(|r| r.len() >= 3)
+                .max_by_key(String::len)
         }
         HirKind::Capture(c) => branch_required_literal(&c.sub),
         HirKind::Repetition(rep) if rep.min >= 1 => branch_required_literal(&rep.sub),
@@ -370,9 +416,45 @@ mod tests {
     #[test]
     fn test_repetition_prefix_is_required() {
         assert_eq!(constraints("abc+"), vec![vec!["abc".to_string()]]);
-        assert_eq!(constraints("abc{2,}"), vec![vec!["abc".to_string()]]);
+        assert_eq!(constraints("abc{2,}"), vec![vec!["abcc".to_string()]]);
         assert!(constraints("abc*").is_empty(), "only 'ab' is mandatory");
         assert_eq!(constraints("(abc)+d"), vec![vec!["abcd".to_string()]]);
+    }
+
+    /// Review 1.1: a variable repetition splits the required run. `P X+ S`
+    /// requires `PX` and `XS` but never `PXS` (`fo+bar` matches `foobar`,
+    /// which does not contain `fobar`). A fixed count is plain text.
+    #[test]
+    fn test_repetition_is_a_run_boundary() {
+        let flat = |p: &str| -> Vec<String> { constraints(p).into_iter().flatten().collect() };
+        assert_eq!(flat("fo+bar"), vec!["obar"]);
+        assert_eq!(flat("foo+bar"), vec!["foo", "obar"]);
+        assert_eq!(flat("xa{3}y"), vec!["xaaay"]);
+        assert_eq!(flat("xa{3,}y"), vec!["xaaa", "aaay"]);
+        assert_eq!(flat("x{2,5}y"), vec!["xxy"]);
+        assert_eq!(flat("foo(bar)+baz"), vec!["foobar", "barbaz"]);
+        assert!(flat("(ab)*c").is_empty());
+        assert_eq!(flat(r"\bfoo+\b"), vec!["foo"]);
+        // Nested in a group and inside an alternation branch.
+        assert_eq!(flat("x(fo+bar)y"), vec!["obar"]);
+        assert_eq!(flat("fo+bar|hello"), vec!["obar", "hello"]);
+        // A huge count is capped, and a prefix of a required string is still required.
+        assert_eq!(flat("a{1000}"), vec!["a".repeat(16)]);
+        for (pattern, text) in [
+            ("fo+bar", "foobar"),
+            ("xa{3}y", "xaaay"),
+            ("x{2,5}y", "xxxxy"),
+            ("foo(bar)+baz", "foobarbarbaz"),
+        ] {
+            let a = RegexAnalysis::analyze(pattern).unwrap();
+            assert!(a.regex.is_match(text));
+            for group in &a.constraints {
+                assert!(
+                    group.iter().any(|lit| text.contains(lit.as_str())),
+                    "{pattern}: {text} lacks every literal of {group:?}"
+                );
+            }
+        }
     }
 
     #[test]

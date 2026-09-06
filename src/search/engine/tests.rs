@@ -1834,4 +1834,101 @@ fn test_source_base_path_respects_component_boundaries() {
     assert_eq!(result.removed_files.len(), 1);
     assert!(result.removed_files[0].ends_with("a.rs"));
     assert_eq!(reloaded.search("fn b", 5).len(), 1);
+
+/// Review 1.1 / 1.2: the trigram candidate set derived from a regex's
+/// literal constraints must be a superset of the documents the compiled
+/// regex matches — for repetitions, fixed counts, case-insensitive runs,
+/// alternations and word boundaries alike — and the interesting patterns
+/// must actually be accelerated (otherwise the property is vacuous).
+#[test]
+fn test_regex_candidates_are_superset_of_matches() {
+    use crate::search::regex_search::RegexAnalysis;
+    let temp_dir = TempDir::new().unwrap();
+    let corpus: &[&str] = &[
+        "fn foobar() {}\n",
+        "fooobar and fooooobar\n",
+        "fobar only\n",
+        "xaaay\n",
+        "xaaaay\n",
+        "xaay\n",
+        "TASK: Task list\n",
+        "mask pass MASK\n",
+        "foobarbarbaz\n",
+        "foobarbaz\n",
+        "foobaz\n",
+        "abc\n",
+        "ababababc\n",
+        "xxy xxxxxy xxxxxxxxxxy\n",
+        "bbbc bc\n",
+        "hello there\n",
+        "world here\n",
+        "  foooo  \n",
+        "foo\n",
+        "getValue setValue\n",
+        "unrelated content with nothing special\n",
+        "Kelvin K sign\n",
+        "aaaaaaaaaaaaaaaaaaaaaaaa\n",
+    ];
+    let mut engine = SearchEngine::new();
+    let mut ids = Vec::new();
+    for (i, text) in corpus.iter().enumerate() {
+        let path = temp_dir.path().join(format!("doc{i}.txt"));
+        fs::write(&path, text).unwrap();
+        engine.index_file(&path).unwrap();
+        ids.push(engine.find_file_id(&path.to_string_lossy()).unwrap());
+    }
+    engine.finalize();
+
+    let patterns = [
+        "fo+bar",
+        "foo+bar",
+        "xa{3}y",
+        "xa{3,}y",
+        "(?i)task",
+        "(?i)mask",
+        "(?i)pass",
+        "foo(bar)+baz",
+        "a|b+c",
+        "(ab)*c",
+        "x{2,5}y",
+        r"\bfoo+\b",
+        "hello|world",
+        "(get|set)Value",
+        "a{20}",
+        "(?i)Kelvin",
+        "foobar",
+        "fo{2,}b",
+    ];
+    let mut accelerated = 0;
+    for pattern in patterns {
+        let analysis = RegexAnalysis::analyze(pattern).unwrap();
+        let candidates = engine
+            .regex_candidate_docs(&analysis)
+            .unwrap_or_else(|| engine.trigram_index.all_documents().into_owned());
+        if analysis.is_accelerated {
+            accelerated += 1;
+        }
+        for (i, text) in corpus.iter().enumerate() {
+            if analysis.regex.is_match(text) {
+                assert!(
+                    candidates.contains(ids[i]),
+                    "{pattern}: doc {i} ({text:?}) matches but is not a candidate; \
+                     constraints {:?}",
+                    analysis.constraints
+                );
+            }
+        }
+        // End to end: the search itself finds every matching document.
+        let hits = engine.search_regex(pattern, "", "", 100).unwrap();
+        let hit_ids: std::collections::HashSet<u32> = hits.iter().map(|h| h.file_id).collect();
+        for (i, text) in corpus.iter().enumerate() {
+            if text.lines().any(|l| analysis.regex.is_match(l)) {
+                assert!(hit_ids.contains(&ids[i]), "{pattern}: doc {i} not found");
+            }
+        }
+    }
+    assert!(
+        accelerated >= 12,
+        "expected most patterns to be accelerated, got {accelerated}"
+    );
 }
