@@ -1084,7 +1084,7 @@ impl SearchEngine {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
 
-        // File-level AND / NOT checks before any per-line work.
+        // File-level NOT check before any per-line work.
         if terms
             .exclude
             .iter()
@@ -1092,13 +1092,40 @@ impl SearchEngine {
         {
             return None;
         }
-        if terms
-            .terms
-            .iter()
-            .skip(1)
-            .any(|(o, l)| line_hits(&content, o, l, opts).is_empty())
-        {
-            return None;
+
+        // Hits to report, each with the number of distinct terms on its line.
+        //
+        // One term: every hit line, in document order (the ASCII
+        // case-insensitive scan when no option is set).
+        //
+        // Several terms (file-level AND): every term must hit somewhere or
+        // the file is skipped; a line is reported once, by the earliest term
+        // that matched it, and lines are ordered by how many distinct terms
+        // they contain (most first, then document order) so that lines
+        // holding every term are emitted before the per-document cap and the
+        // match budget can cut anything off. The count also scales the
+        // line's score below, so those lines rank first globally.
+        let mut all_hits: Vec<(LineHit<'_>, usize)>;
+        if terms.terms.len() == 1 {
+            let hits = if !opts.case_sensitive && !opts.whole_word && query_lower.is_ascii() {
+                ascii_ci_line_hits(&content, query_lower)
+            } else {
+                line_hits(&content, original_query, query_lower, opts)
+            };
+            all_hits = hits.into_iter().map(|h| (h, 1)).collect();
+        } else {
+            let mut by_line: FxHashMap<usize, (LineHit<'_>, usize)> = FxHashMap::default();
+            for (o, l) in &terms.terms {
+                let hits = line_hits(&content, o, l, opts);
+                if hits.is_empty() {
+                    return None; // AND: a term is missing from the file
+                }
+                for hit in hits {
+                    by_line.entry(hit.line_num).or_insert((hit, 0)).1 += 1;
+                }
+            }
+            all_hits = by_line.into_values().collect();
+            all_hits.sort_by_key(|(h, n)| (std::cmp::Reverse(*n), h.line_num));
         }
 
         // Get symbols for this file. The symbol cache may be empty/missing if:
@@ -1127,81 +1154,71 @@ impl SearchEngine {
         let mut is_src_lib = false;
         let mut symbol_maps: Option<SymbolLineMaps<'_>> = None;
 
-        // Per-hit body shared by the ASCII whole-content scan and the
-        // per-line Unicode fallback. Returns false to stop scanning.
-        let mut emit =
-            |line_num: usize, line: &str, match_start: usize, match_end: usize| -> bool {
-                if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
-                    return false;
-                }
-                let path_ref = display_path.get_or_insert_with(|| {
-                    let raw = file.path.to_string_lossy().into_owned();
-                    let path_bytes = raw.as_bytes();
-                    is_src_lib = contains_bytes(path_bytes, b"/src/")
-                        || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/")
-                        || contains_bytes(path_bytes, b"\\lib\\");
-                    self.display_path_for(doc_id, &file.path)
-                });
-                let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
-
-                let is_symbol_def = maps.is_definition_line(line_num);
-                let score = calculate_score_inline(
-                    line,
-                    original_query,
-                    query_lower,
-                    is_symbol_def,
-                    is_src_lib,
-                    dependency_boost,
-                );
-                let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
-                    names
-                        .iter()
-                        .any(|n| contains_case_insensitive(n, query_lower))
-                });
-
-                let truncated = truncate_around_match(line, match_start, match_end);
-                matches.push(SearchMatch {
-                    file_id: doc_id,
-                    file_path: path_ref.clone(),
-                    line_number: line_num + 1, // 1-based line numbers
-                    content: truncated.content,
-                    match_start: truncated.match_start,
-                    match_end: truncated.match_end,
-                    content_truncated: truncated.was_truncated,
-                    line_match_start: match_start,
-                    line_match_end: match_end,
-                    match_column: char_column(line, match_start),
-                    score,
-                    is_symbol,
-                    is_reference: false,
-                    dependency_count,
-                });
-                true
-            };
-
-        // Hits for every term, merged by line (a line reported once, by the
-        // earliest term that matched it), in document order.
-        let mut all_hits: Vec<LineHit<'_>> = Vec::new();
-        if terms.terms.len() == 1
-            && !opts.case_sensitive
-            && !opts.whole_word
-            && query_lower.is_ascii()
-        {
-            all_hits = ascii_ci_line_hits(&content, query_lower);
-        } else {
-            let mut seen_lines = FxHashSet::default();
-            for (o, l) in &terms.terms {
-                for hit in line_hits(&content, o, l, opts) {
-                    if seen_lines.insert(hit.line_num) {
-                        all_hits.push(hit);
-                    }
-                }
+        // Per-hit body; `term_hits` is the number of distinct query terms on
+        // the line (always 1 for a single-term query). Returns false to stop.
+        let mut emit = |line_num: usize,
+                        line: &str,
+                        match_start: usize,
+                        match_end: usize,
+                        term_hits: usize|
+         -> bool {
+            if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
+                return false;
             }
-            all_hits.sort_by_key(|h| h.line_num);
-        }
-        for hit in all_hits {
-            if !emit(hit.line_num, hit.line, hit.start, hit.end) {
+            let path_ref = display_path.get_or_insert_with(|| {
+                let raw = file.path.to_string_lossy().into_owned();
+                let path_bytes = raw.as_bytes();
+                is_src_lib = contains_bytes(path_bytes, b"/src/")
+                    || contains_bytes(path_bytes, b"\\src\\")
+                    || contains_bytes(path_bytes, b"/lib/")
+                    || contains_bytes(path_bytes, b"\\lib\\");
+                self.display_path_for(doc_id, &file.path)
+            });
+            let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
+
+            let is_symbol_def = maps.is_definition_line(line_num);
+            let mut score = calculate_score_inline(
+                line,
+                original_query,
+                query_lower,
+                is_symbol_def,
+                is_src_lib,
+                dependency_boost,
+            );
+            if term_hits > 1 {
+                // A line holding several of the query's terms outranks
+                // one holding a single term (single-term scores are
+                // untouched).
+                score *= term_hits as f64;
+            }
+            let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
+                names
+                    .iter()
+                    .any(|n| contains_case_insensitive(n, query_lower))
+            });
+
+            let truncated = truncate_around_match(line, match_start, match_end);
+            matches.push(SearchMatch {
+                file_id: doc_id,
+                file_path: path_ref.clone(),
+                line_number: line_num + 1, // 1-based line numbers
+                content: truncated.content,
+                match_start: truncated.match_start,
+                match_end: truncated.match_end,
+                content_truncated: truncated.was_truncated,
+                line_match_start: match_start,
+                line_match_end: match_end,
+                match_column: char_column(line, match_start),
+                score,
+                is_symbol,
+                is_reference: false,
+                dependency_count,
+            });
+            true
+        };
+
+        for (hit, term_hits) in all_hits {
+            if !emit(hit.line_num, hit.line, hit.start, hit.end, term_hits) {
                 break;
             }
         }

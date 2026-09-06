@@ -4,6 +4,17 @@
 //! Everything is optional: a query without operators is a single term and
 //! behaves exactly as before. Operators only apply to plain-text searches;
 //! regex queries are passed through untouched.
+//!
+//! # Several terms
+//!
+//! `fn main` is two terms. A file matches only when it contains **every**
+//! term (file-level AND); a `"quoted phrase"` is one term matched literally.
+//! Within a matching file, every line containing at least one term is a
+//! hit, reported once (by the earliest term that matched it). Lines are
+//! ranked by how many distinct terms they contain: the line score is
+//! multiplied by that count, and within a file the lines holding the most
+//! terms are emitted first, so they are never cut off by the per-file match
+//! cap or the query's match budget. A single-term query is unaffected.
 
 /// Matching options that change how a term is verified in file content.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -17,7 +28,8 @@ pub struct SearchOptions {
 /// A parsed query.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedQuery {
-    /// Terms that must all appear in a file (lines matching any are returned).
+    /// Terms that must all appear in a file. Lines matching any are
+    /// returned, those matching the most terms first (see the module docs).
     pub terms: Vec<String>,
     /// Files containing any of these are dropped.
     pub exclude_terms: Vec<String>,

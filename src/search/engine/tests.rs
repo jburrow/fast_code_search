@@ -1978,3 +1978,88 @@ fn test_references_survive_stale_positions() {
     fs::write(&a, "fn other() {}\n").unwrap();
     assert_eq!(count(&engine), 0);
 }
+
+/// Review 1.5: with several terms, lines containing every term rank first
+/// and are emitted before the per-document cap, so `fn main` finds
+/// `fn main()` even in a file with hundreds of other `fn` lines; single-term
+/// queries keep their document-order, unscaled results.
+#[test]
+fn test_multi_term_lines_rank_by_terms_matched() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    // 150 `fn` lines (only the first term), then the line with both terms,
+    // then one more `main` line (only the second term).
+    let mut big = String::new();
+    for i in 0..150 {
+        big.push_str(&format!("fn helper_{i}() {{}}\n"));
+    }
+    big.push_str("fn main() {}\n");
+    big.push_str("// main entry\n");
+    fs::write(temp_dir.path().join("big.rs"), &big).unwrap();
+    // A second file where the first `fn` line comes before the joint line.
+    fs::write(
+        temp_dir.path().join("small.rs"),
+        "fn other() {}\nlet x = 1;\nfn main() { other() }\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(temp_dir.path().join("big.rs")).unwrap();
+    engine.index_file(temp_dir.path().join("small.rs")).unwrap();
+    engine.finalize();
+
+    let (hits, _) = engine
+        .search_parsed(
+            &parse("fn main"),
+            "",
+            "",
+            SearchLimits::new(500),
+            RankMode::Full,
+        )
+        .unwrap();
+    let name = |h: &SearchMatch| h.file_path.rsplit('/').next().unwrap().to_string();
+    // The two lines holding both terms come first, ahead of every
+    // single-term line, and the capped big file still reports its joint
+    // line (line 151, beyond MAX_MATCHES_PER_DOC) and its `main`-only line.
+    assert!(hits.len() >= 2, "{}", hits.len());
+    let top: Vec<(String, usize)> = hits[..2].iter().map(|h| (name(h), h.line_number)).collect();
+    assert!(top.contains(&("big.rs".into(), 151)), "{top:?}");
+    assert!(top.contains(&("small.rs".into(), 3)), "{top:?}");
+    assert!(hits[..2].iter().all(|h| h.content.contains("fn main")));
+    let big_lines: Vec<usize> = hits
+        .iter()
+        .filter(|h| name(h) == "big.rs")
+        .map(|h| h.line_number)
+        .collect();
+    assert_eq!(big_lines.len(), SearchEngine::MAX_MATCHES_PER_DOC);
+    assert_eq!(big_lines[0], 151, "joint line first");
+    // Single-term lines follow in document order and the cap still applies
+    // to them, so the `main`-only line 152 is cut off like `fn` line 150.
+    assert!(!big_lines.contains(&152), "{big_lines:?}");
+    let mut rest = big_lines[1..].to_vec();
+    rest.sort_unstable();
+    assert_eq!(rest, (1..100).collect::<Vec<usize>>());
+    // The multiplier is exactly the number of distinct terms on the line.
+    let joint = hits.iter().find(|h| h.line_number == 3).unwrap();
+    let single = hits
+        .iter()
+        .find(|h| name(h) == "small.rs" && h.line_number == 1)
+        .unwrap();
+    assert!(joint.score > single.score, "{joint:?} vs {single:?}");
+    let (only_fn, _) = engine
+        .search_parsed(&parse("fn"), "", "", SearchLimits::new(500), RankMode::Full)
+        .unwrap();
+    let small_fn_main = only_fn
+        .iter()
+        .find(|h| name(h) == "small.rs" && h.line_number == 3)
+        .unwrap();
+    assert_eq!(joint.score, small_fn_main.score * 2.0);
+
+    // Single term: document order within the file, unscaled, capped.
+    let big_only: Vec<usize> = only_fn
+        .iter()
+        .filter(|h| name(h) == "big.rs")
+        .map(|h| h.line_number)
+        .collect();
+    assert_eq!(big_only.len(), SearchEngine::MAX_MATCHES_PER_DOC);
+    assert!(!big_only.contains(&151), "cut off by the cap, as before");
+}
