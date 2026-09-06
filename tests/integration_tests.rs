@@ -2714,9 +2714,7 @@ async fn test_concurrent_search_during_updates() -> Result<()> {
 #[tokio::test]
 async fn test_real_watcher_events_end_to_end() -> Result<()> {
     use fast_code_search::config::IndexerConfig;
-    use fast_code_search::search::{
-        apply_changes, FileChange, FileWatcher, SearchEngine, WatcherConfig,
-    };
+    use fast_code_search::search::{apply_changes, FileWatcher, SearchEngine, WatcherConfig};
     use tempfile::TempDir;
 
     let temp = TempDir::new()?;
@@ -2732,64 +2730,67 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
         exclude_patterns: Vec::new(),
     })?;
 
-    // Wait up to `wait` for the first event, then keep draining until the
-    // watcher has been quiet for a while. Backends differ in how many events
-    // one disk operation produces (FSEvents on macOS reports a create as
-    // Create + Modify, and a rename as two Modify(Name) events that may or
-    // may not be paired), so a step must consume everything it caused
-    // rather than exactly one event; a leftover would be misread as the
-    // next step's event.
-    let collect = |watcher: &FileWatcher, wait: Duration| -> Vec<FileChange> {
-        let deadline = std::time::Instant::now() + wait;
-        let mut out = Vec::new();
-        while out.is_empty() && std::time::Instant::now() < deadline {
-            if let Some(c) = watcher.recv_timeout(Duration::from_millis(200)) {
-                out.push(c);
+    // Backends differ in how many events one disk operation produces and
+    // when they arrive: inotify is precise, FSEvents on macOS coalesces and
+    // can deliver the halves of a rename late and unpaired, so the first
+    // event seen after an operation may belong to the previous one. Each
+    // step therefore keeps draining events (quiet gap 500 ms), applying them
+    // and re-checking the expected end state until it holds or 8 s pass,
+    // which is what any consumer of the watcher has to do anyway.
+    fn settle(
+        watcher: &FileWatcher,
+        engine: &mut SearchEngine,
+        config: &IndexerConfig,
+        what: &str,
+        ok: impl Fn(&SearchEngine) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        let mut seen = 0usize;
+        loop {
+            let mut batch = Vec::new();
+            while let Some(c) = watcher.recv_timeout(Duration::from_millis(500)) {
+                batch.push(c);
             }
+            seen += batch.len();
+            if !batch.is_empty() {
+                apply_changes(engine, &batch, config);
+            }
+            if ok(engine) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what}: expected state not reached after {seen} events"
+            );
         }
-        while let Some(c) = watcher.recv_timeout(Duration::from_millis(500)) {
-            out.push(c);
-        }
-        out
-    };
+    }
 
     // create
     let a = root.join("w_a.rs");
     std::fs::write(&a, "fn watch_created() {}\n")?;
-    let ev = collect(&watcher, Duration::from_secs(5));
-    assert!(!ev.is_empty(), "expected a create event");
-    apply_changes(&mut engine, &ev, &config);
-    assert_eq!(engine.search("watch_created", 5).len(), 1);
+    settle(&watcher, &mut engine, &config, "create", |e| {
+        e.search("watch_created", 5).len() == 1
+    });
 
     // modify
     std::fs::write(&a, "fn watch_modified() {}\n")?;
-    let ev = collect(&watcher, Duration::from_secs(5));
-    assert!(!ev.is_empty(), "expected a modify event");
-    apply_changes(&mut engine, &ev, &config);
-    assert!(engine.search("watch_created", 5).is_empty());
-    assert_eq!(engine.search("watch_modified", 5).len(), 1);
+    settle(&watcher, &mut engine, &config, "modify", |e| {
+        e.search("watch_created", 5).is_empty() && e.search("watch_modified", 5).len() == 1
+    });
 
     // rename
     let b = root.join("w_b.rs");
     std::fs::rename(&a, &b)?;
-    let ev = collect(&watcher, Duration::from_secs(5));
-    assert!(!ev.is_empty(), "expected a rename event");
-    apply_changes(&mut engine, &ev, &config);
-    let hits = engine.search("watch_modified", 5);
-    assert_eq!(hits.len(), 1, "{hits:?}");
-    assert!(
-        hits[0].file_path.ends_with("w_b.rs"),
-        "{}",
-        hits[0].file_path
-    );
+    settle(&watcher, &mut engine, &config, "rename", |e| {
+        let hits = e.search("watch_modified", 5);
+        hits.len() == 1 && hits[0].file_path.ends_with("w_b.rs")
+    });
 
     // delete
     std::fs::remove_file(&b)?;
-    let ev = collect(&watcher, Duration::from_secs(5));
-    assert!(!ev.is_empty(), "expected a delete event");
-    apply_changes(&mut engine, &ev, &config);
-    assert!(engine.search("watch_modified", 5).is_empty());
-    assert_eq!(engine.get_stats().num_files, 0, "live file count");
+    settle(&watcher, &mut engine, &config, "delete", |e| {
+        e.search("watch_modified", 5).is_empty() && e.get_stats().num_files == 0
+    });
     Ok(())
 }
 
