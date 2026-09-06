@@ -1834,6 +1834,7 @@ fn test_source_base_path_respects_component_boundaries() {
     assert_eq!(result.removed_files.len(), 1);
     assert!(result.removed_files[0].ends_with("a.rs"));
     assert_eq!(reloaded.search("fn b", 5).len(), 1);
+}
 
 /// Review 1.1 / 1.2: the trigram candidate set derived from a regex's
 /// literal constraints must be a superset of the documents the compiled
