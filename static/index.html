@@ -89,7 +89,7 @@
         }
         .ctx-loading {
             padding: 1rem;
-            color: #7a785f;
+            color: #5f5d48;
         }
         /* Deps popover */
         .deps-popover {
@@ -124,7 +124,7 @@
         .deps-section-title {
             font-size: 0.7rem;
             font-weight: 600;
-            color: #7a785f;
+            color: #5f5d48;
             text-transform: uppercase;
             letter-spacing: 0.04em;
             margin-bottom: 0.3rem;
@@ -165,7 +165,7 @@
             font-size: 0.72rem;
         }
         .deps-more:hover { text-decoration: underline; }
-        .deps-popover-loading { padding: 0.5rem 0.65rem; color: #7a785f; font-size: 0.75rem; }
+        .deps-popover-loading { padding: 0.5rem 0.65rem; color: #5f5d48; font-size: 0.75rem; }
         /* File modal */
         .file-modal-overlay {
             position: fixed;
@@ -230,7 +230,7 @@
             border-bottom: 1px solid #cbc8aa;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.72rem;
-            color: #7a785f;
+            color: #5f5d48;
         }
         .file-code { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
         .file-line {
@@ -242,7 +242,7 @@
         /* Matched line highlight */
         .file-line-highlight { background: var(--hl-line-bg) !important; }
         .file-line-num {
-            color: #7a785f;
+            color: #5f5d48;
             min-width: 3rem;
             text-align: right;
             padding-right: 1.25rem;
@@ -254,14 +254,14 @@
         .empty-state {
             padding: 3rem 1.5rem;
             text-align: center;
-            color: #7a785f;
+            color: #5f5d48;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.85rem;
         }
         .loading {
             padding: 2rem;
             text-align: center;
-            color: #7a785f;
+            color: #5f5d48;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.85rem;
         }
@@ -280,7 +280,7 @@
             text-align: center;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.82rem;
-            color: #7a785f;
+            color: #5f5d48;
         }
         .loading-progress {
             width: 200px;
@@ -331,6 +331,13 @@
         #query:disabled { opacity: 0.6; cursor: not-allowed; }
         /* Mode toggle "on" look — set only by syncToggleVisuals() in keyword.js */
         .mode-toggle.toggle-on { background: #fff900; color: #000; }
+        /* The checkbox inside is sr-only, so show keyboard focus on the label */
+        .mode-toggle:has(input:focus-visible) { outline: 2px solid #646100; outline-offset: -2px; }
+        /* Keyboard-selected result group (j/k) */
+        .result-group:focus-visible { outline: 3px solid #646100; outline-offset: 2px; }
+        /* Tailwind's outline colour (#5f5d48) is 4.2:1 on the #fefae4 ground and
+           3.2:1 on the #dedac6 result headers; #5f5d48 is 6.4:1 and 4.75:1. */
+        .text-outline { color: #5f5d48; }
         /* Paging */
         .load-more-row { display: flex; justify-content: center; padding: 0.5rem 0 1rem; }
         .load-more-btn {
@@ -418,7 +425,7 @@
             display: flex;
             align-items: center;
             padding: 0 0.5rem 0 0.6rem;
-            color: #7a785f;
+            color: #5f5d48;
             flex-shrink: 0;
             font-size: 16px !important;
         }
@@ -436,7 +443,7 @@
             width: 120px;
         }
         @media (min-width: 1024px) { #nav-query { width: 260px; } }
-        #nav-query::placeholder { color: #7a785f; }
+        #nav-query::placeholder { color: #5f5d48; }
         #nav-search-btn {
             display: flex;
             align-items: center;
@@ -490,7 +497,7 @@
             <span title="Number of unique 3-character sequences">TRIGRAMS: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
             <span title="Number of import/dependency edges used to boost relevance scoring">DEPS: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
         </div>
-        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors text-xl" title="Documentation">help_outline</a>
+        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors text-xl" title="Documentation" aria-label="Documentation">help_outline</a>
     </header>
 
     <!-- ===== PROGRESS PANEL ===== -->
@@ -522,8 +529,9 @@
                 <!-- Search input -->
                 <div class="flex-grow relative">
                     <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-                        <span class="material-symbols-outlined text-outline text-xl">search</span>
+                        <span class="material-symbols-outlined text-outline text-xl" aria-hidden="true">search</span>
                     </div>
+                    <label for="query" class="sr-only">Search query</label>
                     <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
                         class="w-full bg-surface-container-lowest border border-black pl-12 pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
                     <div class="absolute inset-y-0 right-4 flex items-center gap-2">
@@ -568,7 +576,7 @@
 
             <!-- Results meta bar (shown after search) -->
             <div id="results-header" class="flex justify-between items-center border-b border-outline-variant pb-2 px-1" style="display: none;">
-                <div class="flex gap-4 items-center flex-wrap">
+                <div class="flex gap-4 items-center flex-wrap" aria-live="polite" aria-atomic="true">
                     <span id="results-count" class="font-label text-xs font-bold bg-black text-white px-2 py-0.5"></span>
                     <span id="search-time" class="font-label text-xs text-outline italic"></span>
                     <span id="ranking-info" class="font-label text-xs text-outline"></span>

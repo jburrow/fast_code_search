@@ -1377,6 +1377,8 @@ function renderSearch(search, durationMs, opts = {}) {
     }
 
     if (search.results.length === 0) {
+        resultsContainer.removeAttribute('role');
+        resultsContainer.removeAttribute('aria-label');
         resultsContainer.innerHTML = `<div class="empty-state no-results"><p>No results found for "${escapeHtml(query)}"</p></div>`;
         return;
     }
@@ -1406,8 +1408,9 @@ function renderSearch(search, durationMs, opts = {}) {
 
         // Dependency badge
         const depBadge = depCount > 0
-            ? `<span class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</span>`
+            ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+                aria-label="${depCount} dependents; show files that import this file"
+                data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</button>`
             : '';
 
         // A filename hit has line_number 0: the viewer opens at line 1 for it.
@@ -1441,7 +1444,7 @@ function renderSearch(search, durationMs, opts = {}) {
                         ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
                         : '';
                     return `<div style="${lineStyle}">` +
-                        `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
+                        `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#5f5d48;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
                         `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
                         `</div>`;
                 }).join('');
@@ -1464,19 +1467,20 @@ function renderSearch(search, durationMs, opts = {}) {
                 <div style="${hitContainerStyle}">
                     <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
                         <div class="flex items-center gap-2 min-w-0">
-                            <span class="font-label text-xs" style="color:#7a785f;flex-shrink:0">${lineLabel}</span>
+                            <span class="font-label text-xs" style="color:#5f5d48;flex-shrink:0">${lineLabel}</span>
                             <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
                             ${truncatedBadge}
                         </div>
                         <div class="flex items-center gap-3 flex-shrink-0">
-                            <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7a785f;text-transform:uppercase"
+                            <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5f5d48;text-transform:uppercase"
                                 title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)&#10;&#10;Higher scores rank first.">
                                 ${result.score.toFixed(2)}
                             </span>
-                            <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
-                                style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                            <button type="button" class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
+                                style="font-size:18px;cursor:pointer;color:#5f5d48;background:none;border:none;padding:0"
                                 data-file-path="${escapeHtml(result.file_path)}"
                                 data-line-number="${viewLine}"
+                                aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}"
                                 title="View full file at this line">open_in_new</button>
                         </div>
                     </div>
@@ -1488,27 +1492,29 @@ function renderSearch(search, durationMs, opts = {}) {
         }).join('');
 
         return `
-            <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
+            <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
                 <!-- File header -->
                 <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
                     <div class="flex items-center gap-2 min-w-0">
                         <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">${fileIcon}</span>
                         <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
-                            ${dirPath ? `<span style="color:#7a785f;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
+                            ${dirPath ? `<span style="color:#5f5d48;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
                         </span>
                         <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
                         ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
                         ${depBadge}
-                        <button class="copy-path-btn material-symbols-outlined hover:text-primary transition-colors"
-                            style="font-size:16px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                        <button type="button" class="copy-path-btn material-symbols-outlined hover:text-primary transition-colors"
+                            style="font-size:16px;cursor:pointer;color:#5f5d48;background:none;border:none;padding:0"
                             data-file-path="${escapeHtml(group.filePath)}"
+                            aria-label="Copy file path"
                             title="Copy file path">content_copy</button>
-                        <button class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
-                            style="font-size:18px;cursor:pointer;color:#7a785f;background:none;border:none;padding:0"
+                        <button type="button" class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
+                            style="font-size:18px;cursor:pointer;color:#5f5d48;background:none;border:none;padding:0"
                             data-file-path="${escapeHtml(group.filePath)}"
                             data-line-number="${groupViewLine}"
+                            aria-label="View full file"
                             title="View full file">open_in_new</button>
                     </div>
                 </div>
@@ -1525,6 +1531,10 @@ function renderSearch(search, durationMs, opts = {}) {
            </div>`
         : '';
 
+    // The groups are a keyboard-selectable list (j/k, Enter); the listbox
+    // role gives aria-selected on each group meaning.
+    resultsContainer.setAttribute('role', 'listbox');
+    resultsContainer.setAttribute('aria-label', `Search results for ${query}`);
     resultsContainer.innerHTML = groupsHtml + loadMoreHtml;
 
     const loadMoreBtn = document.getElementById('load-more-btn');
@@ -1602,9 +1612,8 @@ function renderSearch(search, durationMs, opts = {}) {
         });
     });
 
-    if (opts.preserveSelection && _selectedGroupIndex >= 0) {
-        highlightSelectedGroup(getResultGroups());
-    }
+    // Roving tabindex: the selected group (or the first) is the one Tab reaches.
+    highlightSelectedGroup(getResultGroups(), { focus: false });
 }
 
 const debouncedSearch = debounce(() => performSearch({ trigger: 'input' }), DEBOUNCE_MS);
@@ -1635,11 +1644,22 @@ function getResultGroups() {
     return Array.from(resultsContainer.querySelectorAll('.result-group'));
 }
 
-function highlightSelectedGroup(groups) {
+/**
+ * Reflect `_selectedGroupIndex` in the DOM: outline, aria-selected and a
+ * roving tabindex (the selected group, or the first, is the one Tab reaches),
+ * and move real focus to it so screen readers follow j/k.
+ * @param {HTMLElement[]} groups
+ * @param {{focus?: boolean}} [opts] - focus:false when the group already has focus
+ */
+function highlightSelectedGroup(groups, opts = {}) {
     groups.forEach((g, i) => {
-        if (i === _selectedGroupIndex) {
+        const selected = i === _selectedGroupIndex;
+        g.setAttribute('aria-selected', selected ? 'true' : 'false');
+        g.setAttribute('tabindex', selected || (_selectedGroupIndex < 0 && i === 0) ? '0' : '-1');
+        if (selected) {
             g.style.outline = '3px solid #646100';
             g.style.outlineOffset = '2px';
+            if (opts.focus !== false) g.focus({ preventScroll: true });
             g.scrollIntoView({ block: 'nearest' });
         } else {
             g.style.outline = '';
@@ -1663,10 +1683,24 @@ function openSelectedGroup() {
     showFileModal(g.dataset.filePath, parseInt(g.dataset.lineNumber, 10) || 1);
 }
 
+// A group that receives focus by mouse or Tab becomes the selection too, so
+// j/k continue from it (no focus() call here: it already has focus).
+resultsContainer.addEventListener('focusin', (e) => {
+    const group = e.target.closest && e.target.closest('.result-group');
+    if (!group || e.target !== group) return;
+    const groups = getResultGroups();
+    const idx = groups.indexOf(group);
+    if (idx >= 0 && idx !== _selectedGroupIndex) {
+        _selectedGroupIndex = idx;
+        highlightSelectedGroup(groups, { focus: false });
+    }
+});
+
 // Global shortcuts: '/' focuses search; j/k or arrows move the result selection;
 // Enter opens the selected file. Ignored while typing in a field or with a modal open.
 document.addEventListener('keydown', (e) => {
-    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    const active = document.activeElement;
+    const tag = (active && active.tagName) || '';
     const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
     const modalOpen = document.getElementById('file-modal') || document.getElementById('dep-modal');
 
@@ -1684,6 +1718,8 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         moveResultSelection(-1);
     } else if (e.key === 'Enter') {
+        // A focused button or link handles Enter itself.
+        if (tag === 'BUTTON' || tag === 'A') return;
         openSelectedGroup();
     }
 });
@@ -1831,7 +1867,7 @@ async function showDepsTooltip(badgeEl, filePath) {
                 : '';
             return `<div class="deps-popover-section">` +
                 `<div class="deps-section-title">${escapeHtml(label)} (${files.length})</div>` +
-                `<ul>${items || '<li style="color:#7a785f;font-style:italic">none</li>'}</ul>` +
+                `<ul>${items || '<li style="color:#5f5d48;font-style:italic">none</li>'}</ul>` +
                 more +
                 `</div>`;
         }
@@ -1896,22 +1932,77 @@ async function showDependencies(filePath) {
     }
 }
 
+// ============================================
+// DIALOG HELPERS (shared by the dependency and file modals)
+// ============================================
+
+// Elements that had focus when each open dialog was opened, innermost last.
+const _dialogFocusStack = [];
+
+const FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+    'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Keep Tab / Shift+Tab cycling inside the dialog that received the event. */
+function trapDialogTab(e) {
+    if (e.key !== 'Tab') return;
+    const overlay = e.currentTarget;
+    const focusables = Array.from(overlay.querySelectorAll(FOCUSABLE_SELECTOR))
+        .filter(el => el.offsetParent !== null);
+    if (!focusables.length) { e.preventDefault(); return; }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+        if (active === first || !overlay.contains(active)) { e.preventDefault(); last.focus(); }
+    } else if (active === last || !overlay.contains(active)) {
+        e.preventDefault();
+        first.focus();
+    }
+}
+
+/**
+ * Give an overlay/dialog pair dialog semantics: role, aria-modal, an
+ * accessible name, a Tab focus trap, and initial focus. Focus is restored
+ * to the opener by releaseDialog().
+ */
+function armDialog(overlay, dialog, label, initialFocus) {
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-label', label);
+    if (!dialog.hasAttribute('tabindex')) dialog.setAttribute('tabindex', '-1');
+    overlay.addEventListener('keydown', trapDialogTab);
+    _dialogFocusStack.push(document.activeElement);
+    const target = initialFocus || dialog;
+    // The overlay is appended synchronously before this runs; focus directly.
+    if (typeof target.focus === 'function') target.focus({ preventScroll: true });
+}
+
+/** Undo armDialog: drop the trap and return focus to the element that opened it. */
+function releaseDialog(overlay) {
+    if (overlay) overlay.removeEventListener('keydown', trapDialogTab);
+    const opener = _dialogFocusStack.pop();
+    if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+        opener.focus({ preventScroll: true });
+    }
+}
+
 function showDependencyModal(title, filePath, files, description) {
     const existingModal = document.getElementById('dep-modal');
-    if (existingModal) existingModal.remove();
+    if (existingModal) closeModal();
 
     const fileList = files.length > 0
         ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;color:#1d1c0f">${escapeHtml(f)}</li>`).join('')
-        : '<li style="color:#7a785f;">No files found</li>';
+        : '<li style="color:#5f5d48;">No files found</li>';
 
     const modal = document.createElement('div');
     modal.id = 'dep-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;';
     modal.innerHTML = `
-        <div style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
+        <div class="dep-modal-dialog" style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)} (${files.length})</h2>
-                <button class="dep-modal-close" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
+                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)} (${files.length})</h2>
+                <button type="button" class="dep-modal-close" aria-label="Close" title="Close (Esc)" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
             <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
             <p style="color:#494831;font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
@@ -1924,6 +2015,7 @@ function showDependencyModal(title, filePath, files, description) {
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     document.addEventListener('keydown', handleModalEscape);
     document.body.appendChild(modal);
+    armDialog(modal, modal.querySelector('.dep-modal-dialog'), `${title} of ${filePath}`, closeBtn);
 }
 
 function handleModalEscape(e) {
@@ -1932,7 +2024,10 @@ function handleModalEscape(e) {
 
 function closeModal() {
     const modal = document.getElementById('dep-modal');
-    if (modal) modal.remove();
+    if (modal) {
+        releaseDialog(modal);
+        modal.remove();
+    }
     document.removeEventListener('keydown', handleModalEscape);
 }
 
@@ -1957,12 +2052,7 @@ async function showFileModal(filePath, highlightLine) {
     hideContextTooltipImmediately();
 
     // Clean up any existing file modal and its listeners
-    const existingModal = document.getElementById('file-modal');
-    if (existingModal) {
-        if (_fileModalOverlayListener) existingModal.removeEventListener('click', _fileModalOverlayListener);
-        existingModal.remove();
-    }
-    document.removeEventListener('keydown', handleFileModalEscape);
+    if (document.getElementById('file-modal')) closeFileModal();
 
     // Create modal scaffold immediately (with loading state)
     const modal = document.createElement('div');
@@ -1980,8 +2070,10 @@ async function showFileModal(filePath, highlightLine) {
     pathSpan.textContent = filePath;
 
     const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
     closeBtn.className = 'file-modal-close';
     closeBtn.title = 'Close (Esc)';
+    closeBtn.setAttribute('aria-label', 'Close');
     closeBtn.textContent = '×';
     closeBtn.addEventListener('click', closeFileModal);
 
@@ -1991,6 +2083,8 @@ async function showFileModal(filePath, highlightLine) {
     const body = document.createElement('div');
     body.className = 'file-modal-body';
     body.id = 'file-modal-body';
+    // Focusable so keyboard users can scroll the file with the arrow keys.
+    body.setAttribute('tabindex', '0');
     body.innerHTML = '<div class="loading">Loading file…</div>';
 
     dialog.appendChild(header);
@@ -2001,6 +2095,7 @@ async function showFileModal(filePath, highlightLine) {
     modal.addEventListener('click', _fileModalOverlayListener);
     document.addEventListener('keydown', handleFileModalEscape);
     document.body.appendChild(modal);
+    armDialog(modal, dialog, `File ${filePath}`, closeBtn);
 
     try {
         await populateFileView(body, filePath, highlightLine, _currentMatcher || currentQueryMatcher());
@@ -2020,6 +2115,7 @@ function closeFileModal() {
             modal.removeEventListener('click', _fileModalOverlayListener);
             _fileModalOverlayListener = null;
         }
+        releaseDialog(modal);
         modal.remove();
     }
     document.removeEventListener('keydown', handleFileModalEscape);

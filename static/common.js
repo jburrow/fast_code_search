@@ -325,7 +325,7 @@ class SearchReadinessManager {
                     ">
                         <div style="font-size: 2rem; margin-bottom: 0.75rem; opacity: 0.45; line-height: 1;">&#9888;</div>
                         <div style="font-weight: 700; font-size: 0.9rem; color: #1d1c0f; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.07em;">Server Not Running</div>
-                        <div style="color: #7a785f; font-size: 0.76rem; max-width: 340px; margin: 0 auto; line-height: 1.65;">
+                        <div style="color: #5f5d48; font-size: 0.76rem; max-width: 340px; margin: 0 auto; line-height: 1.65;">
                             The search server could not be reached.<br>
                             Start the server and this page will reconnect automatically.
                         </div>
@@ -780,9 +780,9 @@ function showSearchHistoryDropdown(dropdownEl, queryInput, storageKey, onSelectQ
 
     dropdownEl.innerHTML = matches.slice(0, 10).map((q, i) =>
         `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-primary-container font-label text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
-            <span class="material-symbols-outlined" style="font-size:14px;color:#7a785f;flex-shrink:0">history</span>
+            <span class="material-symbols-outlined" style="font-size:14px;color:#5f5d48;flex-shrink:0">history</span>
             <span class="flex-1 truncate">${escapeHtml(q)}</span>
-            <button class="history-delete material-symbols-outlined ml-auto flex-shrink-0" style="font-size:14px;color:#7a785f;background:none;border:none;cursor:pointer;padding:0" data-query="${escapeHtml(q)}" title="Remove">close</button>
+            <button class="history-delete material-symbols-outlined ml-auto flex-shrink-0" style="font-size:14px;color:#5f5d48;background:none;border:none;cursor:pointer;padding:0" data-query="${escapeHtml(q)}" title="Remove">close</button>
         </div>`
     ).join('') + `<div class="flex items-center justify-end px-4 py-1.5 border-t border-outline-variant">
         <button id="clear-history-btn" class="font-label text-[10px] text-outline hover:text-black transition-colors">CLEAR ALL HISTORY</button>
