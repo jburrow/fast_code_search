@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788688502333,
+  "lastUpdate": 1788691068964,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -11770,6 +11770,402 @@ window.BENCHMARK_DATA = {
           {
             "name": "corpus_bench/tokio+django/rss_after_build_bytes",
             "value": 120295424,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "distinct": true,
+          "id": "ec5d6f908a26b1b90a0d0bdb9e47a497c8e80275",
+          "message": "test(watch): settle on end state per step in the e2e watcher test\n\nFSEvents on macOS coalesces events and can deliver the halves of a\nrename late and unpaired, so the first event seen after a disk\noperation may belong to the previous one; the delete step then applied\na stale event for the old name and asserted before the real Remove\narrived (the last remaining macOS CI failure). Each step now keeps\ndraining, applying and re-checking the expected index state for up to\n8 s, which is what a real consumer of the watcher has to do.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-06T11:26:28+01:00",
+          "tree_id": "2ac37cd310eeb2573af8a46992c55bc098b36aa7",
+          "url": "https://github.com/jburrow/fast_code_search/commit/ec5d6f908a26b1b90a0d0bdb9e47a497c8e80275"
+        },
+        "date": 1788691068251,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 323645,
+            "range": "± 7923",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 30558,
+            "range": "± 1021",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 416,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 321598,
+            "range": "± 19837",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 30540,
+            "range": "± 799",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 418,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 328563,
+            "range": "± 5931",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 31179,
+            "range": "± 944",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 422,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 529990,
+            "range": "± 14199",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 455898,
+            "range": "± 7710",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 622637,
+            "range": "± 8899",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 729197,
+            "range": "± 10420",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 325921,
+            "range": "± 8482",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 345315,
+            "range": "± 6711",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 399250,
+            "range": "± 8842",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 538524,
+            "range": "± 4531",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 320413,
+            "range": "± 7410",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 319786,
+            "range": "± 8484",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 371252,
+            "range": "± 7137",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 223094,
+            "range": "± 11533",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 323470,
+            "range": "± 8376",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 694271,
+            "range": "± 24762",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 470978,
+            "range": "± 13402",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 433056,
+            "range": "± 7727",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 7886,
+            "range": "± 59",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 14195379,
+            "range": "± 54812",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 28037764,
+            "range": "± 551464",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 55687393,
+            "range": "± 582050",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 25476820,
+            "range": "± 89694",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 27228262,
+            "range": "± 521731",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 49841386,
+            "range": "± 202100",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 54010559,
+            "range": "± 381600",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 1172043,
+            "range": "± 75242",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3563546,
+            "range": "± 110475",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6646475,
+            "range": "± 262073",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1237433,
+            "range": "± 11265",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 4223389,
+            "range": "± 28397",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 8280154,
+            "range": "± 372542",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 164235,
+            "range": "± 4690",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 223254,
+            "range": "± 6864",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 285234,
+            "range": "± 4675",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 69523,
+            "range": "± 1325",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 299919,
+            "range": "± 9786",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 585004,
+            "range": "± 20778",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_build",
+            "value": 4295267026,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_save",
+            "value": 184527302,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_load",
+            "value": 211279148,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/common",
+            "value": 872874,
+            "range": "± 54463",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/identifier",
+            "value": 1365683,
+            "range": "± 112303",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/no_match",
+            "value": 500,
+            "range": "± 71",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/short",
+            "value": 1220189,
+            "range": "± 78728",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/full_rank",
+            "value": 777765,
+            "range": "± 183736",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/filtered",
+            "value": 880609,
+            "range": "± 85792",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/literal",
+            "value": 1878148,
+            "range": "± 1052362",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/case_insensitive",
+            "value": 1666119,
+            "range": "± 275398",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/no_literal",
+            "value": 1864382,
+            "range": "± 600021",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/exact",
+            "value": 3415399,
+            "range": "± 652233",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/prefix",
+            "value": 3467632,
+            "range": "± 397579",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/references",
+            "value": 601944,
+            "range": "± 221016",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/incremental/modify_file",
+            "value": 4908717,
+            "range": "± 2698714",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/rss_after_build_bytes",
+            "value": 119951360,
             "range": "± 0",
             "unit": "ns/iter"
           }
