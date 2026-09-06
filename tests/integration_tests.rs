@@ -2662,12 +2662,14 @@ async fn test_concurrent_search_during_updates() -> Result<()> {
         e.finalize();
     }
 
+    use std::sync::atomic::AtomicUsize;
     let stop = Arc::new(AtomicBool::new(false));
+    let searches = Arc::new(AtomicUsize::new(0));
     let searcher = {
         let engine = engine.clone();
         let stop = stop.clone();
+        let searches = searches.clone();
         std::thread::spawn(move || {
-            let mut searches = 0usize;
             while !stop.load(Ordering::Relaxed) {
                 if let Ok(e) = engine.try_read() {
                     // Every version of every file has exactly one definition.
@@ -2676,31 +2678,49 @@ async fn test_concurrent_search_during_updates() -> Result<()> {
                     // tolerated; 2+ would mean a duplicate id or stale postings.
                     // Probe a rotating subset so each read-lock hold is short
                     // (a debug-build search costs milliseconds).
-                    for i in (searches % 4..20).step_by(4) {
+                    let n = searches.load(Ordering::Relaxed);
+                    for i in (n % 4..20).step_by(4) {
                         let hits = e.search(&format!("conc_token_{i}_v"), 10);
                         assert!(hits.len() <= 1, "file {i} has {} live versions", hits.len());
                     }
-                    searches += 1;
+                    searches.fetch_add(1, Ordering::Relaxed);
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
-            searches
         })
     };
 
-    for round in 1..=5 {
+    // The point is overlap, so wait for the searcher to be live before the
+    // first update (a slow runner can otherwise finish every update before
+    // the thread has even started), and keep updating until it has searched
+    // a few more times during the writes.
+    let start = std::time::Instant::now();
+    while searches.load(Ordering::Relaxed) == 0 {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "search thread never got the lock"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let searched_before = searches.load(Ordering::Relaxed);
+    let mut round = 0usize;
+    while round < 5 || (searches.load(Ordering::Relaxed) < searched_before + 3 && round < 40) {
+        round += 1;
         for (i, p) in files.iter().enumerate() {
             std::fs::write(p, format!("fn conc_token_{i}_v{round}() {{}}\n"))?;
             engine.write().unwrap().update_file(p)?;
         }
     }
     stop.store(true, Ordering::Relaxed);
-    let searches = searcher.join().expect("search thread panicked");
-    assert!(searches > 0, "search thread never got the lock");
+    searcher.join().expect("search thread panicked");
+    assert!(
+        searches.load(Ordering::Relaxed) >= searched_before + 3,
+        "searches did not overlap the updates"
+    );
 
     let e = engine.read().unwrap();
     for i in 0..20 {
-        let hits = e.search(&format!("conc_token_{i}_v5"), 10);
+        let hits = e.search(&format!("conc_token_{i}_v{round}"), 10);
         assert_eq!(hits.len(), 1, "final content for {i}");
         assert!(e.search(&format!("conc_token_{i}_v0"), 10).is_empty());
     }
