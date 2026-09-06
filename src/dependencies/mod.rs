@@ -160,8 +160,17 @@ impl DependencyIndex {
     /// name anywhere in the repo" fallback, which produced false edges that
     /// inflated the "heavily imported" ranking boost on unrelated files.
     ///
+    /// An absolute `import_path` is an edge the engine re-queued when its
+    /// target was removed (`SearchEngine::park_dependents`); it resolves
+    /// only to that exact indexed path. No supported language spells an
+    /// import as an absolute file-system path.
+    ///
     /// This method is thread-safe and only requires `&self`.
     pub fn resolve_import_path(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
+        let literal = Path::new(import_path);
+        if literal.is_absolute() {
+            return self.indexed(literal);
+        }
         // Candidates are joined onto `from_file` and looked up lexically, so
         // it must be in the canonical form the index is keyed by. The engine
         // passes canonical paths; a caller that does not (a path through a

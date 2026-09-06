@@ -2122,3 +2122,91 @@ fn test_regex_search_tolerates_missing_symbol_slot() {
     assert_eq!(hits[0].line_number, 2);
     assert!(!hits[0].is_symbol);
 }
+
+/// Review priority 4: editing a file must keep the dependency edges *into*
+/// it (its importers did not change), and a file that is deleted and later
+/// recreated regains its dependents once it is indexed again.
+#[test]
+fn test_update_and_recreate_keep_dependents() {
+    let temp_dir = TempDir::new().unwrap();
+    let main_path = temp_dir.path().join("main.rs");
+    // `lib.rs`: like `main.rs`, `mod helper;` there names a sibling file.
+    let other_path = temp_dir.path().join("lib.rs");
+    let helper_path = temp_dir.path().join("helper.rs");
+    fs::write(&main_path, "mod helper;\nfn main() { helper::help() }\n").unwrap();
+    fs::write(&other_path, "mod helper;\nfn other() {}\n").unwrap();
+    fs::write(&helper_path, "pub fn help() {}\n").unwrap();
+    let mut engine = SearchEngine::new();
+    for p in [&helper_path, &main_path, &other_path] {
+        engine.index_file(p).unwrap();
+    }
+    engine.resolve_imports();
+    engine.finalize();
+    let id_of =
+        |e: &SearchEngine, p: &std::path::Path| e.find_file_id(&p.to_string_lossy()).unwrap();
+    let helper = id_of(&engine, &helper_path);
+    let main = id_of(&engine, &main_path);
+    let other = id_of(&engine, &other_path);
+    let dependents = |e: &SearchEngine, id: u32| {
+        let mut d = e.get_dependents(id);
+        d.sort_unstable();
+        d
+    };
+    assert_eq!(dependents(&engine, helper), vec![main, other]);
+    assert_eq!(engine.get_dependencies(main), vec![helper]);
+
+    // Edit the imported file: same id, edges into it survive.
+    fs::write(&helper_path, "pub fn help() {}\npub fn more() {}\n").unwrap();
+    engine.update_file(&helper_path).unwrap();
+    assert_eq!(id_of(&engine, &helper_path), helper, "id is stable");
+    assert_eq!(dependents(&engine, helper), vec![main, other]);
+    assert_eq!(engine.get_dependencies(main), vec![helper]);
+    assert_eq!(engine.dependency_index.get_import_count(helper), 2);
+    assert!(engine
+        .search("more", 10)
+        .iter()
+        .any(|h| h.file_id == helper));
+
+    // Edit an importer: its out-edge is re-resolved, nothing else changes.
+    fs::write(&main_path, "mod helper;\nfn main() {}\n").unwrap();
+    engine.update_file(&main_path).unwrap();
+    assert_eq!(dependents(&engine, helper), vec![main, other]);
+
+    // Delete the imported file, then recreate it: the new id regains the
+    // dependents when the file is indexed again.
+    assert!(engine.remove_file(&helper_path));
+    assert!(engine.get_dependents(helper).is_empty());
+    assert!(engine.get_dependencies(main).is_empty());
+    assert_eq!(engine.waiting_imports_count(), 2, "two edges parked");
+    fs::write(&helper_path, "pub fn help() {}\n").unwrap();
+    engine.update_file(&helper_path).unwrap(); // the watcher's create path
+    let helper2 = id_of(&engine, &helper_path);
+    assert_ne!(helper2, helper, "ids are never reused");
+    assert_eq!(dependents(&engine, helper2), vec![main, other]);
+    assert_eq!(engine.get_dependencies(main), vec![helper2]);
+    assert_eq!(engine.waiting_imports_count(), 0);
+
+    // The same through `update_file` when the file turns unreadable
+    // (binary) and later becomes source again.
+    fs::write(&helper_path, b"\0\0\0binary\0").unwrap();
+    engine.update_file(&helper_path).unwrap();
+    assert!(
+        engine.file_store.get(helper2).is_none(),
+        "dropped from the index"
+    );
+    assert!(engine.get_dependencies(main).is_empty());
+    fs::write(&helper_path, "pub fn help() {}\n").unwrap();
+    engine.update_file(&helper_path).unwrap();
+    let helper3 = id_of(&engine, &helper_path);
+    assert_eq!(dependents(&engine, helper3), vec![main, other]);
+
+    // A parked edge whose importer has meanwhile been removed is dropped,
+    // never added from a dead id.
+    assert!(engine.remove_file(&helper_path));
+    assert!(engine.remove_file(&other_path));
+    fs::write(&helper_path, "pub fn help() {}\n").unwrap();
+    engine.update_file(&helper_path).unwrap();
+    let helper4 = id_of(&engine, &helper_path);
+    assert_eq!(dependents(&engine, helper4), vec![main]);
+    assert_eq!(engine.waiting_imports_count(), 0);
+}

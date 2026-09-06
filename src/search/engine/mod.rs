@@ -1027,8 +1027,12 @@ impl SearchEngine {
             .collect();
         let mut edges = Vec::new();
         for (i, edge) in results {
-            if let Some(e) = edge {
-                edges.push(e);
+            if let Some((from, to)) = edge {
+                // The importing file may have been removed since it parked
+                // the import; never add an edge from a dead id.
+                if self.file_store.get(from).is_some() {
+                    edges.push((from, to));
+                }
                 self.waiting_imports[i] = None;
             }
         }
@@ -1192,19 +1196,21 @@ impl SearchEngine {
     /// A brand-new file is indexed normally.
     pub fn update_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
         let Some(id) = self.find_file_id_exact(path) else {
-            // Not yet indexed — treat as a fresh add.
-            return self.index_file(path);
+            // Not yet indexed — treat as a fresh add, then resolve what can
+            // be resolved now: the new file's own imports, and any parked
+            // import waiting for a file with this name (including the edges
+            // of a file that was deleted and has just come back).
+            self.index_file(path)?;
+            self.resolve_imports_incremental();
+            return Ok(());
         };
 
-        // Strip all stale data for this id first.
-        self.trigram_index.remove_document(id);
-        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
-            slot.clear();
-        }
-        if let Some(slot) = self.reference_cache.get_mut(id as usize) {
-            slot.clear();
-        }
-        self.dependency_index.remove_file(id);
+        // Strip all stale data for this id first. The edges *into* the file
+        // are snapshotted: the files importing it did not change, so those
+        // edges are restored once the file is registered again (dropping
+        // them zeroed the dependency boost of every popular module on each
+        // edit).
+        let dependents = self.strip_for_reindex(id);
 
         // Read fresh owned content + safety check (no live mmap — avoids SIGBUS if
         // the file is being rewritten concurrently).
@@ -1212,24 +1218,63 @@ impl SearchEngine {
             match PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size) {
                 Some(p) => p,
                 None => {
-                    // File is now binary/unsafe/oversized/unreadable — drop it from
-                    // the index entirely rather than keeping stale content.
-                    self.file_store.remove_file_by_id(id);
+                    // File is now binary/unsafe/oversized/unreadable — drop it
+                    // from the index entirely rather than keeping stale
+                    // content; its dependents' edges are parked so they
+                    // return if a readable file appears here again.
+                    if let Some(p) = self.file_store.get_path(id).map(Path::to_path_buf) {
+                        self.park_dependents(p, &dependents);
+                    }
+                    self.forget_id(id);
                     return Ok(());
                 }
             };
         let pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
 
-        // Refresh the store entry so the stale mapping + caches are discarded, and
-        // re-register for import resolution.
+        // Refresh the store entry so the stale mapping + caches are discarded,
+        // then re-register and re-index under the same id.
         self.file_store.refresh_file_by_id(id);
+        self.install_reindexed(id, path, pre, &dependents);
+        Ok(())
+    }
+
+    /// Drop the trigrams, symbols, references and dependency edges of `id`
+    /// ahead of re-indexing it under the same id. Returns the files that
+    /// import `id`, whose edges the caller restores with
+    /// [`Self::install_reindexed`].
+    fn strip_for_reindex(&mut self, id: u32) -> Vec<u32> {
+        self.trigram_index.remove_document(id);
+        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        if let Some(slot) = self.reference_cache.get_mut(id as usize) {
+            slot.clear();
+        }
+        let dependents = self.dependency_index.get_dependents(id);
+        self.dependency_index.remove_file(id);
+        dependents
+    }
+
+    /// Register `pre` under the existing id `id`: metadata, dependency path,
+    /// trigrams, symbols, references and imports, plus the restored edges
+    /// from `dependents`.
+    fn install_reindexed(
+        &mut self,
+        id: u32,
+        path: &std::path::Path,
+        pre: PreIndexedFile,
+        dependents: &[u32],
+    ) {
         self.set_indexed_meta(id, pre.mtime, pre.size);
         self.note_added_file(path);
         if let Some(canonical) = self.file_store.get_path(id).map(Path::to_path_buf) {
             self.dependency_index.register_canonical_file(id, canonical);
         }
+        if !dependents.is_empty() {
+            self.dependency_index
+                .add_imports_batch(dependents.iter().map(|&from| (from, id)).collect());
+        }
 
-        // Re-add trigrams and symbols under the same id.
         self.trigram_index.add_document_trigrams(id, pre.trigrams);
         while self.symbol_cache.len() <= id as usize {
             self.symbol_cache.push(Vec::new());
@@ -1246,7 +1291,6 @@ impl SearchEngine {
         // Keep fast-mode ranking signals current for the touched file.
         self.refresh_file_metadata(id);
         self.generation += 1;
-        Ok(())
     }
 
     /// Monotonic mutation counter (see the `generation` field).
@@ -1416,6 +1460,10 @@ impl SearchEngine {
 
     /// Everything except the trigram postings: symbols, metadata, dependency
     /// edges and the store slot (tombstoned so the id is never reused).
+    ///
+    /// The edges *into* the file are parked as imports of its former path
+    /// (see [`Self::park_dependents`]), so a file that is deleted and later
+    /// recreated regains its dependents when it is indexed again.
     fn forget_id(&mut self, id: u32) {
         self.generation += 1;
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
@@ -1431,10 +1479,34 @@ impl SearchEngine {
         // (symbol count, in-edges) is unchanged; files it imported lose an
         // in-edge, so refresh their dependency-count-based base score.
         let dependents_changed: Vec<u32> = self.dependency_index.get_dependencies(id);
+        let dependents = self.dependency_index.get_dependents(id);
+        let path = self.file_store.get_path(id).map(Path::to_path_buf);
         self.dependency_index.remove_file(id);
         self.file_store.remove_file_by_id(id);
         for other in dependents_changed {
             self.refresh_file_metadata(other);
+        }
+        if let Some(path) = path {
+            self.park_dependents(path, &dependents);
+        }
+    }
+
+    /// Re-queue the edges from `dependents` into the file that lived at
+    /// `target_path` as parked imports naming that absolute path. The
+    /// dependency index resolves an absolute import only to that exact
+    /// indexed path, so the edges come back as soon as a file is indexed
+    /// there again (the retry is keyed on the path's stem like any other
+    /// parked import).
+    fn park_dependents(&mut self, target_path: PathBuf, dependents: &[u32]) {
+        if dependents.is_empty() {
+            return;
+        }
+        let import = target_path.to_string_lossy().into_owned();
+        for &from in dependents {
+            let Some(from_path) = self.file_store.get_path(from).map(Path::to_path_buf) else {
+                continue;
+            };
+            self.park_import(from, from_path, import.clone());
         }
     }
 
