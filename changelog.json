@@ -1,6 +1,12 @@
 {
   "releases": [
     {
+      "version": "0.10.0",
+      "date": "2026-09-06",
+      "summary": "",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.10.0"
+    },
+    {
       "version": "0.9.0",
       "date": "2026-06-10",
       "summary": "",
@@ -41,12 +47,6 @@
       "date": "2026-03-17",
       "summary": "",
       "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.7.1"
-    },
-    {
-      "version": "0.7.0",
-      "date": "2026-03-03",
-      "summary": "",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.7.0"
     }
   ]
 }
