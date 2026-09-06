@@ -768,9 +768,12 @@ impl SearchEngine {
             self.set_indexed_meta(file_id, pre_indexed.mtime, pre_indexed.size);
             self.note_added_file(&pre_indexed.path);
 
-            // Register file in dependency index
-            self.dependency_index
-                .register_file(file_id, &pre_indexed.path);
+            // Register file in dependency index under the store's canonical
+            // path (no realpath walk per file).
+            if let Some(canonical) = self.file_store.get_path(file_id).map(Path::to_path_buf) {
+                self.dependency_index
+                    .register_canonical_file(file_id, canonical);
+            }
 
             // Add trigrams to index (using pre-computed trigrams)
             self.trigram_index
@@ -1202,7 +1205,9 @@ impl SearchEngine {
         self.file_store.refresh_file_by_id(id);
         self.set_indexed_meta(id, pre.mtime, pre.size);
         self.note_added_file(path);
-        self.dependency_index.register_file(id, path);
+        if let Some(canonical) = self.file_store.get_path(id).map(Path::to_path_buf) {
+            self.dependency_index.register_canonical_file(id, canonical);
+        }
 
         // Re-add trigrams and symbols under the same id.
         self.trigram_index.add_document_trigrams(id, pre.trigrams);

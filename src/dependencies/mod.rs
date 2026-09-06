@@ -66,17 +66,25 @@ impl DependencyIndex {
     /// previous path mapping for that id is dropped first, so repeated edits
     /// of one file never accumulate duplicate `filename_to_paths` entries.
     pub fn register_file(&mut self, file_id: u32, path: &Path) {
-        // The engine passes the file store's canonical path; only a path we
-        // have not seen needs the realpath walk.
-        let stored_path = if self.path_to_id.get(path) == Some(&file_id) {
+        // Only a path we have not seen needs the realpath walk.
+        if self.path_to_id.get(path) == Some(&file_id) {
             return;
-        } else if let Ok(canonical) = path.canonicalize() {
-            canonical
-        } else {
+        }
+        let stored_path = match path.canonicalize() {
+            Ok(canonical) => canonical,
             // Fallback to the path as-is if canonicalization fails
-            path.to_path_buf()
+            Err(_) => path.to_path_buf(),
         };
+        self.register_canonical_file(file_id, stored_path);
+    }
 
+    /// [`Self::register_file`] for a path that is already canonical (the
+    /// file store's key, a persisted path): no file-system access at all.
+    /// Restoring a 61k-file index spent 16 s in realpath walks here.
+    pub fn register_canonical_file(&mut self, file_id: u32, stored_path: PathBuf) {
+        if self.path_to_id.get(&stored_path) == Some(&file_id) {
+            return;
+        }
         if let Some(previous) = self.id_to_path.get(&file_id) {
             if *previous == stored_path {
                 return; // already registered under exactly this path

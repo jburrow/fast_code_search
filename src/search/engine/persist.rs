@@ -123,7 +123,9 @@ impl SearchEngine {
                 continue;
             }
             if let Some(path) = self.file_store.get_path(new_id) {
-                self.dependency_index.register_file(new_id, path);
+                let canonical = path.to_path_buf();
+                self.dependency_index
+                    .register_canonical_file(new_id, canonical);
             }
             if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
                 self.symbol_cache[new_id as usize] = syms.clone();
@@ -181,7 +183,9 @@ impl SearchEngine {
         // Re-register all files for import resolution
         for file_id in 0..total_files as u32 {
             if let Some(path) = self.file_store.get_path(file_id) {
-                self.dependency_index.register_file(file_id, path);
+                let canonical = path.to_path_buf();
+                self.dependency_index
+                    .register_canonical_file(file_id, canonical);
             }
         }
 
@@ -508,6 +512,17 @@ impl SearchEngine {
     ) -> anyhow::Result<LoadIndexResult> {
         use crate::index::persistence::{batch_check_files, FileStatus, PersistedIndex};
 
+        // Per-phase wall time, reported in the final log line so a slow load
+        // says which step was slow.
+        let started = std::time::Instant::now();
+        let mut last = started;
+        let mut phase_ms: Vec<(&'static str, u128)> = Vec::new();
+        let mut mark = |name: &'static str| {
+            let now = std::time::Instant::now();
+            phase_ms.push((name, (now - last).as_millis()));
+            last = now;
+        };
+
         progress(
             LoadingPhase::ReadingFile,
             None,
@@ -522,6 +537,7 @@ impl SearchEngine {
         );
         let persisted = PersistedIndex::load(path)?;
         let total_files = persisted.files.len();
+        mark("read_and_decode");
 
         let (config_compatible, new_paths, removed_paths) = match config {
             Some(config) => {
@@ -550,6 +566,7 @@ impl SearchEngine {
             &format!("Checking {} files for changes...", total_files),
         );
         let file_statuses = batch_check_files(&persisted.files, &removed_paths);
+        mark("check_files");
         progress(
             LoadingPhase::CheckingFiles,
             Some(total_files),
@@ -597,6 +614,7 @@ impl SearchEngine {
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
             self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
             self.file_store.add_content_bytes(total_content_bytes);
+            mark("register_files");
 
             progress(
                 LoadingPhase::MappingFiles,
@@ -616,6 +634,7 @@ impl SearchEngine {
                 Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
             self.trigram_index.finalize();
+            mark("trigrams");
         }
 
         if !self.file_store.is_empty() {
@@ -658,6 +677,7 @@ impl SearchEngine {
                 Some(loaded),
                 "Symbol and dependency caches ready",
             );
+            mark("symbols_and_imports");
         }
 
         // Configured paths are the roots for display-path computation. They
@@ -673,6 +693,7 @@ impl SearchEngine {
         // loaded index ranks by id order until the background finalize runs.
         self.compute_all_file_metadata();
         self.generation += 1;
+        mark("file_metadata");
 
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
             .iter()
@@ -688,6 +709,8 @@ impl SearchEngine {
             removed_paths = removed_paths.len(),
             config_compatible,
             reconciled = config.is_some(),
+            total_ms = started.elapsed().as_millis(),
+            phases_ms = ?phase_ms,
             "Index loaded from disk"
         );
 

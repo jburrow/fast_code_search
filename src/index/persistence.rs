@@ -651,13 +651,15 @@ pub fn batch_check_files(
                 }
             }
 
-            // Check if file exists and is stale
-            if !file_meta.path.exists() {
-                (idx, FileStatus::Removed)
-            } else if is_file_stale(&file_meta.path, file_meta.mtime, file_meta.size) {
-                (idx, FileStatus::Stale)
-            } else {
-                (idx, FileStatus::Valid)
+            // One stat answers both "still there?" and "changed?".
+            match std::fs::metadata(&file_meta.path) {
+                Err(_) => (idx, FileStatus::Removed),
+                Ok(meta)
+                    if mtime_secs_of(&meta) != file_meta.mtime || meta.len() != file_meta.size =>
+                {
+                    (idx, FileStatus::Stale)
+                }
+                Ok(_) => (idx, FileStatus::Valid),
             }
         })
         .collect()
