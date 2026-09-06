@@ -3,6 +3,10 @@
 <head>
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <!-- Set to "true" (or define window.SEMANTIC_ENABLED) when the semantic
+         server runs on port 8081: the page then probes it for the status badge.
+         Left false, no probe is made (a refused probe logs a console error). -->
+    <meta name="fcs-semantic-enabled" content="false"/>
     <title>Fast Code Search</title>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/fonts.css"/>

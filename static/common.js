@@ -65,19 +65,6 @@ function formatNumber(num) {
 }
 
 /**
- * Format elapsed time to human-readable string
- * @param {number} secs - Seconds elapsed
- * @returns {string} Formatted string (e.g., "2m 30s")
- */
-function formatElapsed(secs) {
-    if (!secs) return '';
-    if (secs < 60) return `${secs.toFixed(1)}s`;
-    const mins = Math.floor(secs / 60);
-    const remainingSecs = secs % 60;
-    return `${mins}m ${remainingSecs.toFixed(0)}s`;
-}
-
-/**
  * Debounce a function call
  * @param {Function} func - Function to debounce
  * @param {number} wait - Milliseconds to wait
@@ -152,24 +139,6 @@ function showError(containerId, message) {
         container.innerHTML = `
             <div class="error-message">
                 <strong>Error:</strong> ${escapeHtml(message)}
-            </div>
-        `;
-    }
-}
-
-/**
- * Show empty/no results state
- * @param {string} containerId - DOM container ID
- * @param {string} message - Message to display
- * @param {string} icon - Emoji icon (default: 🔍)
- */
-function showEmpty(containerId, message, icon = '🔍') {
-    const container = document.getElementById(containerId);
-    if (container) {
-        container.innerHTML = `
-            <div class="no-results">
-                <div class="no-results-icon">${icon}</div>
-                <p>${escapeHtml(message)}</p>
             </div>
         `;
     }
@@ -371,9 +340,12 @@ class SearchReadinessManager {
             }
         });
         
-        // Show loading message in results if not ready and results is empty
+        // Show loading message in results if not ready and results is empty.
+        // Keyword results are .result-group, semantic results .result-item;
+        // both pages mark "no results" with .no-results. Matching only
+        // .result-item wiped keyword results on every not-ready transition.
         if (!this.isReady && resultsContainer && this.lastStatus) {
-            const hasContent = resultsContainer.querySelector('.result-item, .no-results');
+            const hasContent = resultsContainer.querySelector('.result-group, .result-item, .no-results');
             if (!hasContent) {
                 const msg = this.getStatusMessage(this.lastStatus);
                 const pct = this.lastStatus.progress_percent || 0;
@@ -440,21 +412,6 @@ function formatCodeWithLineNumbers(content, startLine = 1) {
         const lineNum = startLine + i;
         return `<span class="line-number">${lineNum}</span>${escapeHtml(line)}`;
     }).join('\n');
-}
-
-/**
- * Highlight matching text in content
- * @param {string} content - Content to search in
- * @param {string} query - Query to highlight
- * @returns {string} HTML with highlighted matches
- */
-function highlightMatches(content, query) {
-    if (!query) return escapeHtml(content);
-    
-    const escaped = escapeHtml(content);
-    const queryEscaped = escapeHtml(query);
-    const regex = new RegExp(`(${queryEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    return escaped.replace(regex, '<span class="highlight">$1</span>');
 }
 
 // ============================================
@@ -586,57 +543,9 @@ class ProgressWebSocket {
     }
 }
 
-// Legacy StatusPoller for fallback (if WebSocket not available)
-class StatusPoller {
-    constructor(options = {}) {
-        this.apiBase = options.apiBase || '';
-        this.fastIntervalMs = options.fastIntervalMs || 1000;
-        this.slowIntervalMs = options.slowIntervalMs || 30000;
-        this.onUpdate = options.onUpdate || (() => {});
-        this.onError = options.onError || console.error;
-        this.intervalId = null;
-        this.currentInterval = null;
-    }
-
-    async fetch() {
-        try {
-            const response = await fetch(`${this.apiBase}/api/status`);
-            if (!response.ok) throw new Error('Failed to fetch status');
-            const status = await response.json();
-            this.onUpdate(status);
-            this.adjustPolling(status.is_indexing);
-        } catch (error) {
-            this.onError(error);
-        }
-    }
-
-    adjustPolling(isIndexing) {
-        const targetInterval = isIndexing ? this.fastIntervalMs : this.slowIntervalMs;
-        if (this.currentInterval === targetInterval) return;
-
-        if (this.intervalId) {
-            clearInterval(this.intervalId);
-        }
-
-        this.intervalId = setInterval(() => this.fetch(), targetInterval);
-        this.currentInterval = targetInterval;
-    }
-
-    start() {
-        this.fetch();
-    }
-
-    stop() {
-        if (this.intervalId) {
-            clearInterval(this.intervalId);
-            this.intervalId = null;
-            this.currentInterval = null;
-        }
-    }
-}
-
 // ============================================
-// URL STATE HELPERS
+// URL STATE HELPERS (used by semantic.js; keyword.js has its own
+// applyUrlState/writeUrlState with history support)
 // ============================================
 
 /**
@@ -844,20 +753,17 @@ function navigateSearchHistoryDropdown(dropdownEl, queryInput, direction) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         escapeHtml,
+        readErrorBody,
         formatBytes,
         formatNumber,
-        formatElapsed,
         debounce,
         updateStat,
         toggleElement,
         showLoading,
         showError,
-        showEmpty,
         createResultsSummary,
         formatCodeWithLineNumbers,
-        highlightMatches,
         ProgressWebSocket,
-        StatusPoller,
         SearchReadinessManager,
         loadStateFromUrl,
         syncUrlFromState,

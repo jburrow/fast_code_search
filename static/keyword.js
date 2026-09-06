@@ -373,14 +373,34 @@ async function checkBackendHealth() {
     // Use the page's own protocol so this works under https (mixed-content
     // requests to http:// are blocked). The port is overridable via
     // window.SEMANTIC_PORT for non-default deployments.
+    // The browser logs a connection error for a refused probe that no
+    // script can suppress, so the probe only runs where a semantic server
+    // is expected (see semanticEnabled()).
     let semanticUp = false;
-    try {
-        const semanticPort = window.SEMANTIC_PORT || 8081;
-        const resp = await fetch(`${window.location.protocol}//${hostname}:${semanticPort}/api/health`, { signal: AbortSignal.timeout(2000) });
-        semanticUp = resp.ok;
-    } catch (e) { /* offline */ }
+    if (semanticEnabled()) {
+        try {
+            const semanticPort = window.SEMANTIC_PORT || 8081;
+            const resp = await fetch(`${window.location.protocol}//${hostname}:${semanticPort}/api/health`, { signal: AbortSignal.timeout(2000) });
+            semanticUp = resp.ok;
+        } catch (e) { /* offline */ }
+    }
 
     renderBackendStatus(keywordAvailable, semanticUp);
+}
+
+/**
+ * Whether this deployment runs the semantic server on port 8081, i.e.
+ * whether to probe it for the status badge. In order of precedence:
+ * `window.SEMANTIC_ENABLED`, a `<meta name="fcs-semantic-enabled">` tag,
+ * then the presence of the SEMANTIC nav link. index.html ships the meta
+ * set to false so a keyword-only install stays silent; the nav link keeps
+ * working regardless (semantic.html probes for itself).
+ */
+function semanticEnabled() {
+    if (typeof window.SEMANTIC_ENABLED === 'boolean') return window.SEMANTIC_ENABLED;
+    const meta = document.querySelector('meta[name="fcs-semantic-enabled"]');
+    if (meta) return ['true', '1', 'yes'].includes((meta.content || '').trim().toLowerCase());
+    return !!document.querySelector('a[href="/semantic.html"]');
 }
 
 function renderBackendStatus(keywordUp, semanticUp) {
@@ -388,6 +408,8 @@ function renderBackendStatus(keywordUp, semanticUp) {
     if (!banner) return;
 
     updateBackendBadge('keyword-status-badge', keywordUp, 'KEYWORD');
+    const semanticBadge = document.getElementById('semantic-status-badge');
+    if (semanticBadge) semanticBadge.style.display = semanticEnabled() ? '' : 'none';
     updateBackendBadge('semantic-status-badge', semanticUp, 'SEMANTIC');
 
     if (keywordUp) {
