@@ -1212,6 +1212,92 @@ impl SearchEngine {
     /// old mmap and cached UTF-8/transcode results) before re-extracting from the
     /// current content — all under the SAME file id so existing ids stay stable.
     /// A brand-new file is indexed normally.
+    /// Re-index `paths` (known files under their existing ids, unknown ones
+    /// as new files) as one batch: every stale posting list is stripped in a
+    /// single pass over the index instead of one pass per file, and the
+    /// files are read and parsed in parallel before the merge. This is what
+    /// a watcher burst (branch switch, formatter run) goes through; the
+    /// per-file [`Self::update_file`] path cost a full posting-list scan per
+    /// modified file. Returns `(indexed, removed)`.
+    pub fn update_files(&mut self, paths: &[PathBuf]) -> (usize, usize) {
+        if paths.is_empty() {
+            return (0, 0);
+        }
+        let mut known: Vec<(u32, PathBuf)> = Vec::new();
+        let mut fresh: Vec<PathBuf> = Vec::new();
+        let mut doomed = roaring::RoaringBitmap::new();
+        for path in paths {
+            match self.find_file_id_exact(path) {
+                Some(id) => {
+                    if doomed.insert(id) {
+                        known.push((id, path.clone()));
+                    }
+                }
+                None => {
+                    if !fresh.contains(path) {
+                        fresh.push(path.clone());
+                    }
+                }
+            }
+        }
+
+        // One pass over the posting lists for every known id, then the
+        // per-id caches and edges (keeping the edges *into* each file).
+        self.trigram_index.remove_documents(&doomed);
+        // A dependent that is itself in the batch re-resolves its own
+        // imports when it is installed; restoring its edge as well would
+        // record it twice.
+        let dependents_of: Vec<Vec<u32>> = known
+            .iter()
+            .map(|(id, _)| {
+                let mut deps = self.strip_caches_and_edges(*id);
+                deps.retain(|d| !doomed.contains(*d));
+                deps
+            })
+            .collect();
+
+        // Parallel owned reads + parsing (no live mmaps: a file being
+        // rewritten concurrently cannot SIGBUS us).
+        let transcode = self.transcode_non_utf8;
+        let max_size = self.max_file_size;
+        let symbols = self.enable_symbols;
+        let parse = |p: &PathBuf| {
+            PartialIndexedFile::process(p, transcode, max_size)
+                .map(|(partial, _)| PreIndexedFile::from_partial(partial, symbols))
+        };
+        let parsed: Vec<Option<PreIndexedFile>> = known.par_iter().map(|(_, p)| parse(p)).collect();
+
+        let mut indexed = 0;
+        let mut removed = 0;
+        for (((id, path), pre), dependents) in known.into_iter().zip(parsed).zip(dependents_of) {
+            match pre {
+                Some(pre) => {
+                    self.file_store.refresh_file_by_id(id);
+                    self.install_reindexed(id, &path, pre, &dependents);
+                    indexed += 1;
+                }
+                None => {
+                    // Now binary, oversized or unreadable: drop it, parking
+                    // its dependents' edges in case a readable file returns.
+                    if let Some(p) = self.file_store.get_path(id).map(Path::to_path_buf) {
+                        self.park_dependents(p, &dependents);
+                    }
+                    self.forget_id(id);
+                    removed += 1;
+                }
+            }
+        }
+
+        if !fresh.is_empty() {
+            let pre: Vec<PreIndexedFile> = fresh.par_iter().filter_map(parse).collect();
+            indexed += self.index_batch(pre);
+        }
+        if indexed > 0 {
+            self.resolve_imports_incremental();
+        }
+        (indexed, removed)
+    }
+
     pub fn update_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
         let Some(id) = self.find_file_id_exact(path) else {
             // Not yet indexed — treat as a fresh add, then resolve what can
@@ -1262,6 +1348,12 @@ impl SearchEngine {
     /// [`Self::install_reindexed`].
     fn strip_for_reindex(&mut self, id: u32) -> Vec<u32> {
         self.trigram_index.remove_document(id);
+        self.strip_caches_and_edges(id)
+    }
+
+    /// [`Self::strip_for_reindex`] without the posting-list pass, for callers
+    /// that removed several ids from the trigram index in one pass.
+    fn strip_caches_and_edges(&mut self, id: u32) -> Vec<u32> {
         if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
             slot.clear();
         }

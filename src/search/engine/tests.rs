@@ -2258,3 +2258,59 @@ fn test_reindexing_a_known_path_replaces_its_trigrams() {
     assert_eq!(engine.get_dependents(helper), vec![main]);
     assert_eq!(engine.file_store.live_len(), 2);
 }
+
+/// Review 2.3: a batch of modified files is re-indexed with one pass over the
+/// posting lists and a parallel parse, with the same results as one
+/// `update_file` per path: new content is searchable, old content is not,
+/// dependents survive, unknown paths are added, unreadable ones dropped.
+#[test]
+fn test_update_files_batch_matches_per_file_semantics() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let a = root.join("a.py");
+    let b = root.join("b.py");
+    let c = root.join("c.py");
+    fs::write(&a, "def alpha_one(): pass\n").unwrap();
+    fs::write(&b, "from a import alpha_one\ndef beta_one(): pass\n").unwrap();
+    fs::write(&c, "def gamma_one(): pass\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(root);
+    engine.index_file(&a).unwrap();
+    engine.index_file(&b).unwrap();
+    engine.index_file(&c).unwrap();
+    engine.finalize();
+    engine.resolve_imports();
+    let a_id = engine.find_file_id_exact(&a).unwrap();
+    assert_eq!(engine.get_dependents(a_id).len(), 1, "b imports a");
+
+    // Modify a and b, turn c into a binary blob, add d.
+    fs::write(&a, "def alpha_two(): pass\n").unwrap();
+    fs::write(&b, "from a import alpha_two\ndef beta_two(): pass\n").unwrap();
+    fs::write(&c, [0u8, 159, 146, 150, 0, 0, 0, 1]).unwrap();
+    let d = root.join("d.py");
+    fs::write(&d, "def delta_one(): pass\n").unwrap();
+
+    let (indexed, removed) = engine.update_files(&[a.clone(), b.clone(), c.clone(), d.clone()]);
+    assert_eq!((indexed, removed), (3, 1));
+
+    // The definition in a.py and the import in b.py.
+    assert_eq!(engine.search("alpha_two", 5).len(), 2);
+    assert!(
+        engine.search("alpha_one", 5).is_empty(),
+        "stale postings must be gone"
+    );
+    assert_eq!(engine.search("beta_two", 5).len(), 1);
+    assert!(
+        engine.search("gamma_one", 5).is_empty(),
+        "binary file dropped"
+    );
+    assert_eq!(engine.search("delta_one", 5).len(), 1, "new file indexed");
+    assert_eq!(engine.find_file_id_exact(&a), Some(a_id), "id is kept");
+    assert_eq!(
+        engine.get_dependents(a_id).len(),
+        1,
+        "edges into a survive the batch update"
+    );
+    assert_eq!(engine.get_stats().num_files, 3);
+}

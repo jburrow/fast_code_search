@@ -86,19 +86,26 @@ pub fn apply_changes(
     }
     let removed = engine.remove_files_by_ids(&doomed);
 
-    // Phase 2: (re)index the modified paths.
+    // Phase 2: (re)index the modified paths as one batch — directories are
+    // expanded to their eligible files, ineligible or vanished paths are
+    // dropped, and everything else goes through one posting-list pass and
+    // a parallel parse.
     let mut outcome = ChangeOutcome {
         indexed: 0,
         removed,
     };
+    let mut to_index: Vec<PathBuf> = Vec::new();
     for path in &order {
         if ops[path] != Op::Modify {
             continue;
         }
-        let o = index_path(engine, path, config);
-        outcome.indexed += o.indexed;
-        outcome.removed += o.removed;
+        let plan = plan_path(engine, path, config);
+        outcome.removed += plan.removed;
+        to_index.extend(plan.files);
     }
+    let (indexed, removed) = engine.update_files(&to_index);
+    outcome.indexed += indexed;
+    outcome.removed += removed;
 
     // Phase 3: a backend may have dropped the delete / rename-away half of
     // what just happened (FSEvents does), so check the siblings of every
@@ -140,9 +147,16 @@ fn remove_path(engine: &mut SearchEngine, path: &Path) -> usize {
     }
 }
 
-/// Index or re-index `path`: a single eligible file, or every eligible file
-/// under a directory (e.g. the target of a directory rename).
-fn index_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) -> ChangeOutcome {
+/// What a modified path needs: the files to (re)index under it, and how
+/// many index entries were dropped because the path is gone or no longer
+/// eligible.
+#[derive(Default)]
+struct PathPlan {
+    files: Vec<std::path::PathBuf>,
+    removed: usize,
+}
+
+fn plan_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) -> PathPlan {
     if path.is_dir() {
         let discovery = FileDiscoveryConfig {
             paths: vec![path.to_string_lossy().to_string()],
@@ -152,50 +166,32 @@ fn index_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) ->
             respect_gitignore: config.respect_gitignore,
             ..Default::default()
         };
-        let mut indexed = 0;
-        for file in FileDiscoveryIterator::new(&discovery) {
-            if config.is_file_excluded(&file) {
-                continue;
-            }
-            match engine.update_file(&file) {
-                Ok(()) => indexed += 1,
-                Err(e) => tracing::warn!(
-                    path = %file.display(),
-                    error = %e,
-                    "Failed to index file under changed directory"
-                ),
-            }
-        }
-        return ChangeOutcome {
-            indexed,
+        return PathPlan {
+            files: FileDiscoveryIterator::new(&discovery)
+                .filter(|file| !config.is_file_excluded(file))
+                .collect(),
             removed: 0,
         };
     }
 
     if !path.is_file() {
         // Vanished between the event and now; treat as a delete.
-        return ChangeOutcome {
-            indexed: 0,
+        return PathPlan {
+            files: Vec::new(),
             removed: remove_path(engine, path),
         };
     }
     if !is_eligible_file(path, config) {
         // A file that is not eligible (wrong extension, excluded) but was
         // previously indexed must be dropped rather than refreshed.
-        return ChangeOutcome {
-            indexed: 0,
+        return PathPlan {
+            files: Vec::new(),
             removed: usize::from(engine.remove_file(path)),
         };
     }
-    match engine.update_file(path) {
-        Ok(()) => ChangeOutcome {
-            indexed: 1,
-            removed: 0,
-        },
-        Err(e) => {
-            tracing::warn!(path = %path.display(), error = %e, "Failed to update file in index");
-            ChangeOutcome::default()
-        }
+    PathPlan {
+        files: vec![path.to_path_buf()],
+        removed: 0,
     }
 }
 
