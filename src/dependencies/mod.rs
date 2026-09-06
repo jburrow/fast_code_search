@@ -162,6 +162,23 @@ impl DependencyIndex {
     ///
     /// This method is thread-safe and only requires `&self`.
     pub fn resolve_import_path(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
+        // Candidates are joined onto `from_file` and looked up lexically, so
+        // it must be in the canonical form the index is keyed by. The engine
+        // passes canonical paths; a caller that does not (a path through a
+        // symlinked temp dir on macOS, a non-verbatim path on Windows) costs
+        // one realpath walk per importing file, never per candidate.
+        let canonical;
+        let from_file = if self.path_to_id.contains_key(from_file) {
+            from_file
+        } else {
+            match from_file.canonicalize() {
+                Ok(c) => {
+                    canonical = c;
+                    &canonical
+                }
+                Err(_) => from_file,
+            }
+        };
         let ext = from_file
             .extension()
             .and_then(|e| e.to_str())
@@ -739,6 +756,28 @@ mod tests {
         // to nothing (the file system is not consulted).
         std::fs::write(temp.path().join("src/x/z.ts"), "").unwrap();
         assert_eq!(idx.resolve_import_path(&from("src/x/y.ts"), "./z"), None);
+    }
+
+    /// The importing path may reach the file through a symlink (macOS temp
+    /// dirs live under /var -> /private/var; Windows canonical paths carry
+    /// the verbatim prefix). Resolution must still find the canonical keys.
+    #[cfg(unix)]
+    #[test]
+    fn test_resolves_from_non_canonical_importing_path() {
+        let (temp, idx) = setup(&[("src/util.ts", ""), ("src/x/y.ts", "")]);
+        let link = temp.path().with_file_name(format!(
+            "{}-link",
+            temp.path().file_name().unwrap().to_string_lossy()
+        ));
+        std::os::unix::fs::symlink(temp.path(), &link).unwrap();
+        let via_link = link.join("src/x/y.ts");
+        assert_ne!(via_link.canonicalize().unwrap(), via_link);
+        let hit = idx.resolve_import_path(&via_link, "../util");
+        let _ = std::fs::remove_file(&link);
+        assert_eq!(
+            hit.and_then(|p| idx.get_file_id(&p)),
+            idx.get_file_id(&temp.path().join("src/util.ts").canonicalize().unwrap())
+        );
     }
 
     /// Roadmap 1.11: re-registering an id (watcher update path) must not
