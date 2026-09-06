@@ -2745,13 +2745,13 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
         ok: impl Fn(&SearchEngine) -> bool,
     ) {
         let deadline = std::time::Instant::now() + Duration::from_secs(8);
-        let mut seen = 0usize;
+        let mut seen: Vec<String> = Vec::new();
         loop {
             let mut batch = Vec::new();
             while let Some(c) = watcher.recv_timeout(Duration::from_millis(500)) {
                 batch.push(c);
             }
-            seen += batch.len();
+            seen.extend(batch.iter().map(|c| format!("{c:?}")));
             if !batch.is_empty() {
                 apply_changes(engine, &batch, config);
             }
@@ -2760,7 +2760,8 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "{what}: expected state not reached after {seen} events"
+                "{what}: expected state not reached; files={} events={seen:?}",
+                engine.get_stats().num_files
             );
         }
     }
