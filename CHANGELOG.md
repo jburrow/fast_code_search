@@ -11,6 +11,28 @@ Fixes from the 2026-09-06 engine and UI review
 (`docs/plans/2026-09-06-keyword-engine-and-ui-review.md`).
 
 ### Fixed
+- Regex candidate generation treated a repetition as one contiguous copy on
+  both sides, so `fo+bar` demanded the literal `fobar` and never found
+  `foobar`; repetitions are now run boundaries, and a property test asserts
+  the candidate set is a superset of the regex's matches. Case-insensitive
+  runs no longer break at `k` and `s` (which previously turned `(?i)task`
+  into a full scan).
+- `references=true` applied index-time columns to the current file content
+  and could panic mid-character on a file edited since indexing (a 500 for
+  every reference query until re-index); positions are verified first.
+- Rust type mentions are captured as references.
+- Multi-term queries rank lines containing more of the terms first and
+  emit them before the per-file cap, so `fn main` finds `fn main()`.
+- The query syntax no longer swallows `->`, `-Wall`, `-1.5`, `file:` or
+  quoted operators; `file:src/` selects everything under `src`.
+- `case=false` is honoured in regex mode; a needle containing `\n` no
+  longer reports a match range past the end of the line.
+- `update_file` kept the edges out of a file but dropped every edge into
+  it, zeroing a module's dependents whenever it was edited; the edges are
+  kept, and a deleted-then-recreated file regains its dependents.
+- Re-indexing an already indexed path replaced its postings instead of
+  unioning stale trigrams onto them; suffix path lookups match whole path
+  components only, and an empty suffix matches nothing.
 - Two concurrent saves (the watcher's shutdown save racing the indexer's
   final save, a checkpoint racing a watcher save, or two processes sharing
   `index_path`) could delete the index file. Saves are serialized and use
