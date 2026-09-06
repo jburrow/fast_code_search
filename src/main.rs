@@ -318,12 +318,14 @@ async fn main() -> Result<()> {
                                     removed = outcome.removed,
                                     "File changes applied"
                                 );
-                                watcher_updates_total += 1;
-                                save_on_watcher_update(
+                                watcher_updates_total += outcome.indexed + outcome.removed;
+                                if save_on_watcher_update(
                                     &watch_indexer_config,
                                     &watch_engine,
                                     watcher_updates_total,
-                                );
+                                ) {
+                                    watcher_updates_total = 0;
+                                }
                             }
                         }
                     }
@@ -459,6 +461,15 @@ async fn shutdown_signal() {
         _ = ctrl_c => info!("Received Ctrl+C, shutting down"),
         _ = terminate => info!("Received SIGTERM, shutting down"),
     }
+
+    // A second Ctrl+C during a slow shutdown save used to be swallowed
+    // (the runtime owns SIGINT), leaving SIGKILL as the only way out.
+    tokio::spawn(async {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::warn!("Second Ctrl+C: exiting immediately without saving");
+            std::process::exit(130);
+        }
+    });
 }
 
 /// Resolve once the shutdown watch channel is set (or its sender is gone).

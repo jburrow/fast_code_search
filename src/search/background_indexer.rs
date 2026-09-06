@@ -743,7 +743,11 @@ fn process_batches(
                     // first batch boundary *after* `checkpoint_interval_files` new
                     // files have accumulated, regardless of common factors between
                     // batch_size and the configured interval.
-                    if indexer_config.checkpoint_interval_files > 0
+                    // Checkpoints follow `save_after_build`: writing them while
+                    // skipping the final save would leave an on-disk index that
+                    // permanently lacks the tail of the build.
+                    if indexer_config.save_after_build
+                        && indexer_config.checkpoint_interval_files > 0
                         && total_indexed - last_checkpoint_indexed
                             >= indexer_config.checkpoint_interval_files
                     {
@@ -1028,42 +1032,41 @@ fn log_completion_stats(
     );
 }
 
-/// Called by the file-watcher loop after each successful file update.
-/// Saves the index to disk when the `save_after_updates` threshold is reached.
+/// Called by the file-watcher loop after each applied batch with the number
+/// of file updates (indexed + removed) since the last save. Saves once that
+/// reaches `save_after_updates` and returns whether it did, so the caller
+/// can reset its counter.
 pub fn save_on_watcher_update(
     indexer_config: &IndexerConfig,
     engine: &Arc<RwLock<SearchEngine>>,
-    total_updates: usize,
-) {
+    updates_since_save: usize,
+) -> bool {
     if indexer_config.save_after_updates > 0
-        && total_updates.is_multiple_of(indexer_config.save_after_updates)
+        && updates_since_save >= indexer_config.save_after_updates
     {
-        // Watcher updates increment by 1, so is_multiple_of is exact here.
-        save_index_if_needed(indexer_config, engine, true, total_updates, 0);
+        save_index_if_needed(indexer_config, engine, true, updates_since_save, 0);
+        true
+    } else {
+        false
     }
 }
 
 /// Save the index on shutdown if any watcher updates were applied since the
-/// last periodic save. Called by the watcher thread after it observes the
-/// shutdown flag so edits made while the server ran are not lost.
+/// last save. Called by the watcher thread after it observes the shutdown
+/// flag so edits made while the server ran are not lost.
 pub fn save_after_watcher_shutdown(
     indexer_config: &IndexerConfig,
     engine: &Arc<RwLock<SearchEngine>>,
-    total_updates: usize,
+    updates_since_save: usize,
 ) {
-    if total_updates == 0 {
-        return;
-    }
-    let already_saved = indexer_config.save_after_updates > 0
-        && total_updates.is_multiple_of(indexer_config.save_after_updates);
-    if already_saved {
+    if updates_since_save == 0 {
         return;
     }
     info!(
-        updates = total_updates,
+        updates = updates_since_save,
         "Shutdown: saving index with pending watcher updates"
     );
-    save_index_if_needed(indexer_config, engine, true, total_updates, 0);
+    save_index_if_needed(indexer_config, engine, true, updates_since_save, 0);
 }
 
 /// Save the index to disk if configured and appropriate.
