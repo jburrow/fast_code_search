@@ -376,10 +376,33 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let config: Config = toml::from_str(&content)
+        let mut config: Config = toml::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+        config.normalize_paths(path.parent());
 
         Ok(config)
+    }
+
+    /// Expand `~` and resolve relative paths in every path-valued setting.
+    ///
+    /// Relative paths resolve against `base_dir` (the config file's
+    /// directory) rather than the process's working directory, so a config
+    /// behaves the same no matter where the server is started from.
+    /// Extensions in `include_extensions` lose a leading dot (`".rs"` and
+    /// `"rs"` both work).
+    pub fn normalize_paths(&mut self, base_dir: Option<&Path>) {
+        for p in &mut self.indexer.paths {
+            *p = expand_path(p, base_dir);
+        }
+        if let Some(p) = &mut self.indexer.index_path {
+            *p = expand_path(p, base_dir);
+        }
+        if let Some(p) = &mut self.server.static_dir {
+            *p = expand_path(p, base_dir);
+        }
+        for e in &mut self.indexer.include_extensions {
+            *e = e.trim_start_matches('.').to_string();
+        }
     }
 
     /// Try to load configuration from default locations
@@ -391,11 +414,16 @@ impl Config {
     pub fn from_default_locations() -> Result<Option<(Self, PathBuf)>> {
         // Check environment variable first
         if let Ok(env_path) = std::env::var("FCS_CONFIG") {
-            let path = PathBuf::from(&env_path);
-            if path.exists() {
-                let config = Self::from_file(&path)?;
-                return Ok(Some((config, path)));
-            }
+            let path = PathBuf::from(expand_path(&env_path, None));
+            // An explicitly named file that is missing is an error, not a
+            // silent fall-through to the defaults.
+            anyhow::ensure!(
+                path.exists(),
+                "FCS_CONFIG points to a missing file: {}",
+                path.display()
+            );
+            let config = Self::from_file(&path)?;
+            return Ok(Some((config, path)));
         }
 
         // Check current directory
@@ -568,8 +596,11 @@ service_name = "fast_code_search"
             self.server.web_address = addr;
         }
 
-        // Append extra paths from CLI
-        self.indexer.paths.extend(extra_paths);
+        // Append extra paths from CLI (relative to the working directory,
+        // which is what a shell user expects).
+        self.indexer
+            .paths
+            .extend(extra_paths.iter().map(|p| expand_path(p, None)));
         self.indexer.canonicalize_paths();
 
         self
@@ -641,6 +672,29 @@ service_name = "fast_code_search"
         }
         Ok(warnings)
     }
+}
+
+/// Expand a leading `~` to the home directory and, when `base_dir` is given,
+/// resolve a relative path against it. Paths that do not exist are left as
+/// written (after expansion) so error messages still name what the user typed.
+pub fn expand_path(raw: &str, base_dir: Option<&Path>) -> String {
+    let expanded: PathBuf = if raw == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw))
+    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        match dirs::home_dir() {
+            Some(home) => home.join(rest),
+            None => PathBuf::from(raw),
+        }
+    } else {
+        PathBuf::from(raw)
+    };
+    let resolved = match base_dir {
+        Some(base) if expanded.is_relative() && !base.as_os_str().is_empty() => {
+            base.join(&expanded)
+        }
+        _ => expanded,
+    };
+    resolved.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
@@ -725,5 +779,62 @@ paths = ["/code/project"]
         assert!(template.contains("[server]"));
         assert!(template.contains("[indexer]"));
         assert!(template.contains("paths"));
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn test_expand_path_tilde_and_relative() {
+        let home = dirs::home_dir().expect("home dir");
+        assert_eq!(
+            expand_path("~/code", None),
+            home.join("code").to_string_lossy()
+        );
+        assert_eq!(expand_path("~", None), home.to_string_lossy());
+
+        let base = Path::new("/etc/fcs");
+        assert_eq!(expand_path("repos", Some(base)), "/etc/fcs/repos");
+        assert_eq!(expand_path("/abs/repos", Some(base)), "/abs/repos");
+        assert_eq!(
+            expand_path("~/x", Some(base)),
+            home.join("x").to_string_lossy()
+        );
+        assert_eq!(expand_path("plain", None), "plain");
+    }
+
+    #[test]
+    fn test_from_file_resolves_paths_against_config_dir_and_strips_dots() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let cfg_path = temp.path().join("fcs.toml");
+        std::fs::write(
+            &cfg_path,
+            r#"
+[indexer]
+paths = ["repos", "~/elsewhere"]
+index_path = "cache/index.bin"
+include_extensions = [".rs", "py"]
+"#,
+        )
+        .unwrap();
+        let config = Config::from_file(&cfg_path).unwrap();
+        assert_eq!(
+            config.indexer.paths[0],
+            temp.path().join("repos").to_string_lossy()
+        );
+        assert!(config.indexer.paths[1]
+            .starts_with(dirs::home_dir().unwrap().to_string_lossy().as_ref()));
+        assert_eq!(
+            config.indexer.index_path.as_deref(),
+            Some(
+                temp.path()
+                    .join("cache/index.bin")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert_eq!(config.indexer.include_extensions, vec!["rs", "py"]);
     }
 }
