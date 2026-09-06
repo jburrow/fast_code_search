@@ -875,10 +875,86 @@ function currentQueryMatcher() {
 // FILE VIEW HELPER (shared by modal and tooltip)
 // ============================================
 
+// Lines rendered on each side of the target line when a file opens, and
+// added per "Show more" click. A 60k-line file used to be highlighted and
+// laid out in full, line by line, before the modal could scroll.
+const FILE_VIEW_WINDOW = 1000;
+const FILE_VIEW_STEP = 1000;
+// Files larger than this are shown without syntax colouring.
+const HLJS_MAX_CHARS = 2_000_000;
+
+/**
+ * Split highlight.js output into one HTML string per source line. hljs
+ * spans may start on one line and end on a later one (block comments,
+ * multi-line strings); such spans are closed at the line break and
+ * re-opened on the next line so every line is a self-contained fragment.
+ */
+function splitHighlightedHtml(html) {
+    const lines = [];
+    const open = [];
+    let cur = '';
+    const re = /<span[^>]*>|<\/span>|[^<]+|</g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        const tok = m[0];
+        if (tok.startsWith('<span')) {
+            open.push(tok);
+            cur += tok;
+        } else if (tok === '</span>') {
+            open.pop();
+            cur += tok;
+        } else {
+            const parts = tok.split('\n');
+            for (let i = 0; i < parts.length; i++) {
+                if (i > 0) {
+                    cur += '</span>'.repeat(open.length);
+                    lines.push(cur);
+                    cur = open.join('');
+                }
+                cur += parts[i];
+            }
+        }
+    }
+    lines.push(cur);
+    return lines;
+}
+
+/**
+ * Highlight `text` once for `lang` and return an escaped HTML string per
+ * line. Falls back to plain escaped lines when hljs is missing, the language
+ * is unknown, the file is very large, or highlighting throws.
+ * @returns {string[]}
+ */
+function highlightLines(text, lang) {
+    const plain = () => text.split('\n').map(escapeHtml);
+    if (typeof hljs === 'undefined' || text.length > HLJS_MAX_CHARS) return plain();
+    const language = lang && lang !== 'plaintext' && hljs.getLanguage(lang) ? lang : null;
+    if (!language) return plain();
+    try {
+        const html = hljs.highlight(text, { language, ignoreIllegals: true }).value;
+        const lines = splitHighlightedHtml(html);
+        // Sanity: hljs never adds or removes newlines, so the counts agree.
+        return lines.length === text.split('\n').length ? lines : plain();
+    } catch (_) {
+        return plain();
+    }
+}
+
+/** One rendered file line; `html` is already escaped/highlighted. */
+function renderFileLineHtml(html, lineNum, highlightLine) {
+    const isHighlighted = lineNum === highlightLine;
+    const cls = isHighlighted ? 'file-line file-line-highlight' : 'file-line';
+    return `<div class="${cls}" id="file-line-${lineNum}">` +
+        `<span class="file-line-num">${lineNum}</span>` +
+        `<span class="file-line-content">${html}</span>` +
+        `</div>`;
+}
+
 /**
  * Fetch a file and render it into `container` with syntax highlighting,
  * query-term highlighting, and the matched line scrolled into view within
- * the container (works for both the full-screen modal and the fixed tooltip).
+ * the container. Only ±FILE_VIEW_WINDOW lines around the target are laid
+ * out; "Show more" controls extend the window in either direction.
  */
 async function populateFileView(container, filePath, highlightLine, matcher, signal) {
     const response = await fetch(
@@ -892,32 +968,66 @@ async function populateFileView(container, filePath, highlightLine, matcher, sig
     }
     const data = await response.json();
     const lang = hljsLangForPath(filePath);
-    const linesHtml = data.content.split('\n')
-        .map((line, idx) => renderFileLine(line, idx + 1, highlightLine))
-        .join('');
+    const lines = highlightLines(data.content, lang);
+    const total = lines.length;
+    const target = Math.min(Math.max(1, highlightLine || 1), total);
+    let from = Math.max(1, target - FILE_VIEW_WINDOW);
+    let to = Math.min(total, target + FILE_VIEW_WINDOW);
 
     container.innerHTML =
-        `<div class="file-meta">${data.line_count.toLocaleString()} lines · ${formatBytes(data.size_bytes)}</div>` +
-        `<div class="file-code" data-lang="${lang}">${linesHtml}</div>`;
+        `<div class="file-meta">${Number(data.line_count || total).toLocaleString()} lines · ${formatBytes(data.size_bytes || 0)}</div>` +
+        `<div class="file-code" data-lang="${lang}">` +
+            `<div class="file-more" data-side="above"></div>` +
+            `<div class="file-lines"></div>` +
+            `<div class="file-more" data-side="below"></div>` +
+        `</div>`;
+    const linesEl = container.querySelector('.file-lines');
+    const aboveEl = container.querySelector('.file-more[data-side="above"]');
+    const belowEl = container.querySelector('.file-more[data-side="below"]');
 
-    if (typeof hljs !== 'undefined') {
-        container.querySelectorAll('.file-line-content').forEach(span => {
-            const code = document.createElement('code');
-            code.className = `language-${lang}`;
-            code.textContent = span.textContent;
-            hljs.highlightElement(code);
-            span.innerHTML = code.innerHTML;
+    const renderRange = (a, b) => {
+        const holder = document.createElement('div');
+        holder.innerHTML = lines.slice(a - 1, b).map((html, i) => renderFileLineHtml(html, a + i, target)).join('');
+        if (matcher) holder.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
+        return holder;
+    };
+
+    linesEl.append(...renderRange(from, to).childNodes);
+
+    const updateMoreControls = () => {
+        const hiddenAbove = from - 1;
+        const hiddenBelow = total - to;
+        aboveEl.innerHTML = hiddenAbove > 0
+            ? `<button type="button" class="file-more-btn">Show ${Math.min(FILE_VIEW_STEP, hiddenAbove).toLocaleString()} more lines above (${hiddenAbove.toLocaleString()} hidden)</button>`
+            : '';
+        belowEl.innerHTML = hiddenBelow > 0
+            ? `<button type="button" class="file-more-btn">Show ${Math.min(FILE_VIEW_STEP, hiddenBelow).toLocaleString()} more lines below (${hiddenBelow.toLocaleString()} hidden)</button>`
+            : '';
+        const aboveBtn = aboveEl.querySelector('button');
+        if (aboveBtn) aboveBtn.addEventListener('click', () => {
+            const newFrom = Math.max(1, from - FILE_VIEW_STEP);
+            // Keep the visible lines where they are while content is prepended.
+            const prevTop = container.scrollTop;
+            const prevHeight = container.scrollHeight;
+            linesEl.prepend(...renderRange(newFrom, from - 1).childNodes);
+            from = newFrom;
+            container.scrollTop = prevTop + (container.scrollHeight - prevHeight);
+            updateMoreControls();
         });
-    }
-
-    if (matcher) {
-        container.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
-    }
+        const belowBtn = belowEl.querySelector('button');
+        if (belowBtn) belowBtn.addEventListener('click', () => {
+            const newTo = Math.min(total, to + FILE_VIEW_STEP);
+            linesEl.append(...renderRange(to + 1, newTo).childNodes);
+            to = newTo;
+            updateMoreControls();
+        });
+    };
+    updateMoreControls();
 
     // Scroll the matched line to the centre of the container.
     // Using getBoundingClientRect so it works for both fixed-position tooltips
     // and normal flow modal bodies.
-    const targetLine = container.querySelector(`#file-line-${highlightLine}`);
+    const targetLine = container.querySelector(`#file-line-${target}`);
     if (targetLine) {
         const cRect = container.getBoundingClientRect();
         const lRect = targetLine.getBoundingClientRect();
@@ -998,14 +1108,20 @@ window.addEventListener('resize', () => {
 // Lines of context shown above/below the match in the hover preview.
 const CTX_TOOLTIP_CONTEXT = 12;
 
-function renderContextBody(data, highlightLine) {
+/**
+ * Render the /api/context window. The lines are highlighted together with
+ * the file's language (not highlightAuto per line, which ran every grammar
+ * on every line) and the query terms are marked afterwards.
+ */
+function renderContextBody(data, highlightLine, lang) {
     const start = data.start_line || 1;
-    const rows = (data.lines || []).map((line, i) => {
+    const lines = highlightLines((data.lines || []).join('\n'), lang);
+    const rows = lines.map((html, i) => {
         const ln = start + i;
         const isMatch = ln === highlightLine;
         return `<div class="file-line${isMatch ? ' file-line-highlight' : ''}">` +
             `<span class="file-line-num">${ln}</span>` +
-            `<span class="file-line-content">${escapeHtml(line)}</span>` +
+            `<span class="file-line-content">${html}</span>` +
             `</div>`;
     }).join('');
     return `<div class="ctx-file-body">${rows}</div>`;
@@ -1013,14 +1129,8 @@ function renderContextBody(data, highlightLine) {
 
 function highlightContextTooltip(tooltip) {
     const matcher = _currentMatcher || currentQueryMatcher();
-    tooltip.querySelectorAll('.file-line-content').forEach(span => {
-        if (typeof hljs !== 'undefined') {
-            const code = document.createElement('code');
-            code.textContent = span.textContent;
-            try { hljs.highlightElement(code); span.innerHTML = code.innerHTML; } catch (e) { /* leave plain */ }
-        }
-        if (matcher) highlightTermsIn(span, matcher);
-    });
+    if (!matcher) return;
+    tooltip.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
 }
 
 async function showContextTooltip(resultItem, filePath, lineNumber) {
@@ -1030,13 +1140,14 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
     const signal = _ctxFetchController.signal;
 
     const tooltip = getOrCreateTooltip();
+    const lang = hljsLangForPath(filePath);
     const headerHtml = `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>`;
     const cacheKey = `${filePath}::${lineNumber}`;
 
     // Cache hit: render immediately, no fetch.
     const cached = _ctxContextCache.get(cacheKey);
     if (cached) {
-        tooltip.innerHTML = headerHtml + renderContextBody(cached, lineNumber);
+        tooltip.innerHTML = headerHtml + renderContextBody(cached, lineNumber, lang);
         tooltip.style.display = 'flex';
         highlightContextTooltip(tooltip);
         positionTooltip(tooltip, resultItem);
@@ -1056,7 +1167,7 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
         const data = await resp.json();
         if (signal.aborted) return;
         _ctxContextCache.set(cacheKey, data);
-        tooltip.innerHTML = headerHtml + renderContextBody(data, lineNumber);
+        tooltip.innerHTML = headerHtml + renderContextBody(data, lineNumber, lang);
         highlightContextTooltip(tooltip);
         positionTooltip(tooltip, resultItem);
     } catch (e) {
@@ -2035,14 +2146,6 @@ function closeModal() {
 // FILE VIEWER MODAL
 // ============================================
 
-function renderFileLine(line, lineNum, highlightLine) {
-    const isHighlighted = lineNum === highlightLine;
-    const cls = isHighlighted ? 'file-line file-line-highlight' : 'file-line';
-    return `<div class="${cls}" id="file-line-${lineNum}">` +
-        `<span class="file-line-num">${lineNum}</span>` +
-        `<span class="file-line-content">${escapeHtml(line)}</span>` +
-        `</div>`;
-}
 
 // Stored so the overlay click listener can be removed on close
 let _fileModalOverlayListener = null;
