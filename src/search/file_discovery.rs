@@ -78,8 +78,22 @@ impl FileDiscoveryConfig {
 /// One directory walk: plain `walkdir`, or the `ignore` crate's walker which
 /// applies `.gitignore` rules as it descends.
 enum Walker {
-    Plain(walkdir::IntoIter),
+    Plain(walkdir::FilterEntry<walkdir::IntoIter, DirPredicate>),
     Ignore(ignore::Walk),
+}
+
+/// Decides whether a directory is descended into (see [`is_excluded_dir`]).
+type DirPredicate = Box<dyn FnMut(&walkdir::DirEntry) -> bool + Send + 'static>;
+
+/// Does `dir` match an exclude pattern as a directory? Patterns are written
+/// for files (`**/node_modules/**`, `**/target/**`), so the directory is
+/// probed both as itself and with a child appended: pruning it here means
+/// `.git/objects`, `target/` and `node_modules/` are never read at all
+/// instead of being walked, stat'ed and rejected file by file.
+fn is_excluded_dir(filter: &PathFilter, dir: &Path) -> bool {
+    let normalized = dir.to_string_lossy().replace('\\', "/");
+    let probe = format!("{}/_", normalized.trim_end_matches('/'));
+    !filter.matches(&normalized) || !filter.matches(&probe)
 }
 
 /// Iterator over discovered files matching the configuration criteria.
@@ -87,13 +101,25 @@ pub struct FileDiscoveryIterator {
     /// Stack of directory walkers (one per path).
     walkers: Vec<Walker>,
 
+    /// The eligibility rules every discovered file is checked against.
+    rules: EligibilityProbe,
+}
+
+/// The single eligibility rule set — exclude patterns, include-extension
+/// whitelist, binary extensions, size cap, and `.gitignore` when enabled —
+/// without any directory walk. Discovery applies it to every file it finds;
+/// the watcher and the reload reconciliation apply it to single paths, so
+/// the initial build and incremental updates can never disagree. Cheap to
+/// share across threads; build once per config.
+#[derive(Clone)]
+pub struct EligibilityProbe {
     /// Whether single-path eligibility checks consult `.gitignore` files.
     respect_gitignore: bool,
 
     /// Compiled exclude glob filter.
     exclude_filter: PathFilter,
 
-    /// Allowed file extensions (lowercased; empty = allow all).
+    /// Allowed file extensions (lowercased, no leading dot; empty = allow all).
     include_extensions: Vec<String>,
 
     /// Binary extensions to skip.
@@ -103,9 +129,46 @@ pub struct FileDiscoveryIterator {
     max_file_size: Option<u64>,
 }
 
+impl EligibilityProbe {
+    /// Build the rules from `config` (`config.paths` is ignored).
+    pub fn new(config: &FileDiscoveryConfig) -> Self {
+        // Build a PathFilter from the exclude patterns. Patterns are matched against
+        // the full OS path of each discovered file so that patterns like
+        // `**/node_modules/**` are evaluated with proper glob semantics instead of
+        // the old substring-contains approach.
+        let exclude_filter = PathFilter::new(&[], &config.exclude_patterns).unwrap_or_else(|e| {
+            tracing::warn!("Invalid exclude pattern(s): {}; exclusions disabled", e);
+            PathFilter::default()
+        });
+        Self {
+            respect_gitignore: config.respect_gitignore,
+            exclude_filter,
+            include_extensions: config
+                .include_extensions
+                .iter()
+                .map(|e| e.trim_start_matches('.').to_lowercase())
+                .collect(),
+            binary_extensions: config.get_all_binary_extensions(),
+            max_file_size: config.max_file_size,
+        }
+    }
+
+    /// Would discovery index `path`? `known_size` avoids a stat when the
+    /// caller already has it.
+    pub fn is_eligible_path(&self, path: &Path, known_size: Option<u64>) -> bool {
+        if self.respect_gitignore && is_gitignored(path) {
+            return false;
+        }
+        self.accepts_with_size(path, known_size)
+    }
+}
+
 impl FileDiscoveryIterator {
     /// Create a new file discovery iterator from the given configuration.
     pub fn new(config: &FileDiscoveryConfig) -> Self {
+        let rules = EligibilityProbe::new(config);
+        let dir_filter = Arc::new(rules.exclude_filter.clone());
+
         let walkers: Vec<Walker> = config
             .paths
             .iter()
@@ -120,7 +183,11 @@ impl FileDiscoveryIterator {
                 // two paths -> duplicate search results) and can pull in trees
                 // outside the requested roots. This matches the default of most
                 // code-search tools (e.g. ripgrep).
+                //
+                // Excluded directories are pruned before they are read (the
+                // root itself, depth 0, is always entered).
                 Some(if config.respect_gitignore {
+                    let filter = dir_filter.clone();
                     Walker::Ignore(
                         ignore::WalkBuilder::new(path)
                             .follow_links(false)
@@ -132,37 +199,39 @@ impl FileDiscoveryIterator {
                             .git_global(false)
                             .ignore(true)
                             .parents(true)
+                            // Honour .gitignore in trees that are not git
+                            // repositories too, so discovery agrees with the
+                            // watcher's per-path `is_gitignored` check.
+                            .require_git(false)
+                            .filter_entry(move |e| {
+                                e.depth() == 0
+                                    || !e.file_type().is_some_and(|t| t.is_dir())
+                                    || !is_excluded_dir(&filter, e.path())
+                            })
                             .build(),
                     )
                 } else {
-                    Walker::Plain(WalkDir::new(path).follow_links(false).into_iter())
+                    let filter = dir_filter.clone();
+                    let predicate: DirPredicate = Box::new(move |e: &walkdir::DirEntry| {
+                        e.depth() == 0
+                            || !e.file_type().is_dir()
+                            || !is_excluded_dir(&filter, e.path())
+                    });
+                    Walker::Plain(
+                        WalkDir::new(path)
+                            .follow_links(false)
+                            .into_iter()
+                            .filter_entry(predicate),
+                    )
                 })
             })
             .collect();
 
-        // Build a PathFilter from the exclude patterns. Patterns are matched against
-        // the full OS path of each discovered file so that patterns like
-        // `**/node_modules/**` are evaluated with proper glob semantics instead of
-        // the old substring-contains approach.
-        let exclude_filter = PathFilter::new(&[], &config.exclude_patterns).unwrap_or_else(|e| {
-            tracing::warn!("Invalid exclude pattern(s): {}; exclusions disabled", e);
-            PathFilter::default()
-        });
-
-        Self {
-            walkers,
-            respect_gitignore: config.respect_gitignore,
-            exclude_filter,
-            include_extensions: config
-                .include_extensions
-                .iter()
-                .map(|e| e.to_lowercase())
-                .collect(),
-            binary_extensions: config.get_all_binary_extensions(),
-            max_file_size: config.max_file_size,
-        }
+        Self { walkers, rules }
     }
+}
 
+impl EligibilityProbe {
     /// Check if a path matches any exclude pattern.
     fn is_excluded(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
@@ -199,6 +268,11 @@ impl FileDiscoveryIterator {
     /// discovered file and by [`is_eligible`] for watcher events, so the
     /// initial build and incremental updates can never disagree.
     fn accepts(&self, path: &Path) -> bool {
+        self.accepts_with_size(path, None)
+    }
+
+    /// [`Self::accepts`] with the file size already known (skips the stat).
+    fn accepts_with_size(&self, path: &Path, known_size: Option<u64>) -> bool {
         if self.is_excluded(path) {
             return false;
         }
@@ -216,26 +290,16 @@ impl FileDiscoveryIterator {
         if self.has_binary_ext(path) || has_binary_extension(path) {
             return false;
         }
-        if self.exceeds_size_limit(path) {
+        let too_large = match (known_size, self.max_file_size) {
+            (Some(size), Some(max)) => size > max,
+            _ => self.exceeds_size_limit(path),
+        };
+        if too_large {
             tracing::debug!(path = %path.display(), "Skipping file exceeding size limit");
             return false;
         }
         true
     }
-}
-
-/// Would discovery with `config` index `path`? Same rules as
-/// [`FileDiscoveryIterator`] (exclude patterns, include extensions, binary
-/// extensions, size cap); `config.paths` is ignored.
-pub fn is_eligible(path: &Path, config: &FileDiscoveryConfig) -> bool {
-    let probe = FileDiscoveryIterator::new(&FileDiscoveryConfig {
-        paths: Vec::new(),
-        ..config.clone()
-    });
-    if probe.respect_gitignore && is_gitignored(path) {
-        return false;
-    }
-    probe.accepts(path)
 }
 
 impl Iterator for FileDiscoveryIterator {
@@ -263,7 +327,7 @@ impl Iterator for FileDiscoveryIterator {
                     if !is_file {
                         continue;
                     }
-                    if !self.accepts(&path) {
+                    if !self.rules.accepts(&path) {
                         continue;
                     }
                     return Some(path);
@@ -281,6 +345,14 @@ impl Iterator for FileDiscoveryIterator {
 
         None
     }
+}
+
+/// Would discovery with `config` index `path`? Same rules as
+/// [`FileDiscoveryIterator`] (exclude patterns, include extensions, binary
+/// extensions, size cap, `.gitignore`); `config.paths` is ignored. Build an
+/// [`EligibilityProbe`] instead when checking many paths.
+pub fn is_eligible(path: &Path, config: &FileDiscoveryConfig) -> bool {
+    EligibilityProbe::new(config).is_eligible_path(path, None)
 }
 
 /// Is `path` ignored by a `.gitignore` / `.ignore` file in one of its
@@ -523,5 +595,106 @@ mod tests {
 
         let discovered: Vec<PathBuf> = FileDiscoveryIterator::new(&config).collect();
         assert!(discovered.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    fn names(root: &Path, cfg: &FileDiscoveryConfig) -> Vec<String> {
+        let mut v: Vec<String> = FileDiscoveryIterator::new(cfg)
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Excluded directories are pruned (not descended into) by both walkers,
+    /// while a root whose own name matches a pattern is still entered.
+    #[test]
+    fn test_excluded_directories_are_pruned() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        for d in ["node_modules/pkg/deep", "target/debug", "build", "src"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("node_modules/pkg/deep/x.js"), "x").unwrap();
+        std::fs::write(root.join("target/debug/y.rs"), "y").unwrap();
+        std::fs::write(root.join("build/z.rs"), "z").unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        let cfg = FileDiscoveryConfig {
+            paths: vec![root.to_string_lossy().to_string()],
+            exclude_patterns: vec![
+                "**/node_modules/**".to_string(),
+                "**/target/**".to_string(),
+                "**/build".to_string(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(names(root, &cfg), vec!["src/main.rs"]);
+        let plain = FileDiscoveryConfig {
+            respect_gitignore: false,
+            ..cfg.clone()
+        };
+        assert_eq!(names(root, &plain), vec!["src/main.rs"]);
+
+        // The predicate itself: directories match as themselves or via a child.
+        let filter = PathFilter::new(&[], &cfg.exclude_patterns).unwrap();
+        assert!(is_excluded_dir(&filter, &root.join("node_modules")));
+        assert!(is_excluded_dir(&filter, &root.join("target")));
+        assert!(is_excluded_dir(&filter, &root.join("build")));
+        assert!(!is_excluded_dir(&filter, &root.join("src")));
+
+        // A root that is itself named like an excluded directory is entered.
+        let sub_root = root.join("build");
+        let cfg2 = FileDiscoveryConfig {
+            paths: vec![sub_root.to_string_lossy().to_string()],
+            exclude_patterns: vec!["**/build".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(names(&sub_root, &cfg2), vec!["z.rs"]);
+    }
+
+    /// Discovery honours `.gitignore` in a tree that is not a git repository,
+    /// so it agrees with the per-path check the watcher uses.
+    #[test]
+    fn test_gitignore_applies_outside_git_repos() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("build")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
+        std::fs::write(root.join("build/gen.rs"), "fn gen() {}").unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        let cfg = FileDiscoveryConfig {
+            paths: vec![root.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        assert_eq!(names(root, &cfg), vec![".gitignore", "src/main.rs"]);
+        assert!(!is_eligible(&root.join("build/gen.rs"), &cfg));
+    }
+
+    /// `include_extensions` accepts `".rs"` as well as `"rs"`, and the probe
+    /// can use a known size instead of a stat.
+    #[test]
+    fn test_probe_extensions_and_known_size() {
+        let cfg = FileDiscoveryConfig {
+            include_extensions: vec![".RS".to_string()],
+            max_file_size: Some(10),
+            respect_gitignore: false,
+            ..Default::default()
+        };
+        let probe = EligibilityProbe::new(&cfg);
+        assert!(probe.is_eligible_path(Path::new("/nowhere/a.rs"), Some(5)));
+        assert!(!probe.is_eligible_path(Path::new("/nowhere/a.rs"), Some(11)));
+        assert!(!probe.is_eligible_path(Path::new("/nowhere/a.py"), Some(5)));
     }
 }

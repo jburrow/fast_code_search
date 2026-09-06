@@ -497,7 +497,7 @@ fn run_indexing_pipeline(
         stale_files,
         indexer_config.exclude_patterns.clone(),
         indexer_config.include_extensions.clone(),
-        indexer_config.max_file_size,
+        crate::search::incremental::effective_max_size(indexer_config),
         indexer_config.respect_gitignore,
         tx,
         files_discovered.clone(),

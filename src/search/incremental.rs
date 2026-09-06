@@ -199,7 +199,9 @@ fn index_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) ->
     }
 }
 
-fn effective_max_size(config: &IndexerConfig) -> u64 {
+/// `max_file_size = 0` means "the default" everywhere (engine, watcher,
+/// gRPC Index and initial discovery alike).
+pub(crate) fn effective_max_size(config: &IndexerConfig) -> u64 {
     if config.max_file_size == 0 {
         crate::search::PartialIndexedFile::DEFAULT_MAX_FILE_SIZE
     } else {

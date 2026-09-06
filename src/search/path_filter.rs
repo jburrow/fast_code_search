@@ -19,7 +19,7 @@ use std::path::PathBuf;
 /// root folder's own name as the first component, e.g. `project/src/main.rs`
 /// (not just `src/main.rs`), so patterns like `src/**/*.rs` are automatically
 /// expanded to `**/src/**/*.rs` and will match at any depth.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PathFilter {
     /// Include patterns - file must match at least one (if non-empty)
     include: Option<GlobSet>,

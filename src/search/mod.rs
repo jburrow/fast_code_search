@@ -17,7 +17,9 @@ pub use engine::{
     PartialIndexedFile, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine,
     SearchLimits, SearchMatch, SearchRankingInfo, SearchStats, SharedIndexingProgress,
 };
-pub use file_discovery::{discover_files, FileDiscoveryConfig, FileDiscoveryIterator};
+pub use file_discovery::{
+    discover_files, EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator,
+};
 pub use incremental::{apply_change, apply_changes, ChangeOutcome};
 pub use path_filter::PathFilter;
 pub use query_syntax::{parse as parse_query, ParsedQuery, SearchOptions};
