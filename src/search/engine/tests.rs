@@ -2210,3 +2210,50 @@ fn test_update_and_recreate_keep_dependents() {
     assert_eq!(dependents(&engine, helper4), vec![main]);
     assert_eq!(engine.waiting_imports_count(), 0);
 }
+
+/// Review 1.10: indexing a path that is already indexed (the watcher beat
+/// discovery during the initial build) replaces its postings instead of
+/// unioning onto them, so stale trigrams never keep the file a candidate
+/// for text it no longer contains; the edges into it survive.
+#[test]
+fn test_reindexing_a_known_path_replaces_its_trigrams() {
+    let temp_dir = TempDir::new().unwrap();
+    let main_path = temp_dir.path().join("main.rs");
+    let helper_path = temp_dir.path().join("helper.rs");
+    fs::write(&main_path, "mod helper;\nfn main() {}\n").unwrap();
+    fs::write(&helper_path, "pub fn alphabet() {}\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&helper_path).unwrap();
+    engine.index_file(&main_path).unwrap();
+    engine.resolve_imports();
+    let helper = engine.find_file_id(&helper_path.to_string_lossy()).unwrap();
+    let main = engine.find_file_id(&main_path.to_string_lossy()).unwrap();
+    assert!(engine.text_candidates("alphabet").contains(helper));
+    assert_eq!(engine.get_dependents(helper), vec![main]);
+    assert!(engine
+        .search_symbols("alphabet", "", "", 10)
+        .unwrap()
+        .iter()
+        .any(|h| h.file_id == helper));
+
+    // The file changed and is indexed again through the batch path.
+    fs::write(&helper_path, "pub fn zebra() {}\n").unwrap();
+    engine.index_file(&helper_path).unwrap();
+    assert_eq!(
+        engine.find_file_id(&helper_path.to_string_lossy()),
+        Some(helper),
+        "same id"
+    );
+    assert!(
+        !engine.text_candidates("alphabet").contains(helper),
+        "stale trigrams must be gone"
+    );
+    assert!(engine.text_candidates("zebra").contains(helper));
+    assert!(engine
+        .search_symbols("alphabet", "", "", 10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(engine.search("zebra", 10).len(), 1);
+    assert_eq!(engine.get_dependents(helper), vec![main]);
+    assert_eq!(engine.file_store.live_len(), 2);
+}

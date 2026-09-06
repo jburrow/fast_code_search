@@ -781,9 +781,23 @@ impl SearchEngine {
 
         for pre_indexed in batch {
             // Add file to store - this also memory-maps it
+            let ids_before = self.file_store.len();
             let file_id = match self.file_store.add_file(&pre_indexed.path) {
                 Ok(id) => id,
                 Err(_) => continue,
+            };
+            // A known path (the watcher beat discovery during the initial
+            // build, or the same batch was fed twice) is re-indexed under
+            // its existing id: strip the stale postings, symbols and
+            // out-edges first — unioning the new trigrams onto the old
+            // posting lists kept the file a false candidate for text it no
+            // longer contains — while keeping the edges into it.
+            let dependents = if (file_id as usize) < ids_before {
+                let dependents = self.strip_for_reindex(file_id);
+                self.file_store.refresh_file_by_id(file_id);
+                dependents
+            } else {
+                Vec::new()
             };
             self.set_indexed_meta(file_id, pre_indexed.mtime, pre_indexed.size);
             self.note_added_file(&pre_indexed.path);
@@ -793,6 +807,10 @@ impl SearchEngine {
             if let Some(canonical) = self.file_store.get_path(file_id).map(Path::to_path_buf) {
                 self.dependency_index
                     .register_canonical_file(file_id, canonical);
+            }
+            if !dependents.is_empty() {
+                self.dependency_index
+                    .add_imports_batch(dependents.iter().map(|&from| (from, file_id)).collect());
             }
 
             // Add trigrams to index (using pre-computed trigrams)
