@@ -45,9 +45,11 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
+          # GitHub runs bash steps with -e, so the failing pipeline must be
+          # caught here or the annotation script below never runs.
           set -o pipefail
-          cargo test --verbose --no-fail-fast 2>&1 | tee test.log
-          status=${PIPESTATUS[0]}
+          status=0
+          cargo test --verbose --no-fail-fast 2>&1 | tee test.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash .github/scripts/annotate-test-log.sh test.log
           fi
@@ -56,9 +58,11 @@ jobs:
       - name: Run tests (semantic feature)
         shell: bash
         run: |
+          # GitHub runs bash steps with -e, so the failing pipeline must be
+          # caught here or the annotation script below never runs.
           set -o pipefail
-          cargo test --verbose --features semantic --lib --no-fail-fast 2>&1 | tee test-semantic.log
-          status=${PIPESTATUS[0]}
+          status=0
+          cargo test --verbose --features semantic --lib --no-fail-fast 2>&1 | tee test-semantic.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash .github/scripts/annotate-test-log.sh test-semantic.log
           fi
