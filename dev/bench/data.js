@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788596861241,
+  "lastUpdate": 1788685592303,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -10583,6 +10583,402 @@ window.BENCHMARK_DATA = {
             "name": "file_staleness_check/1000",
             "value": 945807,
             "range": "± 7612",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3366521d241752f2df6d73c1b586dc72302b1dc9",
+          "message": "Keyword roadmap 3 (#116)\n\n* ci: stop shipping debug archives with releases\n\nRoadmap 6.6 leftover. Each release built and uploaded a second,\nunoptimised binary per target. Release binaries are LTO'd and stripped;\nanyone debugging builds from the tag.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(deps): resolve import candidates lexically, never through realpath\n\nEvery candidate path the resolver probed that was not an exact map hit\nwas canonicalized, i.e. a readlink per path component. Python absolute\nimports probe up to eight ancestor directories with two candidates per\nsegment, so building a 6k-file tokio+django corpus made 17.6 million\nfailing readlink calls: 25 s of build, 32 s of system time.\n\nCandidates are joined onto registered canonical paths, so resolving\n'.' and '..' lexically and looking the result up in the map answers\nthe same question. Build time 25.5 s -> 8.7 s on that corpus with the\nidentical 8,466 edges; register_file also skips the realpath walk when\nthe engine re-registers a path it already holds.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(index): parallel single-document removal from the posting lists\n\nRoadmap 6.5 finding. Updating one file from the watcher cost 15.6 ms on\na 6k-file corpus, 13 ms of it in remove_document: a sequential retain\nover 134k posting lists doing a bitmap intersection on each. The scan is\nnow parallel and the single-document path only pays a membership test.\nPosting lists left empty are pruned by finalize instead of on every\nremoval. One-file update: 15.6 ms -> 5.2 ms (removal 13.4 ms -> 2.7 ms).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(watch): cache compiled gitignore matchers per directory\n\nRoadmap 6.5 finding. Every watcher event rebuilt the .gitignore/.ignore\nmatcher (parse + one regex per pattern) for each ancestor directory of\nthe changed file, about 10 ms per event on a repository with a normal\nroot .gitignore. Matchers are now cached per directory, keyed by the\nignore files' modification times so an edited ignore file is re-read.\nOne-file update on the tokio+django corpus: 16 ms -> 4.3 ms.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* bench: real-corpus benchmark in CI, nightly large-corpus run\n\nRoadmap 6.5. examples/corpus_bench.rs indexes real directories the way\nthe server does and reports build throughput, resident memory, query\nlatency percentiles (text, regex, symbol, filtered), incremental update\ncost and index save/load, as a markdown table and optionally as bencher\nlines. The benchmark workflow checks out tokio 1.45.0 and Django 5.2\n(pinned, shallow) on every push to main, feeds the metrics into the\nexisting trend chart and the job summary, and a nightly job runs the\nsame over rust-lang/rust 1.89.0. The README benchmark section carries\nthe measured table with provenance.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(search): multi-line regex\n\nRoadmap Phase 7. A pattern that mentions a newline (\\n, \\r, \\x0a) or sets\nthe s flag ((?s)begin.*?end) is matched against the whole file content\ninstead of line by line. Each match is reported once, on the line where\nit starts, with the in-line offsets clamped to that line; the per-document\ncap and the query budget apply as before. Patterns without either marker\nare unchanged, so \\s+ still never crosses a line.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(index): compact once, in finalize\n\nRoadmap 6.4 leftover. The batch loop called compact_memory every 50\nbatches, which shrank the trigram hash map to fit and forced the next\nbatch to grow and rehash it again. finalize already releases capacity\nonce at the end; the periodic call and the now-unused method are gone.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* chore: remove unreferenced public functions\n\nA whole-tree scan (src, tests, benches, examples) found nine pub fns\nwith no reference anywhere: IndexerConfig::is_path_in_scope,\nDependencyIndex::files_with_dependents, LazyMappedFile::new_small,\nTrigram::from_slice, TrigramIndex::num_documents,\ndiscover_files_with_config, PathFilter::filter_documents_by_display,\nSystemLimits::can_allocate_more and diagnose_mmap_error.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* test(web): CORS headers and /ws/progress\n\nExplicit coverage for two serving behaviours that had none:\nserver.cors_origins (default: no Access-Control-Allow-Origin at all; a\nlisted origin is echoed, an unlisted one is not, preflight succeeds,\n\"*\" allows any) and the progress WebSocket (101 handshake with\nSec-WebSocket-Accept, an initial status frame on connect, a broadcast\nupdate relayed). The WebSocket test speaks the handshake and frame\nformat directly so no client dependency is added.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(symbols): symbol references (call sites, type mentions)\n\nRoadmap Phase 7. The grammars' tags queries already describe references\n(@reference.call, @reference.class, @reference.implementation, ...);\nthose patterns are now kept instead of disabled, and the Rust query is\nsupplemented with path calls (crate::run(), Type::new()) and generic\ncalls, which upstream leaves out.\n\nReferences are stored apart from definitions: per file, a list of\n(interned name id, line, column) at 12 bytes each, with one name table\nper engine. They are persisted (format v6, magic FCSIDX04; older files\nare rebuilt), remapped on save/load like symbols, refreshed by update\nand cleared by removal.\n\nSearchEngine::search_references(name) returns the lines where the\nidentifier is used (exact, case-sensitive; one result per line; the\ntrigram index pre-filters candidates so only files containing the text\nhave their reference lists scanned). REST: /api/search?references=true;\ngRPC: SearchRequest.references. Results carry match_type\nSYMBOL_REFERENCE, which the web UI already labels.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: reference search parameter and results\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* bench: report symbol references in the corpus benchmark\n\nAdds a reference-search query and the reference count to\nexamples/corpus_bench.rs; README numbers updated (references add about\n6 MB of memory and 3 MB on disk for 220k references on tokio + Django,\nand no measurable build time in an alternating A/B against the\npre-reference binary).\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* feat(index): sectioned, checksummed persisted index (format v7)\n\nRoadmap 6.1. The index file is now a 36-byte header (magic FCSIDX05,\nversion, CRC-32, section lengths) followed by three sections: the\nmetadata (bincode of everything but the posting lists), a fixed-width\ntrigram directory sorted by trigram, and the roaring bitmaps back to\nback. The CRC covers all three sections.\n\nSave streams: bitmaps are serialized straight from the live map into\nthe file (no per-bitmap Vec, no serialized copy of the whole index).\nLoad memory-maps the file, validates magic, version, section bounds and\nchecksum before decoding anything, decodes the metadata, and\ndeserializes bitmaps in parallel directly out of the mapping.\nReconciling load of the 22 MB tokio+django index: 0.31 s -> 0.21 s.\n\nA golden fixture (tests/fixtures/index-v7.fcsidx) pins the format: a\ntest asserts that saving a fixed index reproduces it byte for byte and\nthat it loads with every section intact; corrupt bodies and bad section\nlengths are rejected with a rebuild message. Older magics (v1..v6) are\nrejected up front. Fixtures are marked binary in .gitattributes.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: describe the v7 index layout; tick roadmap 6.1\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* docs: roadmap status: complete\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* ci: surface test crashes as annotations; reset Criterion state before benchmarks\n\nThe macOS test job fails with exit code 101 and no failed-test line, so\nthe annotation step had nothing to echo. The log scraper now also\nreports panics, cargo's \"process didn't exit successfully\" / signal\nlines and compile errors, and falls back to the last 40 log lines. CI\nalso gains workflow_dispatch so a run can be triggered on main.\n\nThe benchmark job failed at the trend-tracking step: rust-cache prunes\nfiles it does not recognise, leaving Criterion baseline directories\nwithout sample.json, and Criterion's error text broke the bencher lines.\ntarget/criterion is removed before benchmarks run, --noplot is passed,\nand only well-formed bencher lines are handed to the action.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* perf(index): load a 61k-file index in 8 s instead of 23 s; phase timings in the log\n\nMeasured on a real 61k-file / 545 MB workspace index (external HDD):\n\n- Restoring symbols and imports registered every file with the\n  dependency index through realpath, one walk per file: 15.9 s -> 0.3 s\n  by registering the store's already-canonical path\n  (register_canonical_file; the batch merge and update paths use it too).\n- The staleness check stat'ed each file twice (exists, then metadata):\n  one stat now answers both (7.9 s -> 3.5 s).\n- The \"Index loaded from disk\" line carries total_ms and per-phase\n  timings so the next slow load says which step it was.\n\nAlso: 5xx responses are traced at debug rather than error, since a\nreadiness probe answering 503 during the build is expected and the\nhandlers log genuine failures themselves.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-06T09:55:13+01:00",
+          "tree_id": "f3afd037063b030cd4e381f3ff0e6d2d2d4bfda7",
+          "url": "https://github.com/jburrow/fast_code_search/commit/3366521d241752f2df6d73c1b586dc72302b1dc9"
+        },
+        "date": 1788685591810,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 328982,
+            "range": "± 24935",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 31866,
+            "range": "± 904",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 414,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 333402,
+            "range": "± 4476",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 32152,
+            "range": "± 868",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 420,
+            "range": "± 10",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 329944,
+            "range": "± 11083",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 32595,
+            "range": "± 978",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 422,
+            "range": "± 4",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 536701,
+            "range": "± 10362",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 459174,
+            "range": "± 9631",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 623233,
+            "range": "± 9444",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 750222,
+            "range": "± 11185",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 331672,
+            "range": "± 8106",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 355089,
+            "range": "± 3554",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 410946,
+            "range": "± 6392",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 552550,
+            "range": "± 5784",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 331098,
+            "range": "± 8434",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 327248,
+            "range": "± 8101",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 379115,
+            "range": "± 6852",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 230288,
+            "range": "± 4558",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 332324,
+            "range": "± 15041",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 702528,
+            "range": "± 22669",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 482216,
+            "range": "± 12105",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 447859,
+            "range": "± 12054",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 8349,
+            "range": "± 32",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 14285127,
+            "range": "± 42032",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 28443579,
+            "range": "± 62851",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 56333641,
+            "range": "± 195129",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 25447563,
+            "range": "± 63167",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 27403090,
+            "range": "± 151857",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 50500083,
+            "range": "± 319733",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 54403550,
+            "range": "± 193134",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 1212253,
+            "range": "± 84593",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 3564238,
+            "range": "± 93934",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 6519575,
+            "range": "± 387256",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1250840,
+            "range": "± 13317",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 4228719,
+            "range": "± 31714",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 7941267,
+            "range": "± 121252",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 163887,
+            "range": "± 4774",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 223501,
+            "range": "± 6386",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 281823,
+            "range": "± 6685",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 73679,
+            "range": "± 1461",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 307512,
+            "range": "± 2866",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 598803,
+            "range": "± 119908",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_build",
+            "value": 4335181574,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_save",
+            "value": 181051359,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_load",
+            "value": 207876349,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/common",
+            "value": 890219,
+            "range": "± 74830",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/identifier",
+            "value": 1078261,
+            "range": "± 335289",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/no_match",
+            "value": 501,
+            "range": "± 100",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/short",
+            "value": 1237169,
+            "range": "± 45015",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/full_rank",
+            "value": 865643,
+            "range": "± 59181",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/filtered",
+            "value": 896010,
+            "range": "± 51466",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/literal",
+            "value": 1884583,
+            "range": "± 985177",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/case_insensitive",
+            "value": 1721778,
+            "range": "± 242875",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/no_literal",
+            "value": 1901425,
+            "range": "± 331592",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/exact",
+            "value": 3338278,
+            "range": "± 485911",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/prefix",
+            "value": 3567408,
+            "range": "± 441178",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/references",
+            "value": 606497,
+            "range": "± 57598",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/incremental/modify_file",
+            "value": 5451430,
+            "range": "± 3240295",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/rss_after_build_bytes",
+            "value": 122097664,
+            "range": "± 0",
             "unit": "ns/iter"
           }
         ]
