@@ -1119,6 +1119,34 @@ async fn test_http_regex_search() -> Result<()> {
     Ok(())
 }
 
+/// Review 1.8: an explicit `case=false` makes a regex search
+/// case-insensitive (`(?i)`); the default and `case=true` stay
+/// case-sensitive.
+#[tokio::test]
+async fn test_http_regex_honours_case_false() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+    let count = |case: Option<&'static str>| {
+        let client = client.clone();
+        let url = format!("{}/api/search", ctx.http_url);
+        async move {
+            let mut params = vec![("q", "TESTSTRUCT"), ("regex", "true")];
+            if let Some(c) = case {
+                params.push(("case", c));
+            }
+            let response = client.get(url).query(&params).send().await?;
+            assert!(response.status().is_success());
+            let body: serde_json::Value = response.json().await?;
+            Ok::<usize, anyhow::Error>(body["results"].as_array().unwrap().len())
+        }
+    };
+    assert_eq!(count(None).await?, 0, "regex is case-sensitive by default");
+    assert_eq!(count(Some("true")).await?, 0);
+    let insensitive = count(Some("false")).await?;
+    assert!(insensitive >= 2, "struct + impl lines, got {insensitive}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_grpc_regex_search() -> Result<()> {
     let ctx = setup_test_server().await?;

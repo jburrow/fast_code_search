@@ -518,9 +518,17 @@ pub async fn search_handler(
                     )
                 })?
         } else if is_regex {
+            // Regex is case-sensitive by default (like `(?-i)`); an explicit
+            // `case=false` asks for case-insensitive matching, which for a
+            // regex is the `(?i)` flag. `case=true` needs nothing.
+            let pattern = if case_override == Some(false) {
+                format!("(?i){query}")
+            } else {
+                query.clone()
+            };
             engine
                 .search_regex_with_limits(
-                    &query,
+                    &pattern,
                     &include_patterns,
                     &exclude_patterns,
                     limits,
