@@ -769,11 +769,24 @@ pub struct DependencyResponse {
     pub count: usize,
 }
 
+/// `file=` must name something: an empty or blank value used to fall
+/// through to the suffix lookup and return an arbitrary indexed file.
+fn require_file_param(file: &str) -> Result<(), ApiError> {
+    if file.trim().is_empty() {
+        return Err(ApiError::from((
+            StatusCode::BAD_REQUEST,
+            "file must not be empty".to_string(),
+        )));
+    }
+    Ok(())
+}
+
 /// Get files that depend on (import) the specified file
 pub async fn dependents_handler(
     State(state): State<WebState>,
     ApiQuery(params): ApiQuery<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, ApiError> {
+    require_file_param(&params.file)?;
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = try_read_engine(&engine)?;
@@ -814,6 +827,7 @@ pub async fn dependencies_handler(
     State(state): State<WebState>,
     ApiQuery(params): ApiQuery<DependencyQuery>,
 ) -> Result<Json<DependencyResponse>, ApiError> {
+    require_file_param(&params.file)?;
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = try_read_engine(&engine)?;
@@ -870,6 +884,7 @@ pub async fn file_handler(
     State(state): State<WebState>,
     ApiQuery(params): ApiQuery<FileQuery>,
 ) -> Result<Json<FileResponse>, ApiError> {
+    require_file_param(&params.file)?;
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = try_read_engine(&engine)?;
@@ -946,6 +961,7 @@ pub async fn context_handler(
     State(state): State<WebState>,
     ApiQuery(params): ApiQuery<ContextQuery>,
 ) -> Result<Json<ContextResponse>, ApiError> {
+    require_file_param(&params.file)?;
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
         let engine = try_read_engine(&engine)?;
@@ -1015,7 +1031,11 @@ pub async fn ws_progress_handler(
     State(state): State<WebState>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_progress_socket(socket, state))
+    // Inbound frames are ignored, so there is no reason to buffer the
+    // defaults (64 MiB messages / 16 MiB frames) per connection.
+    ws.max_message_size(4 * 1024)
+        .max_frame_size(4 * 1024)
+        .on_upgrade(|socket| handle_progress_socket(socket, state))
 }
 
 /// Helper to get stats from engine
