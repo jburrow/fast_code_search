@@ -690,9 +690,27 @@ pub fn batch_check_files(
                 }
             }
 
-            // One stat answers both "still there?" and "changed?".
+            // One stat answers both "still there?" and "changed?". Only a
+            // definite "not there" counts as removed: a permission error, an
+            // I/O error or an unmounted share must not wipe the file (and,
+            // through the forced save, the whole root) from the index.
             match std::fs::metadata(&file_meta.path) {
-                Err(_) => (idx, FileStatus::Removed),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    (idx, FileStatus::Removed)
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        path = %file_meta.path.display(),
+                        error = %e,
+                        "Could not stat indexed file; keeping its entry"
+                    );
+                    (idx, FileStatus::Valid)
+                }
                 Ok(meta)
                     if mtime_secs_of(&meta) != file_meta.mtime || meta.len() != file_meta.size =>
                 {
@@ -1121,5 +1139,59 @@ mod tests {
             0,
             0
         ));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod stat_error_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Only a definite "not found" marks a file removed; a permission error
+    /// (or an unmounted share) keeps the entry, so a bad boot cannot wipe a
+    /// whole root from the checkpoint.
+    #[test]
+    fn test_unreadable_directory_does_not_remove_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let locked = temp.path().join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        let file = locked.join("a.rs");
+        std::fs::write(&file, "fn a() {}").unwrap();
+        let mtime = get_mtime(&file).unwrap();
+        let files = vec![
+            PersistedFileMetadata {
+                path: file.clone(),
+                mtime,
+                size: 9,
+                source_base_path: None,
+            },
+            PersistedFileMetadata {
+                path: temp.path().join("gone.rs"),
+                mtime,
+                size: 1,
+                source_base_path: None,
+            },
+        ];
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let statuses = batch_check_files(&files, &[]);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Root can stat anything; the assertion is only meaningful otherwise.
+        let is_root = std::fs::metadata(&file).is_ok() && unsafe_is_root();
+        if !is_root {
+            assert!(
+                matches!(statuses[0].1, FileStatus::Valid),
+                "{:?}",
+                statuses[0].1
+            );
+        }
+        assert!(matches!(statuses[1].1, FileStatus::Removed));
+    }
+
+    fn unsafe_is_root() -> bool {
+        std::fs::read_to_string("/proc/self/status")
+            .map(|s| s.lines().any(|l| l.starts_with("Uid:\t0\t")))
+            .unwrap_or(false)
     }
 }
