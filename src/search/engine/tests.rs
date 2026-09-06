@@ -2102,3 +2102,23 @@ fn test_needle_with_newline_is_clamped_to_first_line() {
     check(run("\"alpha\nbeta\" case:yes"), &[1]);
     check(run("\"alpha\nbeta\" word:yes"), &[1, 4]);
 }
+
+/// Review 1.10: a regex search must not drop a document whose symbol
+/// cache slot is missing (the text path already tolerates that).
+#[test]
+fn test_regex_search_tolerates_missing_symbol_slot() {
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("a.rs");
+    fs::write(&path, "fn alpha() {}\nlet beta = 1;\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&path).unwrap();
+    engine.finalize();
+    assert_eq!(engine.search_regex(r"bet\w", "", "", 10).unwrap().len(), 1);
+
+    engine.symbol_cache.clear();
+    assert_eq!(engine.search("beta", 10).len(), 1, "text path");
+    let hits = engine.search_regex(r"bet\w", "", "", 10).unwrap();
+    assert_eq!(hits.len(), 1, "regex path: {hits:?}");
+    assert_eq!(hits[0].line_number, 2);
+    assert!(!hits[0].is_symbol);
+}

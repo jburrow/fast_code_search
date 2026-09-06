@@ -873,8 +873,15 @@ impl SearchEngine {
         let file = self.file_store.get(doc_id)?;
         let content = file.as_str().ok()?;
 
-        // Get symbols for this file
-        let symbols = self.symbol_cache.get(doc_id as usize)?;
+        // Symbols for this file. The cache slot may be missing (index loaded
+        // without symbols, or a file added before its symbols were stored);
+        // the text path treats that as "no symbols" and so must this one,
+        // otherwise every regex hit in such a file is silently dropped.
+        let symbols = self
+            .symbol_cache
+            .get(doc_id as usize)
+            .map(|s| s.as_slice())
+            .unwrap_or(&[]);
 
         // Get dependency count for this file (cached lookup - done once per document)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
