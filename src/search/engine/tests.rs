@@ -1928,7 +1928,7 @@ fn test_regex_candidates_are_superset_of_matches() {
         }
     }
     assert!(
-        accelerated >= 12,
+        accelerated >= 14,
         "expected most patterns to be accelerated, got {accelerated}"
     );
 }

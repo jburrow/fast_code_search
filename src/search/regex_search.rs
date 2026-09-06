@@ -215,23 +215,31 @@ fn required_runs(subs: &[Hir], mut on_other: impl FnMut(&Hir)) -> Vec<String> {
 
 /// If `class` matches exactly the case variants of one character, that
 /// character in lowercase.
+///
+/// `(?i)k` and `(?i)s` compile to classes that also contain the Kelvin sign
+/// (U+212A) and the long s (U+017F), whose *lowercase* is not `k` / `s`; a
+/// member is accepted when either its lowercase or the lowercase of its
+/// uppercase (the simple case fold) is the target. The pre-filter therefore
+/// treats a file spelled with a long s as not containing `s`; that character
+/// does not occur in source code, whereas rejecting the class broke every
+/// case-insensitive run at each `k` or `s` (`(?i)task`, `(?i)pass`) and
+/// turned those searches into full scans.
 fn single_char_class_lower(class: &regex_syntax::hir::Class) -> Option<char> {
     use regex_syntax::hir::Class;
+    fn single(mut it: impl Iterator<Item = char>) -> Option<char> {
+        let c = it.next()?;
+        it.next().is_none().then_some(c)
+    }
     let mut lower: Option<char> = None;
     let mut consider = |c: char| -> bool {
-        let mut it = c.to_lowercase();
-        let Some(l) = it.next() else {
-            return false;
-        };
-        if it.next().is_some() {
-            return false; // multi-char lowercase mapping: not a simple case pair
-        }
+        let l = single(c.to_lowercase());
+        let via_upper = single(c.to_uppercase()).and_then(|u| single(u.to_lowercase()));
         match lower {
             None => {
-                lower = Some(l);
-                true
+                lower = l.or(via_upper);
+                lower.is_some()
             }
-            Some(existing) => existing == l,
+            Some(existing) => l == Some(existing) || via_upper == Some(existing),
         }
     };
     match class {
@@ -455,6 +463,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Review 1.2: `(?i)` classes for `k` and `s` also contain the Kelvin
+    /// sign and the long s; they must not break the literal run.
+    #[test]
+    fn test_case_insensitive_k_and_s_stay_in_the_run() {
+        assert_eq!(constraints("(?i)task"), vec![vec!["task".to_string()]]);
+        assert_eq!(constraints("(?i)mask"), vec![vec!["mask".to_string()]]);
+        assert_eq!(constraints("(?i)pass"), vec![vec!["pass".to_string()]]);
+        assert_eq!(
+            constraints("(?i)Kelvin sign"),
+            vec![vec!["kelvin sign".to_string()]]
+        );
+        assert!(RegexAnalysis::analyze("(?i)task").unwrap().is_accelerated);
     }
 
     #[test]
