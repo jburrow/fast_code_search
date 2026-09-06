@@ -25,15 +25,22 @@ pub struct CodeSearchService {
     /// Eligibility rules (excludes, extensions, size, gitignore, batch size)
     /// for the `Index` RPC; defaults when the service was built without one.
     indexer_config: Option<IndexerConfig>,
+    /// Bounds concurrent searches across every connection (shared with the
+    /// REST router in the shipped binary). `concurrency_limit_per_connection`
+    /// alone lets N connections run N × limit searches.
+    search_permits: Arc<tokio::sync::Semaphore>,
+    /// Whole-request timeout; searches get an engine deadline just under it.
+    request_timeout: std::time::Duration,
+    /// Only one `Index` RPC may run at a time.
+    index_in_progress: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CodeSearchService {
+    const DEFAULT_MAX_CONCURRENT_SEARCHES: usize = 64;
+    const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
     pub fn new() -> Self {
-        Self {
-            engine: Arc::new(RwLock::new(SearchEngine::new())),
-            allowed_index_roots: None,
-            indexer_config: None,
-        }
+        Self::with_engine(Arc::new(RwLock::new(SearchEngine::new())))
     }
 
     /// Create a service with an existing shared engine
@@ -42,7 +49,24 @@ impl CodeSearchService {
             engine,
             allowed_index_roots: None,
             indexer_config: None,
+            search_permits: Arc::new(tokio::sync::Semaphore::new(
+                Self::DEFAULT_MAX_CONCURRENT_SEARCHES,
+            )),
+            request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
+            index_in_progress: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    /// Share a search semaphore (with the REST router) and set the request
+    /// timeout that bounds every search's engine deadline.
+    pub fn with_limits(
+        mut self,
+        search_permits: Arc<tokio::sync::Semaphore>,
+        request_timeout: std::time::Duration,
+    ) -> Self {
+        self.search_permits = search_permits;
+        self.request_timeout = request_timeout.max(std::time::Duration::from_secs(1));
+        self
     }
 
     /// Like [`Self::with_engine`], but the `Index` RPC only accepts paths under
@@ -55,11 +79,9 @@ impl CodeSearchService {
             .into_iter()
             .map(|r| crate::search::engine::canonicalize_lossy(&r))
             .collect();
-        Self {
-            engine,
-            allowed_index_roots: Some(roots),
-            indexer_config: None,
-        }
+        let mut s = Self::with_engine(engine);
+        s.allowed_index_roots = Some(roots);
+        s
     }
 
     /// The shipped configuration: `Index` scoped to `config.paths` and
@@ -118,12 +140,25 @@ impl CodeSearch for CodeSearchService {
         let case_sensitive = req.case_sensitive;
         let whole_word = req.whole_word;
         let rank_mode = RankMode::parse(&req.rank);
-        let mut limits = SearchLimits::new(max_results).with_offset(req.offset.max(0) as usize);
-        if req.deadline_ms > 0 {
-            limits = limits.with_timeout(std::time::Duration::from_millis(
-                (req.deadline_ms as u64).min(30_000),
-            ));
+        let offset = req.offset.max(0) as usize;
+        if offset > SearchLimits::MAX_OFFSET {
+            return Err(Status::invalid_argument(format!(
+                "offset must be at most {}; narrow the query instead of paging deeper",
+                SearchLimits::MAX_OFFSET
+            )));
         }
+        // Same deadline policy as /api/search: the client's deadline if
+        // given, capped by (and otherwise just under) the request timeout.
+        let default_timeout = self.request_timeout.mul_f32(0.9);
+        let timeout = if req.deadline_ms > 0 {
+            std::time::Duration::from_millis((req.deadline_ms as u64).min(30_000))
+                .min(default_timeout)
+        } else {
+            default_timeout
+        };
+        let limits = SearchLimits::new(max_results)
+            .with_offset(offset)
+            .with_timeout(timeout);
         {
             let span = tracing::Span::current();
             span.record("query", query.as_str());
@@ -139,8 +174,20 @@ impl CodeSearch for CodeSearchService {
         // Move CPU-intensive search work onto a blocking thread so tokio worker
         // threads are not starved under concurrent load.  The RwLockReadGuard is
         // not Send, so we clone the Arc and acquire the lock inside the closure.
+        // Concurrency limit shared with the REST API; beyond it we answer
+        // RESOURCE_EXHAUSTED immediately rather than queueing blocking threads.
+        let permit = match self.search_permits.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                return Err(Status::resource_exhausted(
+                    "Too many concurrent searches, please try again shortly",
+                ));
+            }
+        };
         let engine_arc = std::sync::Arc::clone(&self.engine);
         let matches = tokio::task::spawn_blocking(move || {
+            // Held for the search's real lifetime, not the RPC future's.
+            let _permit = permit;
             // Use try_read to avoid blocking when a write lock is held during indexing.
             let engine = match engine_arc.try_read() {
                 Ok(guard) => guard,
@@ -252,6 +299,19 @@ impl CodeSearch for CodeSearchService {
         info!(paths = ?req.paths, "Received index request");
         let start = Instant::now();
 
+        if req.paths.iter().all(|p| p.trim().is_empty()) {
+            return Err(Status::invalid_argument(
+                "paths must contain at least one directory to index",
+            ));
+        }
+        // One Index at a time: interleaving two runs would merge batches out
+        // of order and finalize twice under the write lock.
+        let _index_guard = self
+            .index_in_progress
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| Status::aborted("An index request is already running"))?;
+
         // Scope check: a network client must not be able to index (and then
         // read back via /api/file) arbitrary paths on the host.
         if let Some(roots) = &self.allowed_index_roots {
@@ -330,8 +390,12 @@ impl CodeSearch for CodeSearchService {
             }
             let stats = {
                 let mut engine = write_engine(&engine_arc);
-                engine.resolve_imports();
-                engine.finalize();
+                // Nothing indexed means nothing to resolve or compact; skip
+                // the O(files + trigrams) finalize under the write lock.
+                if files_indexed > 0 {
+                    engine.resolve_imports();
+                    engine.finalize();
+                }
                 engine.get_stats()
             };
             Ok::<_, Status>((files_indexed, total_size, stats))
@@ -373,6 +437,20 @@ pub fn create_server_with_engine_config(
     config: &IndexerConfig,
 ) -> CodeSearchServer<CodeSearchService> {
     CodeSearchServer::new(CodeSearchService::with_engine_config(engine, config))
+}
+
+/// [`create_server_with_engine_config`] sharing a search semaphore and
+/// request timeout with the REST router.
+pub fn create_server_with_engine_config_limits(
+    engine: Arc<RwLock<SearchEngine>>,
+    config: &IndexerConfig,
+    search_permits: Arc<tokio::sync::Semaphore>,
+    request_timeout: std::time::Duration,
+) -> CodeSearchServer<CodeSearchService> {
+    CodeSearchServer::new(
+        CodeSearchService::with_engine_config(engine, config)
+            .with_limits(search_permits, request_timeout),
+    )
 }
 
 /// Create a gRPC server whose `Index` RPC is restricted to `roots`.

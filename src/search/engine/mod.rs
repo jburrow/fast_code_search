@@ -103,6 +103,13 @@ impl SearchLimits {
     const BUDGET_MULTIPLIER: usize = 8;
     /// Never budget fewer matches than this, so tiny pages still rank well.
     const MIN_BUDGET: usize = 512;
+    /// Largest offset a client may page to. Deeper pages would need a budget
+    /// (and a scan) proportional to the offset; past this point a client
+    /// should narrow the query instead.
+    pub const MAX_OFFSET: usize = 10_000;
+    /// Ceiling on the budget derived from page size and offset. An explicit
+    /// [`Self::with_match_budget`] may still exceed it (benchmarks, tests).
+    pub const MAX_DERIVED_BUDGET: usize = 100_000;
 
     /// Limits for a page of `max_results` with the default budget.
     pub fn new(max_results: usize) -> Self {
@@ -110,17 +117,30 @@ impl SearchLimits {
         Self {
             max_results,
             offset: 0,
-            match_budget: (max_results * Self::BUDGET_MULTIPLIER).max(Self::MIN_BUDGET),
+            match_budget: Self::derived_budget(0, max_results),
             deadline: None,
         }
     }
 
-    /// Skip the first `offset` results (the budget grows to cover the page).
+    /// Budget for a page of `max_results` starting at `offset`: enough
+    /// headroom for ranking, bounded above so a deep offset cannot turn one
+    /// request into an unbounded scan.
+    fn derived_budget(offset: usize, max_results: usize) -> usize {
+        offset
+            .saturating_add(max_results)
+            .saturating_mul(Self::BUDGET_MULTIPLIER)
+            .clamp(Self::MIN_BUDGET, Self::MAX_DERIVED_BUDGET)
+    }
+
+    /// Skip the first `offset` results (the budget grows to cover the page,
+    /// up to [`Self::MAX_DERIVED_BUDGET`]). Offsets beyond
+    /// [`Self::MAX_OFFSET`] are clamped; callers that want to reject them
+    /// should validate before building the limits.
     pub fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
+        self.offset = offset.min(Self::MAX_OFFSET);
         self.match_budget = self
             .match_budget
-            .max(((offset + self.max_results) * Self::BUDGET_MULTIPLIER).max(Self::MIN_BUDGET));
+            .max(Self::derived_budget(self.offset, self.max_results));
         self
     }
 

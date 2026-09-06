@@ -3539,3 +3539,65 @@ async fn test_lost_delete_event_is_healed_by_sibling_check() -> Result<()> {
     assert_eq!(engine.search("keep_token_v2", 5).len(), 1);
     Ok(())
 }
+
+// =============================================================================
+// Request bounds: offset, timeouts, gRPC guards
+// =============================================================================
+
+#[tokio::test]
+async fn test_http_search_rejects_deep_offset() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "find_me_in_search"), ("offset", "10001")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await?;
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("offset"),
+        "expected an offset error, got {body}"
+    );
+
+    // The boundary itself is accepted.
+    let resp = client
+        .get(format!("{}/api/search", ctx.http_url))
+        .query(&[("q", "find_me_in_search"), ("offset", "10000")])
+        .send()
+        .await?;
+    assert_eq!(resp.status(), 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_index_rejects_empty_paths() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    let err = client
+        .index(IndexRequest { paths: vec![] })
+        .await
+        .expect_err("empty paths must be rejected");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_search_rejects_deep_offset() -> Result<()> {
+    let ctx = setup_test_server().await?;
+    let mut client = CodeSearchClient::connect(ctx.grpc_url).await?;
+
+    let err = client
+        .search(SearchRequest {
+            query: "find_me_in_search".to_string(),
+            max_results: 10,
+            offset: 10_001,
+            ..Default::default()
+        })
+        .await
+        .expect_err("deep offsets must be rejected");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    Ok(())
+}

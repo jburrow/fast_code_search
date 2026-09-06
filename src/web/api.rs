@@ -145,6 +145,19 @@ fn default_max_results() -> usize {
 /// Upper bound for a client-requested search deadline.
 const MAX_SEARCH_TIMEOUT_MS: u64 = 30_000;
 
+/// Records a search's wall time when dropped, so the metric covers the
+/// search's real lifetime even when the HTTP response was abandoned.
+struct SearchTimer {
+    metrics: std::sync::Arc<super::metrics::Metrics>,
+    start: std::time::Instant,
+}
+
+impl Drop for SearchTimer {
+    fn drop(&mut self) {
+        self.metrics.record_search(self.start.elapsed());
+    }
+}
+
 /// Maximum number of context lines allowed per match.
 /// Capped to avoid returning excessively large payloads for dense result sets.
 const MAX_CONTEXT_LINES: usize = 10;
@@ -373,14 +386,31 @@ pub async fn search_handler(
 
     let max_results = params.max.clamp(1, 1000);
     let offset = params.offset;
+    if offset > SearchLimits::MAX_OFFSET {
+        return Err(ApiError::from((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "offset must be at most {}; narrow the query instead of paging deeper",
+                SearchLimits::MAX_OFFSET
+            ),
+        )));
+    }
     let case_override = params.case;
     let word_override = params.word;
-    let mut limits = SearchLimits::new(max_results).with_offset(offset);
-    if params.timeout_ms > 0 {
-        limits = limits.with_timeout(std::time::Duration::from_millis(
-            params.timeout_ms.min(MAX_SEARCH_TIMEOUT_MS),
-        ));
-    }
+    // Every search runs under an engine deadline: the client's `timeout_ms`
+    // if given, capped by (and otherwise just under) the HTTP request
+    // timeout, so a scan whose response was abandoned by the timeout layer
+    // stops on its own instead of holding the read lock and a thread.
+    let default_timeout = state.request_timeout.mul_f32(0.9);
+    let timeout = if params.timeout_ms > 0 {
+        std::time::Duration::from_millis(params.timeout_ms.min(MAX_SEARCH_TIMEOUT_MS))
+            .min(default_timeout)
+    } else {
+        default_timeout
+    };
+    let limits = SearchLimits::new(max_results)
+        .with_offset(offset)
+        .with_timeout(timeout);
     let include_patterns = params.include;
     let exclude_patterns = params.exclude;
     let is_regex = params.regex;
@@ -398,7 +428,7 @@ pub async fn search_handler(
     // Concurrency limit: each search occupies a blocking-pool thread, so
     // beyond the configured number we answer 503 + Retry-After immediately
     // rather than letting requests pile up and starve the other endpoints.
-    let _permit = match state.search_permits.clone().try_acquire_owned() {
+    let permit = match state.search_permits.clone().try_acquire_owned() {
         Ok(p) => p,
         Err(_) => {
             state.metrics.record_rejected();
@@ -409,10 +439,19 @@ pub async fn search_handler(
         }
     };
     let metrics = state.metrics.clone();
-    let request_start = std::time::Instant::now();
+    let timer = SearchTimer {
+        metrics: metrics.clone(),
+        start: std::time::Instant::now(),
+    };
 
     let engine = state.engine.clone();
     let outcome = tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
+        // The permit and the latency timer live inside the blocking task so
+        // they reflect the search's real lifetime: if the HTTP layer times
+        // out and drops the response future, the slot stays taken and the
+        // request is still counted until the scan actually ends.
+        let _permit = permit;
+        let _timer = timer;
         // Start timing the search
         let start_time = std::time::Instant::now();
 
@@ -572,7 +611,6 @@ pub async fn search_handler(
     })?
     .map_err(ApiError::from);
 
-    metrics.record_search(request_start.elapsed());
     if let Err(e) = &outcome {
         match e.status {
             StatusCode::SERVICE_UNAVAILABLE => metrics.record_unavailable(),

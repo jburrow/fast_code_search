@@ -35,6 +35,9 @@ pub struct WebState {
     pub static_dir: Option<PathBuf>,
     /// Bounds concurrent searches (each holds a blocking-pool thread).
     pub search_permits: Arc<tokio::sync::Semaphore>,
+    /// Whole-request timeout; searches get an engine deadline just under it
+    /// so an abandoned request stops scanning on its own.
+    pub request_timeout: std::time::Duration,
     /// Request counters and latency histogram for `/metrics`.
     pub metrics: Arc<metrics::Metrics>,
     /// The indexer configuration, for `/api/diagnostics` (None in embedded /
@@ -58,6 +61,10 @@ pub struct RouterOptions {
     pub body_limit: usize,
     /// Indexer configuration to report on `/api/diagnostics`.
     pub indexer_config: Option<crate::config::IndexerConfig>,
+    /// Semaphore bounding concurrent searches. Pass the same one to the gRPC
+    /// service so both surfaces share `max_concurrent_searches`; `None`
+    /// creates a private one sized from `max_concurrent_searches`.
+    pub search_permits: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl Default for RouterOptions {
@@ -68,6 +75,7 @@ impl Default for RouterOptions {
             request_timeout: std::time::Duration::from_secs(30),
             body_limit: 64 * 1024,
             indexer_config: None,
+            search_permits: None,
         }
     }
 }
@@ -125,7 +133,11 @@ pub fn create_router_with_options(
         progress,
         progress_tx,
         static_dir,
-        search_permits: Arc::new(tokio::sync::Semaphore::new(opts.max_concurrent_searches)),
+        search_permits: opts
+            .search_permits
+            .clone()
+            .unwrap_or_else(|| Arc::new(tokio::sync::Semaphore::new(opts.max_concurrent_searches))),
+        request_timeout: opts.request_timeout,
         metrics: Arc::new(metrics::Metrics::new()),
         indexer_config: opts.indexer_config.clone().map(Arc::new),
         diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
@@ -157,9 +169,9 @@ pub fn create_router_with_options(
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             opts.body_limit,
         ))
-        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            opts.request_timeout,
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            request_timeout_middleware,
         ))
         // 5xx responses are logged at debug rather than error: a readiness
         // probe answering 503 while the index builds is expected, and the
@@ -170,6 +182,38 @@ pub fn create_router_with_options(
             ),
         )
         .with_state(state)
+}
+
+/// Whole-request timeout that answers with the API's JSON error envelope
+/// (504 + `Retry-After`) instead of an empty 408. Search handlers also give
+/// the engine a deadline just under this, so the scan stops on its own when
+/// the response is abandoned here.
+async fn request_timeout_middleware(
+    axum::extract::State(state): axum::extract::State<WebState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match tokio::time::timeout(state.request_timeout, next.run(req)).await {
+        Ok(resp) => resp,
+        Err(_) => {
+            let mut resp = (
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                axum::Json(api::ErrorResponse {
+                    error: format!(
+                        "Request timed out after {} s; narrow the query or pass a smaller timeout_ms",
+                        state.request_timeout.as_secs()
+                    ),
+                }),
+            )
+                .into_response();
+            resp.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("1"),
+            );
+            resp
+        }
+    }
 }
 
 /// Translate the configured origin list into a CORS layer. Invalid origin
@@ -324,4 +368,60 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(s, "{:02x}", b);
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole-request timeout answers with the JSON error envelope and a
+    /// `Retry-After` header (not an empty 408), so clients can treat it like
+    /// any other API error. Uses a deliberately slow route so the outcome
+    /// does not depend on how fast a real search happens to be.
+    #[tokio::test]
+    async fn request_timeout_answers_with_json_504() {
+        let state = WebState {
+            engine: Arc::new(RwLock::new(SearchEngine::new())),
+            progress: Arc::new(RwLock::new(crate::search::IndexingProgress::default())),
+            progress_tx: crate::search::create_progress_broadcaster(),
+            static_dir: None,
+            search_permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            request_timeout: std::time::Duration::from_millis(20),
+            metrics: Arc::new(metrics::Metrics::new()),
+            indexer_config: None,
+            diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
+        };
+        let router = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    "done"
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                request_timeout_middleware,
+            ))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+
+        let resp = reqwest::get(format!("http://{addr}/slow")).await.unwrap();
+        assert_eq!(resp.status(), 504);
+        assert_eq!(
+            resp.headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert!(
+            body["error"].as_str().unwrap_or("").contains("timed out"),
+            "{body}"
+        );
+    }
 }

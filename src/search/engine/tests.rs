@@ -1689,3 +1689,29 @@ fn test_make_display_path_multiple_roots() {
     assert_eq!(display_a, "alpha/utils.rs");
     assert_eq!(display_b, "beta/utils.rs");
 }
+
+// ---------------------------------------------------------------------------
+// SearchLimits: offset and budget bounds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_search_limits_offset_is_clamped_and_budget_capped() {
+    let base = SearchLimits::new(50);
+    assert_eq!(base.offset, 0);
+
+    // A deep offset is clamped and the derived budget stops growing.
+    let deep = SearchLimits::new(1000).with_offset(usize::MAX);
+    assert_eq!(deep.offset, SearchLimits::MAX_OFFSET);
+    assert_eq!(deep.match_budget, (SearchLimits::MAX_OFFSET + 1000) * 8);
+    assert!(deep.match_budget <= SearchLimits::MAX_DERIVED_BUDGET);
+
+    // A shallow offset still grows the budget proportionally.
+    let shallow = SearchLimits::new(50).with_offset(100);
+    assert_eq!(shallow.offset, 100);
+    assert!(shallow.match_budget > base.match_budget);
+    assert!(shallow.match_budget <= SearchLimits::MAX_DERIVED_BUDGET);
+
+    // An explicit override is still allowed to exceed the derived ceiling.
+    let unbounded = SearchLimits::new(50).with_match_budget(usize::MAX);
+    assert_eq!(unbounded.match_budget, usize::MAX);
+}

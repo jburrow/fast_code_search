@@ -159,6 +159,14 @@ async fn main() -> Result<()> {
             let _ = shutdown_tx.send(true);
         });
     }
+    // Shared by the REST router and the gRPC service so
+    // `max_concurrent_searches` bounds the process, not each surface (or
+    // each gRPC connection) separately.
+    let search_permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
+        config.server.max_concurrent_searches.max(1),
+    ));
+    let request_timeout = std::time::Duration::from_secs(config.server.request_timeout_secs.max(1));
+
     let mut web_handle: Option<tokio::task::JoinHandle<()>> = None;
     let mut indexer_handle: Option<std::thread::JoinHandle<()>> = None;
     let mut watcher_handle: Option<std::thread::JoinHandle<()>> = None;
@@ -196,6 +204,7 @@ async fn main() -> Result<()> {
         let web_shutdown_rx = shutdown_rx.clone();
         let mut router_options = web::RouterOptions::from(&config.server);
         router_options.indexer_config = Some(config.indexer.clone());
+        router_options.search_permits = Some(search_permits.clone());
         web_handle = Some(tokio::spawn(async move {
             let router = web::create_router_with_options(
                 web_engine,
@@ -339,8 +348,12 @@ async fn main() -> Result<()> {
     }
 
     // Create gRPC service with shared engine
-    let search_service =
-        server::create_server_with_engine_config(shared_engine.clone(), &config.indexer);
+    let search_service = server::create_server_with_engine_config_limits(
+        shared_engine.clone(),
+        &config.indexer,
+        search_permits.clone(),
+        request_timeout,
+    );
 
     info!(version = env!("CARGO_PKG_VERSION"), address = %addr, "Fast Code Search Server starting");
     info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");
@@ -355,7 +368,6 @@ async fn main() -> Result<()> {
         >>()
         .await;
 
-    let request_timeout = std::time::Duration::from_secs(config.server.request_timeout_secs.max(1));
     let serve_result = Server::builder()
         .timeout(request_timeout)
         .concurrency_limit_per_connection(config.server.max_concurrent_searches.max(1))
