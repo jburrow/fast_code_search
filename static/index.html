@@ -368,13 +368,18 @@
         #progress-panel[style*="display: none"] { display: none !important; }
 
         /* ===== COMPACT NAV SEARCH ===== */
-        /* Absolutely centred inside the sticky header; only transform+opacity animated */
+        /* Absolutely positioned inside the sticky header; only transform+opacity
+           animated. It is anchored to the RIGHT (just left of the help icon), on
+           the track the index stats occupy, and the stats are hidden while it is
+           shown. Centred at left:50% it sat on top of FILES:/CONTENT: at 1440px
+           (box x 550-890 vs stats x 705-880) and on the nav links below 1024px
+           (the links end near x=510; a 340px box centred at 512 starts at 342). */
         #nav-search {
             position: absolute;
-            left: 50%;
+            right: 52px; /* 24px header padding + 20px help icon + 8px gap */
             top: 50%;
             /* -10px: slides up from just below centre on enter; resting at -50% (true centre) */
-            transform: translateX(-50%) translateY(calc(-50% - 10px));
+            transform: translateY(calc(-50% - 10px));
             opacity: 0;
             pointer-events: none;
             display: flex;
@@ -389,14 +394,25 @@
             overflow: hidden;
         }
         #nav-search.nav-search-visible {
-            transform: translateX(-50%) translateY(-50%);
+            transform: translateY(-50%);
             opacity: 1;
             pointer-events: auto;
         }
-        /* On narrow viewports the absolutely-centred compact search overlaps the
-           wordmark and help icon — hide it there (the main search box is in view). */
+        /* On narrow viewports the compact search would overlap the wordmark —
+           hide it there (the main search box is one scroll away). */
         @media (max-width: 640px) {
             #nav-search { display: none !important; }
+        }
+        /* 641-1023px: no stats row, but the nav links end near x=510. Keep the
+           box short (icon + 120px input; Enter submits, the RUN button is
+           dropped) so at 768px its left edge, 768-52-~160 = ~556, clears them. */
+        @media (max-width: 1023px) {
+            #nav-search-btn { display: none; }
+        }
+        /* >=1024px: the box (~355px with a 260px input) takes the stats' place;
+           at 1024px its left edge is ~617, right of the nav links. */
+        @media (min-width: 1024px) {
+            header.nav-compact #header-stats { visibility: hidden; }
         }
         #nav-search-icon {
             display: flex;
@@ -417,7 +433,7 @@
             text-transform: uppercase;
             color: #1d1c0f;
             padding: 0 0.4rem;
-            width: 180px;
+            width: 120px;
         }
         @media (min-width: 1024px) { #nav-query { width: 260px; } }
         #nav-query::placeholder { color: #7a785f; }
@@ -466,8 +482,8 @@
                    tabindex="-1" aria-label="Quick search query"/>
             <button id="nav-search-btn" tabindex="-1" title="Execute search">RUN ↵</button>
         </div>
-        <!-- Index stats row -->
-        <div class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
+        <!-- Index stats row (hidden while the compact search occupies its track) -->
+        <div id="header-stats" class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
             <span title="Total number of source files in the index">FILES: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
             <span title="Total size of all indexed file content">CONTENT: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
             <span title="On-disk size of the serialized search index">INDEX: <span id="stat-size" class="text-on-surface font-bold">-</span></span>
@@ -678,6 +694,7 @@
             const navBtn    = document.getElementById('nav-search-btn');
             const mainQuery = document.getElementById('query');
             const section   = document.getElementById('search-section');
+            const header    = navSearch ? navSearch.closest('header') : null;
             if (!navSearch || !navQuery || !mainQuery || !section) return;
 
             // Cached flag: false when SearchReadinessManager sets section to display:none
@@ -689,12 +706,15 @@
                 navSearch.setAttribute('aria-hidden', 'false');
                 navQuery.removeAttribute('tabindex');
                 navBtn && navBtn.removeAttribute('tabindex');
+                // Hides the index stats, whose track the compact box now occupies.
+                header && header.classList.add('nav-compact');
             }
             function hide() {
                 navSearch.classList.remove('nav-search-visible');
                 navSearch.setAttribute('aria-hidden', 'true');
                 navQuery.setAttribute('tabindex', '-1');
                 navBtn && navBtn.setAttribute('tabindex', '-1');
+                header && header.classList.remove('nav-compact');
             }
 
             // Keep compact input in sync with main input (only when visible to avoid wasted writes)

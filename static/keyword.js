@@ -960,6 +960,7 @@ function hideContextTooltip() {
 
 function hideContextTooltipImmediately() {
     clearTimeout(_ctxHideTimer);
+    clearTimeout(_ctxHoverTimer);
     if (_ctxFetchController) {
         _ctxFetchController.abort();
         _ctxFetchController = null;
@@ -968,6 +969,31 @@ function hideContextTooltipImmediately() {
         _ctxTooltip.style.display = 'none';
     }
 }
+
+function isContextTooltipVisible() {
+    return !!_ctxTooltip && _ctxTooltip.style.display !== 'none';
+}
+
+// The preview used to hide only on mouseleave or when a modal opened, so it
+// stayed on screen across Escape, page scrolls and viewport changes (and
+// covered the mobile layout). Dismiss it on Escape, on any scroll or click
+// outside it, and on resize (its position was computed from the anchor).
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isContextTooltipVisible()) hideContextTooltipImmediately();
+});
+window.addEventListener('scroll', (e) => {
+    if (!isContextTooltipVisible()) return;
+    if (e.target instanceof Node && _ctxTooltip.contains(e.target)) return; // scrolling the preview itself
+    hideContextTooltipImmediately();
+}, true);
+document.addEventListener('click', (e) => {
+    if (!isContextTooltipVisible()) return;
+    if (e.target instanceof Node && _ctxTooltip.contains(e.target)) return;
+    hideContextTooltipImmediately();
+}, true);
+window.addEventListener('resize', () => {
+    if (isContextTooltipVisible()) hideContextTooltipImmediately();
+});
 
 // Lines of context shown above/below the match in the hover preview.
 const CTX_TOOLTIP_CONTEXT = 12;
