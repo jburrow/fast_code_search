@@ -499,43 +499,239 @@ function applyHljs(el, filePath) {
     hljs.highlightElement(el);
 }
 
-/**
- * Walk the DOM inside `el` and wrap occurrences of `query` text in
- * <mark class="highlight"> without breaking existing HTML structure.
- * Operates on text nodes only so it is safe after hljs has run.
- */
-function applyQueryHighlight(el, query) {
-    if (!query) return;
-    const flags = 'gi';
-    let re;
-    try {
-        re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
-    } catch (_) { return; }
+// ============================================
+// MATCH HIGHLIGHTING
+//
+// The server reports the matched range of every hit as UTF-8 byte offsets
+// (`match_start`/`match_end` into `content`, `line_match_start`/`line_match_end`
+// into the full line). The match line is highlighted from those offsets, so
+// regex hits, case-sensitive hits and `file:`/`lang:`-qualified queries are
+// marked exactly where the engine matched. Context lines and file previews
+// carry no offsets; for those the query is tokenised the way the server's
+// query_syntax.rs does (operators dropped, "phrases" unquoted, case:yes
+// honoured) and every remaining term is marked.
+// ============================================
 
-    const walk = (node) => {
-        if (node.nodeType === Node.TEXT_NODE) {
-            const text = node.textContent;
-            if (!re.test(text)) return;
-            re.lastIndex = 0;
-            const frag = document.createDocumentFragment();
-            let last = 0, m;
-            while ((m = re.exec(text)) !== null) {
-                if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-                const mark = document.createElement('mark');
-                mark.className = 'highlight';
-                mark.textContent = m[0];
-                frag.appendChild(mark);
-                last = m.index + m[0].length;
-            }
-            if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-            node.parentNode.replaceChild(frag, node);
-        } else if (node.nodeType === Node.ELEMENT_NODE && node.nodeName !== 'MARK') {
-            // Clone children list as it may be mutated during traversal
-            Array.from(node.childNodes).forEach(walk);
+/**
+ * Convert a UTF-8 byte range in `str` to a UTF-16 code-unit range usable with
+ * String.prototype.slice. Out-of-range input is clamped to the string.
+ * @returns {[number, number]}
+ */
+function byteRangeToCharRange(str, byteStart, byteEnd) {
+    let bytes = 0;
+    let charStart = -1;
+    let charEnd = -1;
+    for (let i = 0; i < str.length;) {
+        if (charStart < 0 && bytes >= byteStart) charStart = i;
+        if (bytes >= byteEnd) { charEnd = i; break; }
+        const cp = str.codePointAt(i);
+        bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+        i += cp > 0xffff ? 2 : 1;
+    }
+    if (charStart < 0) charStart = str.length;
+    if (charEnd < 0) charEnd = str.length;
+    return [charStart, Math.max(charStart, charEnd)];
+}
+
+/** Sort ranges, drop empty ones and merge overlaps. */
+function mergeRanges(ranges) {
+    const sorted = ranges
+        .filter(r => r && r[1] > r[0])
+        .sort((a, b) => a[0] - b[0]);
+    const out = [];
+    for (const r of sorted) {
+        const last = out[out.length - 1];
+        if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+        else out.push([r[0], r[1]]);
+    }
+    return out;
+}
+
+/**
+ * Wrap the given character ranges of `el`'s text content in
+ * <mark class="highlight">, walking text nodes with a running offset so the
+ * marks survive (and nest inside) highlight.js spans.
+ * @param {Element} el
+ * @param {Array<[number, number]>} ranges - [start, end) offsets into el.textContent
+ */
+function markRanges(el, ranges) {
+    const merged = mergeRanges(ranges);
+    if (!merged.length) return;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let node;
+    while ((node = walker.nextNode())) nodes.push(node);
+
+    let pos = 0;
+    let ri = 0;
+    for (const textNode of nodes) {
+        const text = textNode.nodeValue;
+        const start = pos;
+        const end = pos + text.length;
+        pos = end;
+        while (ri < merged.length && merged[ri][1] <= start) ri++;
+        if (ri >= merged.length) break;
+        if (merged[ri][0] >= end) continue;
+
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        for (let k = ri; k < merged.length && merged[k][0] < end; k++) {
+            const s = Math.max(merged[k][0], start) - start;
+            const e = Math.min(merged[k][1], end) - start;
+            if (s > last) frag.appendChild(document.createTextNode(text.slice(last, s)));
+            const mark = document.createElement('mark');
+            mark.className = 'highlight';
+            mark.textContent = text.slice(s, e);
+            frag.appendChild(mark);
+            last = e;
         }
-    };
-    walk(el);
+        if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+        textNode.parentNode.replaceChild(frag, textNode);
+    }
+}
+
+function isYesToken(v) {
+    return ['yes', 'y', 'true', '1', 'on'].includes(v.toLowerCase());
+}
+
+/**
+ * Tokenise a plain-text query exactly like src/search/query_syntax.rs:
+ * whitespace-separated, "quoted phrases" kept together (quotes removed),
+ * `file:`/`lang:`/`-file:`/`-lang:` and `-term` dropped, `case:`/`word:`
+ * consumed as options. A lone `-` or `-123` is a term, not a negation.
+ * @returns {{terms: string[], caseSensitive: boolean, wholeWord: boolean}}
+ */
+function parseQueryTerms(raw) {
+    const tokens = [];
+    let cur = '';
+    let inQuotes = false;
+    for (const c of raw || '') {
+        if (c === '"') inQuotes = !inQuotes;
+        else if (!inQuotes && /\s/.test(c)) { if (cur) { tokens.push(cur); cur = ''; } }
+        else cur += c;
+    }
+    if (cur) tokens.push(cur);
+
+    const terms = [];
+    let caseSensitive = false;
+    let wholeWord = false;
+    for (const tok of tokens) {
+        let negated = false;
+        let body = tok;
+        if (tok.startsWith('-')) {
+            const rest = tok.slice(1);
+            if (rest && !/^\d+$/.test(rest)) { negated = true; body = rest; }
+        }
+        if (body.startsWith('file:') || body.startsWith('lang:')) continue;
+        if (body.startsWith('case:')) { caseSensitive = isYesToken(body.slice(5)); continue; }
+        if (body.startsWith('word:')) { wholeWord = isYesToken(body.slice(5)); continue; }
+        if (negated) continue;
+        if (body) terms.push(body);
+    }
+    return { terms, caseSensitive, wholeWord };
+}
+
+/**
+ * Best-effort translation of a Rust `regex` pattern to a JS RegExp: leading
+ * inline flags `(?is)` become RegExp flags and `(?P<name>` becomes `(?<name>`.
+ * Returns null when the pattern does not compile in JS.
+ */
+function compileRustRegex(pattern) {
+    let flags = 'g';
+    let src = pattern;
+    const lead = /^\(\?([a-z]+)\)/.exec(src);
+    if (lead) {
+        if (lead[1].includes('i')) flags += 'i';
+        if (lead[1].includes('s')) flags += 's';
+        if (lead[1].includes('m')) flags += 'm';
+        src = src.slice(lead[0].length);
+    }
+    src = src.replace(/\(\?P</g, '(?<');
+    try {
+        return new RegExp(src, flags + 'u');
+    } catch (_) {
+        try { return new RegExp(src, flags); } catch (_) { return null; }
+    }
+}
+
+/**
+ * Build a matcher for lines without server offsets (context lines, file
+ * previews). In regex mode the actual pattern is used; otherwise every plain
+ * term from the query is matched literally, case-insensitively unless
+ * `case:yes` is present. Returns null when nothing can be highlighted.
+ * @param {string} query
+ * @param {{regex?: boolean, references?: boolean}} [opts]
+ * @returns {{re: RegExp}|null}
+ */
+function buildQueryMatcher(query, opts = {}) {
+    if (!query) return null;
+    if (opts.regex) {
+        const re = compileRustRegex(query);
+        return re ? { re } : null;
+    }
+    // A references query is one identifier, matched exactly and case-sensitively.
+    const parsed = opts.references
+        ? { terms: [query.trim()], caseSensitive: true, wholeWord: true }
+        : parseQueryTerms(query);
+    const terms = parsed.terms.filter(Boolean);
+    if (!terms.length) return null;
+    // Longest first so "foobar" wins over "foo" in the alternation.
+    terms.sort((a, b) => b.length - a.length);
+    let src = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    if (parsed.wholeWord) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`;
+    try {
+        return { re: new RegExp(src, parsed.caseSensitive ? 'g' : 'gi') };
+    } catch (_) {
+        return null;
+    }
+}
+
+/** Character ranges in `text` matched by `matcher`. */
+function matcherRanges(text, matcher) {
+    if (!matcher || !text) return [];
+    const re = matcher.re;
     re.lastIndex = 0;
+    const out = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+        if (m[0].length === 0) { re.lastIndex++; continue; }
+        out.push([m.index, m.index + m[0].length]);
+        if (out.length > 500) break;
+    }
+    re.lastIndex = 0;
+    return out;
+}
+
+/**
+ * Highlight query terms inside an already syntax-highlighted element, plus
+ * any extra character ranges (the server-reported match).
+ */
+function highlightTermsIn(el, matcher, extraRanges = []) {
+    const ranges = matcherRanges(el.textContent, matcher).concat(extraRanges);
+    markRanges(el, ranges);
+}
+
+/** Highlight `el`'s text with highlight.js for `lang`, keeping it plain on failure. */
+function applyHljsToInline(el, lang) {
+    if (typeof hljs === 'undefined') return;
+    const code = document.createElement('code');
+    code.className = `language-${lang || 'plaintext'}`;
+    code.textContent = el.textContent;
+    try {
+        hljs.highlightElement(code);
+        el.innerHTML = code.innerHTML;
+    } catch (_) { /* leave plain */ }
+}
+
+/** The matcher for the query currently shown in the results (null = none). */
+let _currentMatcher = null;
+
+function currentQueryMatcher() {
+    const query = queryInput.value.trim();
+    return buildQueryMatcher(query, {
+        regex: regexModeCheckbox?.checked || false,
+        references: false,
+    });
 }
 
 // ============================================
@@ -547,7 +743,7 @@ function applyQueryHighlight(el, query) {
  * query-term highlighting, and the matched line scrolled into view within
  * the container (works for both the full-screen modal and the fixed tooltip).
  */
-async function populateFileView(container, filePath, highlightLine, query, signal) {
+async function populateFileView(container, filePath, highlightLine, matcher, signal) {
     const response = await fetch(
         `${API_BASE}/api/file?file=${encodeURIComponent(filePath)}`,
         signal ? { signal } : {}
@@ -577,8 +773,8 @@ async function populateFileView(container, filePath, highlightLine, query, signa
         });
     }
 
-    if (query) {
-        container.querySelectorAll('.file-line-content').forEach(span => applyQueryHighlight(span, query));
+    if (matcher) {
+        container.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
     }
 
     // Scroll the matched line to the centre of the container.
@@ -653,14 +849,14 @@ function renderContextBody(data, highlightLine) {
 }
 
 function highlightContextTooltip(tooltip) {
-    const q = queryInput.value.trim();
+    const matcher = _currentMatcher || currentQueryMatcher();
     tooltip.querySelectorAll('.file-line-content').forEach(span => {
         if (typeof hljs !== 'undefined') {
             const code = document.createElement('code');
             code.textContent = span.textContent;
             try { hljs.highlightElement(code); span.innerHTML = code.innerHTML; } catch (e) { /* leave plain */ }
         }
-        if (q) applyQueryHighlight(span, q);
+        if (matcher) highlightTermsIn(span, matcher);
     });
 }
 
@@ -863,6 +1059,8 @@ async function performSearch() {
 
         const groupedResults = groupResultsByFile(data.results);
         _selectedGroupIndex = -1; // reset keyboard selection on each render
+        // Matcher for lines without server offsets (context lines, previews).
+        _currentMatcher = buildQueryMatcher(query, { regex: isRegex });
 
         resultsContainer.innerHTML = groupedResults.map(group => {
             const firstHit = group.hits[0];
@@ -904,14 +1102,22 @@ async function performSearch() {
                         const lineStyle = isMatch
                             ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
                             : 'display:flex;border-left:3px solid transparent';
+                        // The match line carries the server's byte offsets into the
+                        // full line so the highlight pass can mark the exact hit.
+                        const offsetAttrs = isMatch
+                            ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
+                            : '';
                         return `<div style="${lineStyle}">` +
                             `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#9e9c80;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
-                            `<span class="ctx-line-content${isMatch ? ' match-line' : ''}" style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
+                            `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
                             `</div>`;
                     }).join('');
                 } else {
                     codeContent = escapeHtml(result.content);
                 }
+                const matchOffsetAttrs = result.context_lines
+                    ? ''
+                    : ` data-ms="${Number(result.match_start) || 0}" data-me="${Number(result.match_end) || 0}"`;
 
                 const preClass = result.context_lines
                     ? `result-code result-code-ctx language-${lang}`
@@ -941,7 +1147,7 @@ async function performSearch() {
                             </div>
                         </div>
                         <div class="overflow-x-auto" style="background:#fff">
-                            <pre class="${preClass}" data-query="${escapeHtml(query)}" data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
+                            <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
                         </div>
                     </div>
                 `;
@@ -977,30 +1183,29 @@ async function performSearch() {
             `;
         }).join('');
 
-        // Apply syntax highlighting then re-apply query-term highlight on each result
+        // Syntax-highlight each result, then mark the hit: the match line from
+        // the server's byte offsets, every line from the query terms.
         resultsContainer.querySelectorAll('pre.result-code').forEach(pre => {
             const hasContext = pre.dataset.hasContext === 'true';
-            if (typeof hljs !== 'undefined') {
-                if (hasContext) {
-                    // Highlight individual line content spans for context view
-                    pre.querySelectorAll('.ctx-line-content').forEach(span => {
-                        const code = document.createElement('code');
-                        code.className = `language-${pre.dataset.lang || 'plaintext'}`;
-                        code.textContent = span.textContent;
-                        hljs.highlightElement(code);
-                        span.innerHTML = code.innerHTML;
-                    });
-                } else {
-                    hljs.highlightElement(pre);
+            const lang = pre.dataset.lang || 'plaintext';
+            if (hasContext) {
+                pre.querySelectorAll('.ctx-line-content').forEach(span => {
+                    const text = span.textContent;
+                    applyHljsToInline(span, lang);
+                    const extra = span.dataset.lms !== undefined
+                        ? [byteRangeToCharRange(text, Number(span.dataset.lms), Number(span.dataset.lme))]
+                        : [];
+                    highlightTermsIn(span, _currentMatcher, extra);
+                });
+            } else {
+                const text = pre.textContent;
+                if (typeof hljs !== 'undefined') {
+                    try { hljs.highlightElement(pre); } catch (_) { /* leave plain */ }
                 }
-            }
-            const q = pre.dataset.query;
-            if (q) {
-                if (hasContext) {
-                    pre.querySelectorAll('.ctx-line-content').forEach(span => applyQueryHighlight(span, q));
-                } else {
-                    applyQueryHighlight(pre, q);
-                }
+                const extra = pre.dataset.ms !== undefined
+                    ? [byteRangeToCharRange(text, Number(pre.dataset.ms), Number(pre.dataset.me))]
+                    : [];
+                highlightTermsIn(pre, _currentMatcher, extra);
             }
         });
 
@@ -1449,7 +1654,7 @@ async function showFileModal(filePath, highlightLine) {
     document.body.appendChild(modal);
 
     try {
-        await populateFileView(body, filePath, highlightLine, queryInput.value.trim());
+        await populateFileView(body, filePath, highlightLine, _currentMatcher || currentQueryMatcher());
     } catch (error) {
         body.innerHTML = `<div class="error-message"><strong>Error:</strong> ${escapeHtml(error.message)}</div>`;
     }
