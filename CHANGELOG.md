@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-06
+
+### Fixed
+- The index could keep a file whose delete or rename-away event the watcher
+  backend never delivered (FSEvents on macOS drops the source half of a
+  rename), leaving an entry that search could no longer read. After applying
+  a batch of changes the engine now checks the siblings of every changed path
+  and drops entries whose file is gone.
+- Import resolution failed when the importing path was not in canonical form
+  (a symlinked temp directory on macOS, a non-verbatim path on Windows); the
+  path is now canonicalized once per importing file.
+- CI: failing test names, panic messages and crashes are reported as workflow
+  annotations; the macOS and Windows test jobs pass.
+
 ## [0.10.0] - 2026-09-06
 
 ### Fixed
@@ -720,7 +734,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/jburrow/fast_code_search/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/jburrow/fast_code_search/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/jburrow/fast_code_search/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jburrow/fast_code_search/compare/v0.7.5...v0.8.0
