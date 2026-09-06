@@ -89,6 +89,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Syntax-check the web UI scripts
+        run: node --check static/keyword.js && node --check static/common.js && node --check static/semantic.js
+
       - name: Run clippy (all targets and features)
         run: cargo clippy --all-targets --all-features -- -D warnings
 

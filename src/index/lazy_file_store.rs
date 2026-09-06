@@ -473,9 +473,13 @@ impl LazyFileStore {
     /// from the path map so the same path re-added later receives a fresh id.
     /// The slot itself is retained so existing ids remain stable.
     pub fn remove_file_by_id(&mut self, id: u32) {
-        if let Some(f) = self.files.get(id as usize) {
+        if let Some(f) = self.files.get_mut(id as usize) {
             let p = f.path.clone();
             self.path_to_id.remove(&*p);
+            // Drop the mapping and cached content now: a tombstoned slot
+            // kept its `Mmap` (and transcoded copy) alive for the life of
+            // the store, so every removed large file stayed resident.
+            *f = LazyMappedFile::from_shared(p);
         }
         self.tombstoned.insert(id);
     }
