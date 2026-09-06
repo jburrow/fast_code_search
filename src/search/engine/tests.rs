@@ -1932,3 +1932,49 @@ fn test_regex_candidates_are_superset_of_matches() {
         "expected most patterns to be accelerated, got {accelerated}"
     );
 }
+
+/// Review 1.3: reference positions captured at index time are applied to
+/// the *current* file content. When the file changed on disk without a
+/// re-index, a stale column must not slice mid-character (it panicked, and
+/// the panic surfaced as a 500 for every `references=true` request); only
+/// positions that still hold the name are reported.
+#[test]
+fn test_references_survive_stale_positions() {
+    let temp_dir = TempDir::new().unwrap();
+    let a = temp_dir.path().join("a.rs");
+    fs::write(
+        &a,
+        "pub fn widget() {}\nfn run() {\n    widget();\n    widget();\n    widget();\n}\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&a).unwrap();
+    engine.finalize();
+    let count = |e: &SearchEngine| {
+        e.search_references("widget", "", "", SearchLimits::new(50))
+            .unwrap()
+            .0
+            .len()
+    };
+    assert_eq!(count(&engine), 3);
+
+    // Same line count, but: line 3 now has a multi-byte character so byte 4
+    // lands mid-character; line 4 is shorter than the recorded column; line
+    // 5 still has the call where it was.
+    fs::write(
+        &a,
+        "pub fn widget() {}\nfn run() {\n   é widget();\n  x\n    widget();\n}\n",
+    )
+    .unwrap();
+    let (hits, _) = engine
+        .search_references("widget", "", "", SearchLimits::new(50))
+        .unwrap();
+    let lines: Vec<usize> = hits.iter().map(|h| h.line_number).collect();
+    assert_eq!(lines, vec![5], "{hits:?}");
+    assert_eq!(hits[0].line_match_start, 4);
+    assert_eq!(&hits[0].content[4..10], "widget");
+
+    // The file shrank below the recorded lines: no hits, no panic.
+    fs::write(&a, "fn other() {}\n").unwrap();
+    assert_eq!(count(&engine), 0);
+}

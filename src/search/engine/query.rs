@@ -609,15 +609,23 @@ impl SearchEngine {
             RankMode::Full,
             limits,
             |meta| meta.base_score,
-            |doc_id, run| self.references_in_document(doc_id, name_id, name.len(), run),
+            |doc_id, run| self.references_in_document(doc_id, name_id, name, run),
         )
     }
 
+    /// Reference hits of `name` (interned as `name_id`) in one document.
+    ///
+    /// Positions were captured by tree-sitter at index time; the file may
+    /// have changed on disk since (watching off, or the watcher has not
+    /// caught up). A recorded position is only reported when the current
+    /// line still holds `name` exactly there, so a stale column can neither
+    /// slice mid-character (a panic that turned the whole request into a
+    /// 500) nor highlight unrelated text.
     fn references_in_document(
         &self,
         doc_id: u32,
         name_id: u32,
-        name_len: usize,
+        name: &str,
         run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
         // Consult the reference list before touching file content: most
@@ -641,13 +649,16 @@ impl SearchEngine {
             let Some(line) = lines.get(line_num) else {
                 continue; // file changed under us; the watcher will refresh it
             };
+            // tree-sitter columns are byte offsets into the line as indexed.
+            let start = r.column as usize;
+            let end = start + name.len();
+            if line.get(start..end) != Some(name) {
+                continue; // stale position: the content moved under it
+            }
             if !run.take_match() {
                 break;
             }
             last_line = line_num;
-            // tree-sitter columns are byte offsets.
-            let start = (r.column as usize).min(line.len());
-            let end = (start + name_len).min(line.len());
             let truncated = truncate_around_match(line, start, end);
             matches.push(SearchMatch {
                 file_id: doc_id,
