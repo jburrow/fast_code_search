@@ -65,21 +65,94 @@ function saveSettingsToStorage() {
 
 /**
  * Load settings from localStorage and apply to form fields.
- * URL params take precedence over stored settings.
+ * URL params take precedence over stored settings (applied afterwards).
  */
 function loadSettingsFromStorage() {
     try {
         const raw = localStorage.getItem(LS_SETTINGS_KEY);
         if (!raw) return;
         const s = JSON.parse(raw);
-        if (maxResultsSelect && s.max) maxResultsSelect.value = s.max;
-        if (rankModeSelect && s.rank) rankModeSelect.value = s.rank;
-        if (contextLinesSelect && s.context != null) contextLinesSelect.value = String(s.context);
+        if (s.max != null) applyMaxResults(s.max);
+        if (s.rank != null) setSelectValue(rankModeSelect, s.rank);
+        if (s.context != null) setSelectValue(contextLinesSelect, s.context);
         if (includeFilterInput && s.include) includeFilterInput.value = s.include;
         if (excludeFilterInput && s.exclude) excludeFilterInput.value = s.exclude;
-        if (regexModeCheckbox && s.regex) regexModeCheckbox.checked = true;
-        if (symbolsModeCheckbox && s.symbols) symbolsModeCheckbox.checked = true;
+        if (regexModeCheckbox) regexModeCheckbox.checked = s.regex === true;
+        if (symbolsModeCheckbox) symbolsModeCheckbox.checked = s.symbols === true;
     } catch (_) { /* ignore parse errors */ }
+    syncToggleVisuals();
+}
+
+// ============================================
+// FORM STATE HELPERS
+// ============================================
+
+const MAX_RESULTS_LIMIT = 1000; // server clamps `max` to 1..1000
+
+/**
+ * Select `value` in `select` only when such an option exists, so an unknown
+ * value from a URL or stale storage can never leave the select in a state
+ * that serialises to NaN or an unsupported mode.
+ * @returns {boolean} true when applied
+ */
+function setSelectValue(select, value) {
+    if (!select) return false;
+    const v = String(value);
+    const has = Array.from(select.options).some(o => o.value === v);
+    if (has) select.value = v;
+    return has;
+}
+
+/**
+ * Apply a requested result cap: parse, clamp to 1..1000, then pick the
+ * smallest select option that is >= the request (or the largest option).
+ */
+function applyMaxResults(value) {
+    if (!maxResultsSelect) return;
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return;
+    const clamped = Math.min(MAX_RESULTS_LIMIT, Math.max(1, n));
+    const options = Array.from(maxResultsSelect.options)
+        .map(o => parseInt(o.value, 10))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+    const pick = options.find(o => o >= clamped) ?? options[options.length - 1];
+    if (pick !== undefined) maxResultsSelect.value = String(pick);
+}
+
+/** The validated result cap to send: always an integer in 1..1000. */
+function currentMaxResults() {
+    const n = parseInt(maxResultsSelect?.value, 10);
+    if (!Number.isFinite(n)) return 50;
+    return Math.min(MAX_RESULTS_LIMIT, Math.max(1, n));
+}
+
+/** The validated context-line count to send (0..10). */
+function currentContextLines() {
+    const n = parseInt(contextLinesSelect?.value || '0', 10);
+    if (!Number.isFinite(n)) return 0;
+    return Math.min(10, Math.max(0, n));
+}
+
+function parseBoolParam(value) {
+    return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+/** The mode checkboxes; each is mutually exclusive with the others. */
+function modeCheckboxes() {
+    return [regexModeCheckbox, symbolsModeCheckbox].filter(Boolean);
+}
+
+/**
+ * Derive the toggle label styling from the checkbox state. This is the only
+ * place that sets it, so a mode set from the URL, storage, history navigation
+ * or a click always looks the way it behaves.
+ */
+function syncToggleVisuals() {
+    modeCheckboxes().forEach(cb => {
+        const label = cb.closest('label');
+        if (label) label.classList.toggle('toggle-on', cb.checked);
+    });
 }
 
 // ============================================
@@ -127,23 +200,51 @@ function navigateHistoryDropdown(dir) {
 
 /**
  * Populate form fields from URL query parameters.
- * Auto-opens Advanced Options if any non-default option is present.
+ *
+ * A parameter that is present fully determines its field: `regex=false`
+ * turns regex mode OFF even if it was on from storage. A parameter that is
+ * absent leaves the field alone on the initial load (so stored settings
+ * apply) but resets it to the default when `absentIsDefault` is set, which
+ * is what history navigation needs since the URL is the complete state of
+ * the entry being restored.
+ *
+ * @param {URLSearchParams} params
+ * @param {{absentIsDefault?: boolean}} [opts]
  */
-function loadStateFromUrl() {
-    const params = new URLSearchParams(location.search);
+function applyUrlState(params, opts = {}) {
+    const absentIsDefault = opts.absentIsDefault === true;
+    const text = (input, key) => {
+        if (!input) return;
+        if (params.has(key)) input.value = params.get(key);
+        else if (absentIsDefault) input.value = '';
+    };
+    const select = (sel, key, fallback) => {
+        if (!sel) return;
+        if (params.has(key)) {
+            if (!setSelectValue(sel, params.get(key)) && absentIsDefault) setSelectValue(sel, fallback);
+        } else if (absentIsDefault) {
+            setSelectValue(sel, fallback);
+        }
+    };
+    const mode = (cb, key) => {
+        if (!cb) return;
+        if (params.has(key)) cb.checked = parseBoolParam(params.get(key));
+        else if (absentIsDefault) cb.checked = false;
+    };
 
-    if (params.has('q')) queryInput.value = params.get('q');
-    if (params.has('max') && maxResultsSelect) maxResultsSelect.value = params.get('max');
-    if (includeFilterInput && params.has('include')) includeFilterInput.value = params.get('include');
-    if (excludeFilterInput && params.has('exclude')) excludeFilterInput.value = params.get('exclude');
-    if (regexModeCheckbox && params.get('regex') === 'true') regexModeCheckbox.checked = true;
-    if (symbolsModeCheckbox && params.get('symbols') === 'true') symbolsModeCheckbox.checked = true;
-    if (rankModeSelect && params.has('rank')) rankModeSelect.value = params.get('rank');
-    if (contextLinesSelect && params.has('context')) contextLinesSelect.value = params.get('context');
+    text(queryInput, 'q');
+    text(includeFilterInput, 'include');
+    text(excludeFilterInput, 'exclude');
+    if (params.has('max')) applyMaxResults(params.get('max'));
+    else if (absentIsDefault) setSelectValue(maxResultsSelect, '50');
+    select(rankModeSelect, 'rank', 'auto');
+    select(contextLinesSelect, 'context', '0');
+    mode(regexModeCheckbox, 'regex');
+    mode(symbolsModeCheckbox, 'symbols');
+    syncToggleVisuals();
 
     // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
-    // so the applied filters are discoverable. The previous code opened the hidden
-    // `.advanced-options` element, so filters from a shared link applied invisibly.
+    // so the applied filters are discoverable.
     const hasAdvanced = params.has('include') || params.has('exclude') ||
         params.has('rank') || params.has('max') || params.has('context');
     if (hasAdvanced) {
@@ -152,18 +253,15 @@ function loadStateFromUrl() {
     }
 }
 
-/**
- * Write current form state into the URL (replaces history entry, no navigation).
- * Omits default values to keep URLs short.
- */
-function syncUrlFromState() {
+/** Serialise the current form state; defaults are omitted to keep URLs short. */
+function currentUrlParams() {
     const query = queryInput.value.trim();
     const params = new URLSearchParams();
 
     if (query) params.set('q', query);
 
-    const max = maxResultsSelect?.value;
-    if (max && max !== '50') params.set('max', max);
+    const max = currentMaxResults();
+    if (max !== 50) params.set('max', String(max));
 
     const include = includeFilterInput?.value.trim() || '';
     if (include) params.set('include', include);
@@ -177,12 +275,46 @@ function syncUrlFromState() {
     const rank = rankModeSelect?.value || 'auto';
     if (rank !== 'auto') params.set('rank', rank);
 
-    const context = contextLinesSelect?.value || '0';
-    if (context !== '0') params.set('context', context);
+    const context = currentContextLines();
+    if (context !== 0) params.set('context', String(context));
 
-    const qs = params.toString();
-    history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+    return params;
 }
+
+/**
+ * Write the current form state into the URL.
+ *
+ * Every distinct search gets its own history entry so Back restores the
+ * previous query. Typing produces one entry per "edit session": the first
+ * debounced keystroke after a submitted search pushes, later keystrokes
+ * replace that same entry (flagged `typed` in history.state), and an
+ * explicit submit turns the entry into a submitted one.
+ *
+ * @param {'input'|'submit'|'option'|'history'} trigger
+ */
+function writeUrlState(trigger) {
+    if (trigger === 'history') return; // the URL already is the state
+    const qs = currentUrlParams().toString();
+    const url = qs ? `${location.pathname}?${qs}` : location.pathname;
+    const current = location.search.replace(/^\?/, '');
+    const typed = trigger === 'input';
+    const state = { typed };
+    if (qs === current) {
+        history.replaceState(typed && history.state?.typed ? state : { typed: false }, '', url);
+    } else if (typed && history.state?.typed) {
+        history.replaceState(state, '', url);
+    } else {
+        history.pushState(state, '', url);
+    }
+}
+
+// Back/Forward: the URL is the full state of that entry, so absent params
+// mean defaults (a mode that is not in the URL is off).
+window.addEventListener('popstate', () => {
+    debouncedSearch.cancel();
+    applyUrlState(new URLSearchParams(location.search), { absentIsDefault: true });
+    performSearch({ trigger: 'history' });
+});
 
 // Search readiness manager (disables search until index is ready)
 const searchReadiness = new SearchReadinessManager({
@@ -193,7 +325,7 @@ const searchReadiness = new SearchReadinessManager({
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
-            performSearch();
+            performSearch({ trigger: 'option' });
         }
     }
 });
@@ -966,7 +1098,15 @@ let _searchAbort = null;
 // Index of the keyboard-selected result group (-1 = none). Reset on each render.
 let _selectedGroupIndex = -1;
 
-async function performSearch() {
+/**
+ * Run the search for the current form state.
+ * @param {{trigger?: 'input'|'submit'|'option'|'history'}} [opts]
+ *   `trigger` decides how the URL/history is written (see writeUrlState);
+ *   'history' means the URL already holds this state (popstate, initial load).
+ */
+async function performSearch(opts = {}) {
+    const trigger = opts.trigger || 'option';
+
     // Don't search if index isn't ready yet
     if (!searchReadiness.isReady) {
         return;
@@ -979,16 +1119,16 @@ async function performSearch() {
     const signal = _searchAbort.signal;
 
     const query = queryInput.value.trim();
-    const maxResults = parseInt(maxResultsSelect.value, 10);
+    const maxResults = currentMaxResults();
     const includeFilter = includeFilterInput?.value.trim() || '';
     const excludeFilter = excludeFilterInput?.value.trim() || '';
     const isRegex = regexModeCheckbox?.checked || false;
     const symbolsOnly = symbolsModeCheckbox?.checked || false;
     const rankMode = rankModeSelect?.value || 'auto';
-    const contextLines = parseInt(contextLinesSelect?.value || '0', 10);
+    const contextLines = currentContextLines();
 
-    // Keep URL in sync so searches can be shared as links
-    syncUrlFromState();
+    // Keep URL/history in sync so searches can be shared and navigated
+    writeUrlState(trigger);
     // Persist settings to localStorage
     saveSettingsToStorage();
 
@@ -1010,7 +1150,7 @@ async function performSearch() {
     const startTime = performance.now();
 
     try {
-        const params = new URLSearchParams({ q: query, max: maxResults });
+        const params = new URLSearchParams({ q: query, max: String(maxResults) });
         if (includeFilter) params.set('include', includeFilter);
         if (excludeFilter) params.set('exclude', excludeFilter);
         if (isRegex) params.set('regex', 'true');
@@ -1264,7 +1404,13 @@ async function performSearch() {
     }
 }
 
-const debouncedSearch = debounce(performSearch, DEBOUNCE_MS);
+const debouncedSearch = debounce(() => performSearch({ trigger: 'input' }), DEBOUNCE_MS);
+
+/** A settings change (select, toggle, filter Enter): search now, new history entry. */
+function optionChanged() {
+    debouncedSearch.cancel();
+    performSearch({ trigger: 'option' });
+}
 
 /**
  * Explicit submit: record the query in history (only here, NOT in performSearch,
@@ -1275,7 +1421,7 @@ function submitSearch() {
     debouncedSearch.cancel();
     const q = queryInput.value.trim();
     if (q) saveToHistory(q);
-    performSearch();
+    performSearch({ trigger: 'submit' });
 }
 
 // ============================================
@@ -1685,7 +1831,7 @@ function runInitialSearchFromUrl() {
     const urlQuery = new URLSearchParams(window.location.search).get('q') || '';
     if (!urlQuery.trim()) return;
     if (!queryInput.value.trim()) return;
-    performSearch();
+    performSearch({ trigger: 'history' });
 }
 
 // ============================================
@@ -1726,20 +1872,26 @@ document.addEventListener('click', (e) => {
     }
 });
 
-maxResultsSelect.addEventListener('change', performSearch);
+maxResultsSelect.addEventListener('change', optionChanged);
 
-if (regexModeCheckbox) regexModeCheckbox.addEventListener('change', performSearch);
-if (symbolsModeCheckbox) symbolsModeCheckbox.addEventListener('change', performSearch);
-if (rankModeSelect) rankModeSelect.addEventListener('change', performSearch);
-if (contextLinesSelect) contextLinesSelect.addEventListener('change', performSearch);
+// The mode toggles are mutually exclusive: turning one on turns the others off.
+modeCheckboxes().forEach(cb => {
+    cb.addEventListener('change', () => {
+        if (cb.checked) modeCheckboxes().forEach(other => { if (other !== cb) other.checked = false; });
+        syncToggleVisuals();
+        optionChanged();
+    });
+});
+if (rankModeSelect) rankModeSelect.addEventListener('change', optionChanged);
+if (contextLinesSelect) contextLinesSelect.addEventListener('change', optionChanged);
 
 if (includeFilterInput) {
     includeFilterInput.addEventListener('input', debouncedSearch);
-    includeFilterInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') performSearch(); });
+    includeFilterInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') optionChanged(); });
 }
 if (excludeFilterInput) {
     excludeFilterInput.addEventListener('input', debouncedSearch);
-    excludeFilterInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') performSearch(); });
+    excludeFilterInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') optionChanged(); });
 }
 
 // ============================================
@@ -1752,9 +1904,11 @@ searchReadiness.storeDefaultPlaceholder();
 // Load persisted settings from localStorage first (URL params will override below)
 loadSettingsFromStorage();
 
-// Restore state from URL on page load; URL params take precedence over localStorage.
-// loadStateFromUrl() opens the filter panel itself when filter params are present.
-loadStateFromUrl();
+// Restore state from URL on page load; a URL param that is present wins over
+// storage (including `regex=false`), an absent one leaves the stored value.
+applyUrlState(new URLSearchParams(location.search));
+// Give the initial history entry a state object so Back can return to it.
+history.replaceState({ typed: false }, '', location.href);
 
 // Probe the backend; start the WebSocket only after confirmation.
 // Inputs start enabled (optimistic) — health check disables them only on failure.

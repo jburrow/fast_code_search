@@ -329,6 +329,8 @@
         .status-badge.status-discovering { background: #fff900; }
         /* Search disabled state */
         #query:disabled { opacity: 0.6; cursor: not-allowed; }
+        /* Mode toggle "on" look — set only by syncToggleVisuals() in keyword.js */
+        .mode-toggle.toggle-on { background: #fff900; color: #000; }
         /* Filter panel */
         #filter-panel { display: none; }
         #filter-panel.open { display: block; }
@@ -489,12 +491,16 @@
                 </div>
                 <!-- Toggle group -->
                 <div class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
-                    <label class="flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black has-[:checked]:bg-primary-container has-[:checked]:text-black" title="Enable regular expression syntax">
+                    <!-- Mode toggles: the "on" look comes from the .toggle-on class,
+                         which keyword.js derives from the checkbox state
+                         (syncToggleVisuals), so URL/storage/history changes
+                         always look the way they behave. -->
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Enable regular expression syntax">
                         <input type="checkbox" id="regex-mode" class="sr-only">
                         <span class="material-symbols-outlined text-sm">code</span>
                         <span>REGEX</span>
                     </label>
-                    <label class="flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black has-[:checked]:bg-primary-container has-[:checked]:text-black" title="Only match symbol definitions">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Only match symbol definitions">
                         <input type="checkbox" id="symbols-mode" class="sr-only">
                         <span class="material-symbols-outlined text-sm">function</span>
                         <span>SYMBOLS</span>
@@ -536,6 +542,8 @@
                             <option value="50" selected>50</option>
                             <option value="100">100</option>
                             <option value="250">250</option>
+                            <option value="500">500</option>
+                            <option value="1000">1000</option>
                         </select>
                     </label>
                     <label class="flex flex-col gap-1 text-xs font-label text-outline">
