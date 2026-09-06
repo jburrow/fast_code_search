@@ -3680,3 +3680,68 @@ async fn test_http_rejects_conflicting_modes_and_reports_display_paths() -> Resu
     );
     Ok(())
 }
+
+/// Linux watches one directory at a time so excluded trees get no inotify
+/// handle at all: nothing under node_modules produces an event, a new
+/// directory is reported (so the main loop can watch it), and after
+/// `ensure_watched` files created inside it are seen.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_watcher_skips_excluded_directories_and_follows_new_ones() -> Result<()> {
+    use fast_code_search::search::{FileChange, FileWatcher, WatcherConfig};
+
+    let temp = TempDir::new()?;
+    let root = temp.path().canonicalize()?;
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("node_modules/pkg"))?;
+    let mut watcher = FileWatcher::new(WatcherConfig {
+        paths: vec![root.clone()],
+        debounce_duration: Duration::from_millis(150),
+        exclude_patterns: vec!["**/node_modules/**".to_string()],
+    })?;
+    std::thread::sleep(Duration::from_millis(200));
+
+    let wait_for = |watcher: &FileWatcher, pred: &dyn Fn(&FileChange) -> bool| -> Vec<FileChange> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut seen = Vec::new();
+        while std::time::Instant::now() < deadline {
+            if let Some(c) = watcher.recv_timeout(Duration::from_millis(200)) {
+                let hit = pred(&c);
+                seen.push(c);
+                if hit {
+                    return seen;
+                }
+            }
+        }
+        seen
+    };
+    let touches = |c: &FileChange, name: &str| match c {
+        FileChange::Modified(p) | FileChange::Deleted(p) => p.ends_with(name),
+        FileChange::Renamed { from, to } => from.ends_with(name) || to.ends_with(name),
+    };
+
+    // Excluded tree: no event at all.
+    std::fs::write(root.join("node_modules/pkg/index.js"), "x")?;
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(
+        watcher.try_recv().is_none(),
+        "excluded directory produced an event"
+    );
+
+    // Watched tree: the file is reported.
+    std::fs::write(root.join("src/a.rs"), "fn a() {}")?;
+    let seen = wait_for(&watcher, &|c| touches(c, "a.rs"));
+    assert!(seen.iter().any(|c| touches(c, "a.rs")), "{seen:?}");
+
+    // A new directory is reported so the consumer can watch it ...
+    std::fs::create_dir_all(root.join("src/new"))?;
+    let seen = wait_for(&watcher, &|c| touches(c, "new"));
+    assert!(seen.iter().any(|c| touches(c, "new")), "{seen:?}");
+    watcher.ensure_watched(&root.join("src/new"));
+
+    // ... after which files created inside it are seen.
+    std::fs::write(root.join("src/new/b.rs"), "fn b() {}")?;
+    let seen = wait_for(&watcher, &|c| touches(c, "b.rs"));
+    assert!(seen.iter().any(|c| touches(c, "b.rs")), "{seen:?}");
+    Ok(())
+}

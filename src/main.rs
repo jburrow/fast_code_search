@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
                 ..WatcherConfig::default()
             };
             match FileWatcher::new(watcher_config) {
-                Ok(watcher) => {
+                Ok(mut watcher) => {
                     info!("File watcher started");
                     let mut watcher_updates_total: usize = 0;
                     loop {
@@ -308,6 +308,19 @@ async fn main() -> Result<()> {
                                 count = changes.len(),
                                 "Applying file changes to index"
                             );
+                            // New directories need their own watches on
+                            // platforms that watch per directory.
+                            for change in &changes {
+                                if let fast_code_search::search::FileChange::Modified(p)
+                                | fast_code_search::search::FileChange::Renamed {
+                                    to: p, ..
+                                } = change
+                                {
+                                    if p.is_dir() {
+                                        watcher.ensure_watched(p);
+                                    }
+                                }
+                            }
                             let outcome = with_engine_write(&watch_engine, |engine| {
                                 apply_changes(engine, &changes, &watch_indexer_config)
                             });

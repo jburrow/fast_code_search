@@ -54,13 +54,68 @@ pub struct FileWatcher {
     /// Channel receiver for file change events
     pub rx: Receiver<FileChange>,
     /// Keep the watcher alive
-    _watcher: Debouncer<notify_debouncer_full::notify::RecommendedWatcher, RecommendedCache>,
+    watcher: Debouncer<notify_debouncer_full::notify::RecommendedWatcher, RecommendedCache>,
+    /// Exclude patterns, for deciding which directories get a watch.
+    exclude_filter: Arc<PathFilter>,
+    /// One non-recursive watch per kept directory (Linux/inotify, where a
+    /// recursive watch would install a handle in every excluded directory
+    /// too — node_modules, target, .git/objects — and exhaust
+    /// `max_user_watches`). Other platforms watch each root recursively.
+    per_directory: bool,
+}
+
+/// Bound on queued change events. The consumer applies batches under the
+/// engine write lock, which can be held for a long time during the initial
+/// load; an unbounded queue would grow without limit meanwhile. When the
+/// queue is full the event is dropped and the vanished-sibling check in
+/// `apply_changes` heals what it can.
+const EVENT_QUEUE_CAPACITY: usize = 65_536;
+
+/// Is `dir` excluded as a directory? Patterns are written for files
+/// (`**/target/**`), so probe the directory both as itself and via a child.
+fn dir_is_excluded(filter: &PathFilter, dir: &Path) -> bool {
+    let normalized = dir.to_string_lossy().replace('\\', "/");
+    filter.is_excluded(&normalized)
+        || filter.is_excluded(&format!("{}/_", normalized.trim_end_matches('/')))
+}
+
+/// Add a non-recursive watch to every non-excluded directory under `root`
+/// (`root` itself included). Returns `(watched, failed)`.
+fn watch_tree(
+    debouncer: &mut Debouncer<notify_debouncer_full::notify::RecommendedWatcher, RecommendedCache>,
+    root: &Path,
+    filter: &PathFilter,
+) -> (usize, usize) {
+    let mut watched = 0usize;
+    let mut failed = 0usize;
+    let walker = walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            e.depth() == 0 || !e.file_type().is_dir() || !dir_is_excluded(filter, e.path())
+        });
+    for entry in walker.flatten() {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        match debouncer.watch(entry.path(), RecursiveMode::NonRecursive) {
+            Ok(()) => watched += 1,
+            Err(e) => {
+                if failed == 0 {
+                    warn!(path = %entry.path().display(), error = %e, "Failed to watch directory");
+                }
+                failed += 1;
+            }
+        }
+    }
+    (watched, failed)
 }
 
 impl FileWatcher {
     /// Create and start a new file watcher
     pub fn new(config: WatcherConfig) -> Result<Self> {
-        let (tx, rx) = mpsc::channel::<FileChange>();
+        let (tx, rx) = mpsc::sync_channel::<FileChange>(EVENT_QUEUE_CAPACITY);
+        let per_directory = cfg!(target_os = "linux");
 
         // Compile exclude patterns into a real glob filter (same semantics as file
         // discovery). The previous approach trimmed `**/.git/**` down to `.git` and
@@ -77,8 +132,9 @@ impl FileWatcher {
         );
 
         // Create the debouncer with event handler
-        let handler_tx = tx.clone();
+        let handler_tx = tx;
         let handler_exclude = Arc::clone(&exclude_filter);
+        let mut dropped_since_warn = 0usize;
 
         let mut debouncer = new_debouncer(
             config.debounce_duration,
@@ -91,9 +147,21 @@ impl FileWatcher {
                     Ok(events) => {
                         for event in events {
                             if let Some(change) = process_event(&event, &handler_exclude) {
-                                if handler_tx.send(change).is_err() {
-                                    debug!("File watcher channel closed");
-                                    return;
+                                match handler_tx.try_send(change) {
+                                    Ok(()) => dropped_since_warn = 0,
+                                    Err(mpsc::TrySendError::Full(_)) => {
+                                        dropped_since_warn += 1;
+                                        if dropped_since_warn == 1 {
+                                            warn!(
+                                                capacity = EVENT_QUEUE_CAPACITY,
+                                                "File change queue full; dropping events until it drains"
+                                            );
+                                        }
+                                    }
+                                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                                        debug!("File watcher channel closed");
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -113,6 +181,22 @@ impl FileWatcher {
         let mut watch_errors = 0usize;
         for path in &config.paths {
             if path.exists() {
+                if per_directory {
+                    let (ok, failed) = watch_tree(&mut debouncer, path, &exclude_filter);
+                    if ok > 0 {
+                        info!(
+                            path = %path.display(),
+                            directories = ok,
+                            failed,
+                            "Watching directory tree for changes"
+                        );
+                        watched += 1;
+                    } else {
+                        warn!(path = %path.display(), failed, "Failed to watch path (skipping)");
+                        watch_errors += 1;
+                    }
+                    continue;
+                }
                 match debouncer.watch(path, RecursiveMode::Recursive) {
                     Ok(()) => {
                         info!(path = %path.display(), "Watching directory for changes");
@@ -155,8 +239,21 @@ impl FileWatcher {
 
         Ok(Self {
             rx,
-            _watcher: debouncer,
+            watcher: debouncer,
+            exclude_filter,
+            per_directory,
         })
+    }
+
+    /// Make sure `dir` (a directory that was just created or moved into a
+    /// watched tree) and everything under it is watched. A no-op where roots
+    /// are watched recursively, or when `dir` is excluded.
+    pub fn ensure_watched(&mut self, dir: &Path) {
+        if !self.per_directory || !dir.is_dir() || dir_is_excluded(&self.exclude_filter, dir) {
+            return;
+        }
+        let (watched, failed) = watch_tree(&mut self.watcher, dir, &self.exclude_filter);
+        debug!(path = %dir.display(), watched, failed, "Added watches for new directory");
     }
 
     /// Try to receive a file change event without blocking
@@ -215,10 +312,16 @@ fn process_event(event: &DebouncedEvent, exclude_filter: &PathFilter) -> Option<
             }
         }
         EventKind::Create(_) | EventKind::Modify(_) => {
-            // Use the first non-excluded path that is a regular file.
+            // Use the first non-excluded path that is a regular file. A
+            // newly created directory is reported too: its contents need
+            // discovering, and on platforms that watch per directory it
+            // needs a watch of its own.
+            let is_create = matches!(event.kind, EventKind::Create(_));
             paths
                 .iter()
-                .find(|p| !should_exclude(p, exclude_filter) && p.is_file())
+                .find(|p| {
+                    !should_exclude(p, exclude_filter) && (p.is_file() || (is_create && p.is_dir()))
+                })
                 .map(|p| FileChange::Modified(p.clone()))
         }
         EventKind::Remove(_) => paths
