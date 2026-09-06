@@ -59,39 +59,56 @@ impl ParsedQuery {
 /// - `case:yes`   case-sensitive (`case:no` forces insensitive)
 /// - `word:yes`   whole-word matching
 /// - `-term`      files containing `term` are dropped
+///
+/// Escapes: `-` negates only when followed by a letter, `_` or a quote, so
+/// `->`, `-1.5` and a lone `-` are ordinary terms. Quoting makes a token
+/// literal (`"file:"` is the term `file:`, `-"a b"` excludes the phrase
+/// `a b`), while a quote *after* an operator's colon still belongs to the
+/// operator (`file:"my dir"`). An operator without an argument (`file:`,
+/// `lang:`, `case:`, `word:`) or with a language it does not know is a
+/// plain term rather than a silently empty filter.
 pub fn parse(raw: &str) -> ParsedQuery {
     let mut q = ParsedQuery::default();
     for token in tokenize(raw) {
-        let (negated, body) = match token.strip_prefix('-') {
-            // A lone "-" or a term like "-1" is not an operator.
-            Some(rest) if !rest.is_empty() && !rest.chars().all(|c| c.is_ascii_digit()) => {
-                (true, rest.to_string())
+        let (negated, body, quote_at) = match token.text.strip_prefix('-') {
+            Some(rest) if token.negates() => {
+                (true, rest.to_string(), token.quote_at.map(|i| i - 1))
             }
-            _ => (false, token.clone()),
+            _ => (false, token.text.clone(), token.quote_at),
         };
-        if let Some(pat) = body.strip_prefix("file:") {
-            if pat.is_empty() {
-                continue;
-            }
+        // `prefix` is an operator only when no quote precedes its colon.
+        let operator = |prefix: &str| -> Option<&str> {
+            let arg = body.strip_prefix(prefix)?;
+            (quote_at.is_none_or(|i| i >= prefix.len()) && !arg.is_empty()).then_some(arg)
+        };
+        if let Some(pat) = operator("file:") {
             let glob = file_glob(pat);
             if negated {
                 q.exclude_globs.push(glob);
             } else {
                 q.include_globs.push(glob);
             }
-        } else if let Some(name) = body.strip_prefix("lang:") {
+            continue;
+        }
+        if let Some(name) = operator("lang:") {
             if let Some(globs) = lang_globs(name) {
                 if negated {
                     q.exclude_globs.extend(globs);
                 } else {
                     q.include_globs.extend(globs);
                 }
+                continue;
             }
-        } else if let Some(v) = body.strip_prefix("case:") {
+        }
+        if let Some(v) = operator("case:") {
             q.options.case_sensitive = is_yes(v);
-        } else if let Some(v) = body.strip_prefix("word:") {
+            continue;
+        }
+        if let Some(v) = operator("word:") {
             q.options.whole_word = is_yes(v);
-        } else if negated {
+            continue;
+        }
+        if negated {
             q.exclude_terms.push(body);
         } else if !body.is_empty() {
             q.terms.push(body);
@@ -107,24 +124,60 @@ fn is_yes(v: &str) -> bool {
     )
 }
 
+/// One whitespace-separated token with its quotes removed.
+struct Token {
+    text: String,
+    /// Byte offset in `text` where the first `"` stood, if any.
+    quote_at: Option<usize>,
+}
+
+impl Token {
+    /// Does a leading `-` negate this token? Only when a letter, `_` or a
+    /// quote follows it: `-Wall` and `-"a b"` negate, `->` and `-1.5` do not.
+    fn negates(&self) -> bool {
+        let Some(rest) = self.text.strip_prefix('-') else {
+            return false;
+        };
+        match self.quote_at {
+            Some(0) => false, // `"-foo"` is the literal term `-foo`
+            Some(1) => true,  // `-"a b"`
+            _ => rest
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_'),
+        }
+    }
+}
+
 /// Split on whitespace, keeping double-quoted phrases together (quotes removed).
-fn tokenize(raw: &str) -> Vec<String> {
+fn tokenize(raw: &str) -> Vec<Token> {
     let mut out = Vec::new();
     let mut cur = String::new();
+    let mut quote_at = None;
     let mut in_quotes = false;
     for c in raw.chars() {
         match c {
-            '"' => in_quotes = !in_quotes,
+            '"' => {
+                in_quotes = !in_quotes;
+                quote_at.get_or_insert(cur.len());
+            }
             c if c.is_whitespace() && !in_quotes => {
                 if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
+                    out.push(Token {
+                        text: std::mem::take(&mut cur),
+                        quote_at,
+                    });
                 }
+                quote_at = None;
             }
             c => cur.push(c),
         }
     }
     if !cur.is_empty() {
-        out.push(cur);
+        out.push(Token {
+            text: cur,
+            quote_at,
+        });
     }
     out
 }
@@ -202,5 +255,32 @@ mod tests {
         assert_eq!(parse("lang:xyz").include_globs, vec!["**/*.xyz"]);
         // A negative number is a term, not an exclusion.
         assert_eq!(parse("-1 x").terms, vec!["-1", "x"]);
+    }
+
+    /// Review 1.6: operator-looking text the user means literally is not
+    /// swallowed into an empty filter or an accidental exclusion.
+    #[test]
+    fn escapes_keep_operator_like_text_literal() {
+        // `-` negates only before a letter, `_` or a quote.
+        assert_eq!(parse("-> fn").terms, vec!["->", "fn"]);
+        assert!(parse("-> fn").exclude_terms.is_empty());
+        assert_eq!(parse("-1.5 - -_x -Wall").terms, vec!["-1.5", "-"]);
+        assert_eq!(parse("-1.5 - -_x -Wall").exclude_terms, vec!["_x", "Wall"]);
+        // Quoted tokens are literal; a quote after the colon still belongs to
+        // the operator.
+        assert_eq!(parse("\"file:\"").terms, vec!["file:"]);
+        assert_eq!(parse("\"-foo\"").terms, vec!["-foo"]);
+        assert_eq!(parse("x -\"dog here\"").exclude_terms, vec!["dog here"]);
+        assert_eq!(parse("file:\"my dir\"").include_globs, vec!["**/*my dir*"]);
+        assert_eq!(parse("-\"file:x\"").exclude_terms, vec!["file:x"]);
+        // An operator without an argument, or with an unknown language, is a term.
+        assert_eq!(
+            parse("file: lang: case: word:").terms,
+            vec!["file:", "lang:", "case:", "word:"]
+        );
+        assert_eq!(parse("-file:").exclude_terms, vec!["file:"]);
+        assert_eq!(parse("lang:??? x").terms, vec!["lang:???", "x"]);
+        let q = parse("file: lang: case: word:");
+        assert!(q.include_globs.is_empty() && q.options == SearchOptions::default());
     }
 }
