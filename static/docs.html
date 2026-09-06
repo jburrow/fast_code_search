@@ -211,10 +211,17 @@
             <p>Searches for exact text matches across all indexed files. Uses trigram indexing for fast candidate
                 filtering.</p>
             <ul>
-                <li>ASCII case-insensitive matching</li>
+                <li>ASCII case-insensitive matching (<code>case:yes</code> or <code>case=true</code> for
+                    case-sensitive)</li>
                 <li>Supports glob-based path filtering</li>
                 <li>Can filter to symbol definitions only (plus filename matches)</li>
+                <li>The web UI only submits queries of at least 3 characters (a trigram needs three);
+                    the API accepts shorter queries but has to scan candidates without the index</li>
             </ul>
+            <p>A query with several words, e.g. <code>fn main</code>, is several <em>terms</em>: a file
+                must contain all of them (AND at file level), and within the results lines that
+                contain more of the terms rank first, with every term highlighted. To match the words
+                as one exact phrase, quote them: <code>"fn main"</code>.</p>
 
             <h3>Regex Search</h3>
             <p>Enable the <code>Regex</code> checkbox to search with regular expression patterns. When possible,
@@ -281,6 +288,8 @@
             <ul>
                 <li><strong>Symbol definition</strong>: 3× boost for matches in symbol names</li>
                 <li><strong>Exact match</strong>: 2× boost when query matches exactly (not a substring)</li>
+                <li><strong>Dependency boost</strong>: <code>1 + 0.5 × log10(dependents)</code> for
+                    files imported by other files (1.0 when nothing imports the file)</li>
                 <li><strong>File score</strong>: Base file score is carried through</li>
             </ul>
 
@@ -300,7 +309,8 @@
                     <td><code>q</code></td>
                     <td>string</td>
                     <td>(required)</td>
-                    <td>Search query</td>
+                    <td>Search query (see <a href="#query-syntax">Query Syntax</a>; a regex when
+                        <code>regex=true</code>)</td>
                 </tr>
                 <tr>
                     <td><code>max</code></td>
@@ -324,7 +334,21 @@
                     <td><code>regex</code></td>
                     <td>boolean</td>
                     <td>false</td>
-                    <td>Treat query as regex pattern</td>
+                    <td>Treat query as regex pattern. Ignored when <code>symbols</code> or
+                        <code>references</code> is set (those take precedence).</td>
+                </tr>
+                <tr>
+                    <td><code>case</code></td>
+                    <td>boolean</td>
+                    <td></td>
+                    <td>Case-sensitive matching; overrides <code>case:</code> in the query. Not
+                        applied in regex mode (use <code>(?i)</code> in the pattern).</td>
+                </tr>
+                <tr>
+                    <td><code>word</code></td>
+                    <td>boolean</td>
+                    <td></td>
+                    <td>Whole-word matching; overrides <code>word:</code> in the query</td>
                 </tr>
                 <tr>
                     <td><code>references</code></td>
@@ -355,15 +379,23 @@
                 </tr>
                 <tr>
                     <td><code>offset</code></td>
-                    <td>Results to skip before the returned page (default 0); ordering is deterministic</td>
+                    <td>integer</td>
+                    <td>0</td>
+                    <td>Results to skip before the returned page; ordering is deterministic, so
+                        <code>offset=max</code> is page two</td>
                 </tr>
                 <tr>
                     <td><code>timeout_ms</code></td>
-                    <td>Stop scanning after this many milliseconds and return the best matches so far (0 = no deadline; capped at 30000)</td>
+                    <td>integer</td>
+                    <td>0</td>
+                    <td>Stop scanning after this many milliseconds and return the best matches so far
+                        (0 = no deadline; capped at 30000)</td>
                 </tr>
             </table>
-            <p><strong>Note:</strong> <code>rank</code> applies to text searches only. Regex and symbols-only queries
-                use internal fast ranking and omit ranking metadata in the response.</p>
+            <p><strong>Note:</strong> <code>rank</code> applies to text and regex searches; symbol and
+                reference queries use their own candidate order. Every mode reports
+                <code>rank_mode</code>, <code>total_candidates</code> and
+                <code>candidates_searched</code> in the response.</p>
 
             <h3>Example Requests</h3>
             <pre><code># Basic search
@@ -376,7 +408,13 @@ curl "http://localhost:8080/api/search?q=parse&include=src/**/*.rs"
 curl "http://localhost:8080/api/search?q=error&rank=fast"
 
 # Regex search for function definitions
-curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
+curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"
+
+# Page two, and a 2 s deadline
+curl "http://localhost:8080/api/search?q=error&max=50&offset=50&timeout_ms=2000"
+
+# Call sites and type mentions of an identifier
+curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></pre>
 
             <h3>Response Format</h3>
             <pre><code>{
@@ -425,13 +463,16 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
                 <code>true</code>. Otherwise <code>has_more</code> means
                 <code>offset + total_results &lt; total_matches</code>.</p>
 
-            <h2>Query Syntax</h2>
+            <h2 id="query-syntax">Query Syntax</h2>
             <p>Plain-text queries (not <code>regex=true</code>) understand a few operators, in
-                the style of Zoekt / Sourcegraph. Anything else is a search term; several terms must
-                all appear in a file, and lines matching any of them are returned.</p>
+                the style of Zoekt / Sourcegraph. Anything else is a search term. Several terms must
+                all appear in a file (AND at file level); lines that match more of the terms rank
+                first, and every term is highlighted. Use a quoted phrase for an exact sequence of
+                words.</p>
             <table>
                 <tr><th>Syntax</th><th>Meaning</th></tr>
-                <tr><td><code>"exact phrase"</code></td><td>One term containing spaces</td></tr>
+                <tr><td><code>"exact phrase"</code></td><td>One term containing spaces, matched literally
+                    (<code>"fn main"</code> finds <code>fn main</code>, not <code>fn range</code>)</td></tr>
                 <tr><td><code>-term</code></td><td>Drop files that contain <code>term</code></td></tr>
                 <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td>
                     <td>Only / never paths matching PATTERN (a bare word matches anywhere in the path; globs and <code>/</code> are used as written)</td></tr>
@@ -483,7 +524,22 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
                 </tr>
                 <tr>
                     <td><code>GET /api/health</code></td>
-                    <td>Health check</td>
+                    <td>Liveness check: <code>{ status, version, server_type }</code>, always 200 while
+                        the process runs</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/ready</code></td>
+                    <td>Readiness: 200 with <code>{ ready, status, num_files }</code> once the index can
+                        serve results (a build or reconcile completed, or an index is loaded and idle);
+                        503 with the same fields in the error otherwise. Use it as the Kubernetes
+                        readiness probe.</td>
+                </tr>
+                <tr>
+                    <td><code>GET /metrics</code></td>
+                    <td>Prometheus text exposition: <code>fcs_search_requests_total</code>,
+                        <code>fcs_search_errors_total{reason}</code>, the
+                        <code>fcs_search_duration_seconds</code> histogram, and index gauges (files,
+                        trigrams, dependency edges, content bytes, indexing, ready)</td>
                 </tr>
                 <tr>
                     <td><code>GET /api/dependents?file=...</code></td>
@@ -495,7 +551,8 @@ curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"</code></pre>
                 </tr>
                 <tr>
                     <td><code>GET /api/file?file=...</code></td>
-                    <td>Full UTF-8 content of a file (path, content, size_bytes, line_count)</td>
+                    <td>Full UTF-8 content of an indexed file:
+                        <code>{ file, content, size_bytes, line_count }</code></td>
                 </tr>
                 <tr>
                     <td><code>GET /api/context?file=...&amp;line=N&amp;context=K</code></td>
