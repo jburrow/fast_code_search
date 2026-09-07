@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-07
+
 ### Added
 - A Web UI job in CI runs the JavaScript helper tests (`npm test`, Node's
   built-in runner over `static/tests`) and fails if the committed
@@ -886,7 +888,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/jburrow/fast_code_search/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jburrow/fast_code_search/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/jburrow/fast_code_search/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/jburrow/fast_code_search/compare/v0.9.0...v0.10.0
