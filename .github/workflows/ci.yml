@@ -90,7 +90,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Syntax-check the web UI scripts
-        run: node --check static/keyword.js && node --check static/common.js && node --check static/semantic.js
+        run: node --check static/keyword.js && node --check static/common.js && node --check static/semantic.js && node --check static/lib/keyword-helpers.js
 
       - name: Run clippy (all targets and features)
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -104,6 +104,32 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses sources
+
+  ui:
+    name: Web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the helper tests (node --test static/tests)
+        run: npm test
+
+      - name: Build Tailwind
+        run: npm run build:css
+
+      # The Tailwind build is committed and embedded into the binary; it must
+      # match the markup it was built from.
+      - name: Check the committed tailwind.css is current
+        run: git diff --exit-code static/tailwind.css
 
   msrv:
     name: MSRV (1.89)
