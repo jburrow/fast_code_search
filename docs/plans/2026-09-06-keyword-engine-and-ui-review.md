@@ -18,6 +18,24 @@ discipline, regex hardening). The serious problems cluster in four places:
 concurrency around saves and long searches, regex candidate generation,
 incremental update cost, and a UI that ignores half of the API contract.
 
+## Status (2026-09-07)
+
+Implemented on `main` (see `CHANGELOG.md` [Unreleased]): every priority item
+and sections 1–4 except the following, left open deliberately:
+
+- 1.10 interned reference names are never freed (bounded by the number of
+  distinct identifiers; a rebuild reclaims them).
+- 2 (item 8) parked imports: dead importers are now dropped when they are
+  retried; per-`(file, import)` deduplication is not done.
+- 6: no JavaScript test harness or Tailwind rebuild check in CI (only a
+  syntax check of the UI scripts was added).
+
+Follow-ups found while verifying on the live index: the reload eligibility
+pass initially cost 14.8 s (gitignore chains are now cached per directory),
+and ranking lines by term count was not enough under fast ranking, so
+multi-term queries now prefer the phrase (files containing it are always
+opened; phrase lines outrank all-term lines outrank single-term lines).
+
 ## Priorities
 
 | # | Severity | Area | Finding |
