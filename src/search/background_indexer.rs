@@ -268,9 +268,11 @@ pub fn run(config: BackgroundIndexerConfig) {
     // Count removed entries so the final save is not skipped when files were
     // deleted from disk but no stale/new files needed re-indexing
     // (total_indexed == 0 but removed_files_count > 0 means the index changed).
+    // Re-extracted symbols count as a change too: the file on disk still
+    // holds the old extractor's output.
     let removed_files_count = load_result
         .as_ref()
-        .map(|r| r.removed_files.len() + r.removed_paths.len())
+        .map(|r| r.removed_files.len() + r.removed_paths.len() + usize::from(r.symbols_reextracted))
         .unwrap_or(0);
 
     // Run the indexing pipeline

@@ -682,6 +682,7 @@ impl SearchEngine {
             mark("trigrams");
         }
 
+        let mut symbols_reextracted = false;
         if !self.file_store.is_empty() {
             let loaded = self.file_store.len();
             progress(
@@ -702,7 +703,8 @@ impl SearchEngine {
                     "Persisted symbols predate the current extractor; re-extracting"
                 );
             }
-            if !persisted.symbols.is_empty() && schema_current {
+            symbols_reextracted = persisted.symbols.is_empty() || !schema_current;
+            if !symbols_reextracted {
                 self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 tracing::info!(
                     files_restored = valid_count,
@@ -777,6 +779,7 @@ impl SearchEngine {
             removed_paths,
             config_compatible,
             already_indexed_files,
+            symbols_reextracted,
         })
     }
 }

@@ -46,6 +46,11 @@ pub struct LoadIndexResult {
     /// Used to skip re-indexing when scanning for unindexed files after a
     /// partial/checkpoint load.
     pub already_indexed_files: Vec<std::path::PathBuf>,
+    /// Symbols and references were re-extracted from file content rather
+    /// than restored (older extractor, or none saved): the in-memory index
+    /// now differs from the file and should be saved even if no file
+    /// changed, or the next start pays the extraction again.
+    pub symbols_reextracted: bool,
 }
 
 /// Status of the indexing process
