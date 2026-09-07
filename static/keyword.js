@@ -1,6 +1,6 @@
 // ============================================
 // KEYWORD SEARCH - View-specific logic
-// Uses: common.js
+// Uses: common.js, lib/keyword-helpers.js (pure helpers, Node-tested)
 // ============================================
 
 const API_BASE = '';
@@ -90,8 +90,6 @@ function loadSettingsFromStorage() {
 // FORM STATE HELPERS
 // ============================================
 
-const MAX_RESULTS_LIMIT = 1000; // server clamps `max` to 1..1000
-
 /**
  * Select `value` in `select` only when such an option exists, so an unknown
  * value from a URL or stale storage can never leave the select in a state
@@ -112,33 +110,20 @@ function setSelectValue(select, value) {
  */
 function applyMaxResults(value) {
     if (!maxResultsSelect) return;
-    const n = parseInt(value, 10);
-    if (!Number.isFinite(n)) return;
-    const clamped = Math.min(MAX_RESULTS_LIMIT, Math.max(1, n));
-    const options = Array.from(maxResultsSelect.options)
-        .map(o => parseInt(o.value, 10))
-        .filter(Number.isFinite)
-        .sort((a, b) => a - b);
-    const pick = options.find(o => o >= clamped) ?? options[options.length - 1];
+    const clamped = clampMaxResults(value);
+    if (clamped === null) return;
+    const pick = pickMaxResultsOption(clamped, Array.from(maxResultsSelect.options, o => o.value));
     if (pick !== undefined) maxResultsSelect.value = String(pick);
 }
 
 /** The validated result cap to send: always an integer in 1..1000. */
 function currentMaxResults() {
-    const n = parseInt(maxResultsSelect?.value, 10);
-    if (!Number.isFinite(n)) return 50;
-    return Math.min(MAX_RESULTS_LIMIT, Math.max(1, n));
+    return clampMaxResults(maxResultsSelect?.value) ?? 50;
 }
 
 /** The validated context-line count to send (0..10). */
 function currentContextLines() {
-    const n = parseInt(contextLinesSelect?.value || '0', 10);
-    if (!Number.isFinite(n)) return 0;
-    return Math.min(10, Math.max(0, n));
-}
-
-function parseBoolParam(value) {
-    return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
+    return clampContextLines(contextLinesSelect?.value || '0');
 }
 
 /** The mode checkboxes; each is mutually exclusive with the others. */
@@ -553,100 +538,10 @@ function updateProgressUI(status) {
 }
 
 // ============================================
-// ICONS
-// ============================================
-
-/**
- * An inline SVG icon referencing the sprite in index.html (`#i-<name>`,
- * underscores in `name` become dashes). Sized by attributes, coloured by
- * the surrounding text (fill: currentColor via .icon).
- * @param {string} name - sprite symbol name, e.g. 'open_in_new'
- * @param {number} size - width and height in px
- */
-function iconSvg(name, size) {
-    const id = 'i-' + String(name).replace(/_/g, '-');
-    return `<svg class="icon" width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"/></svg>`;
-}
-
-// ============================================
 // SYNTAX HIGHLIGHTING HELPERS
 // ============================================
 
-/**
- * Map a file path's extension to a highlight.js language name.
- * Falls back to 'plaintext' when unknown.
- */
-function hljsLangForPath(filePath) {
-    const ext = (filePath.split('.').pop() || '').toLowerCase();
-    const MAP = {
-        rs: 'rust', py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-        ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
-        go: 'go', rb: 'ruby', java: 'java', cs: 'csharp', cpp: 'cpp', cc: 'cpp',
-        cxx: 'cpp', c: 'c', h: 'c', hpp: 'cpp', php: 'php', sh: 'bash',
-        bash: 'bash', zsh: 'bash', toml: 'toml', yaml: 'yaml', yml: 'yaml',
-        json: 'json', xml: 'xml', html: 'xml', css: 'css', scss: 'scss',
-        md: 'markdown', sql: 'sql', kt: 'kotlin', swift: 'swift', r: 'r',
-        lua: 'lua', pl: 'perl', pm: 'perl', hs: 'haskell', ex: 'elixir',
-        exs: 'elixir', erl: 'erlang', scala: 'scala', dart: 'dart',
-        proto: 'protobuf', dockerfile: 'dockerfile', makefile: 'makefile',
-    };
-    return MAP[ext] || 'plaintext';
-}
-
 const LANG_BADGE_STYLE_CACHE = new Map();
-
-/**
- * Parse a CSS color string to RGB object for contrast calculations.
- * Supports #rgb, #rrggbb, rgb(), and rgba().
- */
-function parseColorToRgb(color) {
-    if (!color) return null;
-    const value = color.trim();
-
-    if (value.startsWith('#')) {
-        const hex = value.slice(1);
-        if (hex.length === 3) {
-            return {
-                r: parseInt(hex[0] + hex[0], 16),
-                g: parseInt(hex[1] + hex[1], 16),
-                b: parseInt(hex[2] + hex[2], 16),
-            };
-        }
-        if (hex.length === 6) {
-            return {
-                r: parseInt(hex.slice(0, 2), 16),
-                g: parseInt(hex.slice(2, 4), 16),
-                b: parseInt(hex.slice(4, 6), 16),
-            };
-        }
-        return null;
-    }
-
-    const rgbMatch = value.match(/^rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
-    if (!rgbMatch) return null;
-    return {
-        r: Number(rgbMatch[1]),
-        g: Number(rgbMatch[2]),
-        b: Number(rgbMatch[3]),
-    };
-}
-
-function toLinearChannel(v) {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
-function relativeLuminance(rgb) {
-    return 0.2126 * toLinearChannel(rgb.r)
-        + 0.7152 * toLinearChannel(rgb.g)
-        + 0.0722 * toLinearChannel(rgb.b);
-}
-
-function contrastRatio(l1, l2) {
-    const lighter = Math.max(l1, l2);
-    const darker = Math.min(l1, l2);
-    return (lighter + 0.05) / (darker + 0.05);
-}
 
 /**
  * Build a readable language badge style from the configured language color.
@@ -698,43 +593,10 @@ function applyHljs(el, filePath) {
 // marked exactly where the engine matched. Context lines and file previews
 // carry no offsets; for those the query is tokenised the way the server's
 // query_syntax.rs does (operators dropped, "phrases" unquoted, case:yes
-// honoured) and every remaining term is marked.
+// honoured) and every remaining term is marked. The pure pieces
+// (byteRangeToCharRange, parseQueryTerms, buildQueryMatcher, ...) live in
+// lib/keyword-helpers.js, which has Node tests.
 // ============================================
-
-/**
- * Convert a UTF-8 byte range in `str` to a UTF-16 code-unit range usable with
- * String.prototype.slice. Out-of-range input is clamped to the string.
- * @returns {[number, number]}
- */
-function byteRangeToCharRange(str, byteStart, byteEnd) {
-    let bytes = 0;
-    let charStart = -1;
-    let charEnd = -1;
-    for (let i = 0; i < str.length;) {
-        if (charStart < 0 && bytes >= byteStart) charStart = i;
-        if (bytes >= byteEnd) { charEnd = i; break; }
-        const cp = str.codePointAt(i);
-        bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
-        i += cp > 0xffff ? 2 : 1;
-    }
-    if (charStart < 0) charStart = str.length;
-    if (charEnd < 0) charEnd = str.length;
-    return [charStart, Math.max(charStart, charEnd)];
-}
-
-/** Sort ranges, drop empty ones and merge overlaps. */
-function mergeRanges(ranges) {
-    const sorted = ranges
-        .filter(r => r && r[1] > r[0])
-        .sort((a, b) => a[0] - b[0]);
-    const out = [];
-    for (const r of sorted) {
-        const last = out[out.length - 1];
-        if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
-        else out.push([r[0], r[1]]);
-    }
-    return out;
-}
 
 /**
  * Wrap the given character ranges of `el`'s text content in
@@ -777,118 +639,6 @@ function markRanges(el, ranges) {
         if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
         textNode.parentNode.replaceChild(frag, textNode);
     }
-}
-
-function isYesToken(v) {
-    return ['yes', 'y', 'true', '1', 'on'].includes(v.toLowerCase());
-}
-
-/**
- * Tokenise a plain-text query exactly like src/search/query_syntax.rs:
- * whitespace-separated, "quoted phrases" kept together (quotes removed),
- * `file:`/`lang:`/`-file:`/`-lang:` and `-term` dropped, `case:`/`word:`
- * consumed as options. A lone `-` or `-123` is a term, not a negation.
- * @returns {{terms: string[], caseSensitive: boolean, wholeWord: boolean}}
- */
-function parseQueryTerms(raw) {
-    const tokens = [];
-    let cur = '';
-    let inQuotes = false;
-    for (const c of raw || '') {
-        if (c === '"') inQuotes = !inQuotes;
-        else if (!inQuotes && /\s/.test(c)) { if (cur) { tokens.push(cur); cur = ''; } }
-        else cur += c;
-    }
-    if (cur) tokens.push(cur);
-
-    const terms = [];
-    let caseSensitive = false;
-    let wholeWord = false;
-    for (const tok of tokens) {
-        let negated = false;
-        let body = tok;
-        if (tok.startsWith('-')) {
-            const rest = tok.slice(1);
-            if (rest && !/^\d+$/.test(rest)) { negated = true; body = rest; }
-        }
-        if (body.startsWith('file:') || body.startsWith('lang:')) continue;
-        if (body.startsWith('case:')) { caseSensitive = isYesToken(body.slice(5)); continue; }
-        if (body.startsWith('word:')) { wholeWord = isYesToken(body.slice(5)); continue; }
-        if (negated) continue;
-        if (body) terms.push(body);
-    }
-    return { terms, caseSensitive, wholeWord };
-}
-
-/**
- * Best-effort translation of a Rust `regex` pattern to a JS RegExp: leading
- * inline flags `(?is)` become RegExp flags and `(?P<name>` becomes `(?<name>`.
- * Returns null when the pattern does not compile in JS.
- */
-function compileRustRegex(pattern) {
-    let flags = 'g';
-    let src = pattern;
-    const lead = /^\(\?([a-z]+)\)/.exec(src);
-    if (lead) {
-        if (lead[1].includes('i')) flags += 'i';
-        if (lead[1].includes('s')) flags += 's';
-        if (lead[1].includes('m')) flags += 'm';
-        src = src.slice(lead[0].length);
-    }
-    src = src.replace(/\(\?P</g, '(?<');
-    try {
-        return new RegExp(src, flags + 'u');
-    } catch (_) {
-        try { return new RegExp(src, flags); } catch (_) { return null; }
-    }
-}
-
-/**
- * Build a matcher for lines without server offsets (context lines, file
- * previews). In regex mode the actual pattern is used; otherwise every plain
- * term from the query is matched literally, case-insensitively unless
- * `case:yes` is present. Returns null when nothing can be highlighted.
- * @param {string} query
- * @param {{regex?: boolean, references?: boolean}} [opts]
- * @returns {{re: RegExp}|null}
- */
-function buildQueryMatcher(query, opts = {}) {
-    if (!query) return null;
-    if (opts.regex) {
-        const re = compileRustRegex(query);
-        return re ? { re } : null;
-    }
-    // A references query is one identifier, matched exactly and case-sensitively.
-    const parsed = opts.references
-        ? { terms: [query.trim()], caseSensitive: true, wholeWord: true }
-        : parseQueryTerms(query);
-    const terms = parsed.terms.filter(Boolean);
-    if (!terms.length) return null;
-    // Longest first so "foobar" wins over "foo" in the alternation.
-    terms.sort((a, b) => b.length - a.length);
-    let src = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    if (parsed.wholeWord) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`;
-    try {
-        return { re: new RegExp(src, parsed.caseSensitive ? 'g' : 'gi') };
-    } catch (_) {
-        return null;
-    }
-}
-
-/** Character ranges in `text` matched by `matcher`. */
-function matcherRanges(text, matcher) {
-    if (!matcher || !text) return [];
-    const re = matcher.re;
-    re.lastIndex = 0;
-    const out = [];
-    let m;
-    while ((m = re.exec(text)) !== null) {
-        if (m[0].length === 0) { re.lastIndex++; continue; }
-        out.push([m.index, m.index + m[0].length]);
-        if (out.length > 500) break;
-    }
-    re.lastIndex = 0;
-    return out;
 }
 
 /**
@@ -934,42 +684,6 @@ const FILE_VIEW_WINDOW = 1000;
 const FILE_VIEW_STEP = 1000;
 // Files larger than this are shown without syntax colouring.
 const HLJS_MAX_CHARS = 2_000_000;
-
-/**
- * Split highlight.js output into one HTML string per source line. hljs
- * spans may start on one line and end on a later one (block comments,
- * multi-line strings); such spans are closed at the line break and
- * re-opened on the next line so every line is a self-contained fragment.
- */
-function splitHighlightedHtml(html) {
-    const lines = [];
-    const open = [];
-    let cur = '';
-    const re = /<span[^>]*>|<\/span>|[^<]+|</g;
-    let m;
-    while ((m = re.exec(html)) !== null) {
-        const tok = m[0];
-        if (tok.startsWith('<span')) {
-            open.push(tok);
-            cur += tok;
-        } else if (tok === '</span>') {
-            open.pop();
-            cur += tok;
-        } else {
-            const parts = tok.split('\n');
-            for (let i = 0; i < parts.length; i++) {
-                if (i > 0) {
-                    cur += '</span>'.repeat(open.length);
-                    lines.push(cur);
-                    cur = open.join('');
-                }
-                cur += parts[i];
-            }
-        }
-    }
-    lines.push(cur);
-    return lines;
-}
 
 /**
  * Highlight `text` once for `lang` and return an escaped HTML string per

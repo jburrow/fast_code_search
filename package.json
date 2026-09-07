@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "test": "node --test static/tests",
     "build:css": "tailwindcss -i ./static/input.css -o ./static/tailwind.css --content \"./static/**/*.{html,js}\" --minify",
     "watch:css": "tailwindcss -i ./static/input.css -o ./static/tailwind.css --content \"./static/**/*.{html,js}\" --watch"
   },
