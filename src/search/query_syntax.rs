@@ -11,10 +11,13 @@
 //! term (file-level AND); a `"quoted phrase"` is one term matched literally.
 //! Within a matching file, every line containing at least one term is a
 //! hit, reported once (by the earliest term that matched it). Lines are
-//! ranked by how many distinct terms they contain: the line score is
-//! multiplied by that count, and within a file the lines holding the most
-//! terms are emitted first, so they are never cut off by the per-file match
-//! cap or the query's match budget. A single-term query is unaffected.
+//! ranked in tiers: a line containing the terms as one phrase (`fn main()`)
+//! first, then lines containing every term, then lines with fewer of them;
+//! each tier sits above the next whatever the files' own scores, and within
+//! a file the lines holding the most terms are emitted first, so they are
+//! never cut off by the per-file match cap or the query's match budget.
+//! Files whose trigrams contain the phrase are always among those read,
+//! even under fast ranking. A single-term query is unaffected.
 
 /// Matching options that change how a term is verified in file content.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

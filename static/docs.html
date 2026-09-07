@@ -219,9 +219,11 @@
                     the API accepts shorter queries but has to scan candidates without the index</li>
             </ul>
             <p>A query with several words, e.g. <code>fn main</code>, is several <em>terms</em>: a file
-                must contain all of them (AND at file level), and within the results lines that
-                contain more of the terms rank first, with every term highlighted. To match the words
-                as one exact phrase, quote them: <code>"fn main"</code>.</p>
+                must contain all of them (AND at file level). Within the results a line containing the
+                words as one phrase (<code>fn main()</code>) ranks first, then lines containing every
+                term, then lines with fewer of them, with every term highlighted; files containing
+                the phrase are always among those read. To match the words only as one exact
+                phrase, quote them: <code>"fn main"</code>.</p>
 
             <h3>Regex Search</h3>
             <p>Enable the <code>Regex</code> checkbox to search with regular expression patterns. When possible,

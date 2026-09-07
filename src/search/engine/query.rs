@@ -85,13 +85,26 @@ impl SearchEngine {
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
         let terms = TermSet::single(query, query_lower);
-        self.run_terms(&terms, candidates, limits, rank_mode)
+        self.run_terms(&terms, candidates, None, limits, rank_mode)
     }
 
+    /// Added per extra term a line holds beyond the first; larger than any
+    /// single-term score, so the tiers never interleave.
+    const MULTI_TERM_TIER: f64 = 100.0;
+
+    /// Fast-mode boost for a file whose trigrams contain the query phrase:
+    /// large enough that such files are always among the ones opened.
+    const PHRASE_CANDIDATE_BOOST: f32 = 1_000_000.0;
+
+    /// `phrase_docs`: candidates whose trigrams contain the multi-term query
+    /// as one phrase; in fast mode they are opened before any other file,
+    /// since a metadata-ranked sample of thousands of files that merely
+    /// contain every term rarely includes the ones with the phrase.
     pub(super) fn run_terms(
         &self,
         terms: &TermSet,
         candidates: &roaring::RoaringBitmap,
+        phrase_docs: Option<&roaring::RoaringBitmap>,
         limits: SearchLimits,
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
@@ -100,7 +113,13 @@ impl SearchEngine {
             candidates,
             rank_mode,
             limits,
-            |meta| meta.query_score(primary_lower),
+            |id, meta| {
+                let boost = match phrase_docs {
+                    Some(p) if p.contains(id) => Self::PHRASE_CANDIDATE_BOOST,
+                    _ => 0.0,
+                };
+                meta.query_score(primary_lower) + boost
+            },
             |doc_id, run| self.search_in_document_terms(doc_id, terms, run),
         )
     }
@@ -134,7 +153,11 @@ impl SearchEngine {
         let candidates =
             self.apply_path_filter(Cow::Owned(candidates.unwrap_or_default()), &path_filter);
         let terms = TermSet::from_parsed(parsed);
-        Ok(self.run_terms(&terms, &candidates, limits, rank_mode))
+        let phrase_docs = terms
+            .phrase
+            .as_ref()
+            .map(|(_, lower)| self.text_candidates(lower).into_owned() & &*candidates);
+        Ok(self.run_terms(&terms, &candidates, phrase_docs.as_ref(), limits, rank_mode))
     }
 
     /// Symbol search honouring the query's globs and matching options
@@ -159,7 +182,7 @@ impl SearchEngine {
             &candidates,
             RankMode::Full,
             limits,
-            |meta| meta.base_score,
+            |_, meta| meta.base_score,
             |doc_id, run| {
                 self.search_symbols_in_document_opts(doc_id, query, &query_lower, opts, run)
             },
@@ -181,7 +204,7 @@ impl SearchEngine {
         per_doc: F,
     ) -> (Vec<SearchMatch>, SearchRankingInfo)
     where
-        S: Fn(&FileMetadata) -> f32,
+        S: Fn(u32, &FileMetadata) -> f32,
         F: Fn(u32, &QueryRun) -> Option<Vec<SearchMatch>> + Sync,
     {
         let total_candidates = candidates.len() as usize;
@@ -200,7 +223,7 @@ impl SearchEngine {
             // Fast ranking: order by file metadata (no reads), open the top N.
             let mut scored: Vec<(u32, f32)> = candidates
                 .iter()
-                .map(|id| (id, fast_score(self.get_file_metadata(id))))
+                .map(|id| (id, fast_score(id, self.get_file_metadata(id))))
                 .collect();
             scored.sort_unstable_by(|a, b| {
                 b.1.partial_cmp(&a.1)
@@ -493,7 +516,7 @@ impl SearchEngine {
             &candidates,
             rank_mode,
             limits,
-            |meta| meta.base_score,
+            |_, meta| meta.base_score,
             |doc_id, run| self.search_in_document_regex(doc_id, regex, multiline, run),
         ))
     }
@@ -550,7 +573,7 @@ impl SearchEngine {
             &candidates,
             RankMode::Full,
             limits,
-            |meta| meta.base_score,
+            |_, meta| meta.base_score,
             |doc_id, run| self.search_symbols_in_document(doc_id, query, &query_lower, run),
         ))
     }
@@ -608,7 +631,7 @@ impl SearchEngine {
             &candidates,
             RankMode::Full,
             limits,
-            |meta| meta.base_score,
+            |_, meta| meta.base_score,
             |doc_id, run| self.references_in_document(doc_id, name_id, name, run),
         )
     }
@@ -1176,6 +1199,17 @@ impl SearchEngine {
                     by_line.entry(hit.line_num).or_insert((hit, 0)).1 += 1;
                 }
             }
+            // A line holding the query as one phrase counts as one more
+            // than every term, so it sorts (and scores) above lines that
+            // hold the terms separately.
+            if let Some((po, pl)) = &terms.phrase {
+                let all = terms.terms.len();
+                for hit in line_hits(&content, po, pl, opts) {
+                    if let Some(entry) = by_line.get_mut(&hit.line_num) {
+                        entry.1 = all + 1;
+                    }
+                }
+            }
             all_hits = by_line.into_values().collect();
             all_hits.sort_by_key(|(h, n)| (std::cmp::Reverse(*n), h.line_num));
         }
@@ -1238,10 +1272,11 @@ impl SearchEngine {
                 dependency_boost,
             );
             if term_hits > 1 {
-                // A line holding several of the query's terms outranks
-                // one holding a single term (single-term scores are
-                // untouched).
-                score *= term_hits as f64;
+                // Tiers: a line holding the whole phrase, then lines holding
+                // every term, then lines holding several, then one — each
+                // tier above every line of the tier below regardless of the
+                // file-level score (single-term scores are untouched).
+                score = score * term_hits as f64 + Self::MULTI_TERM_TIER * (term_hits - 1) as f64;
             }
             let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
                 names

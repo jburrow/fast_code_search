@@ -593,6 +593,10 @@ pub struct TermSet {
     /// (original, lowercase) per excluded term
     pub exclude: Vec<(String, String)>,
     pub opts: SearchOptions,
+    /// The terms joined by one space, when there are several: a line (or
+    /// file) containing the query as written outranks one that merely holds
+    /// every term somewhere.
+    pub phrase: Option<(String, String)>,
 }
 
 impl TermSet {
@@ -601,11 +605,18 @@ impl TermSet {
             terms: vec![(original.to_string(), lower.to_string())],
             exclude: Vec::new(),
             opts: SearchOptions::default(),
+            phrase: None,
         }
     }
 
     pub(super) fn from_parsed(parsed: &ParsedQuery) -> Self {
+        let phrase = (parsed.terms.len() > 1).then(|| {
+            let original = parsed.terms.join(" ");
+            let lower = original.to_lowercase();
+            (original, lower)
+        });
         Self {
+            phrase,
             terms: parsed
                 .terms
                 .iter()

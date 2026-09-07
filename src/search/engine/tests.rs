@@ -2053,7 +2053,12 @@ fn test_multi_term_lines_rank_by_terms_matched() {
         .iter()
         .find(|h| name(h) == "small.rs" && h.line_number == 3)
         .unwrap();
-    assert_eq!(joint.score, small_fn_main.score * 2.0);
+    // Tiering: at least the all-terms multiplier plus one tier step above
+    // the same line scored for the single term.
+    assert!(
+        joint.score >= small_fn_main.score * 2.0 + 100.0,
+        "{joint:?} vs {small_fn_main:?}"
+    );
 
     // Single term: document order within the file, unscaled, capped.
     let big_only: Vec<usize> = only_fn
@@ -2407,4 +2412,46 @@ fn test_regex_single_pass_keeps_per_line_semantics() {
     assert_eq!(run(r"fn \w+\(\)"), vec![(1, 0, 10), (5, 0, 9)]);
     // A whole-file pattern still spans lines.
     assert_eq!(run(r"fn\r\nmain\("), vec![(3, 0, 2)]);
+}
+
+/// Review 1.5 (follow-up): for a multi-term query the line holding the
+/// query as one phrase ranks first, then lines holding every term, then
+/// single-term lines — whatever the files' own scores — and the file with
+/// the phrase is opened even when fast ranking would not have sampled it.
+#[test]
+fn test_phrase_lines_outrank_all_term_and_single_term_lines() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    let src = temp_dir.path().join("src");
+    let tests = temp_dir.path().join("tests");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&tests).unwrap();
+    // High-scoring location, terms on separate lines only.
+    fs::write(
+        src.join("lib.rs"),
+        "fn default() -> Self {}\nlet main_thread = 1;\nfn other() {}\n",
+    )
+    .unwrap();
+    // Both terms on one line, not as the phrase.
+    fs::write(src.join("mixed.rs"), "let main = fn_ptr; // fn\n").unwrap();
+    // The phrase, in a test file (penalised by the file score).
+    fs::write(tests.join("t.rs"), "fn main() {}\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(temp_dir.path());
+    for f in ["src/lib.rs", "src/mixed.rs", "tests/t.rs"] {
+        engine.index_file(temp_dir.path().join(f)).unwrap();
+    }
+    engine.finalize();
+
+    for mode in [RankMode::Full, RankMode::Fast] {
+        let (hits, _) = engine
+            .search_parsed(&parse("fn main"), "", "", SearchLimits::new(10), mode)
+            .unwrap();
+        let files: Vec<&str> = hits.iter().map(|h| h.file_path.as_str()).collect();
+        assert!(files[0].ends_with("t.rs"), "{mode:?}: {files:?}");
+        assert!(files[1].ends_with("mixed.rs"), "{mode:?}: {files:?}");
+        assert!(files[2].ends_with("lib.rs"), "{mode:?}: {files:?}");
+        assert!(hits[0].score > hits[1].score && hits[1].score > hits[2].score);
+    }
 }
