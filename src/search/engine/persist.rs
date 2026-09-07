@@ -319,6 +319,25 @@ impl SearchEngine {
         // removed. Everything else persisted (trigram bitmaps, symbols, edges)
         // must therefore be remapped from live id -> position, otherwise reload
         // attributes every file after a tombstone to the wrong path.
+        // Configured roots in the form the store keys files by (canonical,
+        // forward slashes, lowercased), computed once: a root written as a
+        // symlinked or non-verbatim path (`/var/...` on macOS, `C:\...` on
+        // Windows) must still claim its files.
+        let root_keys: Vec<(String, String)> = config
+            .paths
+            .iter()
+            .map(|base| {
+                let canonical = super::canonicalize_lossy(std::path::Path::new(base));
+                let key = canonical
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .to_lowercase()
+                    .trim_end_matches('/')
+                    .to_string();
+                (base.clone(), key)
+            })
+            .collect();
+
         let total_ids = self.file_store.len() as u32;
         let mut files = Vec::new();
         let mut live_ids: Vec<u32> = Vec::new();
@@ -349,17 +368,13 @@ impl SearchEngine {
                     .to_string_lossy()
                     .replace('\\', "/")
                     .to_lowercase();
-                let source_base = config
-                    .paths
+                let source_base = root_keys
                     .iter()
-                    .filter(|base| {
-                        let base_normalized = base.replace('\\', "/").to_lowercase();
-                        let base_trimmed = base_normalized.trim_end_matches('/');
-                        file_normalized == base_trimmed
-                            || file_normalized.starts_with(&format!("{base_trimmed}/"))
+                    .filter(|(_, key)| {
+                        file_normalized == *key || file_normalized.starts_with(&format!("{key}/"))
                     })
-                    .max_by_key(|base| base.len())
-                    .cloned();
+                    .max_by_key(|(_, key)| key.len())
+                    .map(|(base, _)| base.clone());
 
                 // Use len_if_mapped() to avoid triggering lazy loading during save
                 // If file isn't mapped yet, get size from filesystem

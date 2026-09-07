@@ -817,7 +817,10 @@ mod path_tests {
         assert_eq!(expand_path("~", None), home.to_string_lossy());
 
         let base = Path::new("/etc/fcs");
-        assert_eq!(expand_path("repos", Some(base)), "/etc/fcs/repos");
+        assert_eq!(
+            expand_path("repos", Some(base)),
+            base.join("repos").to_string_lossy()
+        );
         assert_eq!(expand_path("/abs/repos", Some(base)), "/abs/repos");
         assert_eq!(
             expand_path("~/x", Some(base)),
