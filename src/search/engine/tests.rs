@@ -2455,3 +2455,92 @@ fn test_phrase_lines_outrank_all_term_and_single_term_lines() {
         assert!(hits[0].score > hits[1].score && hits[1].score > hits[2].score);
     }
 }
+
+/// Review 4.1 (result diversity): a file holding many hits no longer fills
+/// the page. Within a score tier every file's best hit comes first, then
+/// every file's second hit, and so on; tiers (phrase, all terms) still come
+/// before everything below them.
+#[test]
+fn test_results_interleave_files_within_a_tier() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    let src = temp_dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    // One file with many single-term hits and a high file score.
+    let many: String = (0..30)
+        .map(|i| format!("fn item_{i}() -> Widget {{}}\n"))
+        .collect();
+    fs::write(src.join("many.rs"), &many).unwrap();
+    fs::write(
+        src.join("one.rs"),
+        "fn lone_widget_use() { let w: Widget = x; }\n",
+    )
+    .unwrap();
+    fs::write(src.join("two.rs"), "struct Widget;\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(temp_dir.path());
+    for f in ["src/many.rs", "src/one.rs", "src/two.rs"] {
+        engine.index_file(temp_dir.path().join(f)).unwrap();
+    }
+    engine.finalize();
+
+    let (hits, _) = engine
+        .search_parsed(
+            &parse("Widget"),
+            "",
+            "",
+            SearchLimits::new(10),
+            RankMode::Full,
+        )
+        .unwrap();
+    let files: Vec<&str> = hits
+        .iter()
+        .map(|h| h.file_path.rsplit('/').next().unwrap())
+        .collect();
+    // The first three hits are one per file; only then does many.rs repeat.
+    let first_three: std::collections::HashSet<&str> = files[..3].iter().copied().collect();
+    assert_eq!(first_three.len(), 3, "{files:?}");
+    assert!(files[3..].iter().all(|f| *f == "many.rs"), "{files:?}");
+
+    // Paging stays stable: page two continues where page one stopped.
+    let (page2, _) = engine
+        .search_parsed(
+            &parse("Widget"),
+            "",
+            "",
+            SearchLimits::new(10).with_offset(10),
+            RankMode::Full,
+        )
+        .unwrap();
+    let (all, _) = engine
+        .search_parsed(
+            &parse("Widget"),
+            "",
+            "",
+            SearchLimits::new(40),
+            RankMode::Full,
+        )
+        .unwrap();
+    let lines = |v: &[SearchMatch]| v.iter().map(|h| h.line_number).collect::<Vec<_>>();
+    assert_eq!(lines(&page2), lines(&all[10..20]));
+
+    // Tiers beat interleaving: both phrase lines of one file precede a
+    // single-term line from another file.
+    fs::write(src.join("phrase.rs"), "fn main() {}\nfn main_two() {}\n").unwrap();
+    engine.index_file(src.join("phrase.rs")).unwrap();
+    engine.finalize();
+    let (hits, _) = engine
+        .search_parsed(
+            &parse("fn main"),
+            "",
+            "",
+            SearchLimits::new(10),
+            RankMode::Full,
+        )
+        .unwrap();
+    assert!(
+        hits[0].file_path.ends_with("phrase.rs") && hits[1].file_path.ends_with("phrase.rs"),
+        "{hits:?}"
+    );
+}

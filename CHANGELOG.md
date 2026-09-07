@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Results interleave files within a score tier: every file's best hit,
+  then every file's second hit, and so on, so one file holding a hundred
+  matches no longer fills the page. Phrase and all-term tiers still come
+  first; paging stays deterministic.
+
 ## [0.11.0] - 2026-09-07
 
 ### Added

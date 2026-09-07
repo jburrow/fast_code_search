@@ -271,27 +271,52 @@ impl SearchEngine {
         )
     }
 
-    /// Deterministic ordering — score desc, then file id, then line — and
-    /// paging by `offset`/`max_results`. Ties no longer reorder run to run,
-    /// so page N+1 never repeats or skips a result from page N.
+    /// Deterministic ordering and paging by `offset`/`max_results`.
+    ///
+    /// Within a score tier (see [`Self::MULTI_TERM_TIER`]: phrase lines,
+    /// then all-term lines, then the rest) hits are interleaved by file —
+    /// every file's best hit, then every file's second hit, and so on — so
+    /// a page is not filled by the one file that happens to hold a hundred
+    /// matches. Ties break on file id then line, so page N+1 never repeats
+    /// or skips a result from page N.
     pub(super) fn sort_and_page(matches: &mut Vec<SearchMatch>, limits: &SearchLimits) {
-        let cmp = |a: &SearchMatch, b: &SearchMatch| {
+        let by_score = |a: &SearchMatch, b: &SearchMatch| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.file_id.cmp(&b.file_id))
                 .then_with(|| a.line_number.cmp(&b.line_number))
         };
-        let keep = limits.offset.saturating_add(limits.max_results);
-        if matches.len() > keep {
-            matches.select_nth_unstable_by(keep, cmp);
-            matches.truncate(keep);
-        }
-        matches.sort_unstable_by(cmp);
-        if limits.offset > 0 {
-            let drop = limits.offset.min(matches.len());
-            matches.drain(..drop);
-        }
+        matches.sort_unstable_by(by_score);
+
+        // Rank of each hit within its file (0 = the file's best hit) and its
+        // tier, then the interleaved order.
+        let mut seen: FxHashMap<u32, u32> = FxHashMap::default();
+        let keyed: Vec<(i64, u32)> = matches
+            .iter()
+            .map(|m| {
+                let rank = seen.entry(m.file_id).or_insert(0);
+                let r = *rank;
+                *rank += 1;
+                ((m.score / Self::MULTI_TERM_TIER).floor() as i64, r)
+            })
+            .collect();
+        let mut order: Vec<usize> = (0..matches.len()).collect();
+        order.sort_unstable_by(|&i, &j| {
+            let (ti, ri) = keyed[i];
+            let (tj, rj) = keyed[j];
+            tj.cmp(&ti)
+                .then_with(|| ri.cmp(&rj))
+                .then_with(|| by_score(&matches[i], &matches[j]))
+        });
+
+        let start = limits.offset.min(order.len());
+        let end = start.saturating_add(limits.max_results).min(order.len());
+        let page: Vec<SearchMatch> = order[start..end]
+            .iter()
+            .map(|&i| matches[i].clone())
+            .collect();
+        *matches = page;
     }
 
     /// Search for a query using parallel processing (uses Auto ranking mode).
