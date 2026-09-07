@@ -116,6 +116,13 @@ pub struct EligibilityProbe {
     /// Whether single-path eligibility checks consult `.gitignore` files.
     respect_gitignore: bool,
 
+    /// Ignore matchers per directory (nearest first, up to the `.git`
+    /// root), built once per directory for the life of the probe. Checking
+    /// 61k files through [`is_gitignored`] alone stat'ed every ancestor's
+    /// `.git`, `.gitignore` and `.ignore` per file (about 15 s on reload);
+    /// with the chain cached per directory a file costs one map lookup.
+    ignore_chains: Arc<std::sync::RwLock<rustc_hash::FxHashMap<PathBuf, Arc<IgnoreChain>>>>,
+
     /// Compiled exclude glob filter.
     exclude_filter: PathFilter,
 
@@ -142,6 +149,7 @@ impl EligibilityProbe {
         });
         Self {
             respect_gitignore: config.respect_gitignore,
+            ignore_chains: Arc::new(std::sync::RwLock::new(Default::default())),
             exclude_filter,
             include_extensions: config
                 .include_extensions
@@ -156,10 +164,52 @@ impl EligibilityProbe {
     /// Would discovery index `path`? `known_size` avoids a stat when the
     /// caller already has it.
     pub fn is_eligible_path(&self, path: &Path, known_size: Option<u64>) -> bool {
-        if self.respect_gitignore && is_gitignored(path) {
+        if self.respect_gitignore && self.is_gitignored_cached(path) {
             return false;
         }
         self.accepts_with_size(path, known_size)
+    }
+
+    /// [`is_gitignored`] using the per-directory matcher cache.
+    fn is_gitignored_cached(&self, path: &Path) -> bool {
+        let Some(dir) = path.parent() else {
+            return false;
+        };
+        let chain = self.ignore_chain(dir);
+        for gi in chain.iter() {
+            match gi.matched_path_or_any_parents(path, false) {
+                ignore::Match::Ignore(_) => return true,
+                ignore::Match::Whitelist(_) => return false,
+                ignore::Match::None => {}
+            }
+        }
+        false
+    }
+
+    /// The matchers that apply to files in `dir`: its own `.gitignore` /
+    /// `.ignore` followed by its ancestors' up to (and including) the first
+    /// directory containing `.git`. Built recursively from the parent's
+    /// chain so every directory is examined once.
+    fn ignore_chain(&self, dir: &Path) -> Arc<IgnoreChain> {
+        if let Ok(map) = self.ignore_chains.read() {
+            if let Some(chain) = map.get(dir) {
+                return chain.clone();
+            }
+        }
+        let mut chain: IgnoreChain = Vec::new();
+        if let Some(gi) = gitignore_for_dir(dir) {
+            chain.push(gi);
+        }
+        if !dir.join(".git").exists() {
+            if let Some(parent) = dir.parent() {
+                chain.extend(self.ignore_chain(parent).iter().cloned());
+            }
+        }
+        let chain = Arc::new(chain);
+        if let Ok(mut map) = self.ignore_chains.write() {
+            map.insert(dir.to_path_buf(), chain.clone());
+        }
+        chain
     }
 }
 
@@ -383,6 +433,10 @@ pub fn is_gitignored(path: &Path) -> bool {
     }
     false
 }
+
+/// Matchers applying to one directory, nearest first (see
+/// [`EligibilityProbe::ignore_chain`]).
+type IgnoreChain = Vec<Arc<ignore::gitignore::Gitignore>>;
 
 /// Compiled ignore matchers per directory, keyed by the modification times
 /// of that directory's `.gitignore` / `.ignore`.
