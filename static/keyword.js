@@ -480,6 +480,9 @@ const progressWS = new ProgressWebSocket({
 });
 
 let _progressHideTimer = null;
+// Fingerprint of the index as last reported over the WebSocket; a change
+// means files were added, removed or re-indexed.
+let _lastIndexSignature = null;
 
 function updateProgressUI(status) {
     const isIdle = status.status === 'idle';
@@ -487,6 +490,17 @@ function updateProgressUI(status) {
 
     // Update search readiness based on status
     searchReadiness.update(status);
+
+    // Hover previews cached before an index change may be stale: drop them
+    // when an indexing pass completes or the reported index contents change.
+    if (status.num_files !== undefined) {
+        const signature = `${status.num_files}|${status.total_content_bytes || 0}|${status.dependency_edges || 0}`;
+        if (signature !== _lastIndexSignature) {
+            _lastIndexSignature = signature;
+            invalidateContextCache();
+        }
+    }
+    if (isCompleted) invalidateContextCache();
 
     // Show the panel while indexing. On 'completed', keep it visible briefly then
     // hide it — a permanent 100% "Complete" bar otherwise reads as "stuck". 'idle'
@@ -1066,8 +1080,14 @@ let _ctxHideTimer = null;
 let _ctxFetchController = null;
 let _ctxHoverTimer = null;
 // Cache of /api/context responses keyed by `${filePath}::${lineNumber}` so
-// sweeping the cursor over results doesn't re-fetch the same windows.
+// sweeping the cursor over results doesn't re-fetch the same windows. It is
+// dropped whenever the index may have changed (see invalidateContextCache),
+// so a preview never shows lines from before a re-index.
 const _ctxContextCache = new Map();
+
+function invalidateContextCache() {
+    _ctxContextCache.clear();
+}
 
 function getOrCreateTooltip() {
     if (!_ctxTooltip) {
@@ -1389,6 +1409,9 @@ async function performSearch(opts = {}) {
 
     resultsContainer.innerHTML = '<div class="loading">Searching...</div>';
     resultsHeader.style.display = 'none';
+    // A new search may follow a watcher-driven re-index the progress stream
+    // did not report (e.g. this tab was hidden); previews are cheap to refetch.
+    invalidateContextCache();
 
     const startTime = performance.now();
 
@@ -1722,14 +1745,8 @@ function renderSearch(search, durationMs, opts = {}) {
     // Copy-path buttons: copy the file path to the clipboard with brief feedback.
     resultsContainer.querySelectorAll('.copy-path-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
-            try {
-                await navigator.clipboard.writeText(btn.dataset.filePath || '');
-                const prev = btn.textContent;
-                btn.textContent = 'check';
-                setTimeout(() => { btn.textContent = prev; }, 1200);
-            } catch (e) {
-                console.error('Copy failed:', e);
-            }
+            const ok = await copyTextToClipboard(btn.dataset.filePath || '');
+            setCopyButtonState(btn, ok ? 'copied' : 'failed');
         });
     });
 
@@ -1893,6 +1910,74 @@ function normalizeFileGroupKey(filePath) {
 }
 
 // ============================================
+// CLIPBOARD
+// ============================================
+
+/**
+ * Copy `text` to the clipboard. The async Clipboard API only exists on
+ * secure origins (https or localhost); a server reached over plain http on
+ * another host falls back to a temporary textarea and execCommand('copy').
+ * @returns {Promise<boolean>} whether the copy succeeded
+ */
+async function copyTextToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) {
+            console.warn('Clipboard API failed, trying execCommand:', e);
+        }
+    }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.setAttribute('aria-hidden', 'true');
+        ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+        document.body.appendChild(ta);
+        ta.focus({ preventScroll: true });
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        const ok = typeof document.execCommand === 'function' && document.execCommand('copy');
+        ta.remove();
+        return !!ok;
+    } catch (e) {
+        console.error('Copy failed:', e);
+        return false;
+    }
+}
+
+const COPY_STATE_MS = 1500;
+
+/**
+ * Show a brief "Copied" / "Copy failed" state on a copy button (icon,
+ * colour, title and accessible name), then restore its idle look.
+ * @param {HTMLButtonElement} btn
+ * @param {'copied'|'failed'} state
+ */
+function setCopyButtonState(btn, state) {
+    if (!btn.dataset.idleLabel) {
+        btn.dataset.idleLabel = btn.getAttribute('aria-label') || 'Copy file path';
+        btn.dataset.idleTitle = btn.title || btn.dataset.idleLabel;
+        btn.dataset.idleIcon = btn.textContent;
+    }
+    clearTimeout(btn._copyStateTimer);
+    const copied = state === 'copied';
+    const label = copied ? 'Copied' : 'Copy failed';
+    btn.classList.remove('copy-ok', 'copy-failed');
+    btn.classList.add(copied ? 'copy-ok' : 'copy-failed');
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    btn.textContent = copied ? 'check' : 'error';
+    btn._copyStateTimer = setTimeout(() => {
+        btn.classList.remove('copy-ok', 'copy-failed');
+        btn.setAttribute('aria-label', btn.dataset.idleLabel);
+        btn.title = btn.dataset.idleTitle;
+        btn.textContent = btn.dataset.idleIcon;
+    }, COPY_STATE_MS);
+}
+
+// ============================================
 // DEPS BADGE POPOVER
 // ============================================
 
@@ -2041,27 +2126,30 @@ async function showDepsTooltip(badgeEl, filePath) {
 
 async function showDependents(filePath) {
     hideDepsTooltipImmediately();
-    try {
-        const response = await fetch(`${API_BASE}/api/dependents?file=${encodeURIComponent(filePath)}`);
-        if (!response.ok) throw new Error(`Failed to fetch dependents`);
-        const data = await response.json();
-        showDependencyModal('Dependents', filePath, data.files, 'Files that import this file:');
-    } catch (error) {
-        console.error('Error fetching dependents:', error);
-        alert('Failed to load dependents: ' + error.message);
-    }
+    await showDependencyList('Dependents', filePath, 'dependents', 'Files that import this file:');
 }
 
 async function showDependencies(filePath) {
     hideDepsTooltipImmediately();
+    await showDependencyList('Dependencies', filePath, 'dependencies', 'Files imported by this file:');
+}
+
+/**
+ * Open the dependency dialog for `filePath`, fetching `/api/<endpoint>`.
+ * A failed fetch is reported inside the dialog with the page's error
+ * styling rather than a blocking alert().
+ */
+async function showDependencyList(title, filePath, endpoint, description) {
     try {
-        const response = await fetch(`${API_BASE}/api/dependencies?file=${encodeURIComponent(filePath)}`);
-        if (!response.ok) throw new Error(`Failed to fetch dependencies`);
+        const response = await fetch(`${API_BASE}/api/${endpoint}?file=${encodeURIComponent(filePath)}`);
+        if (!response.ok) throw new Error(await readErrorBody(response));
         const data = await response.json();
-        showDependencyModal('Dependencies', filePath, data.files, 'Files imported by this file:');
+        showDependencyModal(title, filePath, data.files || [], description);
     } catch (error) {
-        console.error('Error fetching dependencies:', error);
-        alert('Failed to load dependencies: ' + error.message);
+        console.error(`Error fetching ${endpoint}:`, error);
+        showDependencyModal(title, filePath, [], description, {
+            error: `Failed to load ${endpoint}: ${error.message}`,
+        });
     }
 }
 
@@ -2120,13 +2208,20 @@ function releaseDialog(overlay) {
     }
 }
 
-function showDependencyModal(title, filePath, files, description) {
+/**
+ * @param {{error?: string}} [opts] - `error` replaces the list with an inline
+ *   error message (the request for the list failed).
+ */
+function showDependencyModal(title, filePath, files, description, opts = {}) {
     const existingModal = document.getElementById('dep-modal');
     if (existingModal) closeModal();
 
-    const fileList = files.length > 0
-        ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;color:#1d1c0f">${escapeHtml(f)}</li>`).join('')
-        : '<li style="color:#5f5d48;">No files found</li>';
+    const fileList = opts.error
+        ? `<li><div class="error-message" role="alert"><strong>Error:</strong> ${escapeHtml(opts.error)}</div></li>`
+        : files.length > 0
+            ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;color:#1d1c0f">${escapeHtml(f)}</li>`).join('')
+            : '<li style="color:#5f5d48;">No files found</li>';
+    const countLabel = opts.error ? '' : ` (${files.length})`;
 
     const modal = document.createElement('div');
     modal.id = 'dep-modal';
@@ -2134,7 +2229,7 @@ function showDependencyModal(title, filePath, files, description) {
     modal.innerHTML = `
         <div class="dep-modal-dialog" style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)} (${files.length})</h2>
+                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)}${countLabel}</h2>
                 <button type="button" class="dep-modal-close" aria-label="Close" title="Close (Esc)" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
             <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
