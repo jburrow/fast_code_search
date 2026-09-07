@@ -344,6 +344,8 @@
         /* Tailwind's outline colour (#5f5d48) is 4.2:1 on the #fefae4 ground and
            3.2:1 on the #dedac6 result headers; #5f5d48 is 6.4:1 and 4.75:1. */
         .text-outline { color: #5f5d48; }
+        /* Render-on-demand marker: the rest of the results render as it nears the viewport */
+        .render-sentinel { height: 1px; margin: 0 !important; }
         /* Paging */
         .load-more-row { display: flex; justify-content: center; padding: 0.5rem 0 1rem; }
         .load-more-btn {

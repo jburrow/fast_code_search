@@ -1411,6 +1411,7 @@ async function performSearch(opts = {}) {
 
     if (!query) {
         _currentSearch = null;
+        resetRenderState();
         resultsHeader.style.display = 'none';
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter a search query to find code</p></div>';
         return;
@@ -1418,11 +1419,13 @@ async function performSearch(opts = {}) {
 
     if (query.length < 3) {
         _currentSearch = null;
+        resetRenderState();
         resultsHeader.style.display = 'none';
         resultsContainer.innerHTML = '<div class="empty-state"><p>Enter at least 3 characters to search</p></div>';
         return;
     }
 
+    resetRenderState();
     resultsContainer.innerHTML = '<div class="loading">Searching...</div>';
     resultsHeader.style.display = 'none';
     // A new search may follow a watcher-driven re-index the progress stream
@@ -1477,11 +1480,18 @@ async function loadMoreResults() {
         });
         if (signal.aborted || _currentSearch !== search) return;
         const firstNewGroup = groupResultsByFile(search.results).length;
+        // Keep everything that was on screen (plus the first new chunk) in the
+        // re-render, so the page does not shrink under the reader.
+        const renderedBefore = getResultGroups().length;
         search.results = search.results.concat(data.results);
         search.last = data;
-        renderSearch(search, data.elapsed_ms, { preserveSelection: true });
+        renderSearch(search, data.elapsed_ms, {
+            preserveSelection: true,
+            minRendered: renderedBefore + RENDER_CHUNK_GROUPS,
+        });
         // Move focus to the first newly loaded group so keyboard users land
         // where the new content starts.
+        ensureGroupsRendered(firstNewGroup + 1);
         const groups = getResultGroups();
         const target = groups[Math.min(firstNewGroup, groups.length - 1)];
         if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
@@ -1549,6 +1559,7 @@ function renderSearch(search, durationMs, opts = {}) {
     }
 
     if (search.results.length === 0) {
+        resetRenderState();
         resultsContainer.removeAttribute('role');
         resultsContainer.removeAttribute('aria-label');
         resultsContainer.innerHTML = `<div class="empty-state no-results"><p>No results found for "${escapeHtml(query)}"</p></div>`;
@@ -1560,161 +1571,260 @@ function renderSearch(search, durationMs, opts = {}) {
     // Matcher for lines without server offsets (context lines, previews).
     _currentMatcher = buildQueryMatcher(query, { regex: search.isRegex, references: search.isReferences });
 
-    const groupsHtml = groupedResults.map(group => {
-        const firstHit = group.hits[0];
-        const depCount = Math.max(...group.hits.map(hit => hit.dependency_count || 0));
-        const lang = hljsLangForPath(group.filePath);
-        const ext = (group.filePath.split('.').pop() || '').toLowerCase();
-        const langClass = langClassForPath(group.filePath);
-
-        // Split path into directory + filename for display
-        const pathParts = group.filePath.split('/');
-        const fileName = pathParts.pop();
-        const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
-
-        // File type icon based on extension
-        const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'data_object' : 'code');
-
-        // Language badge style
-        const langBadgeStyle = getLangBadgeStyle(langClass);
-
-        // Dependency badge
-        const depBadge = depCount > 0
-            ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
-                aria-label="${depCount} dependents; show files that import this file"
-                data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</button>`
-            : '';
-
-        // A filename hit has line_number 0: the viewer opens at line 1 for it.
-        const groupViewLine = Math.max(1, firstHit.line_number || 0);
-
-        const hitsHtml = group.hits.map((result, idx) => {
-            const matchType = getMatchTypeLabel(result.match_type);
-            const typeBadgeStyle = matchType.isSymbol
-                ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
-                : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
-            const isFilenameHit = !result.line_number;
-            const viewLine = isFilenameHit ? 1 : result.line_number;
-            const lineLabel = isFilenameHit ? 'filename' : `line ${result.line_number}`;
-            const truncatedBadge = result.content_truncated
-                ? `<span class="truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
-                : '';
-
-            // Build code content — with context lines if available, otherwise just the match line
-            let codeContent;
-            if (result.context_lines && result.context_lines.length > 0) {
-                const startLine = result.context_start_line || 1;
-                codeContent = result.context_lines.map((line, i) => {
-                    const lineNum = startLine + i;
-                    const isMatch = lineNum === result.line_number;
-                    const lineStyle = isMatch
-                        ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
-                        : 'display:flex;border-left:3px solid transparent';
-                    // The match line carries the server's byte offsets into the
-                    // full line so the highlight pass can mark the exact hit.
-                    const offsetAttrs = isMatch
-                        ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
-                        : '';
-                    return `<div style="${lineStyle}">` +
-                        `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#5f5d48;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
-                        `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
-                        `</div>`;
-                }).join('');
-            } else {
-                codeContent = escapeHtml(result.content);
-            }
-            const matchOffsetAttrs = result.context_lines
-                ? ''
-                : ` data-ms="${Number(result.match_start) || 0}" data-me="${Number(result.match_end) || 0}"`;
-
-            const preClass = result.context_lines
-                ? `result-code result-code-ctx language-${lang}`
-                : `result-code language-${lang}`;
-
-            const hitContainerStyle = idx === 0
-                ? 'background:#fff'
-                : 'background:#fff;border-top:1px solid #d4d0ba';
-
-            return `
-                <div style="${hitContainerStyle}">
-                    <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
-                        <div class="flex items-center gap-2 min-w-0">
-                            <span class="font-label text-xs" style="color:#5f5d48;flex-shrink:0">${lineLabel}</span>
-                            <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
-                            ${truncatedBadge}
-                        </div>
-                        <div class="flex items-center gap-3 flex-shrink-0">
-                            <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5f5d48;text-transform:uppercase"
-                                title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)&#10;&#10;Higher scores rank first.">
-                                ${result.score.toFixed(2)}
-                            </span>
-                            <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                                style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
-                                data-file-path="${escapeHtml(result.file_path)}"
-                                data-line-number="${viewLine}"
-                                aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}"
-                                title="View full file at this line">${iconSvg('open_in_new', 18)}</button>
-                        </div>
-                    </div>
-                    <div class="overflow-x-auto" style="background:#fff">
-                        <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        return `
-            <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
-                <!-- File header -->
-                <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
-                    <div class="flex items-center gap-2 min-w-0">
-                        ${iconSvg(fileIcon, 16)}
-                        <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
-                            ${dirPath ? `<span style="color:#5f5d48;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
-                        </span>
-                        <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
-                    </div>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
-                        ${depBadge}
-                        <button type="button" class="copy-path-btn hover:text-primary transition-colors"
-                            style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
-                            data-file-path="${escapeHtml(group.filePath)}"
-                            aria-label="Copy file path"
-                            title="Copy file path">${iconSvg('content_copy', 16)}</button>
-                        <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                            style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
-                            data-file-path="${escapeHtml(group.filePath)}"
-                            data-line-number="${groupViewLine}"
-                            aria-label="View full file"
-                            title="View full file">${iconSvg('open_in_new', 18)}</button>
-                    </div>
-                </div>
-                ${hitsHtml}
-            </div>
-        `;
-    }).join('');
-
-    // Paging: the next page starts at offset = hits loaded so far.
-    const loadMoreHtml = data.has_more
-        ? `<div id="load-more-row" class="load-more-row">
-                <button id="load-more-btn" type="button" class="load-more-btn"
-                    title="Fetch the next ${search.maxResults} results (offset ${search.results.length})">LOAD MORE</button>
-           </div>`
-        : '';
+    // Render on demand: the first RENDER_INITIAL_GROUPS groups now, the rest
+    // in chunks of RENDER_CHUNK_GROUPS as the sentinel scrolls into view. A
+    // "Load more" re-render keeps at least what was on screen before.
+    resetRenderState();
 
     // The groups are a keyboard-selectable list (j/k, Enter); the listbox
     // role gives aria-selected on each group meaning.
     resultsContainer.setAttribute('role', 'listbox');
     resultsContainer.setAttribute('aria-label', `Search results for ${query}`);
-    resultsContainer.innerHTML = groupsHtml + loadMoreHtml;
+    // Paging: the next page starts at offset = hits loaded so far.
+    resultsContainer.innerHTML =
+        `<div class="render-sentinel" aria-hidden="true"></div>` +
+        (data.has_more
+            ? `<div id="load-more-row" class="load-more-row">
+                <button id="load-more-btn" type="button" class="load-more-btn"
+                    title="Fetch the next ${search.maxResults} results (offset ${search.results.length})">LOAD MORE</button>
+               </div>`
+            : '');
 
     const loadMoreBtn = document.getElementById('load-more-btn');
     if (loadMoreBtn) loadMoreBtn.addEventListener('click', loadMoreResults);
 
+    _render = {
+        groups: groupedResults,
+        rendered: 0,
+        sentinel: resultsContainer.querySelector('.render-sentinel'),
+        observer: null,
+    };
+    const initial = Math.max(RENDER_INITIAL_GROUPS, opts.minRendered || 0, _selectedGroupIndex + 1);
+    renderPendingGroups(initial);
+    if (_render && _render.rendered < _render.groups.length) {
+        if (typeof IntersectionObserver === 'function') {
+            _render.observer = new IntersectionObserver((entries, observer) => {
+                if (!entries.some(e => e.isIntersecting)) return;
+                renderPendingGroups(RENDER_CHUNK_GROUPS);
+                // Inserting a chunk moves the sentinel down but may leave it
+                // intersecting, which is not a state change and would not be
+                // reported; re-observing delivers a fresh entry either way.
+                if (_render && _render.observer === observer) {
+                    observer.unobserve(_render.sentinel);
+                    observer.observe(_render.sentinel);
+                }
+            }, { rootMargin: '600px 0px' });
+            _render.observer.observe(_render.sentinel);
+        } else {
+            renderPendingGroups(Infinity);
+        }
+    }
+
+    // Roving tabindex: the selected group (or the first) is the one Tab reaches.
+    highlightSelectedGroup(getResultGroups(), { focus: false });
+}
+
+// ============================================
+// RESULT RENDERING (on demand)
+// ============================================
+
+const RENDER_INITIAL_GROUPS = 60;
+const RENDER_CHUNK_GROUPS = 40;
+
+/**
+ * The result groups of the search on screen and how many are in the DOM.
+ * null when nothing is rendered.
+ * @type {{groups: Array, rendered: number, sentinel: Element, observer: IntersectionObserver|null}|null}
+ */
+let _render = null;
+
+function resetRenderState() {
+    if (_render && _render.observer) _render.observer.disconnect();
+    _render = null;
+}
+
+/** Total groups of the current search, rendered or not. */
+function totalResultGroups() {
+    return _render ? _render.groups.length : getResultGroups().length;
+}
+
+/**
+ * Append up to `count` not-yet-rendered groups before the sentinel, wiring
+ * their handlers and highlighting on the detached fragment first. Removes
+ * the sentinel once every group is in the DOM.
+ */
+function renderPendingGroups(count) {
+    const st = _render;
+    if (!st || st.rendered >= st.groups.length) return;
+    const end = Math.min(st.groups.length, st.rendered + count);
+    const holder = document.createElement('div');
+    holder.innerHTML = st.groups.slice(st.rendered, end).map(renderGroupHtml).join('');
+    wireResultGroups(holder);
+    const nodes = Array.from(holder.children);
+    // New groups are Tab-unreachable (-1) unless they hold the selection; the
+    // first group's roving tabindex is set by highlightSelectedGroup.
+    if (st.sentinel.parentNode) st.sentinel.before(...nodes);
+    else resultsContainer.append(...nodes);
+    st.rendered = end;
+    if (st.rendered >= st.groups.length) {
+        if (st.observer) st.observer.disconnect();
+        st.observer = null;
+        st.sentinel.remove();
+    }
+}
+
+/** Make sure at least the first `n` groups are in the DOM (j/k, Load more). */
+function ensureGroupsRendered(n) {
+    while (_render && _render.rendered < Math.min(n, _render.groups.length)) {
+        renderPendingGroups(RENDER_CHUNK_GROUPS);
+    }
+}
+
+/** The HTML of one file group (its header and every hit). */
+function renderGroupHtml(group) {
+    const firstHit = group.hits[0];
+    const depCount = Math.max(...group.hits.map(hit => hit.dependency_count || 0));
+    const lang = hljsLangForPath(group.filePath);
+    const ext = (group.filePath.split('.').pop() || '').toLowerCase();
+    const langClass = langClassForPath(group.filePath);
+
+    // Split path into directory + filename for display
+    const pathParts = group.filePath.split('/');
+    const fileName = pathParts.pop();
+    const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
+
+    // File type icon based on extension
+    const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'data_object' : 'code');
+
+    // Language badge style
+    const langBadgeStyle = getLangBadgeStyle(langClass);
+
+    // Dependency badge
+    const depBadge = depCount > 0
+        ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+            aria-label="${depCount} dependents; show files that import this file"
+            data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</button>`
+        : '';
+
+    // A filename hit has line_number 0: the viewer opens at line 1 for it.
+    const groupViewLine = Math.max(1, firstHit.line_number || 0);
+
+    const hitsHtml = group.hits.map((result, idx) => {
+        const matchType = getMatchTypeLabel(result.match_type);
+        const typeBadgeStyle = matchType.isSymbol
+            ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
+            : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
+        const isFilenameHit = !result.line_number;
+        const viewLine = isFilenameHit ? 1 : result.line_number;
+        const lineLabel = isFilenameHit ? 'filename' : `line ${result.line_number}`;
+        const truncatedBadge = result.content_truncated
+            ? `<span class="truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
+            : '';
+
+        // Build code content — with context lines if available, otherwise just the match line
+        let codeContent;
+        if (result.context_lines && result.context_lines.length > 0) {
+            const startLine = result.context_start_line || 1;
+            codeContent = result.context_lines.map((line, i) => {
+                const lineNum = startLine + i;
+                const isMatch = lineNum === result.line_number;
+                const lineStyle = isMatch
+                    ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
+                    : 'display:flex;border-left:3px solid transparent';
+                // The match line carries the server's byte offsets into the
+                // full line so the highlight pass can mark the exact hit.
+                const offsetAttrs = isMatch
+                    ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
+                    : '';
+                return `<div style="${lineStyle}">` +
+                    `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#5f5d48;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
+                    `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
+                    `</div>`;
+            }).join('');
+        } else {
+            codeContent = escapeHtml(result.content);
+        }
+        const matchOffsetAttrs = result.context_lines
+            ? ''
+            : ` data-ms="${Number(result.match_start) || 0}" data-me="${Number(result.match_end) || 0}"`;
+
+        const preClass = result.context_lines
+            ? `result-code result-code-ctx language-${lang}`
+            : `result-code language-${lang}`;
+
+        const hitContainerStyle = idx === 0
+            ? 'background:#fff'
+            : 'background:#fff;border-top:1px solid #d4d0ba';
+
+        return `
+            <div style="${hitContainerStyle}">
+                <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="font-label text-xs" style="color:#5f5d48;flex-shrink:0">${lineLabel}</span>
+                        <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
+                        ${truncatedBadge}
+                    </div>
+                    <div class="flex items-center gap-3 flex-shrink-0">
+                        <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5f5d48;text-transform:uppercase"
+                            title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)&#10;&#10;Higher scores rank first.">
+                            ${result.score.toFixed(2)}
+                        </span>
+                        <button type="button" class="view-file-btn hover:text-primary transition-colors"
+                            style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                            data-file-path="${escapeHtml(result.file_path)}"
+                            data-line-number="${viewLine}"
+                            aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}"
+                            title="View full file at this line">${iconSvg('open_in_new', 18)}</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto" style="background:#fff">
+                    <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
+            <!-- File header -->
+            <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
+                <div class="flex items-center gap-2 min-w-0">
+                    ${iconSvg(fileIcon, 16)}
+                    <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
+                        ${dirPath ? `<span style="color:#5f5d48;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
+                    </span>
+                    <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
+                    ${depBadge}
+                    <button type="button" class="copy-path-btn hover:text-primary transition-colors"
+                        style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                        data-file-path="${escapeHtml(group.filePath)}"
+                        aria-label="Copy file path"
+                        title="Copy file path">${iconSvg('content_copy', 16)}</button>
+                    <button type="button" class="view-file-btn hover:text-primary transition-colors"
+                        style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                        data-file-path="${escapeHtml(group.filePath)}"
+                        data-line-number="${groupViewLine}"
+                        aria-label="View full file"
+                        title="View full file">${iconSvg('open_in_new', 18)}</button>
+                </div>
+            </div>
+            ${hitsHtml}
+        </div>
+    `;
+}
+
+/**
+ * Post-process freshly built group elements under `root`: syntax and match
+ * highlighting, view/copy/dependency handlers. Runs on a detached holder
+ * before the groups are inserted, so the page lays out only once.
+ */
+function wireResultGroups(root) {
     // Syntax-highlight each result, then mark the hit: the match line from
     // the server's byte offsets, every line from the query terms.
-    resultsContainer.querySelectorAll('pre.result-code').forEach(pre => {
+    root.querySelectorAll('pre.result-code').forEach(pre => {
         const hasContext = pre.dataset.hasContext === 'true';
         const lang = pre.dataset.lang || 'plaintext';
         if (hasContext) {
@@ -1739,7 +1849,7 @@ function renderSearch(search, durationMs, opts = {}) {
     });
 
     // Attach View button click handler and context tooltip
-    resultsContainer.querySelectorAll('.view-file-btn').forEach(btn => {
+    root.querySelectorAll('.view-file-btn').forEach(btn => {
         const filePath = btn.dataset.filePath;
         const lineNumber = parseInt(btn.dataset.lineNumber, 10) || 1;
         btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
@@ -1759,7 +1869,7 @@ function renderSearch(search, durationMs, opts = {}) {
     });
 
     // Copy-path buttons: copy the file path to the clipboard with brief feedback.
-    resultsContainer.querySelectorAll('.copy-path-btn').forEach(btn => {
+    root.querySelectorAll('.copy-path-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
             const ok = await copyTextToClipboard(btn.dataset.filePath || '');
             setCopyButtonState(btn, ok ? 'copied' : 'failed');
@@ -1768,7 +1878,7 @@ function renderSearch(search, durationMs, opts = {}) {
 
     // Attach dependency-badge handlers via dataset (no inline JS handlers, so
     // file paths containing quotes can never inject code).
-    resultsContainer.querySelectorAll('.deps-badge').forEach(badge => {
+    root.querySelectorAll('.deps-badge').forEach(badge => {
         const filePath = badge.dataset.filePath;
         badge.addEventListener('mouseenter', () => showDepsTooltip(badge, filePath));
         badge.addEventListener('mouseleave', hideDepsTooltip);
@@ -1778,8 +1888,6 @@ function renderSearch(search, durationMs, opts = {}) {
         });
     });
 
-    // Roving tabindex: the selected group (or the first) is the one Tab reaches.
-    highlightSelectedGroup(getResultGroups(), { focus: false });
 }
 
 const debouncedSearch = debounce(() => performSearch({ trigger: 'input' }), DEBOUNCE_MS);
@@ -1835,12 +1943,15 @@ function highlightSelectedGroup(groups, opts = {}) {
 }
 
 function moveResultSelection(delta) {
-    const groups = getResultGroups();
-    if (!groups.length) return;
-    _selectedGroupIndex = _selectedGroupIndex < 0
+    const total = totalResultGroups();
+    if (!total) return;
+    const next = _selectedGroupIndex < 0
         ? 0
-        : Math.max(0, Math.min(groups.length - 1, _selectedGroupIndex + delta));
-    highlightSelectedGroup(groups);
+        : Math.max(0, Math.min(total - 1, _selectedGroupIndex + delta));
+    // A group past the rendered window is rendered before it is selected.
+    ensureGroupsRendered(next + 1);
+    _selectedGroupIndex = next;
+    highlightSelectedGroup(getResultGroups());
 }
 
 function openSelectedGroup() {
