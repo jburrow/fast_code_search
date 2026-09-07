@@ -41,11 +41,17 @@ cargo run --release --bin fast_code_search_server -- --init .keyword_config.toml
 cargo keyword
 ```
 
-Or query the API directly:
+Search from a terminal with the `fcs` client (built alongside the server), or
+query the API directly:
 
 ```bash
+fcs 'fn main'                  # grep-style output, exit 0/1/2 like grep
+fcs refs SearchEngine          # call sites and type mentions
 curl "http://localhost:8080/api/search?q=fn%20main&max=10"
 ```
+
+To keep the server running on a developer machine, start it at login: see
+[docs/RUN-AT-STARTUP.md](docs/RUN-AT-STARTUP.md) (systemd, launchd, Task Scheduler).
 
 `cargo keyword` and `cargo semantic` are aliases defined in [.cargo/config.toml](.cargo/config.toml).
 The semantic engine is behind the `semantic` Cargo feature (`ml-models` implies it), so the
@@ -96,7 +102,7 @@ the gRPC `Index` RPC indexes paths on request (restricted to the configured
 `0.0.0.0` only on a trusted network, and list explicit `cors_origins` if a page
 on another origin needs to call the API (the embedded UI does not).
 
-## Why a server instead of a CLI?
+## Why a server (with a CLI on top)?
 
 Tools like ripgrep re-scan files on every invocation. That cost is unbeatable for a
 one-off search, and a poor fit when an IDE issues a query per keystroke:
@@ -110,8 +116,10 @@ The trade is a one-time build plus resident memory in exchange for a per-query c
 two to three orders of magnitude lower — which is what makes search-as-you-type,
 live dependency queries, and team-shared indexes practical.
 
-Use ripgrep for one-off searches; use [Zoekt](https://github.com/sourcegraph/zoekt) if
-you need a disk-resident index. See [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md)
+The [`fcs` command-line client](docs/CLI.md) gives that index a grep-like front end:
+it sends each query to the running server and falls back to the on-disk index when
+the server is down. Use ripgrep for one-off searches in a tree you have not indexed;
+use [Zoekt](https://github.com/sourcegraph/zoekt) if you need a disk-resident index. See [docs/design/PRIOR_ART.md](docs/design/PRIOR_ART.md)
 for a detailed comparison of the architectures, including published benchmark context.
 
 ## Benchmarks
@@ -182,6 +190,24 @@ cargo bench --bench persistence_benchmark  # persistence only
 ```
 
 ## Usage
+
+### Command line
+
+`fcs` is built with the server (`target/release/fcs`). It finds the server through
+`--server`, `$FCS_SERVER` or the configuration's `web_address`, and prints
+`path:line:col:text` when piped or grouped, coloured results on a terminal:
+
+```bash
+fcs 'fn main'                        # words must all appear; the phrase ranks first
+fcs -e 'fn\s+\w+\(' -g '*.rs' -C 2   # regex, Rust files only, two lines of context
+fcs refs helper                      # references; `fcs symbols helper` for definitions
+fcs -l TODO | xargs $EDITOR          # files only
+vim -q <(fcs --format vimgrep TODO)  # quickfix list
+fcs --offline 'fn main'              # search the saved index without a server
+```
+
+Exit status follows grep: 0 matches, 1 none, 2 error. Full reference:
+[docs/CLI.md](docs/CLI.md).
 
 ### Configuration
 
@@ -313,6 +339,9 @@ for CI). Contributor workflow: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Instr
 policy: [docs/INSTRUCTION_FILES_BLUEPRINT.md](docs/INSTRUCTION_FILES_BLUEPRINT.md).
 
 ## Documentation
+
+- [docs/CLI.md](docs/CLI.md) — the `fcs` command-line client
+- [docs/RUN-AT-STARTUP.md](docs/RUN-AT-STARTUP.md) — start the server at login (Linux, macOS, Windows)
 
 - [CHANGELOG.md](CHANGELOG.md) — release notes
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — development guide

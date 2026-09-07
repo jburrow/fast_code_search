@@ -90,7 +90,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "json",
     "blocking",
-], optional = true } # HTTP client for model downloads (rustls: no system OpenSSL needed)
+] } # HTTP client: the fcs CLI talks to the server; semantic model downloads (rustls: no system OpenSSL needed)
 
 [features]
 default = []
@@ -98,7 +98,7 @@ default = []
 # Off by default so the keyword server builds without ndarray/hnsw.
 semantic = ["ndarray", "hnsw_rs", "sha2"]
 # Semantic engine with ONNX embedding models (requires ONNX Runtime at run time).
-ml-models = ["semantic", "ort", "tokenizers", "reqwest"]
+ml-models = ["semantic", "ort", "tokenizers"]
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = [
@@ -142,3 +142,7 @@ strip = true
 [[bin]]
 name = "fast_code_search_validator"
 path = "src/bin/fast_code_search_validator.rs"
+
+[[bin]]
+name = "fcs"
+path = "src/bin/fcs.rs"

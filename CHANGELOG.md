@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `fcs`, a command-line client (`docs/CLI.md`): sends queries to the running
+  server over the REST API with the web UI's syntax and modes (`refs`,
+  `symbols`, regex, globs, context), prints `path:line:col:text` when piped
+  or grouped colour output on a terminal, `--json` for tools, and uses grep's
+  exit codes. When no server answers it searches the on-disk index in-process
+  (`--offline`, `--index-path`). `fcs status` reports the server and index.
+- A guide to running the server at login on Linux (systemd user unit), macOS
+  (launchd agent) and Windows (Task Scheduler), with ready-made unit files
+  under `deploy/` (`docs/RUN-AT-STARTUP.md`).
+- The API's result types (`SearchResponse`, `SearchResultJson`) are public
+  and deserializable, and `reqwest` is a regular dependency (the CLI's
+  HTTP client).
+
 Fixes from the 2026-09-06 engine and UI review
 (`docs/plans/2026-09-06-keyword-engine-and-ui-review.md`).
 

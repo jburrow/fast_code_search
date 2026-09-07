@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  fast_code_search server as a launchd user agent (see docs/RUN-AT-STARTUP.md).
+  Replace __HOME__ with your home directory, copy to ~/Library/LaunchAgents/,
+  then: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fastcodesearch.server.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fastcodesearch.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.local/bin/fast_code_search_server</string>
+        <string>--config</string>
+        <string>__HOME__/.config/fast_code_search/config.toml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ExitTimeOut</key>
+    <integer>120</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_LOG</key>
+        <string>info</string>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/fast_code_search.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/fast_code_search.log</string>
+</dict>
+</plist>

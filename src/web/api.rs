@@ -23,7 +23,7 @@ use std::time::Instant;
 
 /// JSON error body returned by all API handlers for non-2xx responses, so error
 /// and success responses have a consistent (JSON) content type.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
@@ -166,8 +166,9 @@ const MAX_CONTEXT_LINES: usize = 10;
 /// "show more" windows). Larger windows should use `/api/file`.
 const MAX_CONTEXT_WINDOW_LINES: usize = 200;
 
-/// Search result for JSON response
-#[derive(Debug, Serialize)]
+/// Search result for JSON response (also the shape the `fcs` CLI consumes,
+/// from the server or from an in-process offline search).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResultJson {
     pub file_path: String,
     pub content: String,
@@ -187,7 +188,7 @@ pub struct SearchResultJson {
     /// (use this to place an editor cursor).
     pub match_column: usize,
     pub score: f64,
-    pub match_type: &'static str,
+    pub match_type: std::borrow::Cow<'static, str>,
     pub dependency_count: u32,
     /// Context lines before and after the match (only present when context > 0)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,7 +199,7 @@ pub struct SearchResultJson {
 }
 
 /// Search response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
     pub query: String,
@@ -556,61 +557,7 @@ pub async fn search_handler(
         // Context lines: each file is read and split ONCE per request (the
         // result already carries the file id — no path lookup, no per-result
         // re-read when many hits come from one file).
-        let mut line_cache: std::collections::HashMap<u32, Option<Vec<String>>> =
-            std::collections::HashMap::new();
-        let results: Vec<SearchResultJson> = matches
-            .into_iter()
-            .map(|m| {
-                let (ctx_lines, ctx_start) = if context_lines > 0 && m.line_number > 0 {
-                    let lines = line_cache.entry(m.file_id).or_insert_with(|| {
-                        engine.file_store.get(m.file_id).and_then(|f| {
-                            f.as_str()
-                                .ok()
-                                .map(|c| c.lines().map(str::to_string).collect())
-                        })
-                    });
-                    match lines {
-                        Some(all_lines) => {
-                            let total = all_lines.len();
-                            let match_idx =
-                                m.line_number.saturating_sub(1).min(total.saturating_sub(1));
-                            let start_idx = match_idx.saturating_sub(context_lines);
-                            let end_idx = (match_idx + context_lines + 1).min(total);
-                            (
-                                Some(all_lines[start_idx..end_idx].to_vec()),
-                                Some(start_idx + 1),
-                            )
-                        }
-                        None => (None, None),
-                    }
-                } else {
-                    (None, None)
-                };
-
-                SearchResultJson {
-                    file_path: m.file_path,
-                    content: m.content,
-                    line_number: m.line_number,
-                    match_start: m.match_start,
-                    match_end: m.match_end,
-                    content_truncated: m.content_truncated,
-                    line_match_start: m.line_match_start,
-                    line_match_end: m.line_match_end,
-                    match_column: m.match_column,
-                    score: m.score,
-                    match_type: if m.is_reference {
-                        "SYMBOL_REFERENCE"
-                    } else if m.is_symbol {
-                        "SYMBOL_DEFINITION"
-                    } else {
-                        "TEXT"
-                    },
-                    dependency_count: m.dependency_count,
-                    context_lines: ctx_lines,
-                    context_start_line: ctx_start,
-                }
-            })
-            .collect();
+        let results = results_to_json(&engine, matches, context_lines);
 
         let total_results = results.len();
         let has_more = match ranking_info.total_matches {
@@ -650,6 +597,69 @@ pub async fn search_handler(
         }
     }
     outcome
+}
+
+/// Turn engine matches into the API's result shape, attaching `context_lines`
+/// lines of context around each hit (read from the engine's file store).
+pub fn results_to_json(
+    engine: &SearchEngine,
+    matches: Vec<crate::search::SearchMatch>,
+    context_lines: usize,
+) -> Vec<SearchResultJson> {
+    let mut line_cache: HashMap<u32, Option<Vec<String>>> = HashMap::new();
+    matches
+        .into_iter()
+        .map(|m| {
+            let (ctx_lines, ctx_start) = if context_lines > 0 && m.line_number > 0 {
+                let lines = line_cache.entry(m.file_id).or_insert_with(|| {
+                    engine.file_store.get(m.file_id).and_then(|f| {
+                        f.as_str()
+                            .ok()
+                            .map(|c| c.lines().map(str::to_string).collect())
+                    })
+                });
+                match lines {
+                    Some(all_lines) => {
+                        let total = all_lines.len();
+                        let match_idx =
+                            m.line_number.saturating_sub(1).min(total.saturating_sub(1));
+                        let start_idx = match_idx.saturating_sub(context_lines);
+                        let end_idx = (match_idx + context_lines + 1).min(total);
+                        (
+                            Some(all_lines[start_idx..end_idx].to_vec()),
+                            Some(start_idx + 1),
+                        )
+                    }
+                    None => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+            SearchResultJson {
+                file_path: m.file_path,
+                content: m.content,
+                line_number: m.line_number,
+                match_start: m.match_start,
+                match_end: m.match_end,
+                content_truncated: m.content_truncated,
+                line_match_start: m.line_match_start,
+                line_match_end: m.line_match_end,
+                match_column: m.match_column,
+                score: m.score,
+                match_type: std::borrow::Cow::Borrowed(if m.is_reference {
+                    "SYMBOL_REFERENCE"
+                } else if m.is_symbol {
+                    "SYMBOL_DEFINITION"
+                } else {
+                    "TEXT"
+                }),
+                dependency_count: m.dependency_count,
+                context_lines: ctx_lines,
+                context_start_line: ctx_start,
+            }
+        })
+        .collect()
 }
 
 /// Handle stats requests

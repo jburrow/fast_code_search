@@ -82,6 +82,11 @@ strip target/release/fast_code_search_server
 
 ### Running as a System Service
 
+For a single developer's machine (a per-user service started at login on
+Linux, macOS or Windows, with the `fcs` command-line client) see
+[RUN-AT-STARTUP.md](RUN-AT-STARTUP.md). The unit below is the shared,
+system-wide variant.
+
 #### systemd (Linux)
 
 Create `/etc/systemd/system/fast-code-search.service`:

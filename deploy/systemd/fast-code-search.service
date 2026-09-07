@@ -1,0 +1,29 @@
+# fast_code_search server as a per-user service (see docs/RUN-AT-STARTUP.md).
+#
+#   cp deploy/systemd/fast-code-search.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now fast-code-search
+#
+# Expects the binary in ~/.local/bin and the configuration at
+# ~/.config/fast_code_search/config.toml (%h = home directory).
+
+[Unit]
+Description=fast_code_search server (code search index and file watcher)
+Documentation=https://github.com/jburrow/fast_code_search
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/fast_code_search_server --config %h/.config/fast_code_search/config.toml
+# SIGINT lets the server save the index before exiting.
+KillSignal=SIGINT
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=5
+# Keep the machine responsive while the index builds.
+Nice=10
+IOSchedulingClass=idle
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

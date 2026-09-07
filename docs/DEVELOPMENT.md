@@ -104,7 +104,8 @@ fast_code_search/
 │   ├── web/                    # axum REST API, web UI assets, metrics
 │   ├── diagnostics/            # /api/diagnostics types and self-tests
 │   ├── utils.rs                # transcoding, binary detection, system limits
-│   └── bin/                    # fast_code_search_semantic (feature), fast_code_search_validator
+│   ├── cli/                    # the `fcs` command-line client (docs/CLI.md)
+│   └── bin/                    # fcs, fast_code_search_semantic (feature), fast_code_search_validator
 ├── static/                     # embedded web UI (Tailwind build in tailwind.css)
 ├── tests/integration_tests.rs  # end-to-end gRPC + HTTP tests on ephemeral ports
 ├── benches/                    # criterion benchmarks (search, persistence)

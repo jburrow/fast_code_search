@@ -225,6 +225,15 @@
                 the phrase are always among those read. To match the words only as one exact
                 phrase, quote them: <code>"fn main"</code>.</p>
 
+            <h3>Command line</h3>
+            <p>The <code>fcs</code> client (built with the server) runs the same searches from a
+                terminal: <code>fcs 'fn main'</code>, <code>fcs refs Name</code>,
+                <code>fcs symbols Name</code>, <code>fcs -e 'regex' -g '*.rs'</code>. Output is
+                <code>path:line:col:text</code> when piped and grouped on a terminal; exit codes
+                follow grep (0 matches, 1 none, 2 error). It finds this server through
+                <code>--server</code>, <code>$FCS_SERVER</code> or the configuration, and can search
+                the saved index offline. See <code>docs/CLI.md</code> in the repository.</p>
+
             <h3>Regex Search</h3>
             <p>Enable the <code>Regex</code> checkbox to search with regular expression patterns. When possible,
                 literals in the regex are used to accelerate the search via trigram filtering.</p>

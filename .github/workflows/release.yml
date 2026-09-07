@@ -98,9 +98,14 @@ jobs:
           mkdir -p release
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe release/
+            cp target/${{ matrix.target }}/release/fcs.exe release/
           else
             cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} release/
+            cp target/${{ matrix.target }}/release/fcs release/
           fi
+          # Startup unit files and their guide ship with every archive.
+          cp -r deploy release/
+          cp docs/RUN-AT-STARTUP.md docs/CLI.md release/
           # Generate clean config template using the built binary
           if [ "${{ runner.os }}" = "Windows" ]; then
             ./release/${{ env.BINARY_NAME }}.exe --init release/config.toml.example

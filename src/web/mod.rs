@@ -3,6 +3,8 @@
 mod api;
 pub mod metrics;
 
+pub use api::{results_to_json, ErrorResponse, SearchResponse, SearchResultJson};
+
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
 use axum::{
     body::Body,
