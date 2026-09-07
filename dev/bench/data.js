@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788771016961,
+  "lastUpdate": 1788772244417,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -14542,6 +14542,402 @@ window.BENCHMARK_DATA = {
           {
             "name": "corpus_bench/tokio+django/rss_after_build_bytes",
             "value": 119361536,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "distinct": true,
+          "id": "8ee3909647d107dcdcb25b3c7344ddd6fd602357",
+          "message": "feat(cli): fcs, a command-line client for the search server\n\nfcs sends queries to the running server over the REST API with the web\nUI's syntax and modes (search, refs, symbols; regex, globs, context,\npaging, case/word), prints path:line:col:text when piped or grouped colour\noutput on a terminal, --json for tools, and uses grep's exit codes\n(0 matches, 1 none, 2 error). When no server answers and an index_path is\nknown it loads the on-disk index in-process and runs the same engine calls\nread-only, saying so on stderr; --offline forces that, --no-offline\nforbids it. fcs status reports the server and what it holds. The server\nis found through --server, $FCS_SERVER, the configuration's web_address\nor the default; a bare query is the search subcommand and a subcommand\nnamed after flags is accepted.\n\nThe API's result types are public and deserializable and the per-match\nJSON mapping is shared with the offline path. reqwest becomes a regular\ndependency. Release archives include fcs, the startup unit files and the\nguides.\n\ndocs: docs/CLI.md (design and reference), docs/RUN-AT-STARTUP.md (start\nthe server at login on Linux/systemd, macOS/launchd, Windows/Task\nScheduler) with unit files under deploy/, README and web docs updated.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-07T09:58:52+01:00",
+          "tree_id": "a0d22a897ad5cb58bcb2c53d77b64d381e230b5e",
+          "url": "https://github.com/jburrow/fast_code_search/commit/8ee3909647d107dcdcb25b3c7344ddd6fd602357"
+        },
+        "date": 1788772243414,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 253622,
+            "range": "± 8280",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 21470,
+            "range": "± 730",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 330,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 250786,
+            "range": "± 8057",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 21895,
+            "range": "± 516",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 350,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 248769,
+            "range": "± 5289",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 21191,
+            "range": "± 377",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 335,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 362644,
+            "range": "± 13699",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 326118,
+            "range": "± 7793",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 394578,
+            "range": "± 18514",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 509069,
+            "range": "± 17359",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 248158,
+            "range": "± 7599",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 260082,
+            "range": "± 3073",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 305886,
+            "range": "± 5807",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 417626,
+            "range": "± 4510",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 248981,
+            "range": "± 8114",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 245665,
+            "range": "± 10902",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 309636,
+            "range": "± 14388",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 178003,
+            "range": "± 6318",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 248831,
+            "range": "± 6021",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 535784,
+            "range": "± 13688",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 369607,
+            "range": "± 10489",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 343159,
+            "range": "± 10172",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 7081,
+            "range": "± 121",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 10480073,
+            "range": "± 70464",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 20793886,
+            "range": "± 44944",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 41446252,
+            "range": "± 116894",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 18965950,
+            "range": "± 24827",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 20441636,
+            "range": "± 63483",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 37318938,
+            "range": "± 93199",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 40705745,
+            "range": "± 275115",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 1187128,
+            "range": "± 1088515",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 4200445,
+            "range": "± 3312011",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 10034517,
+            "range": "± 11032212",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1059878,
+            "range": "± 18062",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 3747433,
+            "range": "± 17523",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 7139323,
+            "range": "± 95343",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 121804,
+            "range": "± 2757",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 165977,
+            "range": "± 4286",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 217133,
+            "range": "± 5983",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 59441,
+            "range": "± 4779",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 253057,
+            "range": "± 3095",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 496237,
+            "range": "± 2605",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_build",
+            "value": 3070729733,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_save",
+            "value": 248713003,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_load",
+            "value": 187737891,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/common",
+            "value": 646606,
+            "range": "± 81182",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/identifier",
+            "value": 1053629,
+            "range": "± 88555",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/no_match",
+            "value": 391,
+            "range": "± 79",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/short",
+            "value": 857845,
+            "range": "± 148394",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/full_rank",
+            "value": 658984,
+            "range": "± 42084",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/filtered",
+            "value": 687798,
+            "range": "± 25599",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/literal",
+            "value": 958446,
+            "range": "± 123326",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/case_insensitive",
+            "value": 496259,
+            "range": "± 124432",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/no_literal",
+            "value": 1218269,
+            "range": "± 347303",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/exact",
+            "value": 2472901,
+            "range": "± 305631",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/prefix",
+            "value": 2631541,
+            "range": "± 257878",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/references",
+            "value": 475818,
+            "range": "± 192741",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/incremental/modify_file",
+            "value": 5835545,
+            "range": "± 3971942",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/rss_after_build_bytes",
+            "value": 121683968,
             "range": "± 0",
             "unit": "ns/iter"
           }
