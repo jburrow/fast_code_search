@@ -1024,13 +1024,58 @@ impl SearchEngine {
                     last_line = Some(line_num);
                 }
             } else {
-                // Search in each line using regex
-                for (line_num, line) in content.lines().enumerate() {
-                    if let Some(m) = regex.find(line) {
-                        if !emit(line_num, line, m.start(), m.end()) {
+                // Line-mode matching in one pass over the whole content:
+                // the regex engine's prefilter and start-up cost is paid
+                // once per file instead of once per line (a `\s+` pattern
+                // was ten times slower than a plain literal over the same
+                // candidates). The regex is compiled with `(?mR)` so `^`
+                // and `$` keep their per-line meaning; one match is reported
+                // per line, and a match that would span a line break is
+                // resolved by re-running the regex on the lines it touches.
+                let text: &str = &content;
+                let mut pos = 0usize;
+                let mut line_num = 0usize;
+                'scan: while pos <= text.len() {
+                    let Some(m) = regex.find_at(text, pos) else {
+                        break;
+                    };
+                    line_num += text[pos..m.start()].bytes().filter(|&b| b == b'\n').count();
+                    let line_start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+                    let mut line_end = text[m.start()..]
+                        .find('\n')
+                        .map_or(text.len(), |i| i + m.start());
+                    if m.end() <= line_end {
+                        let raw = &text[line_start..line_end];
+                        let line = raw.strip_suffix('\r').unwrap_or(raw);
+                        let m_start = (m.start() - line_start).min(line.len());
+                        let m_end = (m.end() - line_start).min(line.len());
+                        if !emit(line_num, line, m_start, m_end) {
                             break;
                         }
+                    } else {
+                        // The match crosses a line break (e.g. `\s+`): per-line
+                        // semantics evaluate each line on its own.
+                        let span_end = text[m.end()..]
+                            .find('\n')
+                            .map_or(text.len(), |i| i + m.end());
+                        let mut ln = line_num;
+                        for raw in text[line_start..span_end].split('\n') {
+                            let line = raw.strip_suffix('\r').unwrap_or(raw);
+                            if let Some(lm) = regex.find(line) {
+                                if !emit(ln, line, lm.start(), lm.end()) {
+                                    break 'scan;
+                                }
+                            }
+                            ln += 1;
+                        }
+                        line_num = ln - 1;
+                        line_end = span_end;
                     }
+                    if line_end >= text.len() {
+                        break;
+                    }
+                    pos = line_end + 1;
+                    line_num += 1;
                 }
             }
         }

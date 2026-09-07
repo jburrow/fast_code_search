@@ -85,7 +85,17 @@ impl RegexAnalysis {
     /// # Returns
     /// A `RegexAnalysis` containing the compiled regex and extracted literals.
     pub fn analyze(pattern: &str) -> Result<Self> {
-        let regex = regex::RegexBuilder::new(pattern)
+        let multiline = needs_multiline(pattern);
+        // Line-mode patterns are run over whole file contents in one pass
+        // (see `search_in_document_regex`), so `^` and `$` are given their
+        // per-line meaning here (`m`), with `\r\n` as a line terminator (`R`)
+        // so a `foo$` still matches a CRLF line.
+        let effective = if multiline {
+            pattern.to_string()
+        } else {
+            format!("(?mR){pattern}")
+        };
+        let regex = regex::RegexBuilder::new(&effective)
             .size_limit(REGEX_SIZE_LIMIT)
             .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
             .build()
@@ -104,7 +114,7 @@ impl RegexAnalysis {
             regex,
             constraints,
             is_accelerated,
-            multiline: needs_multiline(pattern),
+            multiline,
         })
     }
 }

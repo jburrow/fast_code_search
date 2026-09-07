@@ -2340,3 +2340,71 @@ fn test_removed_file_releases_its_mapping() {
     assert_eq!(engine.file_store.total_mapped_size(), 0);
     assert!(engine.search("mapped_marker_token", 1).is_empty());
 }
+
+/// Review 1.4: TypeScript call sites (plain and member calls) are captured
+/// as references; the upstream tags query only had type and `new` mentions.
+#[test]
+fn test_typescript_call_sites_are_references() {
+    let temp_dir = TempDir::new().unwrap();
+    let a = temp_dir.path().join("a.ts");
+    fs::write(
+        &a,
+        "export function raceFilter(a: number) { return a; }\n\
+         export function caller() { return raceFilter(1); }\n\
+         const x = svc.raceFilter(2);\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(temp_dir.path());
+    engine.index_file(&a).unwrap();
+    engine.finalize();
+
+    let (hits, _) = engine
+        .search_references("raceFilter", "", "", SearchLimits::new(50))
+        .unwrap();
+    let mut lines: Vec<usize> = hits.iter().map(|h| h.line_number).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec![2, 3], "{hits:?}");
+}
+
+/// Review 1.9: line-mode regexes are matched in one pass per file. The
+/// per-line semantics must survive: `^`/`$` anchor at line boundaries (CRLF
+/// included), `\s+` never joins two lines, one hit per line, and the hit's
+/// offsets are relative to its line.
+#[test]
+fn test_regex_single_pass_keeps_per_line_semantics() {
+    let temp_dir = TempDir::new().unwrap();
+    let f = temp_dir.path().join("r.rs");
+    fs::write(
+        &f,
+        "fn alpha() {}\r\nlet x = fn_like();\r\nfn\r\nmain()\r\nfn beta() { fn gamma() {} }\r\nend\r\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(temp_dir.path());
+    engine.index_file(&f).unwrap();
+    engine.finalize();
+
+    let run = |pattern: &str| -> Vec<(usize, usize, usize)> {
+        let (hits, _) = engine
+            .search_regex_with_limits(pattern, "", "", SearchLimits::new(50), RankMode::Full)
+            .unwrap();
+        let mut v: Vec<(usize, usize, usize)> = hits
+            .iter()
+            .map(|h| (h.line_number, h.line_match_start, h.line_match_end))
+            .collect();
+        v.sort_unstable();
+        v
+    };
+
+    // `^fn` matches at the start of lines 1, 3 and 5 only (not `fn_like`).
+    assert_eq!(run(r"^fn\b"), vec![(1, 0, 2), (3, 0, 2), (5, 0, 2)]);
+    // `$` anchors before the CRLF terminator.
+    assert_eq!(run(r"\(\) \{\}$"), vec![(1, 8, 13)]);
+    // `\s+` must not join "fn" and "main()" across the line break.
+    assert!(run(r"fn\s+main\(").is_empty());
+    // One hit per line, at the first match, with line-relative offsets.
+    assert_eq!(run(r"fn \w+\(\)"), vec![(1, 0, 10), (5, 0, 9)]);
+    // A whole-file pattern still spans lines.
+    assert_eq!(run(r"fn\r\nmain\("), vec![(3, 0, 2)]);
+}
