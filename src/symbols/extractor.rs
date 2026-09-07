@@ -264,6 +264,23 @@ fn disable_unused_patterns(query: &mut tree_sitter::Query) {
 /// mentions (`fn f(e: &SearchEngine)`, `Vec<Item>`, `impl Trait for T`).
 /// A type's own definition is also a `type_identifier`; those positions are
 /// dropped again in `extract_with_tags`.
+/// The TypeScript grammar's `tags.scm` records type and `new` references
+/// but no calls, so `references=true` found nothing for a TypeScript
+/// function. Add the same call patterns the JavaScript query has (plain
+/// and member calls).
+fn typescript_tags_source() -> &'static str {
+    use std::sync::OnceLock;
+    static SRC: OnceLock<String> = OnceLock::new();
+    SRC.get_or_init(|| {
+        format!(
+            "{}\n\n; fast_code_search supplement: call sites\n\
+             (call_expression\n    function: (identifier) @name) @reference.call\n\n\
+             (call_expression\n    function: (member_expression\n        property: (property_identifier) @name)) @reference.call\n",
+            tree_sitter_typescript::TAGS_QUERY
+        )
+    })
+}
+
 fn rust_tags_source() -> &'static str {
     use std::sync::OnceLock;
     static SRC: OnceLock<String> = OnceLock::new();
@@ -316,12 +333,12 @@ fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree
         "ts" | "mts" | "cts" => once!(
             TS,
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-            tree_sitter_typescript::TAGS_QUERY
+            typescript_tags_source()
         ),
         "tsx" => once!(
             TSX,
             tree_sitter_typescript::LANGUAGE_TSX,
-            tree_sitter_typescript::TAGS_QUERY
+            typescript_tags_source()
         ),
         "go" => once!(GO, tree_sitter_go::LANGUAGE, tree_sitter_go::TAGS_QUERY),
         "c" | "h" => once!(C, tree_sitter_c::LANGUAGE, tree_sitter_c::TAGS_QUERY),
