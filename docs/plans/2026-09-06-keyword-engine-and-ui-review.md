@@ -27,8 +27,14 @@ and sections 1–4 except the following, left open deliberately:
   distinct identifiers; a rebuild reclaims them).
 - 2 (item 8) parked imports: dead importers are now dropped when they are
   retried; per-`(file, import)` deduplication is not done.
-- 6: no JavaScript test harness or Tailwind rebuild check in CI (only a
-  syntax check of the UI scripts was added).
+- 6: JavaScript helper tests (`npm test`) and a Tailwind rebuild check now
+  run in CI's Web UI job (added after v0.11.0).
+
+After v0.11.0 the remaining UI items were closed too: result diversity
+(hits interleaved by file within a tier), on-demand rendering of result
+groups, inline SVG icons instead of the icon font, the inline dependency
+errors / clipboard fallback / preview-cache invalidation trio, and the
+unused dark stylesheet. The page stays single-theme by design.
 
 Follow-ups found while verifying on the live index: the reload eligibility
 pass initially cost 14.8 s (gitignore chains are now cached per directory),

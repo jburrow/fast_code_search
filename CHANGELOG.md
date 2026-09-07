@@ -7,11 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A Web UI job in CI runs the JavaScript helper tests (`npm test`, Node's
+  built-in runner over `static/tests`) and fails if the committed
+  `tailwind.css` does not match the markup.
+
 ### Changed
+- Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
+  icon font (which stays only for the semantic pages); result groups are
+  rendered on demand as the page scrolls; the pure helpers live in
+  `static/lib/keyword-helpers.js` and the query tokenizer now matches the
+  server's rules exactly; the unused dark highlight stylesheet is gone.
 - Results interleave files within a score tier: every file's best hit,
   then every file's second hit, and so on, so one file holding a hundred
   matches no longer fills the page. Phrase and all-term tiers still come
   first; paging stays deterministic.
+
+### Fixed
+- Web UI: dependency popover failures are shown inline instead of an
+  `alert()`; copying a path works on plain-HTTP origins (textarea
+  fallback) with a visible Copied/Copy failed state; the hover-preview
+  cache is cleared when the index changes, so previews cannot go stale.
 
 ## [0.11.0] - 2026-09-07
 
