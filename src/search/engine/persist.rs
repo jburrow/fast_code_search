@@ -691,7 +691,18 @@ impl SearchEngine {
                 "Restoring symbols and import graph...",
             );
 
-            if !persisted.symbols.is_empty() {
+            // Persisted symbols are restored only when they were extracted
+            // by the current schema; otherwise (an older index, or no
+            // symbols saved) they are re-extracted from the files.
+            let schema_current =
+                crate::config::symbols_schema_current(&persisted.config_fingerprint);
+            if !schema_current && !persisted.symbols.is_empty() {
+                tracing::info!(
+                    saved = %persisted.config_fingerprint,
+                    "Persisted symbols predate the current extractor; re-extracting"
+                );
+            }
+            if !persisted.symbols.is_empty() && schema_current {
                 self.restore_symbols_and_deps(&orig_to_new, &persisted);
                 tracing::info!(
                     files_restored = valid_count,

@@ -338,7 +338,7 @@ impl IndexerConfig {
         use std::hash::Hasher as _;
         let mut h = rustc_hash::FxHasher::default();
         h.write(config_str.as_bytes());
-        format!("{:016x}", h.finish())
+        format!("{:016x}{}", h.finish(), SYMBOL_SCHEMA_TAG)
     }
 
     /// Check if a file path is explicitly excluded via `exclude_files`.
@@ -674,6 +674,19 @@ service_name = "fast_code_search"
     }
 }
 
+/// Version tag of the symbol/reference extraction (tags queries, reference
+/// kinds), appended to the configuration fingerprint. A persisted index
+/// whose fingerprint lacks the current tag has its symbols and references
+/// re-extracted from file content on load instead of restored, so a change
+/// to what is captured (say, TypeScript call sites) reaches an existing
+/// index without a full rebuild. Bump when extraction changes.
+pub const SYMBOL_SCHEMA_TAG: &str = "|sym2";
+
+/// Whether an index saved with `fingerprint` used the current extraction.
+pub fn symbols_schema_current(fingerprint: &str) -> bool {
+    fingerprint.ends_with(SYMBOL_SCHEMA_TAG)
+}
+
 /// Expand a leading `~` to the home directory and, when `base_dir` is given,
 /// resolve a relative path against it. Paths that do not exist are left as
 /// written (after expansion) so error messages still name what the user typed.
@@ -785,6 +798,14 @@ paths = ["/code/project"]
 #[cfg(test)]
 mod path_tests {
     use super::*;
+
+    #[test]
+    fn test_fingerprint_carries_the_symbol_schema_tag() {
+        let fp = IndexerConfig::default().fingerprint();
+        assert!(symbols_schema_current(&fp), "{fp}");
+        assert!(!symbols_schema_current("0123456789abcdef"));
+        assert!(!symbols_schema_current("0123456789abcdef|sym1"));
+    }
 
     #[test]
     fn test_expand_path_tilde_and_relative() {

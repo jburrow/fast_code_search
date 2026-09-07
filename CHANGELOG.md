@@ -40,7 +40,15 @@ Fixes from the 2026-09-06 engine and UI review
   unioning stale trigrams onto them; suffix path lookups match whole path
   components only, and an empty suffix matches nothing.
 - TypeScript call sites (plain and member calls) are captured as
-  references; the upstream tags query only had type and `new` mentions.
+  references; the upstream tags query only had type and `new` mentions. An
+  index saved by an earlier extractor has its symbols and references
+  re-extracted on load (the fingerprint now carries an extraction schema
+  tag), so this reaches existing indexes without a rebuild.
+- Multi-term queries prefer the phrase: files whose trigrams contain the
+  terms as written are always opened, and lines holding the phrase rank
+  above lines holding every term, above single-term lines.
+- Reload: gitignore matchers are cached per directory during the
+  eligibility pass (it took 14.8 s for 61k files).
 - A watcher burst re-indexes modified files with one posting-list pass and
   a parallel parse instead of a full scan per file under the write lock.
 - Removing a file releases its memory map instead of keeping it alive in
