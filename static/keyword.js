@@ -553,6 +553,22 @@ function updateProgressUI(status) {
 }
 
 // ============================================
+// ICONS
+// ============================================
+
+/**
+ * An inline SVG icon referencing the sprite in index.html (`#i-<name>`,
+ * underscores in `name` become dashes). Sized by attributes, coloured by
+ * the surrounding text (fill: currentColor via .icon).
+ * @param {string} name - sprite symbol name, e.g. 'open_in_new'
+ * @param {number} size - width and height in px
+ */
+function iconSvg(name, size) {
+    const id = 'i-' + String(name).replace(/_/g, '-');
+    return `<svg class="icon" width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"/></svg>`;
+}
+
+// ============================================
 // SYNTAX HIGHLIGHTING HELPERS
 // ============================================
 
@@ -1557,7 +1573,7 @@ function renderSearch(search, durationMs, opts = {}) {
         const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
 
         // File type icon based on extension
-        const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'settings_suggest' : 'code');
+        const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'data_object' : 'code');
 
         // Language badge style
         const langBadgeStyle = getLangBadgeStyle(langClass);
@@ -1632,12 +1648,12 @@ function renderSearch(search, durationMs, opts = {}) {
                                 title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)&#10;&#10;Higher scores rank first.">
                                 ${result.score.toFixed(2)}
                             </span>
-                            <button type="button" class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
-                                style="font-size:18px;cursor:pointer;color:#5f5d48;background:none;border:none;padding:0"
+                            <button type="button" class="view-file-btn hover:text-primary transition-colors"
+                                style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
                                 data-file-path="${escapeHtml(result.file_path)}"
                                 data-line-number="${viewLine}"
                                 aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}"
-                                title="View full file at this line">open_in_new</button>
+                                title="View full file at this line">${iconSvg('open_in_new', 18)}</button>
                         </div>
                     </div>
                     <div class="overflow-x-auto" style="background:#fff">
@@ -1652,7 +1668,7 @@ function renderSearch(search, durationMs, opts = {}) {
                 <!-- File header -->
                 <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
                     <div class="flex items-center gap-2 min-w-0">
-                        <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">${fileIcon}</span>
+                        ${iconSvg(fileIcon, 16)}
                         <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
                             ${dirPath ? `<span style="color:#5f5d48;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
                         </span>
@@ -1661,17 +1677,17 @@ function renderSearch(search, durationMs, opts = {}) {
                     <div class="flex items-center gap-2 flex-shrink-0">
                         ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
                         ${depBadge}
-                        <button type="button" class="copy-path-btn material-symbols-outlined hover:text-primary transition-colors"
-                            style="font-size:16px;cursor:pointer;color:#5f5d48;background:none;border:none;padding:0"
+                        <button type="button" class="copy-path-btn hover:text-primary transition-colors"
+                            style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
                             data-file-path="${escapeHtml(group.filePath)}"
                             aria-label="Copy file path"
-                            title="Copy file path">content_copy</button>
-                        <button type="button" class="view-file-btn material-symbols-outlined hover:text-primary transition-colors"
-                            style="font-size:18px;cursor:pointer;color:#5f5d48;background:none;border:none;padding:0"
+                            title="Copy file path">${iconSvg('content_copy', 16)}</button>
+                        <button type="button" class="view-file-btn hover:text-primary transition-colors"
+                            style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
                             data-file-path="${escapeHtml(group.filePath)}"
                             data-line-number="${groupViewLine}"
                             aria-label="View full file"
-                            title="View full file">open_in_new</button>
+                            title="View full file">${iconSvg('open_in_new', 18)}</button>
                     </div>
                 </div>
                 ${hitsHtml}
@@ -1959,7 +1975,7 @@ function setCopyButtonState(btn, state) {
     if (!btn.dataset.idleLabel) {
         btn.dataset.idleLabel = btn.getAttribute('aria-label') || 'Copy file path';
         btn.dataset.idleTitle = btn.title || btn.dataset.idleLabel;
-        btn.dataset.idleIcon = btn.textContent;
+        btn._idleIconHtml = btn.innerHTML;
     }
     clearTimeout(btn._copyStateTimer);
     const copied = state === 'copied';
@@ -1968,12 +1984,12 @@ function setCopyButtonState(btn, state) {
     btn.classList.add(copied ? 'copy-ok' : 'copy-failed');
     btn.setAttribute('aria-label', label);
     btn.title = label;
-    btn.textContent = copied ? 'check' : 'error';
+    btn.innerHTML = iconSvg(copied ? 'check' : 'error', 16);
     btn._copyStateTimer = setTimeout(() => {
         btn.classList.remove('copy-ok', 'copy-failed');
         btn.setAttribute('aria-label', btn.dataset.idleLabel);
         btn.title = btn.dataset.idleTitle;
-        btn.textContent = btn.dataset.idleIcon;
+        btn.innerHTML = btn._idleIconHtml;
     }, COPY_STATE_MS);
 }
 

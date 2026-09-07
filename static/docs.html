@@ -6,15 +6,9 @@
     <title>Documentation — Fast Code Search</title>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
-    <link rel="stylesheet" href="/material-symbols.css"/>
     <style>
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-            font-family: 'Material Symbols Outlined'; font-style: normal; line-height: 1;
-            letter-spacing: normal; text-transform: none; display: inline-block;
-            white-space: nowrap; overflow-wrap: normal; direction: ltr;
-            -webkit-font-smoothing: antialiased; vertical-align: middle;
-        }
+        /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
+        .icon { display: inline-block; fill: currentColor; vertical-align: middle; flex-shrink: 0; }
         body {
             background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
         }
@@ -184,6 +178,16 @@
 
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
+    <!-- Inline SVG icon sprite (Material Design icon paths, Apache-2.0); referenced
+         with <svg class="icon"><use href="#i-name"/></svg>. Replaces the 3.9 MB icon font. -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+        <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
+        <symbol id="i-help-outline" viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></symbol>
+        <symbol id="i-analytics" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></symbol>
+        <symbol id="i-description" viewBox="0 0 24 24"><path d="M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></symbol>
+        <symbol id="i-auto-awesome" viewBox="0 0 24 24"><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></symbol>
+    </svg>
+
     <!-- ===== TOP NAV ===== -->
     <header class="bg-white font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
         <div class="flex items-center gap-6">
@@ -195,7 +199,7 @@
                 <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/docs.html">DOCS</a>
             </nav>
         </div>
-        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors" style="font-size:20px" title="Documentation">help_outline</a>
+        <a href="/docs.html" class="text-outline hover:text-black transition-colors flex items-center" title="Documentation" aria-label="Documentation"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-help-outline"/></svg></a>
     </header>
 
     <main class="max-w-[1440px] mx-auto p-6">
@@ -585,10 +589,10 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
 
     <!-- Mobile bottom nav -->
     <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><span class="material-symbols-outlined" style="font-size:20px">search</span><span>Search</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html"><span class="material-symbols-outlined" style="font-size:20px">auto_awesome</span><span>Semantic</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><span class="material-symbols-outlined" style="font-size:20px">analytics</span><span>Index</span></a>
-        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/docs.html"><span class="material-symbols-outlined" style="font-size:20px;font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24">description</span><span>Docs</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-search"/></svg><span>Search</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-auto-awesome"/></svg><span>Semantic</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-analytics"/></svg><span>Index</span></a>
+        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/docs.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-description"/></svg><span>Docs</span></a>
     </nav>
 </body>
 

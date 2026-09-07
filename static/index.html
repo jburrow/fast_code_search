@@ -10,7 +10,6 @@
     <title>Fast Code Search</title>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
-    <link rel="stylesheet" href="/material-symbols.css"/>
     <!-- The page is a hard-coded light theme (result code is on a white background),
          so always use the light highlight.js theme. Loading the dark theme under
          prefers-color-scheme:dark rendered pale tokens on white = unreadable. -->
@@ -26,20 +25,8 @@
             --hl-line-bg: #fff900;
             --hl-left-border: #646100;
         }
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-            font-family: 'Material Symbols Outlined';
-            font-style: normal;
-            line-height: 1;
-            letter-spacing: normal;
-            text-transform: none;
-            display: inline-block;
-            white-space: nowrap;
-            overflow-wrap: normal;
-            direction: ltr;
-            -webkit-font-smoothing: antialiased;
-            vertical-align: middle;
-        }
+        /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
+        .icon { display: inline-block; fill: currentColor; vertical-align: middle; flex-shrink: 0; }
         body {
             background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
         }
@@ -449,7 +436,6 @@
             padding: 0 0.5rem 0 0.6rem;
             color: #5f5d48;
             flex-shrink: 0;
-            font-size: 16px !important;
         }
         #nav-query {
             border: none;
@@ -492,6 +478,26 @@
 </head>
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
+    <!-- Inline SVG icon sprite (Material Design icon paths, Apache-2.0); referenced
+         with <svg class="icon"><use href="#i-name"/></svg>. Replaces the 3.9 MB icon font. -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+        <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
+        <symbol id="i-code" viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></symbol>
+        <symbol id="i-function" viewBox="0 0 24 24"><path d="M18 4H6v2l6.5 6L6 18v2h12v-3h-7l5-5-5-5h7z"/></symbol>
+        <symbol id="i-link" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></symbol>
+        <symbol id="i-tune" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></symbol>
+        <symbol id="i-content-copy" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></symbol>
+        <symbol id="i-open-in-new" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></symbol>
+        <symbol id="i-help-outline" viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></symbol>
+        <symbol id="i-analytics" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></symbol>
+        <symbol id="i-description" viewBox="0 0 24 24"><path d="M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></symbol>
+        <symbol id="i-auto-awesome" viewBox="0 0 24 24"><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></symbol>
+        <symbol id="i-warning" viewBox="0 0 24 24"><path d="M12 5.99 19.53 19H4.47L12 5.99M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+        <symbol id="i-error" viewBox="0 0 24 24"><path d="M11 15h2v2h-2v-2zm0-8h2v6h-2V7zm.99-5C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/></symbol>
+        <symbol id="i-data-object" viewBox="0 0 24 24"><path d="M4 7v2c0 .55-.45 1-1 1H2v4h1c.55 0 1 .45 1 1v2c0 1.65 1.35 3 3 3h3v-2H7c-.55 0-1-.45-1-1v-2c0-1.3-.84-2.42-2-2.83v-.34C5.16 11.42 6 10.3 6 9V7c0-.55.45-1 1-1h3V4H7C5.35 4 4 5.35 4 7zm17 3c-.55 0-1-.45-1-1V7c0-1.65-1.35-3-3-3h-3v2h3c.55 0 1 .45 1 1v2c0 1.3.84 2.42 2 2.83v.34c-1.16.41-2 1.52-2 2.83v2c0 .55-.45 1-1 1h-3v2h3c1.65 0 3-1.35 3-3v-2c0-.55.45-1 1-1h1v-4h-1z"/></symbol>
+    </svg>
+
     <!-- ===== TOP NAV ===== -->
     <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
         <div class="flex items-center gap-6">
@@ -506,7 +512,7 @@
 
         <!-- Compact search bar — slides into nav when main search scrolls out of view -->
         <div id="nav-search" role="search" aria-label="Quick search" aria-hidden="true">
-            <span id="nav-search-icon" class="material-symbols-outlined">search</span>
+            <span id="nav-search-icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg></span>
             <input type="text" id="nav-query" placeholder="SEARCH..." autocomplete="off"
                    tabindex="-1" aria-label="Quick search query"/>
             <button id="nav-search-btn" tabindex="-1" title="Execute search">RUN ↵</button>
@@ -519,7 +525,7 @@
             <span title="Number of unique 3-character sequences">TRIGRAMS: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
             <span title="Number of import/dependency edges used to boost relevance scoring">DEPS: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
         </div>
-        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors text-xl" title="Documentation" aria-label="Documentation">help_outline</a>
+        <a href="/docs.html" class="text-outline hover:text-black transition-colors flex items-center" title="Documentation" aria-label="Documentation"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-help-outline"/></svg></a>
     </header>
 
     <!-- ===== PROGRESS PANEL ===== -->
@@ -534,7 +540,7 @@
 
     <!-- Backend status banner (shown when keyword backend is unavailable or wrong server type) -->
     <div id="backend-banner" style="display: none;" class="border-b border-black px-6 py-2 flex items-center gap-3 text-xs font-label">
-        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">warning</span>
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-warning"/></svg>
         <span id="backend-banner-msg" class="flex-1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         <div class="flex items-center gap-2 flex-shrink-0">
             <span id="keyword-status-badge" class="status-badge">KEYWORD</span>
@@ -551,7 +557,7 @@
                 <!-- Search input -->
                 <div class="flex-grow relative">
                     <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-                        <span class="material-symbols-outlined text-outline text-xl" aria-hidden="true">search</span>
+                        <span class="text-outline flex items-center"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-search"/></svg></span>
                     </div>
                     <label for="query" class="sr-only">Search query</label>
                     <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
@@ -570,23 +576,23 @@
                          always look the way they behave. -->
                     <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Enable regular expression syntax">
                         <input type="checkbox" id="regex-mode" class="sr-only">
-                        <span class="material-symbols-outlined text-sm">code</span>
+                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-code"/></svg>
                         <span>REGEX</span>
                     </label>
                     <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Only match symbol definitions">
                         <input type="checkbox" id="symbols-mode" class="sr-only">
-                        <span class="material-symbols-outlined text-sm">function</span>
+                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-function"/></svg>
                         <span>SYMBOLS</span>
                     </label>
                     <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Find references (call sites, type mentions) of the identifier in the query">
                         <input type="checkbox" id="references-mode" class="sr-only">
-                        <span class="material-symbols-outlined text-sm">link</span>
+                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-link"/></svg>
                         <span>REFERENCES</span>
                     </label>
                     <!-- Always-visible FILTER toggle so filters can be set BEFORE the
                          first search (the one in the results bar only appears after a search). -->
                     <button type="button" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold" title="Show filter and ranking options">
-                        <span class="material-symbols-outlined text-sm">tune</span>
+                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg>
                         <span>FILTER</span>
                     </button>
                 </div>
@@ -605,7 +611,7 @@
                 </div>
                 <div class="flex gap-3">
                     <button id="filter-toggle-btn" class="filter-toggle flex items-center gap-1 font-label text-xs text-outline hover:text-black transition-colors">
-                        <span class="material-symbols-outlined text-sm">tune</span> FILTER
+                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg> FILTER
                     </button>
                 </div>
             </div>
@@ -675,19 +681,19 @@
     <!-- ===== MOBILE BOTTOM NAV ===== -->
     <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
         <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/">
-            <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;">search</span>
+            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-search"/></svg>
             <span>Search</span>
         </a>
         <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html">
-            <span class="material-symbols-outlined">auto_awesome</span>
+            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-auto-awesome"/></svg>
             <span>Semantic</span>
         </a>
         <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html">
-            <span class="material-symbols-outlined">analytics</span>
+            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-analytics"/></svg>
             <span>Index</span>
         </a>
         <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html">
-            <span class="material-symbols-outlined">description</span>
+            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-description"/></svg>
             <span>Docs</span>
         </a>
     </nav>
