@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Fixes from the 2026-09-06 engine and UI review
 (`docs/plans/2026-09-06-keyword-engine-and-ui-review.md`).
 
+### Changed
+- Line-mode regex patterns are matched in one pass per file (compiled with
+  `(?mR)`, one hit per line, per-line semantics for `^`, `$`, `\s` and CRLF
+  kept), removing the per-line start-up cost that made `fn\s+main\(` an
+  order of magnitude slower than `main\(` over the same candidates.
+
 ### Fixed
 - Regex candidate generation treated a repetition as one contiguous copy on
   both sides, so `fo+bar` demanded the literal `fobar` and never found
@@ -33,6 +39,12 @@ Fixes from the 2026-09-06 engine and UI review
 - Re-indexing an already indexed path replaced its postings instead of
   unioning stale trigrams onto them; suffix path lookups match whole path
   components only, and an empty suffix matches nothing.
+- TypeScript call sites (plain and member calls) are captured as
+  references; the upstream tags query only had type and `new` mentions.
+- A watcher burst re-indexes modified files with one posting-list pass and
+  a parallel parse instead of a full scan per file under the write lock.
+- Removing a file releases its memory map instead of keeping it alive in
+  the tombstoned slot.
 - Two concurrent saves (the watcher's shutdown save racing the indexer's
   final save, a checkpoint racing a watcher save, or two processes sharing
   `index_path`) could delete the index file. Saves are serialized and use
