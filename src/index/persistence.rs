@@ -27,6 +27,15 @@ pub struct DirEntry {
 
 const DIR_ENTRY_LEN: usize = 16;
 
+/// A configured root in comparable form: canonical where the path exists
+/// (so `/var/x` and `/private/var/x`, or a Windows 8.3 short name and its
+/// long form, are one root), forward slashes, lowercased. A root that no
+/// longer exists keeps its spelling.
+fn root_key(path: &str) -> String {
+    let canonical = crate::search::engine::canonicalize_lossy(std::path::Path::new(path));
+    normalize_path_for_comparison(&canonical.to_string_lossy())
+}
+
 /// Serializes [`PersistedIndex::save`] within the process (see there).
 static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Makes every temp file name unique within the process.
@@ -529,35 +538,22 @@ impl PersistedIndex {
 
     /// Get paths that were in the old config but not in the new config (need removal)
     pub fn paths_to_remove(&self, current_paths: &[String]) -> Vec<String> {
-        let current_set: std::collections::HashSet<_> = current_paths
-            .iter()
-            .map(|p| normalize_path_for_comparison(p))
-            .collect();
-
+        let current_set: std::collections::HashSet<_> =
+            current_paths.iter().map(|p| root_key(p)).collect();
         self.indexed_paths
             .iter()
-            .filter(|p| {
-                let normalized = normalize_path_for_comparison(p);
-                !current_set.contains(&normalized)
-            })
+            .filter(|p| !current_set.contains(&root_key(p)))
             .cloned()
             .collect()
     }
 
     /// Get paths that are in the new config but weren't in the old config (need indexing)
     pub fn paths_to_add(&self, current_paths: &[String]) -> Vec<String> {
-        let indexed_set: std::collections::HashSet<_> = self
-            .indexed_paths
-            .iter()
-            .map(|p| normalize_path_for_comparison(p))
-            .collect();
-
+        let indexed_set: std::collections::HashSet<_> =
+            self.indexed_paths.iter().map(|p| root_key(p)).collect();
         current_paths
             .iter()
-            .filter(|p| {
-                let normalized = normalize_path_for_comparison(p);
-                !indexed_set.contains(&normalized)
-            })
+            .filter(|p| !indexed_set.contains(&root_key(p)))
             .cloned()
             .collect()
     }
@@ -1114,6 +1110,25 @@ mod tests {
             "no temp files may remain after concurrent saves: {:?}",
             leftover_temp_files(temp_dir.path())
         );
+    }
+
+    /// A root spelled differently but naming the same directory (a symlinked
+    /// temp dir on macOS, a short name on Windows, `./sub` on any OS) is the
+    /// same root, not one to remove and one to add.
+    #[test]
+    fn test_root_reconciliation_compares_canonical_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let spelled = temp.path().join(".").join("root");
+        let (mut idx, _) = sample_index();
+        idx.indexed_paths = vec![root.to_string_lossy().to_string()];
+        let current = vec![spelled.to_string_lossy().to_string()];
+        assert!(idx.paths_to_remove(&current).is_empty());
+        assert!(idx.paths_to_add(&current).is_empty());
+        let gone = vec![temp.path().join("other").to_string_lossy().to_string()];
+        assert_eq!(idx.paths_to_remove(&gone).len(), 1);
+        assert_eq!(idx.paths_to_add(&gone).len(), 1);
     }
 
     #[test]
