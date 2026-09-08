@@ -8,10 +8,12 @@ under `docs/internal/plans/`; individual items are GitHub issues labelled
 
 - **Documentation site** (this book): generated reference pages, a
   quick start executed in CI, guides for the questions people ask.
-- **Benchmarks people can trust**: methodology, machine specs in every
-  result, results and trends generated onto the site, a ranking-quality
-  suite (precision@1/@5 over labelled queries), and a scripted comparison
-  with ripgrep, ugrep and Zoekt.
+- **Benchmarks people can trust**: done for methodology, machine specs in
+  every result, results generated onto the site, the
+  [ranking-quality suite](../benchmarks/ranking-quality.md) and the
+  [ripgrep/ugrep comparison](../benchmarks/comparison.md). Still open: a
+  Zoekt comparison on a shared corpus and query set, and per-commit
+  charts of memory and throughput.
 
 ## Next
 
