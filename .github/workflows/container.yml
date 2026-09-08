@@ -5,6 +5,11 @@ on:
     tags:
       - 'v[0-9]+.*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to label a manual build with (e.g. 0.13.0); leave empty for a sha-only image"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -32,7 +37,9 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            type=semver,pattern={{version}},value=v${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=latest,enable=${{ (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || (inputs.version != '' && !contains(inputs.version, '-')) }}
             type=sha
           labels: |
             org.opencontainers.image.title=fast_code_search
