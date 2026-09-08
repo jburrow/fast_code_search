@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-10f90ed0.js";
+            window.path_to_searchindex_js = "searchindex-a8020d46.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -2598,10 +2598,13 @@ the benchmark workflow runs it on every push and the result appears on the
 fixed-string, case-insensitive mode, which is what a plain <code>fcs</code> search
 does; regex rows are given to both as regular expressions.</li>
 <li>Warm cache, median of seven runs, wall time from process start to exit,
-all output to <code>/dev/null</code>. <code>fcs</code> asks for the best 50 hits; the scan
-tools are given no match limit, because ripgrep’s limit is per file and
-ugrep’s stops the whole search, and a scan tool cannot know the best 50
-without reading everything anyway.</li>
+every tool’s output written to the same scratch file. <code>fcs</code> asks for
+the best 50 hits; the scan tools are given no match limit, because a
+scan tool cannot know the best 50 without reading everything anyway.</li>
+<li>Output goes to a file, not <code>/dev/null</code>, because ugrep (like GNU grep)
+detects a <code>/dev/null</code> stdout and quietly switches to “stop at the
+first match”. The first CI run timed that as a 6 ms “scan” of forty
+megabytes.</li>
 <li><code>fcs (client)</code> is the command-line client talking to a server over HTTP.
 It includes starting the process and the round trip. <code>fcs (engine)</code> is
 the time the server reports for the search itself, which is what an
@@ -2623,13 +2626,13 @@ forty milliseconds, and publishing that would have been dishonest.</li>
 <tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>36.0 ms</td><td>7.8 ms</td><td>0.90 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>32.3 ms</td><td>10.4 ms</td><td>0.98 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>30.2 ms</td><td>8.7 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>37.2 ms</td><td>8.0 ms</td><td>1.63 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>37.4 ms</td><td>15.4 ms</td><td>1.09 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>42.2 ms</td><td>8.2 ms</td><td>1.06 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>30.7 ms</td><td>7.5 ms</td><td>0.72 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>40.1 ms</td><td>10.4 ms</td><td>0.90 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>33.0 ms</td><td>11.7 ms</td><td>1.03 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>30.4 ms</td><td>7.5 ms</td><td>0.01 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>31.7 ms</td><td>10.5 ms</td><td>1.51 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>37.5 ms</td><td>10.1 ms</td><td>1.17 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>45.5 ms</td><td>9.6 ms</td><td>1.11 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>31.2 ms</td><td>9.3 ms</td><td>0.76 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -2640,13 +2643,13 @@ forty milliseconds, and publishing that would have been dishonest.</li>
 <tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>50.8 ms</td><td>12.4 ms</td><td>0.95 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>48.2 ms</td><td>9.2 ms</td><td>1.28 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>39.7 ms</td><td>10.6 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>40.8 ms</td><td>16.9 ms</td><td>4.46 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>76.2 ms</td><td>9.8 ms</td><td>1.34 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>80.4 ms</td><td>8.7 ms</td><td>2.72 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>48.4 ms</td><td>10.7 ms</td><td>0.95 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>58.6 ms</td><td>16.5 ms</td><td>1.08 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>49.0 ms</td><td>9.3 ms</td><td>1.14 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>39.1 ms</td><td>7.3 ms</td><td>0.01 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>42.0 ms</td><td>13.3 ms</td><td>3.66 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>138.9 ms</td><td>13.3 ms</td><td>1.40 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>92.7 ms</td><td>14.5 ms</td><td>2.63 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>47.2 ms</td><td>9.9 ms</td><td>0.96 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -2656,16 +2659,19 @@ forty milliseconds, and publishing that would have been dishonest.</li>
 thousand files is remarkable, and for a one-off search from a shell it
 is the right tool. Nothing here argues otherwise.</li>
 <li><strong>ugrep is in the CI run.</strong> On the GitHub runner (4 vCPUs) the first
-run put ugrep at 7 ms against ripgrep’s 60 ms, which was ugrep’s match
-limit stopping the whole search after fifty hits, not a scan. The
-limits were removed from both scan tools for that reason; the
-<a href="#latest-results">latest results</a> page shows the corrected run.</li>
+two runs put ugrep at 6 ms against ripgrep’s 60 ms on every query that
+had a match, and at 84 ms on the one that had none. That was ugrep’s
+<code>/dev/null</code> shortcut above, not a scan; the
+<a href="#latest-results">latest results</a> page shows the corrected run. It is a good
+reminder of why the script and the raw JSON are published with the
+numbers.</li>
 <li><strong>The engine’s time does not grow with the tree.</strong> Between the two
-trees ripgrep’s cost roughly doubles on the regex rows because it reads
-twice as many bytes; the engine stays near a millisecond because the
-trigram index narrows every query to the few files that can match
-before any text is read. On a tree ten times larger the scan takes ten
-times longer and the index does not.</li>
+trees ripgrep’s cost doubles to quadruples on the regex rows because it
+reads more bytes and prints more lines; the engine stays near a
+millisecond because the trigram index narrows every query to the few
+files that can match before any text is read, and it prints fifty. On a
+tree ten times larger the scan takes ten times longer and the index
+does not.</li>
 <li><strong>A query per keystroke changes the arithmetic.</strong> An editor or web UI
 that searches as you type issues ten queries for a ten-letter
 identifier. Forty milliseconds each is a visible stutter; one
