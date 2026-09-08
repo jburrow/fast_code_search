@@ -1,0 +1,675 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Development - fast_code_search</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Code search that ranks like code: definitions above usages, widely imported files first, served from an in-memory trigram index.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/fcs-a2b6dcbb.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "../searchindex-e2fe761c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-f198a439.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">fast_code_search</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jburrow/fast_code_search" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/imported/development.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="development-guide"><a class="header" href="#development-guide">Development Guide</a></h1>
+<p>This guide provides detailed information for developers working on fast_code_search.</p>
+<h2 id="table-of-contents"><a class="header" href="#table-of-contents">Table of Contents</a></h2>
+<ul>
+<li><a href="#development-environment-setup">Development Environment Setup</a></li>
+<li><a href="#project-structure">Project Structure</a></li>
+<li><a href="#building-and-testing">Building and Testing</a></li>
+<li><a href="#architecture-deep-dive">Architecture Deep Dive</a></li>
+<li><a href="#development-workflow">Development Workflow</a></li>
+<li><a href="#debugging">Debugging</a></li>
+<li><a href="#performance-profiling">Performance Profiling</a></li>
+</ul>
+<h2 id="development-environment-setup"><a class="header" href="#development-environment-setup">Development Environment Setup</a></h2>
+<h3 id="system-requirements"><a class="header" href="#system-requirements">System Requirements</a></h3>
+<ul>
+<li><strong>OS</strong>: Linux, macOS, or Windows (native or WSL2)</li>
+<li><strong>Rust</strong>: 1.89 or later (see <code>rust-toolchain.toml</code>)</li>
+<li><strong>Memory</strong>: 4GB minimum, 8GB recommended</li>
+<li><strong>Disk</strong>: 2GB for dependencies and build artifacts</li>
+</ul>
+<h3 id="required-tools"><a class="header" href="#required-tools">Required Tools</a></h3>
+<pre><code class="language-bash"># Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install protobuf compiler
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install protobuf-compiler
+
+# macOS
+brew install protobuf
+
+# Verify installation
+protoc --version  # Should be 3.x or later
+rustc --version   # Should be 1.89 or later
+</code></pre>
+<h3 id="recommended-development-tools"><a class="header" href="#recommended-development-tools">Recommended Development Tools</a></h3>
+<pre><code class="language-bash"># Install clippy and rustfmt
+rustup component add clippy rustfmt
+
+# Install cargo-watch for auto-rebuild on file changes
+cargo install cargo-watch
+
+# cargo-deny checks advisories/licenses (CI runs it too)
+cargo install cargo-deny
+</code></pre>
+<h3 id="ide-setup"><a class="header" href="#ide-setup">IDE Setup</a></h3>
+<h4 id="vs-code"><a class="header" href="#vs-code">VS Code</a></h4>
+<p>Install these extensions:</p>
+<ul>
+<li><code>rust-analyzer</code>: Rust language support</li>
+<li><code>CodeLLDB</code>: Debugging support</li>
+<li><code>Even Better TOML</code>: TOML file support</li>
+</ul>
+<h4 id="intellij-idea--clion"><a class="header" href="#intellij-idea--clion">IntelliJ IDEA / CLion</a></h4>
+<ul>
+<li>Install the Rust plugin from JetBrains Marketplace</li>
+</ul>
+<h2 id="project-structure"><a class="header" href="#project-structure">Project Structure</a></h2>
+<pre><code>fast_code_search/
+├── proto/
+│   ├── search.proto            # keyword gRPC service (Search, Index) + grpc.health.v1
+│   └── semantic_search.proto   # semantic engine service (feature "semantic")
+├── src/
+│   ├── lib.rs                  # module tree; semantic* modules are cfg(feature = "semantic")
+│   ├── main.rs                 # keyword server binary: config, servers, indexer, watcher, shutdown
+│   ├── config.rs               # TOML config (deny_unknown_fields), validation, CLI overrides
+│   ├── telemetry.rs            # tracing subscriber + optional OTLP export
+│   ├── index/
+│   │   ├── trigram.rs          # trigram extraction (bitset dedupe, per-byte fold) + Roaring index
+│   │   ├── lazy_file_store.rs  # file table: small files by owned reads, large files mmapped
+│   │   └── persistence.rs      # atomic save/load (magic + version), staleness checks
+│   ├── search/
+│   │   ├── engine/
+│   │   │   ├── mod.rs          # SearchEngine: indexing, incremental update, import resolution
+│   │   │   ├── query.rs        # run_candidates (budget/deadline/paging), per-document scans
+│   │   │   ├── text.rs         # matching/scoring helpers (line hits, word bounds, truncation)
+│   │   │   ├── persist.rs      # save_index, load_index*, reconciliation, symbol rebuild
+│   │   │   ├── progress.rs     # IndexingProgress / status types, broadcaster
+│   │   │   └── tests.rs
+│   │   ├── background_indexer.rs # two-phase batch build, checkpoints, shutdown flag
+│   │   ├── incremental.rs      # apply watcher changes (files and directories) to the engine
+│   │   ├── watcher.rs          # notify-based file watcher
+│   │   ├── file_discovery.rs   # walk (walkdir / ignore crate), eligibility rules
+│   │   ├── path_filter.rs      # include/exclude globs
+│   │   ├── query_syntax.rs     # file:/lang:/-term/case:/word: parsing
+│   │   ├── ranking.rs          # RankingWeights / FileScoreWeights
+│   │   └── regex_search.rs     # regex -&gt; trigram constraints
+│   ├── symbols/
+│   │   ├── extractor.rs        # tree-sitter: tags.scm queries + supplementary walker, imports
+│   │   └── queries/            # vendored tags queries (C#)
+│   ├── dependencies/mod.rs     # import graph, per-language import resolution
+│   ├── server/service.rs       # gRPC CodeSearch service
+│   ├── web/                    # axum REST API, web UI assets, metrics
+│   ├── diagnostics/            # /api/diagnostics types and self-tests
+│   ├── utils.rs                # transcoding, binary detection, system limits
+│   ├── cli/                    # the `fcs` command-line client (docs/CLI.md)
+│   └── bin/                    # fcs, fast_code_search_semantic (feature), fast_code_search_validator
+├── static/                     # embedded web UI (Tailwind build in tailwind.css)
+├── tests/integration_tests.rs  # end-to-end gRPC + HTTP tests on ephemeral ports
+├── benches/                    # criterion benchmarks (search, persistence)
+├── docs/                       # this guide, deployment, design notes, plans, archive
+├── build.rs                    # protobuf compilation
+└── Cargo.toml
+</code></pre>
+<h2 id="building-and-testing"><a class="header" href="#building-and-testing">Building and Testing</a></h2>
+<h3 id="build-commands"><a class="header" href="#build-commands">Build Commands</a></h3>
+<pre><code class="language-bash"># Debug build (faster compilation, slower runtime)
+cargo build
+
+# Release build (slower compilation, optimized runtime)
+cargo build --release
+
+# Build specific binary
+cargo build --bin fast_code_search_server
+
+# Build with verbose output
+cargo build -v
+</code></pre>
+<h3 id="testing"><a class="header" href="#testing">Testing</a></h3>
+<pre><code class="language-bash"># Run all tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_trigram_extraction
+
+# Run tests in a specific module
+cargo test index::trigram
+
+# Run tests with multiple threads
+cargo test -- --test-threads=4
+</code></pre>
+<h3 id="continuous-development"><a class="header" href="#continuous-development">Continuous Development</a></h3>
+<pre><code class="language-bash"># Auto-rebuild on file changes
+cargo watch -x build
+
+# Auto-test on file changes
+cargo watch -x test
+
+# Auto-run server on file changes
+cargo watch -x 'run --bin fast_code_search_server'
+</code></pre>
+<h3 id="code-quality"><a class="header" href="#code-quality">Code Quality</a></h3>
+<pre><code class="language-bash"># Format code
+cargo fmt
+
+# Check formatting without modifying files
+cargo fmt -- --check
+
+# Run clippy linter
+cargo clippy
+
+# Run clippy with strict warnings
+cargo clippy -- -D warnings
+
+# Check for unused dependencies
+cargo +nightly udeps
+</code></pre>
+<h2 id="architecture-deep-dive"><a class="header" href="#architecture-deep-dive">Architecture Deep Dive</a></h2>
+<h3 id="indexing-pipeline"><a class="header" href="#indexing-pipeline">Indexing Pipeline</a></h3>
+<ol>
+<li><strong>Discovery</strong> (<code>file_discovery.rs</code>): a <code>walkdir</code> or, with <code>respect_gitignore</code>,
+an <code>ignore</code> walk applies exclude patterns, include extensions, binary and size
+rules. The same rules (<code>is_eligible</code>) gate watcher events.</li>
+<li><strong>Phase 1, parallel (rayon)</strong>: <code>PartialIndexedFile::process</code> reads each file
+into an owned buffer (never through a live mmap), records its mtime/size,
+transcodes non-UTF-8, runs the structural safety check (which only disables
+symbol extraction) and extracts trigrams.</li>
+<li><strong>Phase 2, parallel</strong>: <code>PreIndexedFile::from_partial</code> runs tree-sitter (tags
+query + walker) under <code>catch_unwind</code>.</li>
+<li><strong>Merge, under the engine write lock</strong>: <code>index_batch</code> registers files,
+inserts postings, stores symbols, queues imports; unresolved imports are
+parked and retried only when a file with a matching name appears.</li>
+<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v7
+(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX05</code>, version,
+CRC-32, section lengths), then a bincode metadata section (file table,
+symbols, edges, parked imports, reference names and per-file references),
+a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
+back to back. Save streams bitmaps from the live map; load memory-maps the
+file, checks bounds and checksum, and deserializes bitmaps in parallel from
+the mapping. <code>tests/fixtures/index-v7.fcsidx</code> pins the format byte for
+byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
+deliberate format change (and bump the version).</li>
+</ol>
+<h3 id="search-pipeline"><a class="header" href="#search-pipeline">Search Pipeline</a></h3>
+<ol>
+<li><strong>Parse</strong> (<code>query_syntax.rs</code>): terms, <code>-term</code>, <code>file:</code>/<code>lang:</code> globs, <code>case:</code>/<code>word:</code>.</li>
+<li><strong>Candidates</strong>: intersection of each term’s trigram bitmaps (index is lowercase),
+then the path filter (precomputed display paths, no allocation).</li>
+<li><strong><code>run_candidates</code></strong> (<code>engine/query.rs</code>): fast vs full mode, fast-mode ordering by
+file metadata, parallel per-document scans under a <code>QueryRun</code> (match budget +
+deadline), deterministic sort (score, file id, line) and offset paging.</li>
+<li><strong>Per document</strong> (<code>engine/text.rs</code>): whole-buffer scan (memmem / memchr2 /
+Unicode fold) resolving line bounds only at hits, lazy symbol maps, scoring.</li>
+<li><strong>Serve</strong>: REST (<code>/api/search</code>) and gRPC report ranking info, totals and
+truncation; every result carries full-line offsets and a character column.</li>
+</ol>
+<h3 id="key-data-structures"><a class="header" href="#key-data-structures">Key Data Structures</a></h3>
+<ul>
+<li><code>TrigramIndex</code>: <code>FxHashMap&lt;Trigram, RoaringBitmap&gt;</code> (run-optimised in <code>finalize</code>),
+plus an all-documents cache kept warm across incremental updates.</li>
+<li><code>LazyFileStore</code>: <code>Vec&lt;LazyMappedFile&gt;</code> addressed by file id; files ≤ 1 MiB are
+read into owned buffers per access, larger ones are memory-mapped; removed ids
+are tombstoned so ids stay stable.</li>
+<li><code>DependencyIndex</code>: bidirectional import graph with cached dependent counts and
+per-language resolution (Rust module paths, Python packages, JS/TS extensions
+and <code>index.*</code>).</li>
+<li><code>FileMetadata</code>: per-file fast-ranking score, lowercase stem, display path.</li>
+</ul>
+<h3 id="scoring"><a class="header" href="#scoring">Scoring</a></h3>
+<p>All weights live in <code>src/search/ranking.rs</code> (<code>RankingWeights</code>, <code>FileScoreWeights</code>).
+Line-level score:</p>
+<pre><code>score = exact_case(2.0) * symbol_definition(3.0) * src_lib_dir(1.5)
+      * line_start(1.5) * line_length_factor * dependency_boost
+line_length_factor = max(1 / (1 + ln(1 + len/100)), 0.3)
+dependency_boost   = 1 + log10(dependents) * 0.5
+</code></pre>
+<p>File-level (fast-mode ordering only, never in a result score): additive
+<code>base + src/lib + extension + log2(symbols) + log2(dependents)</code>, ×0.7 for
+test/example paths, ×5 when the query matches the file stem. Symbol search adds
+exact (2.0) &gt; prefix (1.5) &gt; substring and a small penalty for variables.</p>
+<h3 id="threading-model"><a class="header" href="#threading-model">Threading Model</a></h3>
+<ul>
+<li><strong>Indexing</strong>: discovery on its own thread; phases 1–2 on the global rayon pool
+(8 MB stacks for tree-sitter, built in <code>main</code>); merges under the engine
+<code>RwLock</code> write lock.</li>
+<li><strong>Search</strong>: REST/gRPC handlers <code>spawn_blocking</code>, take <code>try_read</code> (503 +
+<code>Retry-After</code> while a writer holds the lock), and scan candidates with rayon.</li>
+<li><strong>Watcher</strong>: one thread (8 MB stack), gathers events for 200 ms and applies
+them under one write lock via <code>incremental::apply_changes</code>.</li>
+<li><strong>Servers</strong>: tokio; graceful shutdown on SIGINT/SIGTERM saves the index.</li>
+</ul>
+<h2 id="development-workflow"><a class="header" href="#development-workflow">Development Workflow</a></h2>
+<h3 id="adding-a-new-language-for-symbol-extraction"><a class="header" href="#adding-a-new-language-for-symbol-extraction">Adding a New Language for Symbol Extraction</a></h3>
+<ol>
+<li>Add the grammar crate to <code>Cargo.toml</code> (e.g. <code>tree-sitter-kotlin = "0.x"</code>).</li>
+<li>Map its extensions in <code>SymbolExtractor::language_for_extension</code>
+(<code>src/symbols/extractor.rs</code>) and, if the crate exports a <code>TAGS_QUERY</code>, add it to
+<code>tags_query_for</code>. If it does not, vendor the grammar’s <code>queries/tags.scm</code> under
+<code>src/symbols/queries/</code> (see the C# entry) or rely on the supplementary walker
+(<code>visit_definition_node</code>) for its node kinds.</li>
+<li>Add the extension to <code>lang_globs</code> in <code>src/search/query_syntax.rs</code>.</li>
+<li>Add a test in <code>extractor.rs</code> that asserts names <strong>and</strong> line numbers, and an
+import-resolution rule in <code>src/dependencies/mod.rs</code> if the language has imports.</li>
+</ol>
+<h3 id="modifying-the-grpc-api"><a class="header" href="#modifying-the-grpc-api">Modifying the gRPC API</a></h3>
+<ol>
+<li>Update <code>proto/search.proto</code></li>
+<li>Build project to regenerate bindings:</li>
+</ol>
+<pre><code class="language-bash">cargo build
+</code></pre>
+<ol start="3">
+<li>Update <code>src/server/service.rs</code> to implement new endpoints</li>
+<li>Update example client in <code>examples/client.rs</code></li>
+</ol>
+<h3 id="performance-optimization-checklist"><a class="header" href="#performance-optimization-checklist">Performance Optimization Checklist</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> Profile with <code>cargo flamegraph</code></li>
+<li><input disabled="" type="checkbox"> Check allocations with <code>valgrind --tool=massif</code></li>
+<li><input disabled="" type="checkbox"> Benchmark with <code>cargo bench</code> (if benchmarks exist)</li>
+<li><input disabled="" type="checkbox"> Test with large codebases (10GB+)</li>
+<li><input disabled="" type="checkbox"> Measure memory usage under load</li>
+</ul>
+<h2 id="debugging"><a class="header" href="#debugging">Debugging</a></h2>
+<h3 id="debug-build"><a class="header" href="#debug-build">Debug Build</a></h3>
+<pre><code class="language-bash"># Build with debug symbols
+cargo build
+
+# Run with debugging
+rust-gdb target/debug/fast_code_search_server
+# or
+rust-lldb target/debug/fast_code_search_server
+</code></pre>
+<h3 id="logging"><a class="header" href="#logging">Logging</a></h3>
+<p>The crate uses <code>tracing</code> (not <code>log</code>/<code>env_logger</code>):</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use tracing::{debug, info, warn};
+
+debug!(doc_id, "Processing document");
+info!(count, "Indexed files");
+<span class="boring">}</span></code></pre>
+<p><code>RUST_LOG</code> controls the filter and takes precedence over <code>--verbose</code>; the server
+warns when both are set. Optional OTLP export is configured in <code>[telemetry]</code>
+(<code>OTEL_EXPORTER_OTLP_ENDPOINT</code>, <code>OTEL_SERVICE_NAME</code>; <code>OTEL_SDK_DISABLED=true</code> is final).</p>
+<pre><code class="language-bash">RUST_LOG=debug cargo run --bin fast_code_search_server
+</code></pre>
+<h3 id="common-issues"><a class="header" href="#common-issues">Common Issues</a></h3>
+<p><strong>Issue</strong>: Protobuf compilation fails</p>
+<pre><code class="language-bash"># Solution: Install protoc
+sudo apt-get install protobuf-compiler
+</code></pre>
+<p><strong>Issue</strong>: Tree-sitter linking errors</p>
+<pre><code class="language-bash"># Solution: Clean and rebuild
+cargo clean
+cargo build
+</code></pre>
+<p><strong>Issue</strong>: Out of memory during indexing</p>
+<pre><code class="language-bash"># Solution: Process files in batches or increase system memory
+</code></pre>
+<h2 id="performance-profiling"><a class="header" href="#performance-profiling">Performance Profiling</a></h2>
+<h3 id="cpu-profiling"><a class="header" href="#cpu-profiling">CPU Profiling</a></h3>
+<pre><code class="language-bash"># Install flamegraph
+cargo install flamegraph
+
+# Profile the server
+cargo flamegraph --bin fast_code_search_server
+
+# View generated flamegraph.svg in browser
+</code></pre>
+<h3 id="memory-profiling"><a class="header" href="#memory-profiling">Memory Profiling</a></h3>
+<pre><code class="language-bash"># Use Valgrind
+valgrind --tool=massif target/debug/fast_code_search_server
+
+# Analyze results
+ms_print massif.out.&lt;pid&gt;
+</code></pre>
+<h3 id="benchmarking"><a class="header" href="#benchmarking">Benchmarking</a></h3>
+<p>Criterion benchmarks live in <code>benches/</code> (<code>search_benchmark.rs</code>,
+<code>persistence_benchmark.rs</code>) and run in CI on every push to <code>main</code>, with trends
+published to GitHub Pages. They use a small synthetic corpus, so they measure
+fixed overhead well and large-corpus behaviour poorly (roadmap 6.5).</p>
+<pre><code class="language-bash">cargo bench --bench search_benchmark -- indexing
+</code></pre>
+<p>Use <code>std::hint::black_box</code>, not <code>criterion::black_box</code>.</p>
+<h2 id="release-process"><a class="header" href="#release-process">Release Process</a></h2>
+<p>Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.</p>
+<h3 id="steps-to-release"><a class="header" href="#steps-to-release">Steps to Release</a></h3>
+<ol>
+<li>
+<p><strong>Update version</strong> in <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">version = "0.2.0"
+</code></pre>
+</li>
+<li>
+<p><strong>Update CHANGELOG.md</strong>:</p>
+<ul>
+<li>Move items from <code>[Unreleased]</code> to new version section</li>
+<li>Add release date</li>
+<li>Update comparison links at bottom of file</li>
+</ul>
+</li>
+<li>
+<p><strong>Run quality checks</strong>:</p>
+<pre><code class="language-bash">cargo test
+cargo clippy -- -D warnings
+cargo fmt --check
+</code></pre>
+</li>
+<li>
+<p><strong>Commit the version bump</strong>:</p>
+<pre><code class="language-bash">git add Cargo.toml CHANGELOG.md
+git commit -m "chore: release v0.2.0"
+</code></pre>
+</li>
+<li>
+<p><strong>Create and push the tag</strong>:</p>
+<pre><code class="language-bash">git tag v0.2.0
+git push origin main
+git push origin v0.2.0
+</code></pre>
+</li>
+<li>
+<p><strong>Monitor the release workflow</strong>: The <a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/release.yml">release workflow</a> will:</p>
+<ul>
+<li>Build release binaries for Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64)</li>
+<li>Package each with config template, proto files, README, and LICENSE</li>
+<li>Generate SHA256 checksums</li>
+<li>Create a GitHub Release with changelog notes</li>
+</ul>
+</li>
+</ol>
+<h3 id="release-artifacts"><a class="header" href="#release-artifacts">Release Artifacts</a></h3>
+<p>Each release includes platform-specific archives:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Platform</th><th>Archive</th></tr>
+</thead>
+<tbody>
+<tr><td>Linux x86_64 (glibc)</td><td><code>fast_code_search-v{VERSION}-x86_64-unknown-linux-gnu.tar.gz</code></td></tr>
+<tr><td>Linux x86_64 (musl, static)</td><td><code>fast_code_search-v{VERSION}-x86_64-unknown-linux-musl.tar.gz</code></td></tr>
+<tr><td>macOS x86_64</td><td><code>fast_code_search-v{VERSION}-x86_64-apple-darwin.tar.gz</code></td></tr>
+<tr><td>macOS ARM64</td><td><code>fast_code_search-v{VERSION}-aarch64-apple-darwin.tar.gz</code></td></tr>
+<tr><td>Windows x86_64</td><td><code>fast_code_search-v{VERSION}-x86_64-pc-windows-msvc.zip</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Each archive contains:</p>
+<ul>
+<li><code>fast_code_search_server</code> (or <code>.exe</code> on Windows)</li>
+<li><code>config.toml.example</code></li>
+<li><code>proto/search.proto</code></li>
+<li><code>README.md</code></li>
+<li><code>LICENSE</code></li>
+</ul>
+<h3 id="pre-release-versions"><a class="header" href="#pre-release-versions">Pre-release Versions</a></h3>
+<p>For pre-release versions (alpha, beta, rc), use a hyphen in the version:</p>
+<pre><code class="language-bash">git tag v0.2.0-beta.1
+</code></pre>
+<p>These are automatically marked as pre-releases on GitHub.</p>
+<h2 id="useful-commands-reference"><a class="header" href="#useful-commands-reference">Useful Commands Reference</a></h2>
+<pre><code class="language-bash"># View dependency tree
+cargo tree
+
+# Check for outdated dependencies
+cargo outdated
+
+# Update dependencies
+cargo update
+
+# Generate documentation
+cargo doc --open
+
+# Check compilation without building
+cargo check
+
+# Clean build artifacts
+cargo clean
+
+# Show what cargo would compile
+cargo build --dry-run
+</code></pre>
+<h2 id="getting-help"><a class="header" href="#getting-help">Getting Help</a></h2>
+<ul>
+<li>Read the <a href="contributing.html">Contributing Guide</a></li>
+<li>Check existing GitHub issues</li>
+<li>Review the <a href="https://github.com/jburrow/fast_code_search/blob/main/README.md">README</a> for architecture overview</li>
+<li>Ask questions in pull requests</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../imported/contributing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../imported/security.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../imported/contributing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../imported/security.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

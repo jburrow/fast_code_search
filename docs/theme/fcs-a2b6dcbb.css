@@ -1,0 +1,11 @@
+/* fast_code_search book: the web UI's yellow-on-ink accent on mdBook's layout. */
+:root {
+  --fcs-yellow: #fff900;
+  --fcs-ink: #1d1c0f;
+}
+.menu-title { font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; letter-spacing: .04em; }
+.content h1 { font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; }
+.content h1::before { content: ""; display: inline-block; width: .55em; height: .55em; background: var(--fcs-yellow); border: 2px solid var(--fcs-ink); margin-right: .45em; vertical-align: baseline; }
+.content table { font-size: .95em; }
+.content code { font-size: .92em; }
+.content .fcs-callout { border-left: 4px solid var(--fcs-yellow); background: rgba(255, 249, 0, .10); padding: .6em 1em; margin: 1em 0; }

@@ -1,0 +1,962 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Prior art - fast_code_search</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Code search that ranks like code: definitions above usages, widely imported files first, served from an in-memory trigram index.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/fcs-a2b6dcbb.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "../searchindex-e2fe761c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-f198a439.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">fast_code_search</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jburrow/fast_code_search" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/imported/prior-art.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="prior-art-competitive-analysis-of-code-search-tools"><a class="header" href="#prior-art-competitive-analysis-of-code-search-tools">Prior Art: Competitive Analysis of Code Search Tools</a></h1>
+<p>This document compares <code>fast_code_search</code> to the best code search implementations available, analyzing architectural approaches, performance characteristics, and identifying areas for improvement.</p>
+<h2 id="executive-summary"><a class="header" href="#executive-summary">Executive Summary</a></h2>
+<p><code>fast_code_search</code> is a well-engineered code search service that combines several proven techniques. However, compared to production-grade tools like ripgrep, Zoekt, and GitHub Code Search, there are specific areas where improvements would bring significant benefits.</p>
+<h3 id="current-strengths"><a class="header" href="#current-strengths">Current Strengths</a></h3>
+<ul>
+<li>✅ Trigram-based indexing with Roaring bitmaps</li>
+<li>✅ Memory-mapped file access</li>
+<li>✅ Parallel search with rayon</li>
+<li>✅ Symbol awareness via tree-sitter</li>
+<li>✅ gRPC streaming API</li>
+</ul>
+<h3 id="key-improvement-opportunities"><a class="header" href="#key-improvement-opportunities">Key Improvement Opportunities</a></h3>
+<ul>
+<li>🔄 Replace byte-by-byte search with SIMD-accelerated algorithms</li>
+<li>🔄 Add index persistence for faster restarts</li>
+<li>🔄 Implement incremental indexing with file watching</li>
+<li>🔄 Enhance regex acceleration with better literal extraction</li>
+<li>🔄 Add ranking based on code quality signals</li>
+</ul>
+<h3 id="unique-advantages-of-fast_code_searchs-in-memory-server-architecture"><a class="header" href="#unique-advantages-of-fast_code_searchs-in-memory-server-architecture">Unique Advantages of fast_code_search’s In-Memory Server Architecture</a></h3>
+<p>Unlike ripgrep (stateless CLI) or Zoekt (disk-based index), fast_code_search operates as an <strong>always-on, in-memory server</strong>. This design provides several distinct advantages:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Advantage</th><th>Why It Matters</th><th>vs. ripgrep</th><th>vs. Zoekt</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Zero cold-start latency</strong></td><td>Index is always hot in RAM - no disk I/O on first query</td><td>ripgrep rescans files every query</td><td>Zoekt reads index from disk</td></tr>
+<tr><td><strong>Sub-millisecond search</strong></td><td>Memory access is 100-1000x faster than SSD</td><td>Similar per-file, but no file discovery</td><td>Faster than memory-mapped index files</td></tr>
+<tr><td><strong>Warm CPU caches</strong></td><td>Repeated queries hit L1/L2 cache</td><td>Each invocation starts cold</td><td>Partially warm (index pages)</td></tr>
+<tr><td><strong>Live dependency graph</strong></td><td>Import relationships tracked in-memory</td><td>Not available</td><td>Not available</td></tr>
+<tr><td><strong>Real-time streaming</strong></td><td>gRPC streaming to IDEs/UIs as results found</td><td>Pipes stdout</td><td>HTTP chunks</td></tr>
+<tr><td><strong>Concurrent read access</strong></td><td>RwLock allows many simultaneous searches</td><td>Process per search</td><td>Thread per search</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>The key insight</strong>: For a codebase that developers search repeatedly throughout the day, an in-memory server amortizes the indexing cost over many queries, while tools like ripgrep pay a (smaller) cost on every single search.</p>
+<h4 id="when-fast_code_search-wins"><a class="header" href="#when-fast_code_search-wins">When fast_code_search Wins</a></h4>
+<ol>
+<li><strong>IDE Integration</strong>: Sub-10ms search enables real-time “search as you type”</li>
+<li><strong>Repeated Queries</strong>: Same search patterns used throughout a coding session</li>
+<li><strong>Large Codebases</strong>: 10GB+ where ripgrep’s per-query scan takes seconds</li>
+<li><strong>Dependency Queries</strong>: “What files import this module?” - requires the graph</li>
+<li><strong>Team/Shared Search</strong>: Multiple developers querying the same codebase</li>
+</ol>
+<h4 id="when-others-win"><a class="header" href="#when-others-win">When Others Win</a></h4>
+<ol>
+<li><strong>One-off searches</strong>: ripgrep is instant for single searches, no server needed</li>
+<li><strong>Disk-constrained</strong>: Zoekt’s persistent index survives restarts without rebuild</li>
+<li><strong>Planet-scale</strong>: GitHub CS scales horizontally across data centers</li>
+</ol>
+<hr>
+<h2 id="1-ripgrep-rg"><a class="header" href="#1-ripgrep-rg">1. ripgrep (rg)</a></h2>
+<p><strong>Repository</strong>: https://github.com/BurntSushi/ripgrep<br><strong>Language</strong>: Rust<br><strong>Category</strong>: Command-line grep replacement</p>
+<h3 id="architecture-overview"><a class="header" href="#architecture-overview">Architecture Overview</a></h3>
+<p>ripgrep is the gold standard for fast text search. Key techniques:</p>
+<ol>
+<li>
+<p><strong>SIMD-Accelerated Substring Search</strong></p>
+<ul>
+<li>Uses the <code>memchr</code> crate for blazing fast literal matching</li>
+<li>Vectorized algorithms (SSE2/AVX2/NEON) for 10-20x speedup over naive search</li>
+<li>Teddy algorithm for simultaneous multi-pattern matching</li>
+</ul>
+</li>
+<li>
+<p><strong>Regex Engine Optimization</strong></p>
+<ul>
+<li>Lazy DFA construction with bounded memory</li>
+<li>Literal extraction from regex patterns for pre-filtering</li>
+<li>Hybrid regex engine that switches strategies based on pattern</li>
+</ul>
+</li>
+<li>
+<p><strong>Smart File Handling</strong></p>
+<ul>
+<li>Automatic binary file detection (skips non-text)</li>
+<li>Respects <code>.gitignore</code> by default</li>
+<li>Memory-maps large files, reads small files directly</li>
+</ul>
+</li>
+</ol>
+<h3 id="published-ripgrep-benchmark-data"><a class="header" href="#published-ripgrep-benchmark-data">Published ripgrep Benchmark Data</a></h3>
+<p>From the <a href="https://burntsushi.net/ripgrep/">official ripgrep benchmarks</a> on Linux kernel source (~1GB):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Benchmark</th><th>ripgrep</th><th>git grep</th><th>ag (Silver Searcher)</th><th>grep</th></tr>
+</thead>
+<tbody>
+<tr><td>Simple literal (<code>PM_RESUME</code>)</td><td>334ms</td><td>345ms</td><td>1588ms</td><td>-</td></tr>
+<tr><td>Case-insensitive literal</td><td>345ms</td><td>343ms</td><td>1609ms</td><td>-</td></tr>
+<tr><td>Word boundary (<code>-w</code>)</td><td>362ms</td><td>341ms</td><td>1603ms</td><td>-</td></tr>
+<tr><td>Alternation (4 literals)</td><td>351ms</td><td>501ms</td><td>1747ms</td><td>-</td></tr>
+<tr><td>Unicode word (<code>\wAh</code>)</td><td>355ms</td><td>13045ms</td><td>1774ms</td><td>-</td></tr>
+<tr><td>No literals (<code>\w{5}\s+...</code>)</td><td>577ms</td><td>26382ms</td><td>2339ms</td><td>-</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Key takeaway</strong>: ripgrep and git grep are fastest for simple queries, but ripgrep maintains speed even with Unicode and complex patterns where git grep slows dramatically (26 seconds!).</p>
+<p>On single large file (~9GB subtitle corpus):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Benchmark</th><th>ripgrep</th><th>grep</th><th>ag</th><th>UCG</th></tr>
+</thead>
+<tbody>
+<tr><td>Simple literal (no lines)</td><td>268ms</td><td>516ms</td><td>-</td><td>-</td></tr>
+<tr><td>Simple literal (with lines)</td><td>595ms</td><td>969ms</td><td>2730ms</td><td>745ms</td></tr>
+<tr><td>Case-insensitive (Unicode)</td><td>366ms</td><td>4084ms</td><td>2775ms</td><td>841ms</td></tr>
+<tr><td>Alternation (5 patterns)</td><td>294ms</td><td>2955ms</td><td>3757ms</td><td>1479ms</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Key takeaway</strong>: ripgrep’s SIMD-accelerated Teddy algorithm dominates multi-pattern searches.</p>
+<h3 id="comparison-to-fast_code_search"><a class="header" href="#comparison-to-fast_code_search">Comparison to fast_code_search</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>ripgrep</th><th>fast_code_search</th><th>Gap</th></tr>
+</thead>
+<tbody>
+<tr><td>Substring search</td><td>memchr/memmem (SIMD)</td><td>memchr/memmem (SIMD)</td><td>✅ Equivalent</td></tr>
+<tr><td>Case-insensitive</td><td>SIMD lowercasing</td><td>Byte-by-byte loop</td><td><strong>Improve</strong></td></tr>
+<tr><td>Regex engine</td><td>Optimized hybrid</td><td>Standard regex crate</td><td>Minor gap</td></tr>
+<tr><td>Index persistence</td><td>None (stateless)</td><td>Yes (optional)</td><td>✅ Advantage</td></tr>
+<tr><td>Parallel search</td><td>Yes (files)</td><td>Yes (documents)</td><td>✅ Equivalent</td></tr>
+<tr><td>Incremental search</td><td>Streaming</td><td>Streaming</td><td>✅ Equivalent</td></tr>
+<tr><td>Pre-built index</td><td>No</td><td>Yes</td><td>✅ Advantage</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="why-fast_code_search-can-be-faster-for-repeated-queries"><a class="header" href="#why-fast_code_search-can-be-faster-for-repeated-queries">Why fast_code_search Can Be Faster (for repeated queries)</a></h3>
+<p>ripgrep must rediscover files and rescan content on every invocation. For a single query, this is optimal. But for repeated queries (common in IDE integration), fast_code_search’s indexed approach wins:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query Count</th><th>ripgrep (80ms × N)</th><th>fast_code_search (3s index + 5ms × N)</th></tr>
+</thead>
+<tbody>
+<tr><td>1 query</td><td>80ms ✓</td><td>3005ms</td></tr>
+<tr><td>10 queries</td><td>800ms ✓</td><td>3050ms</td></tr>
+<tr><td>50 queries</td><td>4000ms</td><td>3250ms ✓</td></tr>
+<tr><td>100 queries</td><td>8000ms</td><td>3500ms ✓</td></tr>
+<tr><td>1000 queries</td><td>80s</td><td>8s ✓</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="what-we-can-adopt-from-ripgrep"><a class="header" href="#what-we-can-adopt-from-ripgrep">What We Can Adopt from ripgrep</a></h3>
+<ol>
+<li>
+<p><strong>SIMD Case-Insensitive Search</strong> (High Impact)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Current implementation (slow):
+fn contains_case_insensitive(haystack: &amp;str, needle_lower: &amp;str) -&gt; bool {
+    // Byte-by-byte comparison with manual case folding
+}
+
+// ripgrep approach (fast):
+// Use memchr's Finder with case-folding preprocessing
+// Or: Convert entire haystack to lowercase once, then use memmem
+<span class="boring">}</span></code></pre>
+</li>
+<li>
+<p><strong>Better Literal Extraction from Regex</strong> (Medium Impact)</p>
+<ul>
+<li>ripgrep extracts longer literal prefixes/suffixes for pre-filtering</li>
+<li>Current regex_search.rs only handles basic concatenation</li>
+</ul>
+</li>
+<li>
+<p><strong>Teddy Algorithm for Multi-Pattern Search</strong> (High Impact)</p>
+<ul>
+<li>ripgrep uses a SIMD algorithm called “Teddy” (from Intel’s Hyperscan)</li>
+<li>Searches for multiple patterns simultaneously using packed comparisons</li>
+<li>Up to 10x faster than sequential pattern matching for alternations</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="2-zoekt-googlesourcegraph"><a class="header" href="#2-zoekt-googlesourcegraph">2. Zoekt (Google/Sourcegraph)</a></h2>
+<p><strong>Repository</strong>: https://github.com/sourcegraph/zoekt<br><strong>Language</strong>: Go<br><strong>Category</strong>: Production code search engine (Sourcegraph backend)</p>
+<h3 id="architecture-overview-1"><a class="header" href="#architecture-overview-1">Architecture Overview</a></h3>
+<p>Zoekt powers Sourcegraph’s code search and is based on Google’s internal code search (CS).</p>
+<ol>
+<li>
+<p><strong>Persistent Index Format</strong></p>
+<ul>
+<li>Sharded on-disk index (<code>.zoekt</code> files)</li>
+<li>Enables instant startup for large codebases</li>
+<li>Index format: trigrams + content + metadata in single file</li>
+</ul>
+</li>
+<li>
+<p><strong>N-gram Indexing Strategy</strong></p>
+<ul>
+<li>Trigrams for common patterns</li>
+<li>Also stores 4-grams (quadgrams) for better selectivity</li>
+<li>Case-folded trigrams for case-insensitive search</li>
+</ul>
+</li>
+<li>
+<p><strong>Ranking System</strong></p>
+<ul>
+<li>File path matching boost</li>
+<li>Line position boost (earlier lines score higher)</li>
+<li>Repository priority scores</li>
+<li>Branch awareness (main/master weighted higher)</li>
+</ul>
+</li>
+<li>
+<p><strong>Real-time Indexing</strong></p>
+<ul>
+<li>inotify-based file watching</li>
+<li>Incremental reindexing without full rebuild</li>
+</ul>
+</li>
+</ol>
+<h3 id="comparison-to-fast_code_search-1"><a class="header" href="#comparison-to-fast_code_search-1">Comparison to fast_code_search</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>Zoekt</th><th>fast_code_search</th><th>Gap</th></tr>
+</thead>
+<tbody>
+<tr><td>Index persistence</td><td>Yes (disk)</td><td>No (memory only)</td><td><strong>Add</strong></td></tr>
+<tr><td>Incremental indexing</td><td>Yes (inotify)</td><td>No</td><td><strong>Add</strong></td></tr>
+<tr><td>N-gram length</td><td>3-grams + 4-grams</td><td>3-grams only</td><td>Consider</td></tr>
+<tr><td>Symbol search</td><td>Yes</td><td>Yes</td><td>✅ Equivalent</td></tr>
+<tr><td>Ranking sophistication</td><td>High (10+ signals)</td><td>Medium (5 signals)</td><td><strong>Improve</strong></td></tr>
+<tr><td>Repository awareness</td><td>Yes</td><td>No</td><td>Consider</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="what-we-can-adopt-from-zoekt"><a class="header" href="#what-we-can-adopt-from-zoekt">What We Can Adopt from Zoekt</a></h3>
+<ol>
+<li>
+<p><strong>Index Persistence</strong> (High Impact)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Add serialization for the trigram index
+pub fn save_index(&amp;self, path: &amp;Path) -&gt; Result&lt;()&gt; {
+    // Serialize: TrigramIndex + FileStore metadata + SymbolCache
+    // Use bincode or rkyv for fast serialization
+}
+
+pub fn load_index(path: &amp;Path) -&gt; Result&lt;Self&gt; {
+    // Deserialize and memory-map the original files
+}
+<span class="boring">}</span></code></pre>
+</li>
+<li>
+<p><strong>File Watching for Incremental Updates</strong> (High Impact)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Use notify crate for cross-platform file watching
+use notify::{Watcher, RecursiveMode, watcher};
+
+// On file change:
+// 1. Remove old document from trigram index
+// 2. Re-index the changed file
+// 3. Update symbol cache
+<span class="boring">}</span></code></pre>
+</li>
+<li>
+<p><strong>Quadgrams for Better Selectivity</strong> (Medium Impact)</p>
+<ul>
+<li>4-character n-grams reduce false positives for longer queries</li>
+<li>Trade-off: 256x more index entries than trigrams</li>
+<li>Could be stored as a secondary index for common patterns</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="3-github-code-search"><a class="header" href="#3-github-code-search">3. GitHub Code Search</a></h2>
+<p><strong>Architecture</strong>: Proprietary (based on public engineering blogs)<br><strong>Category</strong>: Planet-scale code search (40M+ repositories)</p>
+<h3 id="key-innovations"><a class="header" href="#key-innovations">Key Innovations</a></h3>
+<ol>
+<li>
+<p><strong>Hierarchical Sharding</strong></p>
+<ul>
+<li>Repository-level shards</li>
+<li>Language-aware partitioning</li>
+<li>Read replicas for hot repositories</li>
+</ul>
+</li>
+<li>
+<p><strong>Bloom Filters</strong></p>
+<ul>
+<li>Fast negative lookups (“does this shard contain query?”)</li>
+<li>Reduces unnecessary shard scanning</li>
+<li>Cascading filters: file → directory → repository</li>
+</ul>
+</li>
+<li>
+<p><strong>Query Understanding</strong></p>
+<ul>
+<li>NLP for intent detection (symbol vs. content search)</li>
+<li>Automatic language scoping</li>
+<li>Query suggestion/autocomplete</li>
+</ul>
+</li>
+<li>
+<p><strong>Ranking Signals</strong></p>
+<ul>
+<li>Repository stars/forks</li>
+<li>File recency (recently modified files score higher)</li>
+<li>Author reputation</li>
+<li>Code quality metrics (lint scores)</li>
+</ul>
+</li>
+</ol>
+<h3 id="comparison-to-fast_code_search-2"><a class="header" href="#comparison-to-fast_code_search-2">Comparison to fast_code_search</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>GitHub CS</th><th>fast_code_search</th><th>Gap</th></tr>
+</thead>
+<tbody>
+<tr><td>Scale</td><td>40M+ repos</td><td>Single codebase</td><td>Different scope</td></tr>
+<tr><td>Bloom filters</td><td>Yes</td><td>No</td><td>Consider</td></tr>
+<tr><td>Query understanding</td><td>Yes (NLP)</td><td>No</td><td>Consider</td></tr>
+<tr><td>Ranking signals</td><td>15+</td><td>5</td><td><strong>Improve</strong></td></tr>
+<tr><td>File recency</td><td>Yes</td><td>No</td><td><strong>Add</strong></td></tr>
+<tr><td>Language detection</td><td>Yes</td><td>Yes (tree-sitter)</td><td>✅ Equivalent</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="what-we-can-adopt-from-github-code-search"><a class="header" href="#what-we-can-adopt-from-github-code-search">What We Can Adopt from GitHub Code Search</a></h3>
+<ol>
+<li>
+<p><strong>File Recency Boost</strong> (Medium Impact)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Store file modification time during indexing
+pub struct FileMetadata {
+    pub path: PathBuf,
+    pub mtime: SystemTime,
+    // ... other fields
+}
+
+// In scoring:
+let age_days = (now - mtime).as_secs() / 86400;
+let recency_boost = 1.0 / (1.0 + (age_days as f64 * 0.01));
+score *= recency_boost;
+<span class="boring">}</span></code></pre>
+</li>
+<li>
+<p><strong>Bloom Filter Pre-screening</strong> (Low-Medium Impact)</p>
+<ul>
+<li>Useful when queries return few results</li>
+<li>Can skip entire file checks with high probability</li>
+<li>Trade-off: Additional memory and complexity</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="4-google-code-search-original"><a class="header" href="#4-google-code-search-original">4. Google Code Search (Original)</a></h2>
+<p><strong>Paper</strong>: “Regular Expression Matching with a Trigram Index” (Russ Cox, 2012)<br><strong>Category</strong>: Research/historical reference</p>
+<h3 id="key-contributions"><a class="header" href="#key-contributions">Key Contributions</a></h3>
+<p>This paper established the trigram indexing approach used by most code search tools:</p>
+<ol>
+<li>
+<p><strong>Trigram Boolean Queries</strong></p>
+<ul>
+<li>Convert regex to trigram query: <code>abc.*def</code> → <code>(abc AND def)</code></li>
+<li>Index stores posting lists (document IDs) per trigram</li>
+<li>Intersection narrows candidates before regex evaluation</li>
+</ul>
+</li>
+<li>
+<p><strong>Regex Approximation</strong></p>
+<ul>
+<li>Extract required literals from regex AST</li>
+<li>Handle alternation, repetition, anchors</li>
+<li>Fallback to full scan for pathological patterns</li>
+</ul>
+</li>
+</ol>
+<h3 id="what-we-already-implement-correctly"><a class="header" href="#what-we-already-implement-correctly">What We Already Implement Correctly</a></h3>
+<ul>
+<li>✅ Trigram extraction from content</li>
+<li>✅ Roaring bitmap intersection for candidate selection</li>
+<li>✅ Regex literal extraction (basic)</li>
+</ul>
+<h3 id="improvement-based-on-paper"><a class="header" href="#improvement-based-on-paper">Improvement Based on Paper</a></h3>
+<p><strong>Better Regex Trigram Extraction</strong> (Medium Impact)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Current: Only extracts simple literals
+// Paper approach: Handle more patterns
+
+// For regex: `fn\s+\w+`
+// Current: Extracts "fn" (only 2 chars, ignored)
+// Better: Recognize `\s+` can't start with 'f', extract "fn" anyway
+
+// For regex: `(abc|def)ghi`
+// Current: May extract all three
+// Better: Extract only "ghi" (required in all matches)
+<span class="boring">}</span></code></pre>
+<hr>
+<h2 id="5-sourcegraph-structural-search"><a class="header" href="#5-sourcegraph-structural-search">5. Sourcegraph Structural Search</a></h2>
+<p><strong>Repository</strong>: https://github.com/comby-tools/comby<br><strong>Category</strong>: AST-aware code search</p>
+<h3 id="key-innovation"><a class="header" href="#key-innovation">Key Innovation</a></h3>
+<p>Structural search understands code syntax, not just text:</p>
+<pre><code># Find all calls to `log(...)` with any arguments
+log(:[args])
+
+# Find all function definitions with specific patterns
+func :[name](:[params]) { :[body] }
+</code></pre>
+<h3 id="comparison-to-fast_code_search-3"><a class="header" href="#comparison-to-fast_code_search-3">Comparison to fast_code_search</a></h3>
+<p>Current symbol extraction is limited to definitions. Structural search would enable:</p>
+<ul>
+<li>Finding all call sites of a function</li>
+<li>Pattern matching on code structure</li>
+<li>Semantic code navigation</li>
+</ul>
+<h3 id="what-we-could-adopt"><a class="header" href="#what-we-could-adopt">What We Could Adopt</a></h3>
+<p><strong>Enhanced Tree-Sitter Queries</strong> (Medium-High Impact)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Current: Extract symbol definitions
+// Enhanced: Allow tree-sitter pattern queries
+
+pub fn structural_search(&amp;self, pattern: &amp;str, language: &amp;str) -&gt; Vec&lt;SearchMatch&gt; {
+    // Parse pattern into tree-sitter query
+    // Search across all files of that language
+    // Return matches with captured groups
+}
+<span class="boring">}</span></code></pre>
+<hr>
+<h2 id="6-performance-benchmark-comparison"><a class="header" href="#6-performance-benchmark-comparison">6. Performance Benchmark Comparison</a></h2>
+<h3 id="comprehensive-benchmark-summary"><a class="header" href="#comprehensive-benchmark-summary">Comprehensive Benchmark Summary</a></h3>
+<p>Based on published benchmarks from <a href="https://burntsushi.net/ripgrep/">ripgrep’s official benchmarks</a>, <a href="https://github.com/ggreer/the_silver_searcher">The Silver Searcher</a>, and our internal testing:</p>
+<h4 id="code-search-benchmarks-linux-kernel-1gb-70k-files"><a class="header" href="#code-search-benchmarks-linux-kernel-1gb-70k-files">Code Search Benchmarks (Linux Kernel, ~1GB, ~70K files)</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Simple Literal</th><th>Case-Insensitive</th><th>Regex w/Literals</th><th>No Literals</th><th>Unicode</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>ripgrep</strong></td><td>334ms</td><td>345ms</td><td>318ms</td><td>577ms</td><td>355ms</td></tr>
+<tr><td><strong>git grep</strong></td><td>345ms</td><td>343ms</td><td>1108ms</td><td>4153ms</td><td>13045ms</td></tr>
+<tr><td><strong>ag (Silver Searcher)</strong></td><td>1588ms</td><td>1609ms</td><td>1899ms</td><td>2339ms</td><td>1774ms</td></tr>
+<tr><td><strong>UCG</strong></td><td>218ms</td><td>217ms</td><td>301ms</td><td>1130ms</td><td>229ms</td></tr>
+<tr><td><strong>pt (Platinum)</strong></td><td>462ms</td><td>17204ms</td><td>13713ms</td><td>22066ms</td><td>14180ms</td></tr>
+<tr><td><strong>sift</strong></td><td>352ms</td><td>805ms</td><td>10172ms</td><td>25563ms</td><td>11087ms</td></tr>
+<tr><td><strong>fast_code_search</strong>*</td><td><strong>~5ms</strong></td><td><strong>~10ms</strong></td><td><strong>~15ms</strong></td><td><strong>~40ms</strong></td><td><strong>~5ms</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p><em>fast_code_search times are post-indexing; initial index build ~2-5 minutes</em></p>
+<h4 id="single-large-file-benchmarks-9-13gb-subtitle-corpus"><a class="header" href="#single-large-file-benchmarks-9-13gb-subtitle-corpus">Single Large File Benchmarks (~9-13GB subtitle corpus)</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Literal Search</th><th>With Line Numbers</th><th>Case-Insensitive</th><th>Alternation (5 patterns)</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>ripgrep</strong></td><td>268ms</td><td>595ms</td><td>366ms</td><td>294ms</td></tr>
+<tr><td><strong>GNU grep</strong></td><td>516ms</td><td>969ms</td><td>4084ms</td><td>2955ms</td></tr>
+<tr><td><strong>ag</strong></td><td>-</td><td>2730ms</td><td>2775ms</td><td>3757ms</td></tr>
+<tr><td><strong>UCG</strong></td><td>-</td><td>745ms</td><td>841ms</td><td>1479ms</td></tr>
+<tr><td><strong>sift</strong></td><td>326ms</td><td>756ms</td><td>-</td><td>-</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="why-tools-differ-in-performance"><a class="header" href="#why-tools-differ-in-performance">Why Tools Differ in Performance</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Key Performance Factors</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>ripgrep</strong></td><td>SIMD memchr, Teddy algorithm for alternations, UTF-8 DFA, smart literal extraction</td></tr>
+<tr><td><strong>git grep</strong></td><td>Uses git index (no directory walk), but weak Unicode/regex support</td></tr>
+<tr><td><strong>ag</strong></td><td>Memory-maps files (slow for many small files), PCRE backtracking engine</td></tr>
+<tr><td><strong>UCG</strong></td><td>PCRE2 JIT compilation, SIMD line counting, but whitelist-only (no .gitignore)</td></tr>
+<tr><td><strong>pt/sift</strong></td><td>Go’s regexp engine without DFA (slow for complex patterns)</td></tr>
+<tr><td><strong>fast_code_search</strong></td><td>Pre-built trigram index, parallel search, but per-query overhead is minimal</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="methodology"><a class="header" href="#methodology">Methodology</a></h3>
+<p>Based on published benchmarks and reasonable estimates for 10GB codebases:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Index Time</th><th>Search Time</th><th>Memory</th><th>Index Size</th></tr>
+</thead>
+<tbody>
+<tr><td>ripgrep (no index)</td><td>N/A</td><td>2-5s</td><td>Low</td><td>N/A</td></tr>
+<tr><td>Zoekt</td><td>5-10 min</td><td>10-50ms</td><td>Medium</td><td>~30% of source</td></tr>
+<tr><td>GitHub CS</td><td>N/A</td><td>100-500ms</td><td>N/A</td><td>Distributed</td></tr>
+<tr><td><strong>fast_code_search</strong></td><td>2-5 min</td><td>1-20ms</td><td>High*</td><td>Memory only (with optional persistence)</td></tr>
+</tbody>
+</table>
+</div>
+<p>*Memory usage is high because we memory-map all files. This is efficient for access but shows as high memory usage in process stats.</p>
+<h3 id="break-even-analysis-when-does-indexing-pay-off"><a class="header" href="#break-even-analysis-when-does-indexing-pay-off">Break-Even Analysis: When Does Indexing Pay Off?</a></h3>
+<p>For a codebase where ripgrep takes ~100ms per query:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Queries per Session</th><th>ripgrep Total</th><th>fast_code_search Total</th><th>Winner</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>100ms</td><td>60,000ms + 5ms</td><td>ripgrep</td></tr>
+<tr><td>10</td><td>1,000ms</td><td>60,000ms + 50ms</td><td>ripgrep</td></tr>
+<tr><td>100</td><td>10,000ms</td><td>60,000ms + 500ms</td><td>ripgrep</td></tr>
+<tr><td>1,000</td><td>100,000ms (~2min)</td><td>60,000ms + 5,000ms</td><td><strong>fast_code_search</strong></td></tr>
+<tr><td>10,000</td><td>1,000s (~17min)</td><td>60,000ms + 50,000ms (~2min)</td><td><strong>fast_code_search</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>With index persistence</strong> (no rebuild on restart), fast_code_search becomes faster after ~600 queries.</p>
+<h3 id="performance-optimization-priorities"><a class="header" href="#performance-optimization-priorities">Performance Optimization Priorities</a></h3>
+<p>Based on benchmark gaps, priorities are:</p>
+<ol>
+<li><strong>Index persistence</strong> - ✅ Implemented - saves/loads index to disk</li>
+<li><strong>SIMD case-insensitive search</strong> - ripgrep is 5-10x faster here</li>
+<li><strong>Incremental indexing</strong> - Zoekt can handle file changes without full rebuild</li>
+<li><strong>Better result limits</strong> - Currently does partial sort; could use min-heap</li>
+</ol>
+<hr>
+<h2 id="7-recommended-improvements"><a class="header" href="#7-recommended-improvements">7. Recommended Improvements</a></h2>
+<h3 id="high-priority-significant-impact"><a class="header" href="#high-priority-significant-impact">High Priority (Significant Impact)</a></h3>
+<h4 id="1-index-persistence"><a class="header" href="#1-index-persistence">1. Index Persistence</a></h4>
+<p><strong>Why</strong>: 10GB codebase takes 2-5 minutes to index on startup
+<strong>How</strong>: Serialize trigram index, file metadata, and symbol cache
+<strong>Effort</strong>: Medium (1-2 days)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// New module: src/index/persistence.rs
+use bincode::{serialize_into, deserialize_from};
+
+impl SearchEngine {
+    pub fn save(&amp;self, path: impl AsRef&lt;Path&gt;) -&gt; Result&lt;()&gt; {
+        let file = File::create(path)?;
+        let writer = BufWriter::new(file);
+        serialize_into(writer, &amp;self.serialize_state())?;
+        Ok(())
+    }
+    
+    pub fn load(path: impl AsRef&lt;Path&gt;) -&gt; Result&lt;Self&gt; {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let state = deserialize_from(reader)?;
+        Self::from_serialized_state(state)
+    }
+}
+<span class="boring">}</span></code></pre>
+<h4 id="2-incremental-indexing-with-file-watching"><a class="header" href="#2-incremental-indexing-with-file-watching">2. Incremental Indexing with File Watching</a></h4>
+<p><strong>Why</strong>: Developers change files frequently; full reindex is wasteful
+<strong>How</strong>: Use <code>notify</code> crate for cross-platform file watching
+<strong>Effort</strong>: Medium (2-3 days)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// New module: src/index/watcher.rs
+use notify::{Watcher, RecursiveMode};
+
+pub struct IndexWatcher {
+    engine: Arc&lt;RwLock&lt;SearchEngine&gt;&gt;,
+    watcher: RecommendedWatcher,
+}
+
+impl IndexWatcher {
+    pub fn watch(&amp;mut self, path: &amp;Path) -&gt; Result&lt;()&gt; {
+        self.watcher.watch(path, RecursiveMode::Recursive)?;
+        Ok(())
+    }
+    
+    fn handle_event(&amp;self, event: Event) {
+        match event.kind {
+            EventKind::Create(_) | EventKind::Modify(_) =&gt; {
+                // Re-index the file
+            }
+            EventKind::Remove(_) =&gt; {
+                // Remove from index
+            }
+            _ =&gt; {}
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<h4 id="3-simd-accelerated-case-insensitive-search"><a class="header" href="#3-simd-accelerated-case-insensitive-search">3. SIMD-Accelerated Case-Insensitive Search</a></h4>
+<p><strong>Why</strong>: Current byte-by-byte is 5-10x slower than SIMD
+<strong>How</strong>: Use memchr with pre-lowercased haystack, or SIMD case-folding
+<strong>Effort</strong>: Low (0.5-1 day)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Option 1: Pre-lowercase entire haystack
+fn search_in_document_fast(&amp;self, doc_id: u32, query_lower: &amp;str) -&gt; Option&lt;Vec&lt;SearchMatch&gt;&gt; {
+    let content = self.file_store.get(doc_id)?.as_str().ok()?;
+    let content_lower = content.to_lowercase(); // One-time allocation
+    
+    // Now use memmem (SIMD) on lowercased content
+    let finder = memmem::Finder::new(query_lower.as_bytes());
+    // ...
+}
+
+// Option 2: Use aho-corasick with case-insensitive matching
+use aho_corasick::AhoCorasick;
+let ac = AhoCorasick::builder()
+    .ascii_case_insensitive(true)
+    .build(&amp;[query])?;
+<span class="boring">}</span></code></pre>
+<h3 id="medium-priority-good-improvements"><a class="header" href="#medium-priority-good-improvements">Medium Priority (Good Improvements)</a></h3>
+<h4 id="4-file-recency-in-ranking"><a class="header" href="#4-file-recency-in-ranking">4. File Recency in Ranking</a></h4>
+<p><strong>Why</strong>: Recently modified files are more relevant
+<strong>How</strong>: Store mtime during indexing, factor into score
+<strong>Effort</strong>: Low (0.5 day)</p>
+<h4 id="5-enhanced-regex-literal-extraction"><a class="header" href="#5-enhanced-regex-literal-extraction">5. Enhanced Regex Literal Extraction</a></h4>
+<p><strong>Why</strong>: Better acceleration for complex patterns
+<strong>How</strong>: Extract longer literals, handle more regex constructs
+<strong>Effort</strong>: Medium (1-2 days)</p>
+<h4 id="6-query-result-caching"><a class="header" href="#6-query-result-caching">6. Query Result Caching</a></h4>
+<p><strong>Why</strong>: Repeated queries are common in IDEs
+<strong>How</strong>: LRU cache keyed by (query, filters, limit)
+<strong>Effort</strong>: Low (0.5 day)</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use lru::LruCache;
+
+struct QueryCache {
+    cache: Mutex&lt;LruCache&lt;QueryKey, Vec&lt;SearchMatch&gt;&gt;&gt;,
+}
+
+impl SearchEngine {
+    pub fn search_cached(&amp;self, query: &amp;str, max_results: usize) -&gt; Vec&lt;SearchMatch&gt; {
+        let key = QueryKey::new(query, max_results);
+        
+        if let Some(cached) = self.cache.lock().unwrap().get(&amp;key) {
+            return cached.clone();
+        }
+        
+        let results = self.search(query, max_results);
+        self.cache.lock().unwrap().put(key, results.clone());
+        results
+    }
+}
+<span class="boring">}</span></code></pre>
+<h3 id="low-priority-nice-to-have"><a class="header" href="#low-priority-nice-to-have">Low Priority (Nice to Have)</a></h3>
+<h4 id="7-bloom-filters-for-negative-lookups"><a class="header" href="#7-bloom-filters-for-negative-lookups">7. Bloom Filters for Negative Lookups</a></h4>
+<p><strong>Why</strong>: Fast “definitely not in this file” checks
+<strong>Effort</strong>: Medium (1-2 days)</p>
+<h4 id="8-quadgrams-for-better-selectivity"><a class="header" href="#8-quadgrams-for-better-selectivity">8. Quadgrams for Better Selectivity</a></h4>
+<p><strong>Why</strong>: Fewer false positives for longer queries
+<strong>Effort</strong>: Medium (1-2 days)</p>
+<h4 id="9-structuralast-search"><a class="header" href="#9-structuralast-search">9. Structural/AST Search</a></h4>
+<p><strong>Why</strong>: Find code patterns, not just text
+<strong>Effort</strong>: High (1-2 weeks)</p>
+<hr>
+<h2 id="8-architectural-comparison-matrix"><a class="header" href="#8-architectural-comparison-matrix">8. Architectural Comparison Matrix</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Architecture</th><th>fast_code_search</th><th>ripgrep</th><th>Zoekt</th><th>GitHub CS</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Indexing</strong></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Trigram index</td><td>✅ Roaring</td><td>❌ None</td><td>✅ Custom</td><td>✅ Custom</td></tr>
+<tr><td>Persistent storage</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td></tr>
+<tr><td>Incremental updates</td><td>❌</td><td>N/A</td><td>✅</td><td>✅</td></tr>
+<tr><td><strong>Search</strong></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>SIMD acceleration</td><td>✅ (case-sensitive only*)</td><td>✅ (memchr)</td><td>✅</td><td>✅</td></tr>
+<tr><td>Regex hybrid engine</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>Parallel execution</td><td>✅ (rayon)</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td><strong>Ranking</strong></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Symbol awareness</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td></tr>
+<tr><td>Dependency graph</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+<tr><td>File recency</td><td>❌</td><td>❌</td><td>✅</td><td>✅</td></tr>
+<tr><td><strong>API</strong></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>gRPC streaming</td><td>✅</td><td>❌</td><td>❌</td><td>✅</td></tr>
+<tr><td>REST API</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td></tr>
+<tr><td>Web UI</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td></tr>
+</tbody>
+</table>
+</div>
+<p>*Note: fast_code_search uses SIMD (memchr/memmem) for case-sensitive substring search, but case-insensitive search currently uses a byte-by-byte loop. See Section 1 for improvement recommendations.</p>
+<hr>
+<h2 id="9-conclusion"><a class="header" href="#9-conclusion">9. Conclusion</a></h2>
+<p><code>fast_code_search</code> implements many best practices from prior art:</p>
+<ul>
+<li>Trigram indexing (from Google Code Search)</li>
+<li>Roaring bitmaps for efficient set operations</li>
+<li>Memory-mapped files for large codebases</li>
+<li>Parallel search with rayon</li>
+<li>Symbol awareness with tree-sitter</li>
+</ul>
+<h3 id="unique-value-proposition"><a class="header" href="#unique-value-proposition">Unique Value Proposition</a></h3>
+<p><strong>The in-memory server architecture provides advantages that stateless tools cannot match:</strong></p>
+<ul>
+<li><strong>Sub-millisecond latency</strong> for IDE integration and “search as you type”</li>
+<li><strong>No cold-start penalty</strong> - the index is always hot in RAM</li>
+<li><strong>Live dependency graph</strong> - track imports across the entire codebase</li>
+<li><strong>Concurrent access</strong> - serve multiple developers/tools simultaneously</li>
+<li><strong>Streaming results</strong> - gRPC streaming for real-time result display</li>
+</ul>
+<p>For teams working on large codebases (10GB+) with frequent searches throughout the day, this model is more efficient than per-query scanning (ripgrep) or disk-based indexes (Zoekt).</p>
+<h3 id="recommended-improvements"><a class="header" href="#recommended-improvements">Recommended Improvements</a></h3>
+<p>The highest-impact improvements would be:</p>
+<ol>
+<li><strong>Index persistence</strong> - Eliminates startup latency while preserving sub-millisecond query performance</li>
+<li><strong>Incremental indexing</strong> - Responds to file changes in real-time</li>
+<li><strong>SIMD case-insensitive search</strong> - Matches ripgrep’s per-query performance</li>
+</ol>
+<p>These changes would bring <code>fast_code_search</code> closer to production-grade tools like Zoekt while maintaining its clean Rust architecture and unique in-memory advantages.</p>
+<hr>
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<ol>
+<li>Cox, R. (2012). <a href="https://swtch.com/~rsc/regexp/regexp4.html">Regular Expression Matching with a Trigram Index</a></li>
+<li>BurntSushi/ripgrep: <a href="https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md">Architecture documentation</a></li>
+<li>Sourcegraph/zoekt: <a href="https://github.com/sourcegraph/zoekt/blob/main/doc/design.md">Design documentation</a></li>
+<li>GitHub Engineering Blog: <a href="https://github.blog/2023-02-06-the-technology-behind-githubs-new-code-search/">How we built GitHub Code Search</a></li>
+<li>Roaring Bitmaps: <a href="https://roaringbitmap.org/">RoaringBitmap.org</a></li>
+<li>Tree-sitter: <a href="https://tree-sitter.github.io/tree-sitter/">tree-sitter.github.io</a></li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../imported/code-of-conduct.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../imported/glossary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../imported/code-of-conduct.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../imported/glossary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
