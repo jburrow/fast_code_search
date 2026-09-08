@@ -1,0 +1,11 @@
+# Configuration baked into the container image. Mount your own file at
+# /etc/fast_code_search/config.toml to replace it.
+[server]
+address = "0.0.0.0:50051"
+web_address = "0.0.0.0:8080"
+
+[indexer]
+paths = ["/src"]
+watch = true
+index_path = "/var/lib/fast_code_search/index.fcsidx"
+save_after_build = true

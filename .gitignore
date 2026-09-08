@@ -54,3 +54,6 @@ bench-results/
 # mdBook build output and the canonical docs copied into the book at build time
 docs/book/book/
 docs/book/src/imported/
+
+# The container image's baked-in config is source, not a local config.
+!deploy/docker/config.toml
