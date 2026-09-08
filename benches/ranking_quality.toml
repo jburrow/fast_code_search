@@ -1,0 +1,140 @@
+# Labelled queries for the ranking-quality suite (examples/ranking_quality.rs).
+#
+# Each query names the file (a path suffix of the display path) and, when it
+# matters, the line a reader would want first. The corpora are the pinned
+# benchmark checkouts: tokio 1.45.0 and Django 5.2 (bench-corpus/). Add a
+# query when a ranking bug is fixed, so it stays fixed.
+
+description = "tokio 1.45.0 + Django 5.2"
+
+# --- definitions found by a plain text query (phrase tier + definition boost)
+
+[[query]]
+q = "struct Runtime"
+expect_file = "tokio/src/runtime/runtime.rs"
+expect_line_contains = "pub struct Runtime"
+why = "the definition, not the many mentions in docs and tests"
+
+[[query]]
+q = "pub struct Mutex"
+expect_file = "tokio/src/sync/mutex.rs"
+expect_line_contains = "pub struct Mutex<T"
+why = "tokio's Mutex definition"
+
+[[query]]
+q = "fn sleep"
+expect_file = "tokio/src/time/sleep.rs"
+expect_line_contains = "pub fn sleep(duration"
+why = "the free function, above test helpers named sleep"
+
+[[query]]
+q = "fn block_on"
+expect_file_any = ["tokio/src/runtime/runtime.rs", "tokio/src/runtime/handle.rs"]
+expect_line_contains = "pub fn block_on"
+why = "the public Runtime::block_on / Handle::block_on, not the scheduler's internal fn"
+
+[[query]]
+q = "struct Notify"
+expect_file = "tokio/src/sync/notify.rs"
+expect_line_contains = "pub struct Notify"
+why = "the definition"
+
+[[query]]
+q = "struct Semaphore"
+expect_file = "tokio/src/sync/semaphore.rs"
+expect_line_contains = "pub struct Semaphore"
+why = "the definition"
+
+[[query]]
+q = "class HttpResponse"
+expect_file = "django/http/response.py"
+expect_line_contains = "class HttpResponse("
+why = "the class itself, above HttpResponseRedirect and friends"
+
+[[query]]
+q = "def get_object_or_404"
+expect_file = "django/shortcuts.py"
+expect_line_contains = "def get_object_or_404("
+why = "the definition"
+
+[[query]]
+q = "class QuerySet"
+expect_file = "django/db/models/query.py"
+expect_line_contains = "class QuerySet("
+why = "the definition"
+
+[[query]]
+q = "class ModelForm"
+expect_file = "django/forms/models.py"
+expect_line_contains = "class ModelForm("
+why = "the definition"
+
+[[query]]
+q = "class Client"
+expect_file = "django/test/client.py"
+expect_line_contains = "class Client("
+why = "the test client definition"
+
+[[query]]
+q = "HttpResponseBase"
+expect_file = "django/http/response.py"
+expect_line_contains = "class HttpResponseBase"
+why = "a bare identifier: its definition should beat its uses"
+
+# --- symbols mode
+
+[[query]]
+q = "Runtime"
+mode = "symbols"
+expect_file = "tokio/src/runtime/runtime.rs"
+expect_line_contains = "pub struct Runtime"
+why = "exact name match, the struct"
+
+[[query]]
+q = "get_object_or_404"
+mode = "symbols"
+expect_file = "django/shortcuts.py"
+why = "exact name match"
+
+[[query]]
+q = "JoinHandle"
+mode = "symbols"
+expect_file = "tokio/src/runtime/task/join.rs"
+expect_line_contains = "pub struct JoinHandle"
+why = "the struct, above the many impl blocks"
+
+[[query]]
+q = "HttpResponse"
+mode = "symbols"
+expect_file = "django/http/response.py"
+expect_line_contains = "class HttpResponse("
+why = "exact name match over HttpResponseRedirect etc."
+
+[[query]]
+q = "Field"
+mode = "symbols"
+expect_file = "django/db/models/fields/__init__.py"
+expect_line_contains = "class Field("
+why = "the widely imported model Field, not the GDAL one"
+
+# --- regex
+
+[[query]]
+q = 'pub fn sleep\('
+mode = "regex"
+expect_file = "tokio/src/time/sleep.rs"
+why = "literal-accelerated regex"
+
+[[query]]
+q = '^class Form\('
+mode = "regex"
+expect_file = "django/forms/forms.py"
+why = "anchored regex"
+
+# --- references
+
+[[query]]
+q = "get_object_or_404"
+mode = "references"
+expect_file = "django/contrib/flatpages/views.py"
+why = "the one call site in shipped (non-test) code; the definition itself must not be listed as a reference"
