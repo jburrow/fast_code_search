@@ -11,6 +11,14 @@ Served from an in-memory trigram index in milliseconds, with a CLI, a web UI, an
 [![Benchmarks](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml/badge.svg)](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml)
 [![Release](https://img.shields.io/github/v/release/jburrow/fast_code_search?display_name=tag&color=1d1c0f)](https://github.com/jburrow/fast_code_search/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-fff900.svg?labelColor=1d1c0f)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-jburrow.github.io-fff900.svg?labelColor=1d1c0f)](https://jburrow.github.io/fast_code_search/docs/)
+
+**[Documentation](https://jburrow.github.io/fast_code_search/docs/)** ·
+[Install](https://jburrow.github.io/fast_code_search/docs/start/install.html) ·
+[First search](https://jburrow.github.io/fast_code_search/docs/start/first-search.html) ·
+[Guides](https://jburrow.github.io/fast_code_search/docs/guides/configuration.html) ·
+[How it works](https://jburrow.github.io/fast_code_search/docs/how-it-works/indexing.html) ·
+[Benchmarks](https://jburrow.github.io/fast_code_search/docs/benchmarks/methodology.html)
 
 <img src="docs/images/web-ui.png" alt="The web UI: a search for 'trigram' with definitions ranked first" width="820"/>
 
@@ -163,7 +171,8 @@ lists and symbols with tree-sitter, resolves imports into a dependency graph, an
 merges into the engine in batches so searches stay live during a build. A query
 intersects the posting lists of its trigrams to get candidates, scans them in
 parallel under a match budget, scores each hit with the signals above, and pages
-deterministically. Details: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+deterministically. Details: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and the
+[How it works](https://jburrow.github.io/fast_code_search/docs/how-it-works/indexing.html) chapter of the documentation.
 
 | Area | Source |
 |------|--------|
@@ -179,12 +188,42 @@ symbols; everything else is indexed and searchable without the ranking boosts.
 
 ## Documentation
 
-- [Command-line client](docs/CLI.md) · [Run at startup](docs/RUN-AT-STARTUP.md) ·
-  [API and configuration reference](docs/API.md)
-- [Deployment](docs/DEPLOYMENT.md) · [Development](docs/DEVELOPMENT.md) ·
+The [documentation site](https://jburrow.github.io/fast_code_search/docs/) is built from this repository on every push. It
+is organised the way questions arrive:
+
+- **Start here** — [Install](https://jburrow.github.io/fast_code_search/docs/start/install.html) ·
+  [First index, first search](https://jburrow.github.io/fast_code_search/docs/start/first-search.html) ·
+  [Web UI](https://jburrow.github.io/fast_code_search/docs/start/web-ui.html) · [Editors](https://jburrow.github.io/fast_code_search/docs/start/editors.html) ·
+  [Command-line client](https://jburrow.github.io/fast_code_search/docs/imported/cli.html) ·
+  [Run at startup](https://jburrow.github.io/fast_code_search/docs/imported/run-at-startup.html)
+- **Guides** — [Configuration cookbook](https://jburrow.github.io/fast_code_search/docs/guides/configuration.html) ·
+  [Performance and memory](https://jburrow.github.io/fast_code_search/docs/guides/performance.html) ·
+  [Troubleshooting](https://jburrow.github.io/fast_code_search/docs/guides/troubleshooting.html) ·
+  [Upgrading](https://jburrow.github.io/fast_code_search/docs/guides/upgrading.html) · [Deployment](https://jburrow.github.io/fast_code_search/docs/imported/deployment.html)
+- **Reference** — [API and configuration](https://jburrow.github.io/fast_code_search/docs/imported/api.html) ·
+  [Query syntax](https://jburrow.github.io/fast_code_search/docs/reference/query-syntax.html) ·
+  [`fcs` command line](https://jburrow.github.io/fast_code_search/docs/reference/cli-help.html) ·
+  [Server command line](https://jburrow.github.io/fast_code_search/docs/reference/server-help.html) ·
+  [Configuration template](https://jburrow.github.io/fast_code_search/docs/reference/config-template.html) ·
+  [Index file format](https://jburrow.github.io/fast_code_search/docs/reference/index-format.html)
+- **How it works** — [Indexing pipeline](https://jburrow.github.io/fast_code_search/docs/how-it-works/indexing.html) ·
+  [Candidates and regex analysis](https://jburrow.github.io/fast_code_search/docs/how-it-works/candidates.html) ·
+  [Ranking](https://jburrow.github.io/fast_code_search/docs/how-it-works/ranking.html) ·
+  [Incremental updates](https://jburrow.github.io/fast_code_search/docs/how-it-works/incremental.html) ·
+  [Persistence](https://jburrow.github.io/fast_code_search/docs/how-it-works/persistence.html) ·
+  [Memory and limits](https://jburrow.github.io/fast_code_search/docs/how-it-works/memory.html)
+- **Benchmarks** — [Methodology](https://jburrow.github.io/fast_code_search/docs/benchmarks/methodology.html) ·
+  [Latest results](https://jburrow.github.io/fast_code_search/docs/benchmarks/latest.html) ·
+  [Against ripgrep and ugrep](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html) ·
+  [Ranking quality](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html) ·
+  [Trends per commit](https://jburrow.github.io/fast_code_search/dev/bench/)
+- **Project** — [Changelog](CHANGELOG.md) · [Roadmap](https://jburrow.github.io/fast_code_search/docs/project/roadmap.html) ·
+  [Contributing](CONTRIBUTING.md) · [Development](docs/DEVELOPMENT.md) ·
+  [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) ·
   [Prior art](docs/design/PRIOR_ART.md) · [Glossary](docs/GLOSSARY.md)
-- [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) ·
-  [Security policy](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md)
+
+The same pages live as Markdown under [`docs/`](docs/) and read fine on GitHub;
+the site adds generated reference pages, search and the live benchmark data.
 
 ## Security
 
