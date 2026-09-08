@@ -97,6 +97,19 @@ jobs:
           scripts/bench/compare.sh bench-corpus/tokio bench-corpus/django \
             --runs 7 --json compare.json --markdown compare.md
           cat compare.md >> "$GITHUB_STEP_SUMMARY"
+          # Also as bencher lines, so the trend page can chart every tool per commit.
+          python3 - <<'PY'
+          import json, re
+          c = json.load(open("compare.json"))
+          slug = lambda s: re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+          with open("bench_output.txt", "a") as f:
+              for q in c["queries"]:
+                  for tool, key in [("ripgrep", "ripgrep_ms"), ("ugrep", "ugrep_ms"),
+                                    ("fcs_client", "fcs_client_ms"), ("fcs_engine", "fcs_engine_ms")]:
+                      v = q.get(key)
+                      if v is not None:
+                          f.write(f"test compare/{c['tree']}/{tool}/{slug(q['label'])} ... bench: {int(v * 1e6)} ns/iter (+/- 0)\n")
+          PY
 
       # Machine-readable results for the documentation site
       # (docs/benchmarks/latest.html reads dev/bench/results/latest.json).

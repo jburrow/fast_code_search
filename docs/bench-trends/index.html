@@ -57,6 +57,8 @@
   .card .latest b { font-weight: 600; }
   .card .latest span { color: var(--text-muted); }
   .card .plot { position: relative; height: 230px; }
+  .card.wide { grid-column: 1 / -1; } .card.wide .plot { height: 320px; }
+  .card .note { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; }
   .axis-note { font-size: 12px; color: var(--text-muted); text-align: right; margin: 2px 0 0; }
   .empty { color: var(--text-muted); font-style: italic; padding: 24px 0; }
   footer { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 16px; font-size: 13px; color: var(--text-muted); }
@@ -127,6 +129,30 @@
         { re: new RegExp('^' + CORPUS + '(rss_after_build_bytes)$'), title: 'Resident memory after build', unit: 'bytes',
           desc: 'Resident set size of the benchmark process once the index is built, so roughly the memory the server needs for this corpus. Reported in bytes; the trend action labels everything ns/iter, ignore that here.' },
       ],
+    },
+    {
+      id: 'compare', title: 'Against ripgrep and ugrep, same tree, same runner',
+      blurb: 'The same query string through ripgrep, ugrep and fcs on the pinned tokio + Django checkout, on the runner that produced the rest of this page: warm cache, median of seven runs, wall time from process start to exit, output written to a file. "fcs (client)" is the command-line client including process start and one HTTP round trip; "fcs (engine)" is the search itself as the server measures it, which is what the web UI or an editor sees. These axes are logarithmic because the tools differ by orders of magnitude.',
+      headline: true,
+      dynamic: names => {
+        const TOOL = { ripgrep: 'ripgrep', ugrep: 'ugrep', fcs_client: 'fcs (client)', fcs_engine: 'fcs (engine)' };
+        const slugs = [...new Set(names.map(n => (/^compare\/[^/]+\/(?:ripgrep|ugrep|fcs_client|fcs_engine)\/(.+)$/.exec(n) || [])[1]).filter(Boolean))];
+        const DESC = {
+          common_word: 'A word in most files. A scan tool reads and prints thousands of lines; the index ranks and returns fifty.',
+          identifier: 'A type name present in a few hundred files.',
+          rare_identifier: 'A string that occurs nowhere: the full cost of a scan against a trigram lookup that touches no file.',
+          two_words: 'Two words that must both appear; the index intersects two candidate sets first.',
+          regex_with_literal: 'A pattern with a required literal the index can use to narrow candidates before matching.',
+          regex_no_literal: 'A pattern with no usable literal, so every candidate is scanned by both sides.',
+          case_insensitive: 'A case-insensitive pattern.',
+        };
+        return slugs.map(slug => ({
+          re: new RegExp('^compare\\/[^/]+\\/(ripgrep|ugrep|fcs_client|fcs_engine)\\/' + slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+          title: slug.replace(/_/g, ' '), unit: 'time', log: true, series: t => TOOL[t] || t, color: t => ({ ripgrep: 0, ugrep: 4, fcs_client: 1, fcs_engine: 2 })[t],
+          desc: DESC[slug] || '',
+        }));
+      },
+      charts: [],
     },
     {
       id: 'search', title: 'Synthetic search suite (Criterion)',
@@ -216,7 +242,7 @@
       if (!m) continue;
       claimed.add(name);
       const label = chart.series ? chart.series(m[1]) : m[1].replace(/_/g, ' ');
-      out.push({ name, label, points });
+      out.push({ name, label, points, color: chart.color ? chart.color(m[1]) : null });
     }
     return out;
   }
@@ -227,7 +253,7 @@
     const max = Math.max(...series.flatMap(s => s.points.map(p => p.bench.value + (p.bench.range ? parseFloat(String(p.bench.range).replace(/[^\d.]/g, '')) || 0 : 0))));
     const unit = pickUnit(kind, max);
     const latest = series.map(s => { const p = s.points[s.points.length - 1]; return `<b>${fmt(p.bench.value, unit)}</b> <span>${series.length > 1 ? s.label : ''}</span>`; }).join(' · ');
-    card.innerHTML = `<h3>${chart.title}</h3><p class="desc">${chart.desc || ''}</p><p class="latest">Latest: ${latest}${note ? ` <span>${note}</span>` : ''}</p><div class="plot"><canvas></canvas></div><p class="axis-note">${unit[0]} per ${kind === 'bytes' ? 'process' : 'operation'} · lower is better</p>`;
+    card.innerHTML = `<h3>${chart.title}</h3><p class="desc">${chart.desc || ''}</p><p class="latest">Latest: ${latest}${note ? ` <span>${note}</span>` : ''}</p><div class="plot"><canvas></canvas></div><p class="axis-note">${unit[0]} per ${kind === 'bytes' ? 'process' : 'operation'}${chart.log ? ', log scale' : ''} · lower is better</p>`;
     container.appendChild(card);
 
     // x axis: the union of commits across the series, in date order
@@ -235,12 +261,12 @@
     const labels = commits.map(r => r.commit.id.slice(0, 7));
     const datasets = [];
     series.forEach((s, i) => {
-      const color = COLORS[i % COLORS.length];
+      const color = COLORS[(s.color != null ? s.color : i) % COLORS.length];
       const at = new Map(s.points.map(p => [p.run, p.bench]));
       const val = commits.map(r => at.has(r) ? at.get(r).value / unit[1] : null);
       const spread = commits.map(r => { const b = at.get(r); return b && b.range ? (parseFloat(String(b.range).replace(/[^\d.]/g, '')) || 0) / unit[1] : 0; });
-      datasets.push({ label: s.label + ' (upper)', data: val.map((v, k) => v == null ? null : v + spread[k]), borderWidth: 0, pointRadius: 0, fill: false, backgroundColor: rgba(color, bandAlpha), borderColor: 'transparent', _band: true, order: 2 });
-      datasets.push({ label: s.label + ' (lower)', data: val.map((v, k) => v == null ? null : Math.max(0, v - spread[k])), borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: rgba(color, bandAlpha), borderColor: 'transparent', _band: true, order: 2 });
+      if (!chart.log) datasets.push({ label: s.label + ' (upper)', data: val.map((v, k) => v == null ? null : v + spread[k]), borderWidth: 0, pointRadius: 0, fill: false, backgroundColor: rgba(color, bandAlpha), borderColor: 'transparent', _band: true, order: 2 });
+      if (!chart.log) datasets.push({ label: s.label + ' (lower)', data: val.map((v, k) => v == null ? null : Math.max(0, v - spread[k])), borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: rgba(color, bandAlpha), borderColor: 'transparent', _band: true, order: 2 });
       datasets.push({ label: s.label, data: val, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: commits.length > 80 ? 1.5 : 2.5, pointHoverRadius: 5, tension: .15, spanGaps: true, order: 1, _bench: at });
     });
     new Chart(card.querySelector('canvas'), {
@@ -251,7 +277,9 @@
         interaction: { mode: 'nearest', intersect: false, axis: 'x' },
         scales: {
           x: { ticks: { maxTicksLimit: 8, font: { family: 'JetBrains Mono, monospace', size: 11 } }, grid: { display: false } },
-          y: { beginAtZero: true, title: { display: true, text: unit[0] + (kind === 'bytes' ? '' : ' per operation') }, grid: { color: gridColor }, ticks: { callback: v => v.toLocaleString() } },
+          y: chart.log
+            ? { type: 'logarithmic', title: { display: true, text: unit[0] + ' per query, log scale' }, grid: { color: gridColor }, ticks: { callback: v => (String(v).match(/^[125]0*$|^0\.0*[125]$/) ? v.toLocaleString() : null) } }
+            : { beginAtZero: true, title: { display: true, text: unit[0] + (kind === 'bytes' ? '' : ' per operation') }, grid: { color: gridColor }, ticks: { callback: v => v.toLocaleString() } },
         },
         plugins: {
           legend: { display: series.length > 1, labels: { filter: it => !datasets[it.datasetIndex]._band, boxWidth: 10, usePointStyle: true } },
@@ -279,10 +307,42 @@
     return sec.querySelector('.charts');
   }
   for (const g of GROUPS) {
-    const charts = g.charts.map(c => [c, seriesFor(c)]).filter(([, s]) => s.length);
-    if (!charts.length) continue;
+    const specs = g.dynamic ? g.dynamic([...byName.keys()].filter(n => !claimed.has(n))) : g.charts;
+    const charts = specs.map(c => [c, seriesFor(c)]).filter(([, s]) => s.length);
+    if (!charts.length && !g.headline) continue;
     const el = section(g);
+    if (g.headline) headline(el);
     for (const [c, s] of charts) render(el, c, s);
+  }
+
+  // The latest run's comparison as one bar chart, from the JSON the workflow
+  // publishes next to this page (machine, tool versions, every query).
+  function headline(container) {
+    const card = document.createElement('div'); card.className = 'card wide';
+    card.innerHTML = '<h3>Latest run, every query</h3><p class="desc">Loading results/latest.json…</p><div class="plot"><canvas></canvas></div><p class="axis-note">ms per query, log scale · lower is better</p>';
+    container.appendChild(card);
+    fetch('results/latest.json', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      const c = d.comparison; if (!c) throw new Error('no comparison');
+      const m = d.corpus && d.corpus.machine || {};
+      const tools = [['ripgrep_ms', 'ripgrep', COLORS[0]], ['ugrep_ms', 'ugrep', COLORS[4]], ['fcs_client_ms', 'fcs (client)', COLORS[1]], ['fcs_engine_ms', 'fcs (engine)', COLORS[2]]]
+        .filter(([k]) => c.queries.some(q => q[k] != null));
+      const ratio = arr => { const s = arr.slice().sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+      const rgVsEngine = ratio(c.queries.filter(q => q.ripgrep_ms && q.fcs_engine_ms).map(q => q.ripgrep_ms / q.fcs_engine_ms));
+      const rgVsClient = ratio(c.queries.filter(q => q.ripgrep_ms && q.fcs_client_ms).map(q => q.ripgrep_ms / q.fcs_client_ms));
+      card.querySelector('.desc').innerHTML = `Commit <a href="${d.run_url}"><code>${(d.commit || '').slice(0, 7)}</code></a>, ${(d.generated_at || '').slice(0, 10)}: ${c.tree_files.toLocaleString()} files, ${m.cpu_model || 'unknown CPU'}, ${m.logical_cpus || '?'} logical CPUs; ${c.tools.ripgrep || ''}${c.tools.ugrep ? '; ' + c.tools.ugrep.split(' ').slice(0, 2).join(' ') : ''}. Median of ${c.runs} runs per bar. Across these queries the engine answers about <b>${Math.round(rgVsEngine)}×</b> faster than ripgrep; the command-line client, paying process start and an HTTP round trip, about <b>${Math.round(rgVsClient)}×</b>.`;
+      new Chart(card.querySelector('canvas'), {
+        type: 'bar',
+        data: { labels: c.queries.map(q => q.label), datasets: tools.map(([k, label, color]) => ({ label, data: c.queries.map(q => q[k]), backgroundColor: rgba(color, .85), borderColor: color, borderWidth: 1 })) },
+        options: {
+          animation: false, responsive: true, maintainAspectRatio: false,
+          scales: {
+            x: { grid: { display: false } },
+            y: { type: 'logarithmic', title: { display: true, text: 'ms per query, log scale' }, grid: { color: gridColor }, ticks: { callback: v => (String(v).match(/^[125]0*$|^0\.0*[125]$/) ? v.toLocaleString() + ' ms' : null) } },
+          },
+          plugins: { legend: { labels: { boxWidth: 10, usePointStyle: true } }, tooltip: { callbacks: { label: it => `${it.dataset.label}: ${it.raw < 0.1 ? (it.raw * 1000).toFixed(0) + ' µs' : it.raw.toFixed(1) + ' ms'} (${c.queries[it.dataIndex].query})` } } },
+        },
+      });
+    }).catch(() => { card.querySelector('.desc').textContent = 'The latest run has not published a comparison yet.'; });
   }
   // Anything the catalogue does not describe yet still gets a chart.
   const rest = [...byName.keys()].filter(n => !claimed.has(n));

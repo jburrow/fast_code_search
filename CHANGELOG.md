@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The benchmark trend page (`dev/bench/`) is now the project's own: it
   groups the charts by suite, says what each one measures and what would
   move it, labels every axis with its unit and "lower is better", shades
-  each run's spread, and links each point to its commit. The README's
+  each run's spread, links each point to its commit, and charts the
+  scan-tool comparison: the latest run as one bar chart and each query's
+  ripgrep / ugrep / fcs times per commit. The README's
   benchmark section explains the three measurements and how to read them.
 - `scripts/bench/compare.sh` times the same queries through ripgrep, ugrep
   and `fcs` on the same tree (warm cache, median of seven runs, machine
