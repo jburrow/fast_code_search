@@ -77,7 +77,7 @@ ndarray = { version = "0.15", optional = true } # semantic: vector operations
 hnsw_rs = { version = "0.3", optional = true }  # semantic: approximate nearest neighbour search
 fs2 = "0.4"
 chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
-rand = "0.9"                                                                    # For random file sampling in self-tests
+rand = "0.10"                                                                    # For random file sampling in self-tests
 tempfile = "3"                                                                  # For validator temporary corpus
 indicatif = "0.18"                                                              # Terminal progress bars
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
