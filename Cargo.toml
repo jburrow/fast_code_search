@@ -85,7 +85,7 @@ ort = { version = "2.0.0-rc.10", optional = true, default-features = false, feat
     "load-dynamic",
 ] } # ONNX Runtime for ML model inference (rc.10 works with ONNX Runtime 1.18-1.22)
 tokenizers = { version = "0.22", optional = true } # HuggingFace tokenizers for text encoding
-sha2 = { version = "0.10", optional = true } # semantic: checksum verification for model downloads
+sha2 = { version = "0.11", optional = true } # semantic: checksum verification for model downloads
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "json",
