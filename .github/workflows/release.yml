@@ -187,7 +187,27 @@ jobs:
           fi
           
           # Write to file for multiline support
-          echo "$NOTES" > release_notes.md
+          {
+            echo "$NOTES"
+            echo
+            echo "## Install"
+            echo
+            echo "Download the archive for your platform below, unpack it, and put \`fast_code_search_server\` and \`fcs\` on your \`PATH\`."
+            echo "Each archive also contains \`config.toml.example\`, the startup unit files (\`deploy/\`) and the CLI and startup guides."
+            echo
+            echo "| Platform | Archive |"
+            echo "|---|---|"
+            echo "| Linux x86_64 (glibc) | \`fast_code_search-${VERSION}-x86_64-unknown-linux-gnu.tar.gz\` |"
+            echo "| Linux x86_64 (static, musl) | \`fast_code_search-${VERSION}-x86_64-unknown-linux-musl.tar.gz\` |"
+            echo "| macOS Apple silicon | \`fast_code_search-${VERSION}-aarch64-apple-darwin.tar.gz\` |"
+            echo "| macOS Intel | \`fast_code_search-${VERSION}-x86_64-apple-darwin.tar.gz\` |"
+            echo "| Windows x86_64 | \`fast_code_search-${VERSION}-x86_64-pc-windows-msvc.zip\` |"
+            echo
+            echo "Verify a download with the \`.sha256\` file next to it: \`sha256sum -c fast_code_search-${VERSION}-<target>.tar.gz.sha256\`."
+            echo
+            echo "First run: \`fast_code_search_server --init config.toml\`, add your paths, start the server, then \`fcs 'fn main'\`."
+            echo "Full changelog: https://github.com/jburrow/fast_code_search/blob/main/CHANGELOG.md"
+          } > release_notes.md
           
           echo "=== Release Notes ==="
           cat release_notes.md

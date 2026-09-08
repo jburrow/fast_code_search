@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help
+    url: https://github.com/jburrow/fast_code_search/discussions/categories/q-a
+    about: Ask how to configure, run or query fast_code_search.
+  - name: Idea or feature discussion
+    url: https://github.com/jburrow/fast_code_search/discussions/categories/ideas
+    about: Propose and discuss a feature before it becomes an issue.
+  - name: Security vulnerability
+    url: https://github.com/jburrow/fast_code_search/security/advisories/new
+    about: Report privately; see SECURITY.md.

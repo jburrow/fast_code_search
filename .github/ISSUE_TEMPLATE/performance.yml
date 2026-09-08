@@ -1,0 +1,51 @@
+name: Performance problem
+description: A search, build, load or update is slower than it should be, or memory is higher than expected.
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Numbers make these actionable. `cargo run --release --example corpus_bench -- <paths>` prints the build, load, memory and query timings we track in CI; please include its output for the tree that is slow.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: fast_code_search 0.12.0
+    validations:
+      required: true
+  - type: dropdown
+    id: what
+    attributes:
+      label: What is slow or large?
+      multiple: true
+      options:
+        - Search latency
+        - Initial index build
+        - Loading the persisted index
+        - Incremental updates (file watcher)
+        - Memory (RSS)
+        - Index file size
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Measurements
+      description: corpus_bench output, or `elapsed_ms` / `rank_mode` / `total_candidates` from the API response, plus what you expected.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: corpus
+    attributes:
+      label: Corpus
+      description: Number of files, total size, languages, anything unusual (huge generated files, many small repos, network filesystem).
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      placeholder: 8 cores, 32 GB RAM, NVMe, Linux 6.x
+    validations:
+      required: true

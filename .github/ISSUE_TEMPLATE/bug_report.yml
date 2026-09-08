@@ -1,0 +1,62 @@
+name: Bug report
+description: Something is wrong (wrong results, a crash, an error, a stale index).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Wrong or missing results are the most useful bugs to hear about — please include the exact query.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `fast_code_search_server --version` (and `fcs --version` if the CLI is involved).
+      placeholder: fast_code_search 0.12.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it show up?
+      multiple: true
+      options:
+        - Web UI
+        - fcs command line
+        - REST API
+        - gRPC API
+        - Indexing / file watcher
+        - Persisted index (save / load)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what you got. For a search, paste the query and, if possible, the file and line that should (or should not) have matched.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. config: paths = [...], watch = true
+        2. fcs -e 'fn\s+main\('
+        3. ...
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant part of your config file (redact paths if you like).
+      render: toml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Server log lines around the problem (`RUST_LOG=debug` if it is reproducible).
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: Ubuntu 24.04, 16 GB RAM, ext4; index of 61k files

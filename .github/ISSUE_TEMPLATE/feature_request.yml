@@ -1,0 +1,38 @@
+name: Feature request
+description: Something fast_code_search should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended ideas, a [Discussion](https://github.com/jburrow/fast_code_search/discussions/categories/ideas) is a better place to start; use this form when the request is concrete.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that is awkward or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What would you like to happen? A query, a flag, an API field, a UI change.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      multiple: true
+      options:
+        - Query syntax / ranking
+        - fcs command line
+        - Web UI
+        - REST or gRPC API
+        - Indexing / configuration
+        - Editor integration
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
