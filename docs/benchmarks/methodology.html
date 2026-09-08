@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-1bc25194.js";
+            window.path_to_searchindex_js = "../searchindex-6178e14e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-f198a439.js"></script>
+        <script src="../toc-4e79abd4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -226,11 +226,29 @@ cargo bench --bench search_benchmark        # search only
 </code></pre>
 <p><code>corpus_bench</code> prints the same table CI does (<code>--markdown</code>) and can emit
 bencher lines for tracking (<code>--bencher</code>).</p>
-<h2 id="planned"><a class="header" href="#planned">Planned</a></h2>
-<p>A ranking-quality suite (labelled queries with expected top results over
-the pinned corpora, precision@1 and @5 per commit) and a scripted
-comparison with ripgrep, ugrep and Zoekt on the same machine are in the
-<a href="../project/roadmap.html">roadmap</a>.</p>
+<h2 id="ranking-quality"><a class="header" href="#ranking-quality">Ranking quality</a></h2>
+<p>Latency says how fast the engine is; this says whether what it puts first
+is what a reader wanted. <code>benches/ranking_quality.toml</code> holds labelled
+queries over the pinned corpora — text, symbols, regex and references —
+each naming the file and line that should come first (<code>struct Runtime</code> →
+the definition in <code>runtime.rs</code>, not a doc comment; <code>Field</code> in symbols mode
+→ the model field, not <code>FieldOverridePost</code> in a test). The suite reports
+<strong>precision@1</strong> (the expected result is the first hit) and <strong>precision@5</strong>,
+runs on every push, and fails the run below 0.90 / 0.95, so a change that
+makes searches faster but worse cannot land. Its first run scored 0.30 and
+surfaced six ranking defects; see the <a href="../imported/changelog.html">changelog</a>.</p>
+<pre><code class="language-bash">cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
+cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
+</code></pre>
+<h2 id="comparison-with-scan-tools"><a class="header" href="#comparison-with-scan-tools">Comparison with scan tools</a></h2>
+<p><code>scripts/bench/compare.sh &lt;dir&gt;</code> times the same queries through ripgrep,
+ugrep (if installed) and <code>fcs</code> against a server on the same tree, warm
+cache, median of seven runs, and records the machine. It reports both the
+<code>fcs</code> client’s wall time (process start plus HTTP) and the engine’s own
+time. The point is not that a scan tool is slow — it is the right tool for
+a one-off search — but that an index answers in the same time however
+large the tree is, and ranks. Results are on the
+<a href="latest.html">latest results</a> page when the comparison job has run.</p>
 
                     </main>
 

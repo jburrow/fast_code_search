@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1bc25194.js";
+            window.path_to_searchindex_js = "searchindex-6178e14e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-f198a439.js"></script>
+        <script src="toc-4e79abd4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2461,13 +2461,64 @@ cargo bench --bench search_benchmark        # search only
 </code></pre>
 <p><code>corpus_bench</code> prints the same table CI does (<code>--markdown</code>) and can emit
 bencher lines for tracking (<code>--bencher</code>).</p>
-<h2 id="planned"><a class="header" href="#planned">Planned</a></h2>
-<p>A ranking-quality suite (labelled queries with expected top results over
-the pinned corpora, precision@1 and @5 per commit) and a scripted
-comparison with ripgrep, ugrep and Zoekt on the same machine are in the
-<a href="#roadmap">roadmap</a>.</p>
+<h2 id="ranking-quality"><a class="header" href="#ranking-quality">Ranking quality</a></h2>
+<p>Latency says how fast the engine is; this says whether what it puts first
+is what a reader wanted. <code>benches/ranking_quality.toml</code> holds labelled
+queries over the pinned corpora — text, symbols, regex and references —
+each naming the file and line that should come first (<code>struct Runtime</code> →
+the definition in <code>runtime.rs</code>, not a doc comment; <code>Field</code> in symbols mode
+→ the model field, not <code>FieldOverridePost</code> in a test). The suite reports
+<strong>precision@1</strong> (the expected result is the first hit) and <strong>precision@5</strong>,
+runs on every push, and fails the run below 0.90 / 0.95, so a change that
+makes searches faster but worse cannot land. Its first run scored 0.30 and
+surfaced six ranking defects; see the <a href="#changelog">changelog</a>.</p>
+<pre><code class="language-bash">cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
+cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
+</code></pre>
+<h2 id="comparison-with-scan-tools"><a class="header" href="#comparison-with-scan-tools">Comparison with scan tools</a></h2>
+<p><code>scripts/bench/compare.sh &lt;dir&gt;</code> times the same queries through ripgrep,
+ugrep (if installed) and <code>fcs</code> against a server on the same tree, warm
+cache, median of seven runs, and records the machine. It reports both the
+<code>fcs</code> client’s wall time (process start plus HTTP) and the engine’s own
+time. The point is not that a scan tool is slow — it is the right tool for
+a one-off search — but that an index answers in the same time however
+large the tree is, and ranks. Results are on the
+<a href="#latest-results">latest results</a> page when the comparison job has run.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="latest-results"><a class="header" href="#latest-results">Latest results</a></h1>
+<div id="live-results"><em>Loading the latest results from the benchmark workflow…</em></div>
+
+<script>
+(function () {
+  const el = document.getElementById("live-results");
+  const ms = ns => (ns / 1e6).toFixed(2) + " ms";
+  fetch("../../dev/bench/results/latest.json", { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(d => {
+      const c = d.corpus, m = c.machine, b = c.build, rq = d.ranking_quality;
+      let h = `<p><strong>From <a href="${d.run_url}">the latest benchmark run</a></strong> on commit <code>${d.commit.slice(0,7)}</code> (${d.generated_at.slice(0,10)}), ${m.cpu_model}, ${m.logical_cpus} logical CPUs, ${(m.mem_total_bytes/1e9).toFixed(0)} GB RAM, ${m.os}.</p>`;
+      h += `<table><thead><tr><th>Build (${c.corpus.files.toLocaleString()} files, ${(c.corpus.bytes/1e6).toFixed(1)} MB)</th><th>Value</th></tr></thead><tbody>`;
+      h += `<tr><td>Build</td><td>${(b.build_ns/1e9).toFixed(2)} s (${Math.round(b.files_per_second).toLocaleString()} files/s)</td></tr>`;
+      h += `<tr><td>Resident memory after build</td><td>${(b.rss_after_bytes/1e6).toFixed(0)} MB</td></tr>`;
+      h += `<tr><td>Index save / load</td><td>${ms(b.save_ns)} / ${ms(b.load_ns)} (${(b.index_bytes/1e6).toFixed(1)} MB on disk)</td></tr></tbody></table>`;
+      h += `<table><thead><tr><th>Query</th><th>p50</th><th>p95</th></tr></thead><tbody>`;
+      for (const q of c.queries) h += `<tr><td>${q.name}</td><td>${ms(q.p50_ns)}</td><td>${ms(q.p95_ns)}</td></tr>`;
+      h += `</tbody></table>`;
+      if (rq) h += `<p><strong>Ranking quality:</strong> precision@1 ${rq.precision_at_1.toFixed(2)}, precision@5 ${rq.precision_at_5.toFixed(2)} over ${rq.queries} labelled queries.</p>`;
+      const cmp = d.comparison;
+      if (cmp) {
+        const f = v => v == null ? "—" : v.toFixed(1) + " ms";
+        h += `<h3>Against scan tools (${cmp.tree_files.toLocaleString()} files, warm cache, median of ${cmp.runs})</h3>`;
+        h += `<table><thead><tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr></thead><tbody>`;
+        for (const q of cmp.queries) h += `<tr><td>${q.label} <code>${q.query.replace(/</g,"&lt;")}</code></td><td>${f(q.ripgrep_ms)}</td><td>${f(q.ugrep_ms)}</td><td>${f(q.fcs_client_ms)}</td><td>${q.fcs_engine_ms.toFixed(2)} ms</td></tr>`;
+        h += `</tbody></table><p>${cmp.tools.ripgrep}${cmp.tools.ugrep ? "; " + cmp.tools.ugrep : ""}. The fcs client time includes process start and the HTTP round trip; see <a href="comparison.html">the comparison page</a> for what these numbers do and do not mean.</p>`;
+      }
+      el.innerHTML = h;
+    })
+    .catch(() => { el.innerHTML = "<p><em>Live results are not available (the benchmark workflow has not published them yet); the table below is from the last hand-checked run.</em></p>"; });
+})();
+</script>
+<h2 id="last-hand-checked-run"><a class="header" href="#last-hand-checked-run">Last hand-checked run</a></h2>
 <p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/34254363545">run 34254363545</a>
 on commit <code>f46e7bf</code> (2026-09-08), GitHub-hosted <code>ubuntu-latest</code>. The
 <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
@@ -2533,11 +2584,229 @@ references, 5.9k dependency edges.</p>
 <p>Values are Criterion means; the corpus is generated by
 <code>benches/search_benchmark.rs</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="against-ripgrep-and-ugrep"><a class="header" href="#against-ripgrep-and-ugrep">Against ripgrep and ugrep</a></h1>
+<p>A scan tool reads every file on every query. An index reads the tree once
+and answers from memory. This page puts the two side by side on the same
+machine, the same tree and the same queries, and says plainly what the
+numbers do and do not mean. The script is
+<a href="https://github.com/jburrow/fast_code_search/blob/main/scripts/bench/compare.sh"><code>scripts/bench/compare.sh</code></a>;
+the benchmark workflow runs it on every push and the result appears on the
+<a href="#latest-results">latest results</a> page.</p>
+<h2 id="how-it-is-measured"><a class="header" href="#how-it-is-measured">How it is measured</a></h2>
+<ul>
+<li>The same query string goes to every tool. Literal rows use ripgrep’s
+fixed-string, case-insensitive mode, which is what a plain <code>fcs</code> search
+does; regex rows are given to both as regular expressions.</li>
+<li>Every tool is asked for at most 50 hits, warm cache, median of seven
+runs, wall time from process start to exit.</li>
+<li><code>fcs (client)</code> is the command-line client talking to a server over HTTP.
+It includes starting the process and the round trip. <code>fcs (engine)</code> is
+the time the server reports for the search itself, which is what an
+editor holding a connection sees.</li>
+<li>The server is started fresh on the tree and timing begins only after
+its build has finished. Build time is not in the table; it is on the
+<a href="#latest-results">latest results</a> page.</li>
+<li>The script refuses to run on a FUSE, NFS or SMB mount. On an external
+NTFS drive the same ripgrep query took about one second instead of
+forty milliseconds, and publishing that would have been dishonest.</li>
+</ul>
+<h2 id="results-on-a-laptop"><a class="header" href="#results-on-a-laptop">Results on a laptop</a></h2>
+<p>11th Gen Intel Core i5-1135G7, 8 logical CPUs, ext4 on NVMe, ripgrep
+15.0.0. ugrep was not installed on this machine; the CI run has it.</p>
+<p><strong>tokio 1.45.0 + Django 5.2</strong> — 6,240 files.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
+</thead>
+<tbody>
+<tr><td>common word <code>return</code></td><td>38.8 ms</td><td>8.3 ms</td><td>1.05 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>35.4 ms</td><td>7.6 ms</td><td>1.09 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>33.8 ms</td><td>6.5 ms</td><td>0.01 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>34.3 ms</td><td>8.5 ms</td><td>1.64 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>38.9 ms</td><td>7.5 ms</td><td>1.30 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>44.2 ms</td><td>7.5 ms</td><td>1.26 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>34.3 ms</td><td>7.2 ms</td><td>0.85 ms</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>54 crates from the cargo registry</strong> — 11,451 files, 268 MB on disk.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
+</thead>
+<tbody>
+<tr><td>common word <code>return</code></td><td>51.5 ms</td><td>8.2 ms</td><td>1.07 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>43.9 ms</td><td>11.0 ms</td><td>1.03 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>38.6 ms</td><td>7.5 ms</td><td>0.01 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>40.5 ms</td><td>10.7 ms</td><td>3.65 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>64.7 ms</td><td>15.4 ms</td><td>1.43 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>78.2 ms</td><td>8.6 ms</td><td>1.77 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>44.6 ms</td><td>8.9 ms</td><td>1.47 ms</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="reading-the-numbers"><a class="header" href="#reading-the-numbers">Reading the numbers</a></h2>
+<ul>
+<li><strong>ripgrep is fast.</strong> Forty milliseconds for a full scan of six thousand
+files is remarkable, and for a one-off search from a shell it is the
+right tool. Nothing here argues otherwise.</li>
+<li><strong>The engine’s time does not grow with the tree.</strong> Between the two
+trees ripgrep’s cost roughly doubles on the regex rows because it reads
+twice as many bytes; the engine stays near a millisecond because the
+trigram index narrows every query to the few files that can match
+before any text is read. On a tree ten times larger the scan takes ten
+times longer and the index does not.</li>
+<li><strong>A query per keystroke changes the arithmetic.</strong> An editor or web UI
+that searches as you type issues ten queries for a ten-letter
+identifier. Forty milliseconds each is a visible stutter; one
+millisecond each is not. This, and not the single-query gap, is why the
+project is a server.</li>
+<li><strong>The <code>fcs</code> client column is mostly process start.</strong> Seven of its eight
+milliseconds are the OS starting a process and one HTTP request. A
+client that keeps a connection, such as the web UI or an editor
+extension, sees the engine column.</li>
+<li><strong>Scan tools do not rank.</strong> Both tools return matching lines; only one
+of them puts the definition of <code>Runtime</code> first. That is measured
+separately on the <a href="#ranking-quality-1">ranking quality</a> page.</li>
+<li><strong>Zoekt</strong> is the closest comparable design — a trigram index behind a
+server — and a comparison against it is planned once the corpus and
+query set are shared between the two; see the
+<a href="#roadmap">roadmap</a>.</li>
+</ul>
+<h2 id="reproduce-it"><a class="header" href="#reproduce-it">Reproduce it</a></h2>
+<pre><code class="language-bash">cargo build --release --bins
+scripts/bench/compare.sh path/to/tree [more trees] --runs 7 --json compare.json --markdown compare.md
+</code></pre>
+<p><code>rg</code> must be on the path; <code>ugrep</code> is used if present. The tree must be on
+a local filesystem.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ranking-quality-1"><a class="header" href="#ranking-quality-1">Ranking quality</a></h1>
+<p>Speed is easy to measure and easy to game: an engine that returns the
+first fifty lines containing the query is fast and useless. This page
+tracks the thing that matters — <strong>does the first result answer the
+query?</strong> — with a suite of labelled queries that runs on every push and
+fails the build when it regresses.</p>
+<h2 id="what-is-measured"><a class="header" href="#what-is-measured">What is measured</a></h2>
+<p>Each query in <a href="https://github.com/jburrow/fast_code_search/blob/main/benches/ranking_quality.toml"><code>benches/ranking_quality.toml</code></a>
+names the file (and, for text queries, the line) a reader would want first,
+with a one-line reason. The corpora are the pinned
+<a href="https://github.com/tokio-rs/tokio/tree/tokio-1.45.0">tokio 1.45.0</a> and
+<a href="https://github.com/django/django/tree/5.2">Django 5.2</a> trees used by the
+latency benchmark, so both measurements describe the same index.</p>
+<ul>
+<li><strong>precision@1</strong> — the share of queries whose first result is the expected one.</li>
+<li><strong>precision@5</strong> — the share whose expected result is in the top five.</li>
+</ul>
+<p>The CI gate is precision@1 ≥ 0.90 and precision@5 ≥ 0.95. The suite
+deliberately favours the cases a scan tool gets wrong: a definition that
+has many mentions in docs and tests, a bare identifier whose definition
+should beat its uses, a short name (<code>Field</code>) with several unrelated
+definitions where the widely imported one should win, and a reference
+query where the definition itself must not appear.</p>
+<h2 id="current-score"><a class="header" href="#current-score">Current score</a></h2>
+<p>tokio 1.45.0 + Django 5.2: <strong>precision@1 1.00, precision@5 1.00</strong> over 20 queries.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>Mode</th><th>Expected first</th><th>Why</th><th>Rank found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>struct Runtime</code></td><td>text</td><td><code>tokio/src/runtime/runtime.rs</code></td><td>the definition, not the many mentions in docs and tests</td><td>1</td></tr>
+<tr><td><code>pub struct Mutex</code></td><td>text</td><td><code>tokio/src/sync/mutex.rs</code></td><td>tokio’s Mutex definition</td><td>1</td></tr>
+<tr><td><code>fn sleep</code></td><td>text</td><td><code>tokio/src/time/sleep.rs</code></td><td>the free function, above test helpers named sleep</td><td>1</td></tr>
+<tr><td><code>fn block_on</code></td><td>text</td><td><code>tokio/src/runtime/runtime.rs or tokio/src/runtime/handle.rs</code></td><td>the public Runtime::block_on / Handle::block_on, not the scheduler’s internal fn</td><td>1</td></tr>
+<tr><td><code>struct Notify</code></td><td>text</td><td><code>tokio/src/sync/notify.rs</code></td><td>the definition</td><td>1</td></tr>
+<tr><td><code>struct Semaphore</code></td><td>text</td><td><code>tokio/src/sync/semaphore.rs</code></td><td>the definition</td><td>1</td></tr>
+<tr><td><code>class HttpResponse</code></td><td>text</td><td><code>django/http/response.py</code></td><td>the class itself, above HttpResponseRedirect and friends</td><td>1</td></tr>
+<tr><td><code>def get_object_or_404</code></td><td>text</td><td><code>django/shortcuts.py</code></td><td>the definition</td><td>1</td></tr>
+<tr><td><code>class QuerySet</code></td><td>text</td><td><code>django/db/models/query.py</code></td><td>the definition</td><td>1</td></tr>
+<tr><td><code>class ModelForm</code></td><td>text</td><td><code>django/forms/models.py</code></td><td>the definition</td><td>1</td></tr>
+<tr><td><code>class Client</code></td><td>text</td><td><code>django/test/client.py</code></td><td>the test client definition</td><td>1</td></tr>
+<tr><td><code>HttpResponseBase</code></td><td>text</td><td><code>django/http/response.py</code></td><td>a bare identifier: its definition should beat its uses</td><td>1</td></tr>
+<tr><td><code>Runtime</code></td><td>symbols</td><td><code>tokio/src/runtime/runtime.rs</code></td><td>exact name match, the struct</td><td>1</td></tr>
+<tr><td><code>get_object_or_404</code></td><td>symbols</td><td><code>django/shortcuts.py</code></td><td>exact name match</td><td>1</td></tr>
+<tr><td><code>JoinHandle</code></td><td>symbols</td><td><code>tokio/src/runtime/task/join.rs</code></td><td>the struct, above the many impl blocks</td><td>1</td></tr>
+<tr><td><code>HttpResponse</code></td><td>symbols</td><td><code>django/http/response.py</code></td><td>exact name match over HttpResponseRedirect etc.</td><td>1</td></tr>
+<tr><td><code>Field</code></td><td>symbols</td><td><code>django/db/models/fields/__init__.py</code></td><td>the widely imported model Field, not the GDAL one</td><td>1</td></tr>
+<tr><td><code>pub fn sleep\(</code></td><td>regex</td><td><code>tokio/src/time/sleep.rs</code></td><td>literal-accelerated regex</td><td>1</td></tr>
+<tr><td><code>^class Form\(</code></td><td>regex</td><td><code>django/forms/forms.py</code></td><td>anchored regex</td><td>1</td></tr>
+<tr><td><code>get_object_or_404</code></td><td>references</td><td><code>django/contrib/flatpages/views.py</code></td><td>the one call site in shipped (non-test) code; the definition itself must not be listed as a reference</td><td>1</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-it-caught"><a class="header" href="#what-it-caught">What it caught</a></h2>
+<p>The first run of the suite scored 0.30 at precision@1. Every miss was a
+ranking defect, not a missing feature, and each fix is in the changelog:</p>
+<ul>
+<li>Items declared inside <code>cfg_if!</code> and similar macro bodies were invisible
+to the symbol extractor, so <code>struct Runtime</code> ranked a doc comment above
+the definition. The extractor now re-parses macro bodies.</li>
+<li>Lines that matched only some of a multi-term query could outrank the
+line with the whole phrase. Phrase matches are now a strict tier above
+all-terms and single-term lines.</li>
+<li>Test, example, mock and fixture paths carried the same weight as shipped
+code. They are now scaled by 0.6, and public definitions by 1.6.</li>
+<li>Symbol search compared the query against names with visibility and
+attribute prefixes still attached, so <code>pub struct Mutex</code> lost to
+<code>pub(crate) struct MutexGuard</code>. Modifiers are stripped before scoring.</li>
+<li>Symbol search over a large candidate set spent its per-file budget on
+the first files scanned in parallel, which made results depend on thread
+scheduling. Candidates are now scored from the symbol cache first and
+only the best files are scanned for matches.</li>
+<li>Match budgets were consumed by whichever files finished first, so the
+same query could return different results on different runs. Files
+that contain the whole phrase are now scanned in a separate pass before
+the rest.</li>
+</ul>
+<h2 id="running-it"><a class="header" href="#running-it">Running it</a></h2>
+<pre><code class="language-bash">git clone --depth 1 --branch tokio-1.45.0 https://github.com/tokio-rs/tokio bench-corpus/tokio
+git clone --depth 1 --branch 5.2 https://github.com/django/django bench-corpus/django
+cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
+</code></pre>
+<p>Add <code>--explain 'struct Runtime'</code> (with <code>--explain-mode symbols|regex|references</code>
+for other modes) to print the top results with their scores, tiers and the
+factors that produced them. <code>--min-p1</code> and <code>--min-p5</code> turn the run into a
+gate, as CI does. Adding a query is a five-line TOML entry; the point of
+the suite is that every ranking change comes with the example that
+motivated it.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.1...HEAD">Unreleased</a></a></h2>
+<h3 id="added"><a class="header" href="#added">Added</a></h3>
+<ul>
+<li>A ranking-quality suite: <code>examples/ranking_quality.rs</code> runs the labelled
+queries in <code>benches/ranking_quality.toml</code> (tokio 1.45.0 + Django 5.2)
+and reports precision@1 / @5; CI fails a ranking regression. Machine
+specifications and every figure of the real-corpus benchmark are written
+as JSON (<code>corpus_bench --json</code>) and published to the site per run.</li>
+<li>Rust items wrapped in brace-delimited macro invocations (<code>cfg_rt! { … }</code>)
+are extracted as definitions and references. Existing indexes re-extract
+symbols once on the first start.</li>
+<li><code>scripts/bench/compare.sh</code> times the same queries through ripgrep, ugrep
+and <code>fcs</code> on the same tree (warm cache, median of seven runs, machine
+recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
+slow. CI runs it and the documentation site shows the result alongside
+the latency and ranking-quality figures, with two new book pages.</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>Ranking: single-term lines of a multi-term query are capped per file and
+the files holding the phrase are scanned first, so the match budget can
+no longer starve the best hits; the whole-word phrase outranks the phrase
+as a prefix of a longer identifier; test, example, mock and fixture paths
+are demoted at line level; public definitions score higher and the
+start-of-line boost ignores visibility modifiers; symbol search scores
+from the symbol cache before reading files, weights exact names above
+prefixes more strongly, and ranks <code>impl</code> blocks below the type. The
+suite went from 0.30 to 1.00 precision@1 on the labelled set.</li>
+<li>The “Background indexing completed” log line reports the bytes of text
+indexed rather than the bytes currently memory-mapped.</li>
+</ul>
 <h2 id="0121---2026-09-08"><a class="header" href="#0121---2026-09-08"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.0...v0.12.1">0.12.1</a> - 2026-09-08</a></h2>
 <h3 id="changed-dependencies-and-ci"><a class="header" href="#changed-dependencies-and-ci">Changed (dependencies and CI)</a></h3>
 <ul>
@@ -2546,7 +2815,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <code>softprops/action-gh-release</code> 3; the Pages deploy has its own concurrency
 group and pushes without force.</li>
 </ul>
-<h3 id="added"><a class="header" href="#added">Added</a></h3>
+<h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>
 <ul>
 <li>A documentation site built with mdBook (<code>docs/book</code>, published under
 <code>/docs/</code> on GitHub Pages): Start here, Guides, Reference, How it works,
@@ -2562,7 +2831,7 @@ reference, moved out of the README.</li>
 <li>Release pages carry an install table, checksum instructions and a
 first-run line alongside the changelog section.</li>
 </ul>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
 <li>README rewritten as a landing page that leads with how results are
 ranked; benchmark figures are from the latest CI run and link to it.</li>
@@ -2572,13 +2841,13 @@ ranked; benchmark figures are from the latest CI run and link to it.</li>
 moved under <code>docs/internal/</code>.</li>
 </ul>
 <h2 id="0120---2026-09-07"><a class="header" href="#0120---2026-09-07"><a href="https://github.com/jburrow/fast_code_search/compare/v0.11.0...v0.12.0">0.12.0</a> - 2026-09-07</a></h2>
-<h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>
+<h3 id="added-2"><a class="header" href="#added-2">Added</a></h3>
 <ul>
 <li>A Web UI job in CI runs the JavaScript helper tests (<code>npm test</code>, Node’s
 built-in runner over <code>static/tests</code>) and fails if the committed
 <code>tailwind.css</code> does not match the markup.</li>
 </ul>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li>Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
 icon font (which stays only for the semantic pages); result groups are
@@ -2598,7 +2867,7 @@ fallback) with a visible Copied/Copy failed state; the hover-preview
 cache is cleared when the index changes, so previews cannot go stale.</li>
 </ul>
 <h2 id="0110---2026-09-07"><a class="header" href="#0110---2026-09-07"><a href="https://github.com/jburrow/fast_code_search/compare/v0.10.1...v0.11.0">0.11.0</a> - 2026-09-07</a></h2>
-<h3 id="added-2"><a class="header" href="#added-2">Added</a></h3>
+<h3 id="added-3"><a class="header" href="#added-3">Added</a></h3>
 <ul>
 <li><code>fcs</code>, a command-line client (<code>docs/CLI.md</code>): sends queries to the running
 server over the REST API with the web UI’s syntax and modes (<code>refs</code>,
@@ -2615,7 +2884,7 @@ HTTP client).</li>
 </ul>
 <p>Fixes from the 2026-09-06 engine and UI review
 (<code>docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md</code>).</p>
-<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
 <ul>
 <li>Line-mode regex patterns are matched in one pass per file (compiled with
 <code>(?mR)</code>, one hit per line, per-line semantics for <code>^</code>, <code>$</code>, <code>\s</code> and CRLF
@@ -2773,7 +3042,7 @@ into a 500 until restart; the watcher path is now panic-guarded, runs on an
 <li><code>DependencyIndex::remove_file</code> never pruned the filename index and every
 watcher update pushed a duplicate path entry.</li>
 </ul>
-<h3 id="added-3"><a class="header" href="#added-3">Added</a></h3>
+<h3 id="added-4"><a class="header" href="#added-4">Added</a></h3>
 <ul>
 <li>A real-corpus benchmark (<code>examples/corpus_bench.rs</code>, run in CI over pinned
 tokio and Django checkouts, nightly over the Rust compiler tree) reporting
@@ -2786,7 +3055,7 @@ searches report ranking info too.</li>
 <li>Every result carries <code>line_match_start</code> / <code>line_match_end</code> (byte offsets into
 the full line) and <code>match_column</code> (0-based character column) on REST and gRPC.</li>
 </ul>
-<h3 id="added-4"><a class="header" href="#added-4">Added</a></h3>
+<h3 id="added-5"><a class="header" href="#added-5">Added</a></h3>
 <ul>
 <li>Symbol references: <code>/api/search?references=true</code> (gRPC
 <code>SearchRequest.references</code>) returns the call sites, type mentions and
@@ -2809,7 +3078,7 @@ and the standard <code>grpc.health.v1</code> service.</li>
 <li>gRPC <code>SearchRequest.offset</code> / <code>rank</code> / <code>deadline_ms</code>; results carry
 <code>dependency_count</code>.</li>
 </ul>
-<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
+<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
 <ul>
 <li>Build: the semantic engine is behind the <code>semantic</code> Cargo feature (off by
 default; <code>ml-models</code> implies it), release binaries use thin LTO and are
@@ -2904,7 +3173,7 @@ platform); release binaries are built with thin LTO and stripped.</li>
 repaired; <code>onnxruntime/</code> and the <code>test_corpus</code> gitlinks are no longer tracked.</li>
 </ul>
 <h2 id="090---2026-06-10"><a class="header" href="#090---2026-06-10"><a href="https://github.com/jburrow/fast_code_search/compare/v0.8.0...v0.9.0">0.9.0</a> - 2026-06-10</a></h2>
-<h3 id="added-5"><a class="header" href="#added-5">Added</a></h3>
+<h3 id="added-6"><a class="header" href="#added-6">Added</a></h3>
 <ul>
 <li>Real incremental index updates: file modifications, deletions, and renames now
 update the index in place (<code>TrigramIndex::remove_document</code>, file-store tombstone /
@@ -2915,7 +3184,7 @@ refresh, dependency-edge removal) instead of leaving stale entries until restart
 <li>Keyboard navigation in results (<code>j</code>/<code>k</code>/arrows to move, Enter to open, <code>/</code> to focus).</li>
 <li>Per-result copy-path button.</li>
 </ul>
-<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
+<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
 <ul>
 <li>API errors are now consistent JSON (<code>{ "error": … }</code>); 503s include <code>Retry-After</code>.</li>
 <li>Static assets use compile-time content hashes for ETags and honor <code>If-None-Match</code>
@@ -2949,12 +3218,12 @@ requests abort in-flight so stale results can’t overwrite newer ones; offline 
 tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed dead styles.</li>
 </ul>
 <h2 id="080---2026-03-27"><a class="header" href="#080---2026-03-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.5...v0.8.0">0.8.0</a> - 2026-03-27</a></h2>
-<h3 id="added-6"><a class="header" href="#added-6">Added</a></h3>
+<h3 id="added-7"><a class="header" href="#added-7">Added</a></h3>
 <ul>
 <li>Dependency popover and tooltip interactions in the web UI to improve code navigation context.</li>
 <li>Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.</li>
 </ul>
-<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
+<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
 <ul>
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
@@ -2969,16 +3238,16 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
 <h2 id="074---2026-03-20"><a class="header" href="#074---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.3...v0.7.4">0.7.4</a> - 2026-03-20</a></h2>
-<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
+<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
 <ul>
 <li>New UI theme for the keyword search interface with improved layout and styling.</li>
 </ul>
 <h2 id="073---2026-03-20"><a class="header" href="#073---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.2...v0.7.3">0.7.3</a> - 2026-03-20</a></h2>
-<h3 id="added-7"><a class="header" href="#added-7">Added</a></h3>
+<h3 id="added-8"><a class="header" href="#added-8">Added</a></h3>
 <ul>
 <li>New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.</li>
 </ul>
-<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
+<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
 <ul>
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
@@ -2988,12 +3257,12 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Benchmark CI failure: reset local changes before gh-pages branch switch to prevent dirty <code>Cargo.lock</code> blocking the workflow (#97).</li>
 </ul>
 <h2 id="072---2026-03-18"><a class="header" href="#072---2026-03-18"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.1...v0.7.2">0.7.2</a> - 2026-03-18</a></h2>
-<h3 id="added-8"><a class="header" href="#added-8">Added</a></h3>
+<h3 id="added-9"><a class="header" href="#added-9">Added</a></h3>
 <ul>
 <li>Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).</li>
 <li>New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.</li>
 </ul>
-<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
+<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
 <ul>
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
@@ -3009,33 +3278,33 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Fix semantic web API handlers panicking on a poisoned <code>RwLock</code> (#85).</li>
 <li>Preserve <code>dev/bench/</code> across GitHub Pages deployments (#83).</li>
 </ul>
-<h3 id="added-9"><a class="header" href="#added-9">Added</a></h3>
+<h3 id="added-10"><a class="header" href="#added-10">Added</a></h3>
 <ul>
 <li>URL state encoding for semantic search UI; refactored shared helpers into <code>common.js</code> (#93).</li>
 <li>VS Code configuration and tasks for Rust development.</li>
 </ul>
-<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
+<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
 <ul>
 <li>Refactor code structure for improved readability and maintainability.</li>
 </ul>
 <h2 id="070---2026-03-03"><a class="header" href="#070---2026-03-03"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.9...v0.7.0">0.7.0</a> - 2026-03-03</a></h2>
-<h3 id="added-10"><a class="header" href="#added-10">Added</a></h3>
+<h3 id="added-11"><a class="header" href="#added-11">Added</a></h3>
 <ul>
 <li><strong>GitHub Pages site</strong> (<code>docs/site/</code>): A static project site deployed to <code>gh-pages</code> on every push to <code>main</code> via a new <code>pages.yml</code> workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from <code>dev/bench/</code> pushed by <code>github-action-benchmark</code>), Codecov coverage badge, dynamically-rendered changelog (from <code>changelog.json</code> generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses <code>clean-exclude: dev/</code> to preserve benchmark data, and both <code>pages.yml</code> and <code>benchmark.yml</code> share a <code>gh-pages-deploy</code> concurrency group to prevent simultaneous pushes.</li>
 </ul>
 <h2 id="069---2026-02-28"><a class="header" href="#069---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.8...v0.6.9">0.6.9</a> - 2026-02-28</a></h2>
-<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
+<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
 <ul>
 <li>Version bump and release.</li>
 </ul>
 <h2 id="068---2026-02-28"><a class="header" href="#068---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.7...v0.6.8">0.6.8</a> - 2026-02-28</a></h2>
-<h3 id="added-11"><a class="header" href="#added-11">Added</a></h3>
+<h3 id="added-12"><a class="header" href="#added-12">Added</a></h3>
 <ul>
 <li><strong>Automated performance benchmarks in CI</strong>: A new <code>benchmark</code> workflow runs on every push to <code>main</code>. It executes <code>cargo bench</code> for both <code>search_benchmark</code> and <code>persistence_benchmark</code> suites using the Criterion bencher output format, runs the validator binary in JSON mode for functional performance validation, and uploads results as a <code>benchmark-results</code> artifact. Historical trends are tracked in the <code>gh-pages</code> branch via <code>benchmark-action/github-action-benchmark</code>, with automatic alerts on &gt;200% regressions.</li>
 <li><strong>Registered <code>persistence_benchmark</code> in <code>Cargo.toml</code></strong>: The <code>benches/persistence_benchmark.rs</code> suite (save/load index, trigram deserialization, file staleness checks) was already present but not declared as a <code>[[bench]]</code> target. It is now runnable via <code>cargo bench --bench persistence_benchmark</code>.</li>
 </ul>
 <h2 id="067---2026-02-27"><a class="header" href="#067---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.6...v0.6.7">0.6.7</a> - 2026-02-27</a></h2>
-<h3 id="added-12"><a class="header" href="#added-12">Added</a></h3>
+<h3 id="added-13"><a class="header" href="#added-13">Added</a></h3>
 <ul>
 <li><strong>Code coverage reports in CI</strong>: A new <code>coverage</code> job runs on every push and pull request using <code>cargo-llvm-cov</code>. The HTML coverage report is uploaded as a <code>coverage-report</code> GitHub Actions artifact and LCOV data is uploaded to Codecov. See the <a href="#code-coverage">Code Coverage</a> section in the copilot instructions for how to generate reports locally.</li>
 </ul>
@@ -3094,12 +3363,12 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>File count in UI showed mmap-capped number instead of true indexed count</strong>: Because the above fix ensures all files are registered, <code>file_store.len()</code> — which drives the FILES counter in the web UI and <code>/api/status</code> — now reflects the true number of indexed files rather than the OS mmap limit.</li>
 </ul>
 <h2 id="061---2026-02-27"><a class="header" href="#061---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.0...v0.6.1">0.6.1</a> - 2026-02-27</a></h2>
-<h3 id="added-13"><a class="header" href="#added-13">Added</a></h3>
+<h3 id="added-14"><a class="header" href="#added-14">Added</a></h3>
 <ul>
 <li><strong>Checkpoint saves during initial indexing</strong>: New <code>checkpoint_interval_files</code> config option under <code>[indexer]</code> (default: <code>0</code> = disabled). When set (e.g. <code>20000</code>), the index is written to <code>index_path</code> every N files during the initial build. If the process is killed before completion, the next run loads the checkpoint and re-indexes only the missing files — no compute is lost. Has no effect if <code>index_path</code> is not configured.</li>
 </ul>
 <h2 id="060---2026-02-27"><a class="header" href="#060---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.8...v0.6.0">0.6.0</a> - 2026-02-27</a></h2>
-<h3 id="added-14"><a class="header" href="#added-14">Added</a></h3>
+<h3 id="added-15"><a class="header" href="#added-15">Added</a></h3>
 <ul>
 <li><strong>Non-UTF-8 encoding support</strong>: Files in legacy encodings (Latin-1/ISO-8859-1, Windows-1252, Shift-JIS, UTF-16 LE/BE, etc.) are now automatically detected and transcoded to UTF-8 during indexing, making them fully searchable. Zero performance impact on UTF-8 files (fast path via <code>std::str::from_utf8</code>).
 <ul>
@@ -3131,7 +3400,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Fix panic in <code>content_safety_check</code> on multi-byte UTF-8 content</strong>: <code>is_binary_content()</code> sliced a <code>&amp;str</code> at a raw byte offset (8192) which panics when that position falls inside a multi-byte UTF-8 character (e.g. CJK text, emoji). The function now operates on <code>as_bytes()</code> directly, avoiding the invalid slice.</li>
 </ul>
 <h2 id="057---2026-02-26"><a class="header" href="#057---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.6...v0.5.7">0.5.7</a> - 2026-02-26</a></h2>
-<h3 id="added-15"><a class="header" href="#added-15">Added</a></h3>
+<h3 id="added-16"><a class="header" href="#added-16">Added</a></h3>
 <ul>
 <li><strong>Automatic mmap limit detection</strong>: On Linux the server now reads <code>vm.max_map_count</code> at startup, computes a safe 85 % ceiling, and refuses to map additional files once that ceiling is reached — preventing “cannot allocate memory” crashes on RHEL 7 / CentOS 7 and similar systems with low default limits.</li>
 <li><strong>Startup system-limits logging</strong>: <code>SystemLimits::collect()</code> gathers <code>max_map_count</code>, current map count, open file descriptors, and <code>file-max</code>, then logs them at <code>INFO</code> level on every launch.</li>
@@ -3155,12 +3424,12 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
 <h2 id="055---2026-02-26"><a class="header" href="#055---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5">0.5.5</a> - 2026-02-26</a></h2>
-<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
+<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
 <ul>
 <li>Maintenance release: version/changelog update only; no functional code changes.</li>
 </ul>
 <h2 id="054---2026-02-25"><a class="header" href="#054---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.3...v0.5.4">0.5.4</a> - 2026-02-25</a></h2>
-<h3 id="added-16"><a class="header" href="#added-16">Added</a></h3>
+<h3 id="added-17"><a class="header" href="#added-17">Added</a></h3>
 <ul>
 <li><strong><code>exclude_files</code> config option</strong>: Explicitly exclude specific file paths from indexing.
 Use this when a file causes a crash — identify it via <code>fcs_last_processed.txt</code> then add it:
@@ -3176,7 +3445,7 @@ Run with <code>RUST_LOG=fast_code_search=debug</code> to see a rolling log of fi
 making the crashing file identifiable from the last log entry.</li>
 </ul>
 <h2 id="053---2026-02-25"><a class="header" href="#053---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.2...v0.5.3">0.5.3</a> - 2026-02-25</a></h2>
-<h3 id="added-17"><a class="header" href="#added-17">Added</a></h3>
+<h3 id="added-18"><a class="header" href="#added-18">Added</a></h3>
 <ul>
 <li><strong>Version logged on startup</strong>: The binary version is now emitted as a structured log field
 (<code>version=X.Y.Z</code>) alongside the startup address line, making it easy to confirm which build
@@ -3207,7 +3476,7 @@ are serialised.</li>
 <li><strong>OOM crash during background indexing</strong>: <code>PreIndexedFile</code> was retaining a full copy of each file’s content (<code>String</code>, up to 10 MB each) in memory while rayon processed batches in parallel. With a 500-file batch size this could accumulate up to 5 GB of redundant heap on top of the trigram index, causing an allocation failure on large codebases (~60K files). The <code>content</code> field has been removed from <code>PreIndexedFile</code> — it was only needed transiently inside <code>process()</code> to compute trigrams, symbols, and imports, all of which are now the only data carried into <code>index_batch</code>.</li>
 </ul>
 <h2 id="050---2026-02-25"><a class="header" href="#050---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.4.0...v0.5.0">0.5.0</a> - 2026-02-25</a></h2>
-<h3 id="added-18"><a class="header" href="#added-18">Added</a></h3>
+<h3 id="added-19"><a class="header" href="#added-19">Added</a></h3>
 <ul>
 <li><strong>HNSW vector index for semantic search</strong>: Replaced linear O(n) search with HNSW O(log n) algorithm
 <ul>
@@ -3219,14 +3488,14 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
+<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
 <ul>
 <li>Semantic search vector index now uses HNSW instead of linear search</li>
 <li>Updated documentation with HNSW configuration and tuning guide</li>
 <li>Memory overhead increased to ~3x indexed code size (from ~2x) due to HNSW graph structure</li>
 </ul>
 <h2 id="040---2026-02-09"><a class="header" href="#040---2026-02-09"><a href="https://github.com/jburrow/fast_code_search/compare/v0.3.0...v0.4.0">0.4.0</a> - 2026-02-09</a></h2>
-<h3 id="added-19"><a class="header" href="#added-19">Added</a></h3>
+<h3 id="added-20"><a class="header" href="#added-20">Added</a></h3>
 <ul>
 <li>
 <p><strong>OpenTelemetry distributed tracing</strong>: Both server binaries now export traces via OTLP/gRPC</p>
@@ -3252,7 +3521,7 @@ are serialised.</li>
 <p><strong>Semantic model download verification</strong>: Optional SHA256 verification via <code>FCS_MODEL_SHA256</code> or <code>FCS_MODEL_SHA256_&lt;MODEL&gt;</code></p>
 </li>
 </ul>
-<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
+<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
 <ul>
 <li>Tracing subscriber upgraded from simple <code>FmtSubscriber</code> to layered <code>Registry</code> (fmt + OTel)</li>
 <li><code>tracing-subscriber</code> now uses <code>registry</code> feature alongside <code>env-filter</code></li>
@@ -3270,7 +3539,7 @@ are serialised.</li>
 <li>Added <code>opentelemetry</code> 0.27, <code>opentelemetry_sdk</code> 0.27 (rt-tokio), <code>opentelemetry-otlp</code> 0.27 (tonic), <code>tracing-opentelemetry</code> 0.28</li>
 </ul>
 <h2 id="030---2026-02-06"><a class="header" href="#030---2026-02-06"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.4...v0.3.0">0.3.0</a> - 2026-02-06</a></h2>
-<h3 id="added-20"><a class="header" href="#added-20">Added</a></h3>
+<h3 id="added-21"><a class="header" href="#added-21">Added</a></h3>
 <ul>
 <li>
 <p><strong>Expanded language support</strong>: Tree-sitter symbol extraction now supports 18 languages (up from 4)</p>
@@ -3293,12 +3562,12 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
+<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
 <ul>
 <li>Symbol extractor now handles C/C++ function declarators correctly (name is in <code>declarator</code> field, not <code>name</code>)</li>
 </ul>
 <h2 id="024---2026-02-05"><a class="header" href="#024---2026-02-05"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.3...v0.2.4">0.2.4</a> - 2026-02-05</a></h2>
-<h3 id="added-21"><a class="header" href="#added-21">Added</a></h3>
+<h3 id="added-22"><a class="header" href="#added-22">Added</a></h3>
 <ul>
 <li>
 <p><strong>Two-phase ranking system for large-scale search</strong>: Dramatically improves search performance on codebases with 100k+ files</p>
@@ -3328,13 +3597,13 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
+<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
 <ul>
 <li>Search methods now use file metadata ranking instead of early termination for large candidate sets</li>
 <li><code>search_regex()</code> and <code>search_symbols()</code> also use fast ranking for consistency</li>
 </ul>
 <h2 id="023---2026-02-04"><a class="header" href="#023---2026-02-04"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.2...v0.2.3">0.2.3</a> - 2026-02-04</a></h2>
-<h3 id="added-22"><a class="header" href="#added-22">Added</a></h3>
+<h3 id="added-23"><a class="header" href="#added-23">Added</a></h3>
 <ul>
 <li>
 <p><strong>Terminal progress bars for index loading</strong>: Added animated progress bars when loading a persisted index from disk</p>
@@ -3386,7 +3655,7 @@ are serialised.</li>
 <p><strong>Symbols-only search mode</strong>: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via <code>symbols=true</code> query parameter in REST API or <code>symbols_only=true</code> in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.</p>
 </li>
 </ul>
-<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
+<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
@@ -3409,12 +3678,12 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="022---2026-02-01"><a class="header" href="#022---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.1...v0.2.2">0.2.2</a> - 2026-02-01</a></h2>
-<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
+<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
 <ul>
 <li><strong>Improved indexing log readability</strong>: The background indexing completion message now formats large numbers with underscore separators (e.g., <code>89_210</code>), rounds <code>files_per_sec</code> to whole numbers, and removes redundant raw byte values.</li>
 </ul>
 <h2 id="021---2026-02-01"><a class="header" href="#021---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.0...v0.2.1">0.2.1</a> - 2026-02-01</a></h2>
-<h3 id="added-23"><a class="header" href="#added-23">Added</a></h3>
+<h3 id="added-24"><a class="header" href="#added-24">Added</a></h3>
 <ul>
 <li><strong>Indexing completion stats</strong>: When background indexing completes, the log now reports the total size of indexed text and the current process memory usage in human-readable format (e.g., “150.00 MB”). Uses the <code>sysinfo</code> crate for cross-platform memory reporting.</li>
 </ul>
@@ -3423,7 +3692,7 @@ are serialised.</li>
 <ul>
 <li><strong>Duplicate search results</strong>: Fixed issue where the same file could appear multiple times in search results when discovered via symlinks or different path representations. The <code>FileStore</code> now deduplicates files by canonical path.</li>
 </ul>
-<h3 id="added-24"><a class="header" href="#added-24">Added</a></h3>
+<h3 id="added-25"><a class="header" href="#added-25">Added</a></h3>
 <ul>
 <li><strong>Server-side search timing</strong>: Search API response now includes <code>elapsed_ms</code> field showing the actual server-side query time in milliseconds. The Web UI displays this instead of client-side round-trip time.</li>
 </ul>
@@ -3558,10 +3827,12 @@ under <code>docs/internal/plans/</code>; individual items are GitHub issues labe
 <ul>
 <li><strong>Documentation site</strong> (this book): generated reference pages, a
 quick start executed in CI, guides for the questions people ask.</li>
-<li><strong>Benchmarks people can trust</strong>: methodology, machine specs in every
-result, results and trends generated onto the site, a ranking-quality
-suite (precision@1/@5 over labelled queries), and a scripted comparison
-with ripgrep, ugrep and Zoekt.</li>
+<li><strong>Benchmarks people can trust</strong>: done for methodology, machine specs in
+every result, results generated onto the site, the
+<a href="#ranking-quality-1">ranking-quality suite</a> and the
+<a href="#against-ripgrep-and-ugrep">ripgrep/ugrep comparison</a>. Still open: a
+Zoekt comparison on a shared corpus and query set, and per-commit
+charts of memory and throughput.</li>
 </ul>
 <h2 id="next"><a class="header" href="#next">Next</a></h2>
 <ul>

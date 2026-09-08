@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Configuration cookbook - fast_code_search</title>
+        <title>Against ripgrep and ugrep - fast_code_search</title>
 
 
         <!-- Custom HTML head -->
@@ -147,7 +147,7 @@
                         <a href="https://github.com/jburrow/fast_code_search" title="Git repository" aria-label="Git repository">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
                         </a>
-                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/guides/configuration.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/benchmarks/comparison.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
                             <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
                         </a>
 
@@ -181,78 +181,113 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="configuration-cookbook"><a class="header" href="#configuration-cookbook">Configuration cookbook</a></h1>
-<p>Recipes for the situations that come up most. Keys are documented in
-<a href="../imported/api.html#configuration-file">API and configuration</a>; the
-complete template with every default is in
-<a href="../reference/config-template.html">Configuration template</a>.</p>
-<h2 id="one-developer-many-repositories"><a class="header" href="#one-developer-many-repositories">One developer, many repositories</a></h2>
-<p>List each checkout as its own root. The first path component of every
-result is the root’s directory name, so <code>proj/src/main.rs</code> is unambiguous
-even when several roots have a <code>src/</code>.</p>
-<pre><code class="language-toml">[indexer]
-paths = ["~/work/api", "~/work/web", "~/work/tools", "~/oss/tokio"]
-exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**",
-                    "**/build/**", "**/dist/**", "**/.venv/**", "**/__pycache__/**"]
-index_path = "~/.local/share/fast_code_search/index.fcsidx"
-watch = true
+                        <h1 id="against-ripgrep-and-ugrep"><a class="header" href="#against-ripgrep-and-ugrep">Against ripgrep and ugrep</a></h1>
+<p>A scan tool reads every file on every query. An index reads the tree once
+and answers from memory. This page puts the two side by side on the same
+machine, the same tree and the same queries, and says plainly what the
+numbers do and do not mean. The script is
+<a href="https://github.com/jburrow/fast_code_search/blob/main/scripts/bench/compare.sh"><code>scripts/bench/compare.sh</code></a>;
+the benchmark workflow runs it on every push and the result appears on the
+<a href="latest.html">latest results</a> page.</p>
+<h2 id="how-it-is-measured"><a class="header" href="#how-it-is-measured">How it is measured</a></h2>
+<ul>
+<li>The same query string goes to every tool. Literal rows use ripgrep’s
+fixed-string, case-insensitive mode, which is what a plain <code>fcs</code> search
+does; regex rows are given to both as regular expressions.</li>
+<li>Every tool is asked for at most 50 hits, warm cache, median of seven
+runs, wall time from process start to exit.</li>
+<li><code>fcs (client)</code> is the command-line client talking to a server over HTTP.
+It includes starting the process and the round trip. <code>fcs (engine)</code> is
+the time the server reports for the search itself, which is what an
+editor holding a connection sees.</li>
+<li>The server is started fresh on the tree and timing begins only after
+its build has finished. Build time is not in the table; it is on the
+<a href="latest.html">latest results</a> page.</li>
+<li>The script refuses to run on a FUSE, NFS or SMB mount. On an external
+NTFS drive the same ripgrep query took about one second instead of
+forty milliseconds, and publishing that would have been dishonest.</li>
+</ul>
+<h2 id="results-on-a-laptop"><a class="header" href="#results-on-a-laptop">Results on a laptop</a></h2>
+<p>11th Gen Intel Core i5-1135G7, 8 logical CPUs, ext4 on NVMe, ripgrep
+15.0.0. ugrep was not installed on this machine; the CI run has it.</p>
+<p><strong>tokio 1.45.0 + Django 5.2</strong> — 6,240 files.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
+</thead>
+<tbody>
+<tr><td>common word <code>return</code></td><td>38.8 ms</td><td>8.3 ms</td><td>1.05 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>35.4 ms</td><td>7.6 ms</td><td>1.09 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>33.8 ms</td><td>6.5 ms</td><td>0.01 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>34.3 ms</td><td>8.5 ms</td><td>1.64 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>38.9 ms</td><td>7.5 ms</td><td>1.30 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>44.2 ms</td><td>7.5 ms</td><td>1.26 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>34.3 ms</td><td>7.2 ms</td><td>0.85 ms</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>54 crates from the cargo registry</strong> — 11,451 files, 268 MB on disk.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
+</thead>
+<tbody>
+<tr><td>common word <code>return</code></td><td>51.5 ms</td><td>8.2 ms</td><td>1.07 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>43.9 ms</td><td>11.0 ms</td><td>1.03 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>38.6 ms</td><td>7.5 ms</td><td>0.01 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>40.5 ms</td><td>10.7 ms</td><td>3.65 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>64.7 ms</td><td>15.4 ms</td><td>1.43 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>78.2 ms</td><td>8.6 ms</td><td>1.77 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>44.6 ms</td><td>8.9 ms</td><td>1.47 ms</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="reading-the-numbers"><a class="header" href="#reading-the-numbers">Reading the numbers</a></h2>
+<ul>
+<li><strong>ripgrep is fast.</strong> Forty milliseconds for a full scan of six thousand
+files is remarkable, and for a one-off search from a shell it is the
+right tool. Nothing here argues otherwise.</li>
+<li><strong>The engine’s time does not grow with the tree.</strong> Between the two
+trees ripgrep’s cost roughly doubles on the regex rows because it reads
+twice as many bytes; the engine stays near a millisecond because the
+trigram index narrows every query to the few files that can match
+before any text is read. On a tree ten times larger the scan takes ten
+times longer and the index does not.</li>
+<li><strong>A query per keystroke changes the arithmetic.</strong> An editor or web UI
+that searches as you type issues ten queries for a ten-letter
+identifier. Forty milliseconds each is a visible stutter; one
+millisecond each is not. This, and not the single-query gap, is why the
+project is a server.</li>
+<li><strong>The <code>fcs</code> client column is mostly process start.</strong> Seven of its eight
+milliseconds are the OS starting a process and one HTTP request. A
+client that keeps a connection, such as the web UI or an editor
+extension, sees the engine column.</li>
+<li><strong>Scan tools do not rank.</strong> Both tools return matching lines; only one
+of them puts the definition of <code>Runtime</code> first. That is measured
+separately on the <a href="ranking-quality.html">ranking quality</a> page.</li>
+<li><strong>Zoekt</strong> is the closest comparable design — a trigram index behind a
+server — and a comparison against it is planned once the corpus and
+query set are shared between the two; see the
+<a href="../project/roadmap.html">roadmap</a>.</li>
+</ul>
+<h2 id="reproduce-it"><a class="header" href="#reproduce-it">Reproduce it</a></h2>
+<pre><code class="language-bash">cargo build --release --bins
+scripts/bench/compare.sh path/to/tree [more trees] --runs 7 --json compare.json --markdown compare.md
 </code></pre>
-<p>Roots that do not exist at start are skipped with a warning and picked up
-on the next start; a root that is unreachable when a saved index loads
-(an unmounted share) keeps its files rather than dropping them.</p>
-<h2 id="a-monorepo"><a class="header" href="#a-monorepo">A monorepo</a></h2>
-<p>One root, and excludes that name the build output of every toolchain in
-it. Patterns are globs matched against the full path; a bare directory
-name (<code>node_modules</code>) matches at any depth. Excluded directories are never
-read, so a generous list costs nothing.</p>
-<pre><code class="language-toml">paths = ["/srv/monorepo"]
-exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**",
-                    "**/bazel-*/**", "**/out/**", "**/*.min.js", "**/*.map",
-                    "**/package-lock.json", "**/Cargo.lock"]
-respect_gitignore = true
-max_file_size = 2097152          # 2 MB: skips generated blobs
-checkpoint_interval_files = 20000
-</code></pre>
-<h2 id="only-some-languages"><a class="header" href="#only-some-languages">Only some languages</a></h2>
-<pre><code class="language-toml">include_extensions = ["rs", "py", "ts", "tsx", "toml", "md"]   # a leading dot is fine too
-</code></pre>
-<p>Anything not listed is not indexed at all.</p>
-<h2 id="skip-generated-or-vendored-code-but-keep-it-browsable"><a class="header" href="#skip-generated-or-vendored-code-but-keep-it-browsable">Skip generated or vendored code but keep it browsable</a></h2>
-<p>Use <code>exclude_patterns</code> for whole trees and <code>exclude_files</code> for individual
-paths. A <code>.gitignore</code> in any indexed tree is honoured as well (also outside
-git repositories), so what your VCS ignores, the index ignores.</p>
-<h2 id="change-a-rule-on-a-running-index"><a class="header" href="#change-a-rule-on-a-running-index">Change a rule on a running index</a></h2>
-<p>Edit the file and restart the server. Files that are no longer eligible
-under the new patterns, extensions, size cap or <code>.gitignore</code> are dropped
-when the saved index is reconciled; the log reports how many.</p>
-<h2 id="shared-server-for-a-team"><a class="header" href="#shared-server-for-a-team">Shared server for a team</a></h2>
-<p>Bind to an address others can reach only behind something that
-authenticates: the server has no login and returns file contents.</p>
-<pre><code class="language-toml">[server]
-address = "0.0.0.0:50051"
-web_address = "0.0.0.0:8080"
-cors_origins = ["https://ide.example.com"]   # only if a page on another origin calls the API
-max_concurrent_searches = 64
-request_timeout_secs = 30
-</code></pre>
-<p>See <a href="../imported/deployment.html">Deployment</a> for a reverse-proxy example and
-the system-wide systemd unit, and the <a href="../imported/security.html">security policy</a>.</p>
-<h2 id="where-the-config-file-lives"><a class="header" href="#where-the-config-file-lives">Where the config file lives</a></h2>
-<p><code>--config FILE</code> wins; otherwise <code>$FCS_CONFIG</code>, then <code>./fast_code_search.toml</code>,
-then <code>~/.config/fast_code_search/config.toml</code> (<code>%APPDATA%\fast_code_search\config.toml</code>
-on Windows). <code>~</code> is expanded in every path-valued key; relative paths
-resolve against the config file’s own directory. Both the server and <code>fcs</code>
-use the same lookup.</p>
+<p><code>rg</code> must be on the path; <code>ugrep</code> is used if present. The tree must be on
+a local filesystem.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../imported/run-at-startup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../benchmarks/latest.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../guides/performance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../benchmarks/ranking-quality.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -262,11 +297,11 @@ use the same lookup.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../imported/run-at-startup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../benchmarks/latest.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../guides/performance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../benchmarks/ranking-quality.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
