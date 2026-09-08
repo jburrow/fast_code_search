@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the symbol cache before reading files, weights exact names above
   prefixes more strongly, and ranks `impl` blocks below the type. The
   suite went from 0.30 to 1.00 precision@1 on the labelled set.
+- Reference search scores each hit by its file (dependency boost and the
+  test-path penalty) instead of a flat 1.0, and every result ordering
+  breaks ties on the path rather than the file id, so the same query
+  returns the same page on every machine.
 - The "Background indexing completed" log line reports the bytes of text
   indexed rather than the bytes currently memory-mapped.
 

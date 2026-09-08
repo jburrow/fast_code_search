@@ -762,6 +762,56 @@ fn test_multiline_regex() {
 /// used, not where it is defined; survives a save/load round trip with the
 /// name table intact; and follows updates and removals.
 #[test]
+fn test_reference_in_shipped_code_outranks_the_same_call_in_a_test() {
+    // The same call site in src/ and in tests/: the reader asking "where is
+    // this used" wants the shipped code first, and the order must not depend
+    // on which file happened to be indexed first.
+    let temp_dir = TempDir::new().unwrap();
+    let src = temp_dir.path().join("src");
+    let tests = temp_dir.path().join("tests");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&tests).unwrap();
+    let call = "fn run() {\n    let v = widget();\n    v\n}\n";
+    fs::write(tests.join("a_test.rs"), call).unwrap();
+    fs::write(src.join("lib.rs"), "pub fn widget() -> u8 { 1 }\n").unwrap();
+    fs::write(src.join("z_use.rs"), call).unwrap();
+    for order in [true, false] {
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(temp_dir.path());
+        let mut files = vec![
+            tests.join("a_test.rs"),
+            src.join("lib.rs"),
+            src.join("z_use.rs"),
+        ];
+        if order {
+            files.reverse();
+        }
+        for f in &files {
+            engine.index_file(f).unwrap();
+        }
+        engine.finalize();
+        let (m, _) = engine
+            .search_references("widget", "", "", SearchLimits::new(10))
+            .unwrap();
+        let paths: Vec<String> = m
+            .iter()
+            .map(|m| {
+                m.file_path
+                    .rsplit('/')
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            vec!["z_use.rs/src", "a_test.rs/tests"],
+            "index order reversed = {order}"
+        );
+    }
+}
+
+#[test]
 fn test_search_references() {
     use crate::config::IndexerConfig;
     let temp_dir = TempDir::new().unwrap();

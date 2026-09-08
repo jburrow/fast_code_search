@@ -13,8 +13,11 @@ the benchmark workflow runs it on every push and the result appears on the
 - The same query string goes to every tool. Literal rows use ripgrep's
   fixed-string, case-insensitive mode, which is what a plain `fcs` search
   does; regex rows are given to both as regular expressions.
-- Every tool is asked for at most 50 hits, warm cache, median of seven
-  runs, wall time from process start to exit.
+- Warm cache, median of seven runs, wall time from process start to exit,
+  all output to `/dev/null`. `fcs` asks for the best 50 hits; the scan
+  tools are given no match limit, because ripgrep's limit is per file and
+  ugrep's stops the whole search, and a scan tool cannot know the best 50
+  without reading everything anyway.
 - `fcs (client)` is the command-line client talking to a server over HTTP.
   It includes starting the process and the round trip. `fcs (engine)` is
   the time the server reports for the search itself, which is what an
@@ -35,31 +38,36 @@ the benchmark workflow runs it on every push and the result appears on the
 
 | Query | ripgrep | fcs (client) | fcs (engine) |
 |---|---|---|---|
-| common word `return` | 38.8 ms | 8.3 ms | 1.05 ms |
-| identifier `Config` | 35.4 ms | 7.6 ms | 1.09 ms |
-| rare identifier (no match) | 33.8 ms | 6.5 ms | 0.01 ms |
-| two words `fn main` | 34.3 ms | 8.5 ms | 1.64 ms |
-| regex with literal `fn\s+\w+\(` | 38.9 ms | 7.5 ms | 1.30 ms |
-| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 44.2 ms | 7.5 ms | 1.26 ms |
-| case-insensitive `(?i)unwrap\(` | 34.3 ms | 7.2 ms | 0.85 ms |
+| common word `return` | 36.0 ms | 7.8 ms | 0.90 ms |
+| identifier `Config` | 32.3 ms | 10.4 ms | 0.98 ms |
+| rare identifier (no match) | 30.2 ms | 8.7 ms | 0.01 ms |
+| two words `fn main` | 37.2 ms | 8.0 ms | 1.63 ms |
+| regex with literal `fn\s+\w+\(` | 37.4 ms | 15.4 ms | 1.09 ms |
+| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 42.2 ms | 8.2 ms | 1.06 ms |
+| case-insensitive `(?i)unwrap\(` | 30.7 ms | 7.5 ms | 0.72 ms |
 
 **54 crates from the cargo registry** — 11,451 files, 268 MB on disk.
 
 | Query | ripgrep | fcs (client) | fcs (engine) |
 |---|---|---|---|
-| common word `return` | 51.5 ms | 8.2 ms | 1.07 ms |
-| identifier `Config` | 43.9 ms | 11.0 ms | 1.03 ms |
-| rare identifier (no match) | 38.6 ms | 7.5 ms | 0.01 ms |
-| two words `fn main` | 40.5 ms | 10.7 ms | 3.65 ms |
-| regex with literal `fn\s+\w+\(` | 64.7 ms | 15.4 ms | 1.43 ms |
-| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 78.2 ms | 8.6 ms | 1.77 ms |
-| case-insensitive `(?i)unwrap\(` | 44.6 ms | 8.9 ms | 1.47 ms |
+| common word `return` | 50.8 ms | 12.4 ms | 0.95 ms |
+| identifier `Config` | 48.2 ms | 9.2 ms | 1.28 ms |
+| rare identifier (no match) | 39.7 ms | 10.6 ms | 0.01 ms |
+| two words `fn main` | 40.8 ms | 16.9 ms | 4.46 ms |
+| regex with literal `fn\s+\w+\(` | 76.2 ms | 9.8 ms | 1.34 ms |
+| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 80.4 ms | 8.7 ms | 2.72 ms |
+| case-insensitive `(?i)unwrap\(` | 48.4 ms | 10.7 ms | 0.95 ms |
 
 ## Reading the numbers
 
-- **ripgrep is fast.** Forty milliseconds for a full scan of six thousand
-  files is remarkable, and for a one-off search from a shell it is the
-  right tool. Nothing here argues otherwise.
+- **ripgrep is fast.** Thirty-odd milliseconds for a full scan of six
+  thousand files is remarkable, and for a one-off search from a shell it
+  is the right tool. Nothing here argues otherwise.
+- **ugrep is in the CI run.** On the GitHub runner (4 vCPUs) the first
+  run put ugrep at 7 ms against ripgrep's 60 ms, which was ugrep's match
+  limit stopping the whole search after fifty hits, not a scan. The
+  limits were removed from both scan tools for that reason; the
+  [latest results](latest.md) page shows the corrected run.
 - **The engine's time does not grow with the tree.** Between the two
   trees ripgrep's cost roughly doubles on the regex rows because it reads
   twice as many bytes; the engine stays near a millisecond because the

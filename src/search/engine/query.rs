@@ -410,12 +410,16 @@ impl SearchEngine {
     /// matches. Ties break on file id then line, so page N+1 never repeats
     /// or skips a result from page N.
     pub(super) fn sort_and_page(matches: &mut Vec<SearchMatch>, limits: &SearchLimits) {
+        // Ties break on the display path, not the file id: ids follow
+        // discovery order, which differs between machines and runs, and a
+        // result page must not.
         let by_score = |a: &SearchMatch, b: &SearchMatch| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.file_id.cmp(&b.file_id))
+                .then_with(|| a.file_path.cmp(&b.file_path))
                 .then_with(|| a.line_number.cmp(&b.line_number))
+                .then_with(|| a.file_id.cmp(&b.file_id))
         };
         matches.sort_unstable_by(by_score);
 
@@ -816,6 +820,13 @@ impl SearchEngine {
         let content = file.as_str().ok()?;
         let dependency_count = self.dependency_index.get_import_count(doc_id);
         let display_path = self.make_display_path(&file.path);
+        // Every hit is an equally good reference, so the file decides: the
+        // precomputed score carries the dependency boost and the test,
+        // example and fixture penalty, which puts a call site in shipped
+        // code above the same call in a test. A flat score would leave the
+        // order to file ids, which follow discovery order and differ
+        // between machines.
+        let score = f64::from(self.get_file_metadata(doc_id).base_score.max(f32::EPSILON));
         let lines: Vec<&str> = content.lines().collect();
         let mut matches = Vec::new();
         let mut last_line = usize::MAX;
@@ -849,7 +860,7 @@ impl SearchEngine {
                 line_match_start: start,
                 line_match_end: end,
                 match_column: char_column(line, start),
-                score: 1.0,
+                score,
                 is_symbol: false,
                 is_reference: true,
                 dependency_count,

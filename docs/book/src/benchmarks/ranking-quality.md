@@ -76,6 +76,11 @@ ranking defect, not a missing feature, and each fix is in the changelog:
   same query could return different results on different runs. Files
   that contain the whole phrase are now scanned in a separate pass before
   the rest.
+- Reference hits all carried the same score, so ties were broken by file
+  id, which follows discovery order: the suite scored 1.00 on a laptop
+  and 0.95 on the CI runner, where a test's call to `get_object_or_404`
+  came first. References now take the file's score (dependency boost,
+  test-path penalty) and all ties break on the path.
 
 ## Running it
 

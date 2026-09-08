@@ -38,6 +38,10 @@ done
 
 # Queries: (label, literal or regex, kind). The same string is given to every
 # tool; fcs gets --regex for regex rows, rg/ugrep get -e (regex) for all.
+# The scan tools are not given a match limit: ripgrep's -m is per file and
+# ugrep's stops the whole search, so neither compares with "the best 50",
+# and a scan tool cannot know the best 50 without reading everything anyway.
+# Their output goes to /dev/null, as does fcs's.
 QUERIES=(
   "common word|return|literal"
   "identifier|Config|literal"
@@ -84,8 +88,8 @@ ROWS=()
 for entry in "${QUERIES[@]}"; do
   IFS='|' read -r label q kind <<< "$entry"
   if [ "$kind" = literal ]; then rgargs=(-F -i); fcsargs=(); else rgargs=(); fcsargs=(-e); fi
-  rg_ms=$(time_cmd "$RUNS" "$RG" "${rgargs[@]}" -n -m 50 -e "$q" "${DIRS[@]}")
-  ug_ms=""; [ -n "$UG" ] && ug_ms=$(time_cmd "$RUNS" "$UG" "${rgargs[@]}" -n -r -m 50 -e "$q" "${DIRS[@]}")
+  rg_ms=$(time_cmd "$RUNS" "$RG" "${rgargs[@]}" -n -e "$q" "${DIRS[@]}")
+  ug_ms=""; [ -n "$UG" ] && ug_ms=$(time_cmd "$RUNS" "$UG" "${rgargs[@]}" -n -r -e "$q" "${DIRS[@]}")
   fcs_ms=$(time_cmd "$RUNS" "$FCS" --server http://127.0.0.1:8093 --no-offline -n 50 "${fcsargs[@]}" -- "$q")
   # engine-only time from the API (excludes process start and HTTP)
   enc=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$q")
