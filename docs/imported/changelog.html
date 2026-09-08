@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-6178e14e.js";
+            window.path_to_searchindex_js = "../searchindex-10f90ed0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -213,6 +213,10 @@ start-of-line boost ignores visibility modifiers; symbol search scores
 from the symbol cache before reading files, weights exact names above
 prefixes more strongly, and ranks <code>impl</code> blocks below the type. The
 suite went from 0.30 to 1.00 precision@1 on the labelled set.</li>
+<li>Reference search scores each hit by its file (dependency boost and the
+test-path penalty) instead of a flat 1.0, and every result ordering
+breaks ties on the path rather than the file id, so the same query
+returns the same page on every machine.</li>
 <li>The “Background indexing completed” log line reports the bytes of text
 indexed rather than the bytes currently memory-mapped.</li>
 </ul>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-6178e14e.js";
+            window.path_to_searchindex_js = "../searchindex-10f90ed0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -258,6 +258,11 @@ only the best files are scanned for matches.</li>
 same query could return different results on different runs. Files
 that contain the whole phrase are now scanned in a separate pass before
 the rest.</li>
+<li>Reference hits all carried the same score, so ties were broken by file
+id, which follows discovery order: the suite scored 1.00 on a laptop
+and 0.95 on the CI runner, where a test’s call to <code>get_object_or_404</code>
+came first. References now take the file’s score (dependency boost,
+test-path penalty) and all ties break on the path.</li>
 </ul>
 <h2 id="running-it"><a class="header" href="#running-it">Running it</a></h2>
 <pre><code class="language-bash">git clone --depth 1 --branch tokio-1.45.0 https://github.com/tokio-rs/tokio bench-corpus/tokio
