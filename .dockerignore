@@ -1,0 +1,7 @@
+target
+node_modules
+bench-corpus
+bench-results
+docs/book/book
+vscode-extension
+.git

@@ -4,6 +4,32 @@ This is the part that makes results feel right. A hit's score combines a
 content match with what the index knows about the line, the file and the
 codebase. All weights live in one file, `src/search/ranking.rs`.
 
+```mermaid
+flowchart LR
+    subgraph line["the line"]
+        direction TB
+        A[defines a symbol ×3]
+        B[exact case ×2]
+        C[starts the line ×1.5]
+    end
+    subgraph file["the file"]
+        direction TB
+        E[under src/ or lib/ ×1.5]
+        F[test / example path ×0.6]
+        H[public definition ×1.6]
+    end
+    subgraph codebase["the codebase"]
+        G["imported by N files<br/>× (1 + 0.5·log10 N)"]
+    end
+    line --> S((score))
+    file --> S
+    codebase --> S
+    S --> T{tier}
+    T -->|whole phrase| T1[first]
+    T -->|every term| T2[then]
+    T -->|some terms| T3[last]
+```
+
 ## Line-level signals
 
 ```text

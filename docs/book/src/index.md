@@ -31,6 +31,27 @@ those uses. See [Ranking](how-it-works/ranking.md) for why.
 
 ## The parts
 
+```mermaid
+flowchart LR
+    subgraph clients
+        W[web UI<br/>embedded]
+        F[fcs<br/>command line]
+        E[editors, scripts]
+    end
+    subgraph server["fast_code_search_server"]
+        A[REST :8080] --> X[(in-memory index<br/>trigrams · symbols · import graph)]
+        R[gRPC :50051] --> X
+        V[watcher] --> X
+        X <--> P[/index file on disk/]
+    end
+    W --> A
+    F --> A
+    E --> A
+    E --> R
+    T[(your source trees)] --> V
+    F -. offline fallback .-> P
+```
+
 - **`fast_code_search_server`** builds and holds the index, watches the tree
   for changes, and serves the web UI on `127.0.0.1:8080` and gRPC on
   `127.0.0.1:50051`.

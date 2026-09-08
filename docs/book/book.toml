@@ -16,6 +16,7 @@ git-repository-url = "https://github.com/jburrow/fast_code_search"
 edit-url-template = "https://github.com/jburrow/fast_code_search/edit/main/docs/book/{path}"
 site-url = "/fast_code_search/docs/"
 additional-css = ["theme/fcs.css"]
+additional-js = ["theme/mermaid.js"]
 
 [output.html.search]
 enable = true

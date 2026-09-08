@@ -4,6 +4,23 @@ A build turns a set of directories into three structures held in memory:
 a trigram index, per-file symbol and reference tables, and an import
 graph. Searches are served throughout.
 
+```mermaid
+flowchart TB
+    R[(roots)] --> D[Discovery<br/>excludes, extensions,<br/>size, .gitignore]
+    D --> B{{batch of files}}
+    B --> T[Read + trigrams<br/>parallel]
+    B --> S[Symbols, references,<br/>imports<br/>tree-sitter, parallel]
+    T --> M[Merge<br/>under the write lock]
+    S --> M
+    M --> I[(trigram index)]
+    M --> Y[(symbol + reference tables)]
+    M --> G[(import graph)]
+    M -. every N files .-> P[/checkpoint to index_path/]
+    I --> Q[searches served<br/>between batches]
+    Y --> Q
+    G --> Q
+```
+
 1. **Discovery.** Each root is walked with the exclude patterns, the
    include-extension list, the binary and size rules and `.gitignore`
    applied. Excluded directories are never entered. The same rule set

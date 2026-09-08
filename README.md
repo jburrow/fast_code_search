@@ -52,11 +52,22 @@ and type mention of an identifier, across languages. The weights live in one fil
 put `fast_code_search_server` and `fcs` on your `PATH`. Each archive includes a
 config template, the startup unit files and the guides.
 
-**From source** (Rust 1.89+ and `protoc`):
+**With cargo** (Rust 1.89+; the source build also needs `protoc`):
 
 ```bash
-cargo install --git https://github.com/jburrow/fast_code_search --bins   # both binaries
+cargo binstall --git https://github.com/jburrow/fast_code_search fast_code_search   # downloads the release archive
+cargo install --git https://github.com/jburrow/fast_code_search --bins              # builds from source
 ```
+
+**Container** (indexes the mounted tree, serves the web UI on :8080):
+
+```bash
+docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search
+```
+
+Release archives are signed through Sigstore and carry a `.sha256`; the
+[install guide](https://jburrow.github.io/fast_code_search/docs/start/install.html)
+shows how to verify one.
 
 ## Quick start
 

@@ -11,6 +11,7 @@ env:
 
 permissions:
   contents: write
+  id-token: write   # keyless signing of the archives with cosign (Sigstore)
 
 jobs:
   test:
@@ -160,6 +161,22 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      # Every archive is signed keylessly through Sigstore: the signature is
+      # bound to this workflow's OIDC identity, so a download can be checked
+      # against the repository and tag it claims to come from, not just a
+      # checksum that travelled with it.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the archives (Sigstore keyless)
+        run: |
+          cd artifacts
+          for f in fast_code_search-*.tar.gz fast_code_search-*.zip; do
+            [ -f "$f" ] || continue
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+          ls -la
+
       - name: Extract changelog for version
         id: changelog
         run: |
@@ -204,6 +221,16 @@ jobs:
             echo "| Windows x86_64 | \`fast_code_search-${VERSION}-x86_64-pc-windows-msvc.zip\` |"
             echo
             echo "Verify a download with the \`.sha256\` file next to it: \`sha256sum -c fast_code_search-${VERSION}-<target>.tar.gz.sha256\`."
+            echo "Each archive is also signed through Sigstore; with [cosign](https://docs.sigstore.dev/cosign/installation/) installed:"
+            echo
+            echo "\`\`\`bash"
+            echo "cosign verify-blob --bundle fast_code_search-${VERSION}-<target>.tar.gz.sigstore.json \\"
+            echo "  --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  fast_code_search-${VERSION}-<target>.tar.gz"
+            echo "\`\`\`"
+            echo
+            echo "Other ways to install: \`cargo binstall fast_code_search\` (downloads these archives), \`cargo install fast_code_search\` (builds from crates.io), or the container image \`ghcr.io/jburrow/fast_code_search:${VERSION#v}\`."
             echo
             echo "First run: \`fast_code_search_server --init config.toml\`, add your paths, start the server, then \`fcs 'fn main'\`."
             echo "Full changelog: https://github.com/jburrow/fast_code_search/blob/main/CHANGELOG.md"
@@ -223,3 +250,39 @@ jobs:
             artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # crates.io, when a CARGO_REGISTRY_TOKEN secret is configured. Idempotent:
+  # a version that is already published is reported and skipped.
+  publish:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref, '-') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for a registry token
+        id: token
+        run: echo "present=${{ secrets.CARGO_REGISTRY_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Install Protoc
+        if: steps.token.outputs.present == 'true'
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Rust toolchain
+        if: steps.token.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+      - name: cargo publish
+        if: steps.token.outputs.present == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if curl -fsS -A fast_code_search-release "https://crates.io/api/v1/crates/fast_code_search/$version" >/dev/null 2>&1; then
+            echo "fast_code_search $version is already on crates.io"; exit 0
+          fi
+          cargo publish --locked
+      - name: No token
+        if: steps.token.outputs.present != 'true'
+        run: echo "CARGO_REGISTRY_TOKEN is not set; skipping crates.io. Add it under Settings → Secrets to publish on the next tag."
