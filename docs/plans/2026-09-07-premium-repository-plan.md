@@ -45,6 +45,39 @@ categories, a public roadmap, release notes on the GitHub release itself.
 **Distribution.** Release archives for five targets. Not on crates.io, no
 `cargo binstall` metadata, no Homebrew tap, no container image.
 
+## Positioning: code-rank
+
+The thing to labour everywhere is not "fast grep" but the ranking. The
+engine already scores results the way a reader of code would:
+
+- a line that *defines* a symbol outranks lines that merely use it (3×);
+- a file the rest of the codebase imports ranks above one nothing depends
+  on (`1 + 0.5·log10(dependents)`, a PageRank-style signal from the import
+  graph the indexer resolves);
+- files dense in definitions rank above scratch files; tests and examples
+  are demoted; `src/` and `lib/` are promoted;
+- a multi-term query puts lines holding the phrase first, then lines
+  holding every term;
+- exact case and start-of-line matches are boosted, long lines damped;
+- `references` is a first-class query: call sites and type mentions of an
+  identifier, across languages.
+
+Call this **code-rank** in the README pitch ("Code search that ranks like
+code"), the site headline, the social card, and a dedicated "How ranking
+works" page with worked examples (`fn main` → the definition, then callers;
+`Widget` → its definition, then the files that import it). Pair it with the
+second half of the pitch, the in-memory trigram index, as the reason it is
+fast enough to use on every keystroke. Every other section below carries
+this thread: the README leads with it, the docs explain it, and the
+benchmarks measure it.
+
+Measuring it is what makes the claim premium rather than marketing:
+workstream 3 gains a **ranking-quality suite** — a labelled set of queries
+over the pinned corpora (tokio, Django, rust-lang/rust) with the expected
+top result (the definition, the most-imported implementation), scored as
+precision@1 / precision@5 and tracked per commit like latency. A ranking
+change that helps latency but hurts precision fails CI.
+
 ## Principles
 
 1. **Every number is a link.** No performance figure appears anywhere
@@ -236,8 +269,9 @@ and housekeeping so nothing is documented twice.
 
 ## Definition of done
 
-- [ ] README under 200 lines with GIF, three install paths, generated
-      benchmark block, documentation map; every number linked.
+- [ ] README under 200 lines that leads with code-rank, with GIF, three
+      install paths, generated benchmark and ranking-quality blocks,
+      documentation map; every number linked.
 - [ ] Repository description, topics, homepage, social preview,
       Discussions, code of conduct, issue templates, fuller security policy.
 - [ ] Docs site with Start here / Guides / Reference / How it works /
