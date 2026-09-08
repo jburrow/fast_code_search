@@ -55,9 +55,13 @@ QUERIES=(
 now_ms() { date +%s%N | awk '{printf "%.3f", $1/1e6}'; }
 median() { sort -n | awk '{a[NR]=$1} END {if (NR%2) print a[(NR+1)/2]; else print (a[NR/2]+a[NR/2+1])/2}'; }
 
+# Output goes to a real file, not /dev/null: ugrep notices a /dev/null
+# stdout and stops at the first match as if -q were given, which timed as a
+# 6 ms "scan" of forty megabytes. Every tool pays the same write cost.
+SINK=$(mktemp)
 time_cmd() { # runs a command N times, prints median ms
   local n=$1; shift
-  for _ in $(seq 1 "$n"); do local t0; t0=$(now_ms); "$@" >/dev/null 2>&1 || true; local t1; t1=$(now_ms); awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}'; done | median
+  for _ in $(seq 1 "$n"); do local t0; t0=$(now_ms); "$@" >"$SINK" 2>&1 || true; local t1; t1=$(now_ms); awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}'; done | median
 }
 
 # Start a server on the tree.
@@ -69,7 +73,7 @@ CFG=$(mktemp); INDEX=$(mktemp -u).fcsidx
 } > "$CFG"
 "$SERVER" --config "$CFG" > /tmp/fcs-compare-server.log 2>&1 &
 SPID=$!
-trap 'kill $SPID 2>/dev/null; rm -f "$CFG" "$INDEX"' EXIT
+trap 'kill $SPID 2>/dev/null; rm -f "$CFG" "$INDEX" "$SINK"' EXIT
 # Wait for the build to finish, not merely for the server to be searchable
 # (it serves results while imports are still being resolved).
 READY=""
