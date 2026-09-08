@@ -74,8 +74,41 @@ jobs:
           cargo run --release --example corpus_bench -- \
             bench-corpus/tokio bench-corpus/django \
             --label tokio+django --iterations 30 --bencher \
-            --markdown corpus_summary.md | tee -a bench_output.txt
+            --markdown corpus_summary.md --json corpus_result.json | tee -a bench_output.txt
           cat corpus_summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Does the first result answer the query? Precision over labelled
+      # queries; a ranking change that hurts this fails the run.
+      - name: Ranking quality (precision@1 / @5)
+        run: |
+          cargo run --release --example ranking_quality -- \
+            bench-corpus/tokio bench-corpus/django \
+            --markdown ranking_quality.md --json ranking_quality.json \
+            --min-p1 0.90 --min-p5 0.95
+          cat ranking_quality.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Machine-readable results for the documentation site
+      # (docs/benchmarks/latest.html reads dev/bench/results/latest.json).
+      - name: Assemble results for the site
+        run: |
+          mkdir -p bench-results
+          python3 - <<'PY'
+          import json, os, datetime
+          corpus = json.load(open("corpus_result.json"))
+          ranking = json.load(open("ranking_quality.json"))
+          out = {
+            "schema": 1,
+            "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "commit": os.environ["GITHUB_SHA"],
+            "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+            "corpus": corpus,
+            "ranking_quality": ranking,
+          }
+          json.dump(out, open("bench-results/latest.json", "w"), indent=1)
+          stamp = out["generated_at"][:10] + "-" + out["commit"][:7]
+          json.dump(out, open(f"bench-results/{stamp}.json", "w"), indent=1)
+          PY
+          ls -la bench-results
 
       - name: Run validator (functional performance test)
         run: cargo run --release --bin fast_code_search_validator -- --json --corpus-size 200 | tee validator_output.json
@@ -88,6 +121,9 @@ jobs:
             bench_output.txt
             validator_output.json
             corpus_summary.md
+            corpus_result.json
+            ranking_quality.md
+            ranking_quality.json
 
       - name: Keep only bencher lines for trend tracking
         run: |
@@ -96,6 +132,17 @@ jobs:
 
       - name: Reset local changes before branch switch
         run: git checkout -- .
+
+      - name: Publish results to the site (dev/bench/results)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: bench-results
+          target-folder: dev/bench/results
+          clean: false
+          force: false
+          attempt-limit: 5
+          commit-message: "bench: results for ${{ github.sha }}"
 
       - name: Store benchmark results for trend tracking
         uses: benchmark-action/github-action-benchmark@v1

@@ -680,7 +680,7 @@ service_name = "fast_code_search"
 /// re-extracted from file content on load instead of restored, so a change
 /// to what is captured (say, TypeScript call sites) reaches an existing
 /// index without a full rebuild. Bump when extraction changes.
-pub const SYMBOL_SCHEMA_TAG: &str = "|sym2";
+pub const SYMBOL_SCHEMA_TAG: &str = "|sym3";
 
 /// Whether an index saved with `fingerprint` used the current extraction.
 pub fn symbols_schema_current(fingerprint: &str) -> bool {

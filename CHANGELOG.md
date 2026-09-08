@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A ranking-quality suite: `examples/ranking_quality.rs` runs the labelled
+  queries in `benches/ranking_quality.toml` (tokio 1.45.0 + Django 5.2)
+  and reports precision@1 / @5; CI fails a ranking regression. Machine
+  specifications and every figure of the real-corpus benchmark are written
+  as JSON (`corpus_bench --json`) and published to the site per run.
+- Rust items wrapped in brace-delimited macro invocations (`cfg_rt! { … }`)
+  are extracted as definitions and references. Existing indexes re-extract
+  symbols once on the first start.
+
+### Changed
+- Ranking: single-term lines of a multi-term query are capped per file and
+  the files holding the phrase are scanned first, so the match budget can
+  no longer starve the best hits; the whole-word phrase outranks the phrase
+  as a prefix of a longer identifier; test, example, mock and fixture paths
+  are demoted at line level; public definitions score higher and the
+  start-of-line boost ignores visibility modifiers; symbol search scores
+  from the symbol cache before reading files, weights exact names above
+  prefixes more strongly, and ranks `impl` blocks below the type. The
+  suite went from 0.30 to 1.00 precision@1 on the labelled set.
+
 ## [0.12.1] - 2026-09-08
 
 ### Changed (dependencies and CI)
