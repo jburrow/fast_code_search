@@ -421,7 +421,7 @@ Releases are automated via GitHub Actions. When you push a version tag, the rele
    git push origin v0.2.0
    ```
 
-6. **Monitor the release workflow**: The [release workflow](/.github/workflows/release.yml) will:
+6. **Monitor the release workflow**: The [release workflow](../.github/workflows/release.yml) will:
    - Build release binaries for Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64)
    - Package each with config template, proto files, README, and LICENSE
    - Generate SHA256 checksums
@@ -482,7 +482,7 @@ cargo build --dry-run
 
 ## Getting Help
 
-- Read the [Contributing Guide](CONTRIBUTING.md)
+- Read the [Contributing Guide](../CONTRIBUTING.md)
 - Check existing GitHub issues
-- Review the [README](README.md) for architecture overview
+- Review the [README](../README.md) for architecture overview
 - Ask questions in pull requests

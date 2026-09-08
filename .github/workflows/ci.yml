@@ -92,6 +92,13 @@ jobs:
       - name: Syntax-check the web UI scripts
         run: node --check static/keyword.js && node --check static/common.js && node --check static/semantic.js && node --check static/lib/keyword-helpers.js
 
+      - name: Generated reference pages are up to date
+        run: |
+          cargo build --release --bin fcs --bin fast_code_search_server
+          scripts/docs/generate-reference.sh
+          git diff --exit-code docs/book/src/reference || {
+            echo "::error::docs/book/src/reference is stale: run scripts/docs/generate-reference.sh and commit"; exit 1; }
+
       - name: Run clippy (all targets and features)
         run: cargo clippy --all-targets --all-features -- -D warnings
 

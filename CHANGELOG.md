@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A documentation site built with mdBook (`docs/book`, published under
+  `/docs/` on GitHub Pages): Start here, Guides, Reference, How it works,
+  Benchmarks and Project sections. The canonical documents are imported at
+  build time with links rewritten; the `fcs` help, server help and
+  configuration template pages are generated from the binaries and
+  drift-checked in CI (`scripts/docs/`).
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), issue forms for bugs,
   performance problems and feature requests (questions go to Discussions),
   and a fuller security policy with private reporting and response targets.

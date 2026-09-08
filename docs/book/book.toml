@@ -1,0 +1,27 @@
+[book]
+title = "fast_code_search"
+description = "Code search that ranks like code: definitions above usages, widely imported files first, served from an in-memory trigram index."
+authors = ["James Burrow"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/jburrow/fast_code_search"
+edit-url-template = "https://github.com/jburrow/fast_code_search/edit/main/docs/book/{path}"
+site-url = "/fast_code_search/docs/"
+additional-css = ["theme/fcs.css"]
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-boolean-and = true
+
+[output.html.fold]
+enable = true
+level = 1
