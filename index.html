@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>fast_code_search — High-performance in-memory code search</title>
-  <meta name="description" content="Trigram-indexed, symbol-aware code search for 10GB+ codebases. Sub-millisecond search via gRPC and REST APIs." />
+  <meta name="description" content="Code search that ranks like code: definitions above usages, widely imported files first. An in-memory trigram index with a CLI, web UI, REST and gRPC APIs." />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -41,7 +41,7 @@
     <div class="hero-badge">v<span id="version">0.6.9</span></div>
     <h1 class="hero-title">⚡ fast_code_search</h1>
     <p class="hero-subtitle">
-      High-performance, in-memory code search for <strong>10 GB+ codebases</strong>.<br />
+      Code search that <strong>ranks like code</strong>: definitions above usages, widely imported files first, from an in-memory trigram index.<br />
       Trigram indexing · Tree-sitter symbol awareness · Sub-millisecond search · gRPC + REST APIs
     </p>
     <div class="badge-row">
@@ -77,7 +77,7 @@
         <p>Trigram-indexed, AST-aware search. Zero cold-start. Best for exact code patterns, function calls, and variable names.</p>
         <ul class="engine-features">
           <li>Roaring bitmap trigram index</li>
-          <li>Tree-sitter symbol extraction (12+ languages)</li>
+          <li>Tree-sitter symbol extraction (12 languages)</li>
           <li>PageRank-style import graph scoring</li>
           <li>Regex with trigram acceleration</li>
           <li>Parallel search via rayon</li>
@@ -119,8 +119,8 @@
       </div>
       <div class="feature-card">
         <div class="feature-icon">📦</div>
-        <h4>10 GB+ Codebases</h4>
-        <p>Memory-mapped files via <code>memmap2</code>. Handles 600k+ files without loading everything into RAM.</p>
+        <h4>Ranked like code</h4>
+        <p>Definitions outrank usages, files the codebase imports outrank the ones it doesn't, phrases outrank scattered terms, and references (call sites, type mentions) are a first-class query.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">⚙️</div>
@@ -243,21 +243,23 @@
 
     <div class="bench-stats">
       <div class="bench-stat">
-        <div class="bench-stat-value">&lt; 1 ms</div>
-        <div class="bench-stat-label">Typical search latency</div>
+        <div class="bench-stat-value">0.95 ms</div>
+        <div class="bench-stat-label">p50 text search, tokio + Django (6,237 files)</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">10 GB+</div>
-        <div class="bench-stat-label">Max codebase size</div>
+        <div class="bench-stat-value">1,460 files/s</div>
+        <div class="bench-stat-label">Index build, symbols included</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">600k+</div>
-        <div class="bench-stat-label">Files indexed</div>
+        <div class="bench-stat-value">118 MB</div>
+        <div class="bench-stat-label">Resident for 38.9 MB of source</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">12+</div>
-        <div class="bench-stat-label">Languages supported</div>
+        <div class="bench-stat-value">12</div>
+        <div class="bench-stat-label">Languages with symbol ranking</div>
       </div>
+    </div>
+    <p class="section-subtitle">From <a href="https://github.com/jburrow/fast_code_search/actions/runs/34254363545">benchmark run 34254363545</a> (commit f46e7bf, GitHub-hosted ubuntu-latest); the <a href="https://github.com/jburrow/fast_code_search/blob/main/README.md#benchmarks">README</a> carries the full table.</p>
     </div>
 
     <div class="bench-suites">
