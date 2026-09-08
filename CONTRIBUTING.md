@@ -121,7 +121,7 @@ Includes tests for class and function definitions.
 5. Submit your pull request with a clear description of changes
 6. Address any review comments promptly
 
-Instruction-file ownership and anti-drift policy: [Instruction Files Blueprint](docs/INSTRUCTION_FILES_BLUEPRINT.md)
+Instruction-file ownership and anti-drift policy: [Instruction Files Blueprint](docs/internal/INSTRUCTION_FILES_BLUEPRINT.md)
 
 ### PR Description Template
 
@@ -149,7 +149,7 @@ Describe how you tested your changes
 
 ## Areas for Contribution
 
-The current plan lives in [docs/plans/2026-09-04-keyword-engine-roadmap.md](docs/plans/2026-09-04-keyword-engine-roadmap.md);
+The current plan lives in [docs/internal/plans/2026-09-04-keyword-engine-roadmap.md](docs/internal/plans/2026-09-04-keyword-engine-roadmap.md);
 every task there has file references and an acceptance criterion. Open items as of
 September 2026:
 

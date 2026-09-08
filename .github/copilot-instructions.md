@@ -183,7 +183,7 @@ When changing code, update:
 2. `README.md` — for user-facing changes
 3. `CHANGELOG.md` — for every user-visible change
 
-Instruction governance source: `docs/INSTRUCTION_FILES_BLUEPRINT.md`
+Instruction governance source: `docs/internal/INSTRUCTION_FILES_BLUEPRINT.md`
 
 ## Web UI Architecture & Consistency
 
