@@ -58,6 +58,101 @@ struct Args {
     /// Skip tree-sitter symbol/import extraction (isolates trigram cost).
     #[arg(long)]
     no_symbols: bool,
+    /// Write a machine-readable result (every figure plus the machine it
+    /// ran on) to this JSON file.
+    #[arg(long)]
+    json: Option<PathBuf>,
+}
+
+/// The machine a result was produced on. Every published number carries
+/// this so it can be compared with the right expectations.
+fn machine_info() -> serde_json::Value {
+    fn read(path: &str) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+    let cpu_model = read("/proc/cpuinfo")
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("model name"))
+                .and_then(|l| l.split(':').nth(1))
+                .map(|v| v.trim().to_string())
+        })
+        .or_else(|| {
+            std::process::Command::new("sysctl")
+                .args(["-n", "machdep.cpu.brand_string"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let mem_total_bytes = read("/proc/meminfo")
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+                .map(|kb| kb * 1024)
+        })
+        .or_else(|| {
+            std::process::Command::new("sysctl")
+                .args(["-n", "hw.memsize"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        })
+        .unwrap_or(0);
+    let os_release = read("/etc/os-release")
+        .and_then(|s| {
+            s.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(|l| {
+                l.trim_start_matches("PRETTY_NAME=")
+                    .trim_matches('"')
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|| format!("{} {}", std::env::consts::OS, std::env::consts::ARCH));
+    let git_sha = std::process::Command::new("git")
+        .args(["rev-parse", "--short=10", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    serde_json::json!({
+        "cpu_model": cpu_model,
+        "logical_cpus": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0),
+        "mem_total_bytes": mem_total_bytes,
+        "os": os_release,
+        "arch": std::env::consts::ARCH,
+        "rustc": option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown"),
+        "fast_code_search": env!("CARGO_PKG_VERSION"),
+        "git_sha": git_sha,
+        "ci": std::env::var("GITHUB_ACTIONS").is_ok(),
+        "runner": std::env::var("RUNNER_NAME").ok(),
+        "timestamp_utc": chrono_like_now(),
+    })
+}
+
+/// RFC 3339 UTC timestamp without pulling in a date crate.
+fn chrono_like_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Days since epoch to civil date (Howard Hinnant's algorithm).
+    let days = (secs / 86_400) as i64;
+    let (h, m, s) = ((secs % 86_400) / 3600, (secs % 3600) / 60, secs % 60);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 /// One reported metric.
@@ -373,6 +468,48 @@ fn main() -> Result<()> {
     eprint!("{md}");
     if let Some(path) = &args.markdown {
         std::fs::write(path, &md).with_context(|| format!("writing {}", path.display()))?;
+    }
+
+    if let Some(path) = &args.json {
+        let queries: Vec<serde_json::Value> = metrics
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "name": m.name,
+                    "p50_ns": m.p50.as_nanos() as u64,
+                    "p95_ns": m.p95.as_nanos() as u64,
+                    "detail": m.detail,
+                })
+            })
+            .collect();
+        let result = serde_json::json!({
+            "schema": 1,
+            "label": args.label,
+            "machine": machine_info(),
+            "corpus": {
+                "roots": roots,
+                "files": stats.num_files,
+                "bytes": bytes,
+                "trigrams": stats.num_trigrams,
+                "symbol_references": engine.reference_count(),
+                "dependency_edges": stats.dependency_edges,
+            },
+            "build": {
+                "discovery_ns": discover_took.as_nanos() as u64,
+                "build_ns": build_took.as_nanos() as u64,
+                "files_per_second": stats.num_files as f64 / build_took.as_secs_f64().max(1e-9),
+                "rss_before_bytes": rss_before,
+                "rss_after_bytes": rss_after,
+                "save_ns": save_took.as_nanos() as u64,
+                "index_bytes": index_bytes,
+                "load_ns": load_took.as_nanos() as u64,
+            },
+            "queries": queries,
+            "iterations": args.iterations,
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&result)?)
+            .with_context(|| format!("writing {}", path.display()))?;
+        eprintln!("json result written to {}", path.display());
     }
 
     if args.bencher {
