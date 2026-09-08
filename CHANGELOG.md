@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), issue forms for bugs,
+  performance problems and feature requests (questions go to Discussions),
+  and a fuller security policy with private reporting and response targets.
+- `docs/API.md`: the REST, gRPC, server command line and configuration
+  reference, moved out of the README.
+- Release pages carry an install table, checksum instructions and a
+  first-run line alongside the changelog section.
+
+### Changed
+- README rewritten as a landing page that leads with how results are
+  ranked; benchmark figures are from the latest CI run and link to it.
+- The site and web docs no longer state unmeasured claims ("10 GB+",
+  "600k+ files"); headline figures come from the benchmark run.
+- Internal engineering notes (`plans/`, the instruction-files blueprint)
+  moved under `docs/internal/`.
+
 ## [0.12.0] - 2026-09-07
 
 ### Added
@@ -48,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP client).
 
 Fixes from the 2026-09-06 engine and UI review
-(`docs/plans/2026-09-06-keyword-engine-and-ui-review.md`).
+(`docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md`).
 
 ### Changed
 - Line-mode regex patterns are matched in one pass per file (compiled with
