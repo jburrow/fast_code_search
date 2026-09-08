@@ -63,7 +63,7 @@ jobs:
         run: npx vsce package --out fast-code-search-${{ steps.version.outputs.VERSION }}.vsix
 
       - name: Upload .vsix as release asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         if: success() && github.event_name == 'push'
         with:
           files: vscode-extension/fast-code-search-${{ steps.version.outputs.VERSION }}.vsix
