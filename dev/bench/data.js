@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788893705943,
+  "lastUpdate": 1788896054119,
   "repoUrl": "https://github.com/jburrow/fast_code_search",
   "entries": {
     "fast_code_search Benchmarks": [
@@ -18898,6 +18898,402 @@ window.BENCHMARK_DATA = {
           {
             "name": "corpus_bench/tokio+django/rss_after_build_bytes",
             "value": 121585664,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "committer": {
+            "email": "jaburrow@gmail.com",
+            "name": "James Burrow",
+            "username": "jburrow"
+          },
+          "distinct": true,
+          "id": "0dd37e7fac3bee48dd4b9c8bed93354e78dfe997",
+          "message": "bench: ripgrep/ugrep comparison script and CI step; ranking-quality and comparison pages in the book\n\nscripts/bench/compare.sh runs the same queries through ripgrep, ugrep (if\npresent) and fcs against a server on the same tree, warm cache, median of\nseven runs, and records the machine. It refuses FUSE/NFS/SMB mounts: on\nan external NTFS drive ripgrep took a second per query instead of forty\nmilliseconds, which would have made an unfair table. The benchmark\nworkflow runs it and publishes the result in latest.json; the book's\nlatest-results page renders the live JSON (with the hand-checked table as\na fallback) and gains pages for ranking quality and the scan-tool\ncomparison. The indexing-completed log line now reports indexed text\nbytes rather than currently mapped bytes.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-08T20:19:01+01:00",
+          "tree_id": "7767463421808797362bacd9ccb71af76ad354fe",
+          "url": "https://github.com/jburrow/fast_code_search/commit/0dd37e7fac3bee48dd4b9c8bed93354e78dfe997"
+        },
+        "date": 1788896053713,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "text_search/common_query/50",
+            "value": 450040,
+            "range": "± 82067",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/50",
+            "value": 28147,
+            "range": "± 704",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/50",
+            "value": 458,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/100",
+            "value": 447469,
+            "range": "± 23612",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/100",
+            "value": 27337,
+            "range": "± 859",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/100",
+            "value": 455,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/common_query/200",
+            "value": 437163,
+            "range": "± 8799",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/rare_query/200",
+            "value": 27884,
+            "range": "± 1287",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "text_search/no_match/200",
+            "value": 458,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/simple_literal",
+            "value": 506501,
+            "range": "± 11566",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/alternation",
+            "value": 529252,
+            "range": "± 8959",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/char_class",
+            "value": 580058,
+            "range": "± 24658",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_search/no_literal",
+            "value": 778170,
+            "range": "± 29888",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/no_filter",
+            "value": 434188,
+            "range": "± 13927",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_filter",
+            "value": 377497,
+            "range": "± 4129",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/exclude_filter",
+            "value": 535933,
+            "range": "± 9919",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "filtered_search/include_and_exclude",
+            "value": 694674,
+            "range": "± 6788",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/lowercase",
+            "value": 433229,
+            "range": "± 13941",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/uppercase",
+            "value": 436703,
+            "range": "± 10542",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "case_sensitivity/mixed_case",
+            "value": 432580,
+            "range": "± 13642",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/10",
+            "value": 309727,
+            "range": "± 4821",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/100",
+            "value": 434599,
+            "range": "± 21076",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "result_limits/limit/500",
+            "value": 1047107,
+            "range": "± 7704",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/short_2",
+            "value": 632661,
+            "range": "± 17105",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/medium_8",
+            "value": 523390,
+            "range": "± 16885",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "query_length/long_16",
+            "value": 9652,
+            "range": "± 40",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/25",
+            "value": 15023591,
+            "range": "± 484187",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/50",
+            "value": 29738882,
+            "range": "± 186839",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "indexing/index_files/100",
+            "value": 58853364,
+            "range": "± 202605",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/50",
+            "value": 26462927,
+            "range": "± 198096",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/50",
+            "value": 28432912,
+            "range": "± 72841",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/batch_resolve/100",
+            "value": 52309297,
+            "range": "± 187636",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "import_resolution/incremental_every_10/100",
+            "value": 56610621,
+            "range": "± 280218",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/100",
+            "value": 1259234,
+            "range": "± 69447",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/500",
+            "value": 4220657,
+            "range": "± 130170",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_save/1000",
+            "value": 8111592,
+            "range": "± 348714",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/100",
+            "value": 1381396,
+            "range": "± 22368",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/500",
+            "value": 4844535,
+            "range": "± 76077",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "index_load/1000",
+            "value": 9526026,
+            "range": "± 246340",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/100",
+            "value": 152393,
+            "range": "± 4465",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/500",
+            "value": 210710,
+            "range": "± 4905",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "trigram_deserialization/1000",
+            "value": 274629,
+            "range": "± 5135",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/100",
+            "value": 76937,
+            "range": "± 2926",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/500",
+            "value": 327632,
+            "range": "± 7582",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "file_staleness_check/1000",
+            "value": 645025,
+            "range": "± 5835",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_build",
+            "value": 4326691851,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_save",
+            "value": 197021654,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/index_load",
+            "value": 255796938,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/common",
+            "value": 974942,
+            "range": "± 58176",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/identifier",
+            "value": 1537875,
+            "range": "± 94825",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/no_match",
+            "value": 521,
+            "range": "± 90",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/short",
+            "value": 1538345,
+            "range": "± 177593",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/full_rank",
+            "value": 976775,
+            "range": "± 41962",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/text/filtered",
+            "value": 1025177,
+            "range": "± 60158",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/literal",
+            "value": 1603202,
+            "range": "± 330147",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/case_insensitive",
+            "value": 732243,
+            "range": "± 153778",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/regex/no_literal",
+            "value": 1435653,
+            "range": "± 767626",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/exact",
+            "value": 3647521,
+            "range": "± 486495",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/prefix",
+            "value": 3888362,
+            "range": "± 280174",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/symbol/references",
+            "value": 678353,
+            "range": "± 249239",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/incremental/modify_file",
+            "value": 9930780,
+            "range": "± 4065144",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "corpus_bench/tokio+django/rss_after_build_bytes",
+            "value": 120639488,
             "range": "± 0",
             "unit": "ns/iter"
           }
