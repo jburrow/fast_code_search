@@ -129,3 +129,19 @@ jobs:
           force: false                # rebase and retry instead of overwriting a benchmark push
           attempt-limit: 5
           commit-message: "docs: deploy gh-pages site for ${{ steps.version.outputs.VERSION }} @ ${{ github.sha }}"
+
+      # The benchmark trend page. dev/ is excluded from the deploy above so
+      # that the benchmark workflow's data.js and results/ survive; this
+      # step drops our own index.html (which explains every chart) next to
+      # them without cleaning anything. The benchmark action only writes an
+      # index.html when none exists, so ours is kept.
+      - name: Deploy the benchmark trend page (dev/bench/index.html)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: docs/bench-trends
+          target-folder: dev/bench
+          clean: false
+          force: false
+          attempt-limit: 5
+          commit-message: "docs: benchmark trend page @ ${{ github.sha }}"

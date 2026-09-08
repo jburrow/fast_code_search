@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust items wrapped in brace-delimited macro invocations (`cfg_rt! { … }`)
   are extracted as definitions and references. Existing indexes re-extract
   symbols once on the first start.
+- The benchmark trend page (`dev/bench/`) is now the project's own: it
+  groups the charts by suite, says what each one measures and what would
+  move it, labels every axis with its unit and "lower is better", shades
+  each run's spread, and links each point to its commit. The README's
+  benchmark section explains the three measurements and how to read them.
 - `scripts/bench/compare.sh` times the same queries through ripgrep, ugrep
   and `fcs` on the same tree (warm cache, median of seven runs, machine
   recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly

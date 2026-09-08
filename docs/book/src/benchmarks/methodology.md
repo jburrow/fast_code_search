@@ -46,6 +46,17 @@ cargo bench --bench search_benchmark        # search only
 `corpus_bench` prints the same table CI does (`--markdown`) and can emit
 bencher lines for tracking (`--bencher`).
 
+## Reading the trend charts
+
+The [trend page](../../dev/bench/) charts every measurement per commit to
+`main`. Each chart is a cost, so lower is better; the vertical axis is time
+per operation in the unit that fits the chart (or bytes for memory). The
+shaded band is that run's spread: median to 95th percentile for the
+real-corpus rows, Criterion's reported deviation for the synthetic rows. A
+step on every chart at the same commit is a change of runner, not of code.
+Each chart carries a sentence saying what it measures and what would move
+it.
+
 ## Ranking quality
 
 Latency says how fast the engine is; this says whether what it puts first

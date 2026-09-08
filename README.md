@@ -92,16 +92,31 @@ server running on a developer machine, start it at login:
 
 ## Benchmarks
 
-Measured in CI on every push to `main`
-([workflow](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml));
-trends per commit are charted at
-[jburrow.github.io/fast_code_search/dev/bench](https://jburrow.github.io/fast_code_search/dev/bench/).
+Three things are measured, on every push to `main`, by one
+[workflow](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml)
+on a GitHub-hosted runner:
+
+- **Latency** over two pinned real repositories,
+  [tokio 1.45.0](https://github.com/tokio-rs/tokio/tree/tokio-1.45.0) and
+  [Django 5.2](https://github.com/django/django/tree/5.2), indexed from scratch
+  each run. Every query is timed 30 times in-process after warm-up; the tables
+  report the median (p50) and the 95th percentile (p95). Lower is better.
+- **Ranking quality**: does the first result answer the query? Twenty labelled
+  queries over the same repositories, scored as precision@1 and precision@5.
+  Higher is better; the build fails below 0.90 / 0.95.
+- **Against scan tools**: the same queries through ripgrep, ugrep and `fcs` on
+  the same tree and machine, warm cache, median of seven runs.
+
+Every run publishes its raw JSON with the machine specification, and the
+[trend page](https://jburrow.github.io/fast_code_search/dev/bench/) charts each
+measurement per commit with an explanation of what each chart means. The
+[methodology](https://jburrow.github.io/fast_code_search/docs/benchmarks/methodology.html)
+page says what is deliberately not claimed.
+
 The numbers below are from
 [run 34254363545](https://github.com/jburrow/fast_code_search/actions/runs/34254363545)
-on commit `f46e7bf` (2026-09-08, GitHub-hosted `ubuntu-latest`, 4 vCPU) over two
-pinned real repositories, [tokio 1.45.0](https://github.com/tokio-rs/tokio/tree/tokio-1.45.0)
-and [Django 5.2](https://github.com/django/django/tree/5.2): 6,237 files, 38.9 MB of
-text, 242k symbol references.
+on commit `f46e7bf` (2026-09-08, GitHub-hosted `ubuntu-latest`, 4 vCPU):
+6,237 files, 38.9 MB of text, 242k symbol references.
 
 | Measure | Value |
 |---------|-------|
@@ -116,20 +131,18 @@ text, 242k symbol references.
 | Incremental update of one file, p50 / p95 | 10 ms / 14 ms |
 
 The same run's Criterion suite over a synthetic corpus puts a common-word text
-search at 0.39 ms and a no-match query at 0.45 µs
-([data](https://jburrow.github.io/fast_code_search/dev/bench/)). A nightly job
-indexes the `rust-lang/rust` 1.89.0 tree and records throughput and memory in its
-job summary.
+search at 0.39 ms and a no-match query at 0.45 µs. A nightly job indexes the
+`rust-lang/rust` 1.89.0 tree and records throughput and memory in its job summary.
 
-Speed is only half of it. The same workflow runs a
-[ranking-quality suite](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html):
-twenty labelled queries over the same two repositories, each naming the file and
-line a reader would want first (`struct Runtime` → the definition, not a doc
-comment; `Field` → the model field, not the GDAL one). It currently scores
-precision@1 = 1.00 and precision@5 = 1.00, and the build fails below 0.90 / 0.95.
-It also times the same queries through ripgrep and ugrep on the same tree
-([comparison](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html)).
-Reproduce any of it locally:
+Speed is only half of it. The
+[ranking-quality suite](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html)
+names the file and line a reader would want first for each query (`struct
+Runtime` → the definition, not a doc comment; `Field` → the model field, not the
+GDAL one) and currently scores precision@1 = 1.00, precision@5 = 1.00. The
+[comparison](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html)
+page puts ripgrep at 30–80 ms per query on these trees against about a
+millisecond in the engine, and says plainly when a scan tool is the better
+choice. Reproduce any of it locally:
 
 ```bash
 cargo run --release --example corpus_bench -- path/to/repo [more paths]
