@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../theme/fcs-a2b6dcbb.css">
+        <link rel="stylesheet" href="../theme/fcs-869a8c82.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-e1cc8b2e.js";
+            window.path_to_searchindex_js = "../searchindex-2ca3f317.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -185,6 +185,30 @@
 <p>This is the part that makes results feel right. A hit’s score combines a
 content match with what the index knows about the line, the file and the
 codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
+<pre><code class="language-mermaid">flowchart LR
+    subgraph line["the line"]
+        direction TB
+        A[defines a symbol ×3]
+        B[exact case ×2]
+        C[starts the line ×1.5]
+    end
+    subgraph file["the file"]
+        direction TB
+        E[under src/ or lib/ ×1.5]
+        F[test / example path ×0.6]
+        H[public definition ×1.6]
+    end
+    subgraph codebase["the codebase"]
+        G["imported by N files&lt;br/&gt;× (1 + 0.5·log10 N)"]
+    end
+    line --&gt; S((score))
+    file --&gt; S
+    codebase --&gt; S
+    S --&gt; T{tier}
+    T --&gt;|whole phrase| T1[first]
+    T --&gt;|every term| T2[then]
+    T --&gt;|some terms| T3[last]
+</code></pre>
 <h2 id="line-level-signals"><a class="header" href="#line-level-signals">Line-level signals</a></h2>
 <pre><code class="language-text">score = base
       × 3.0   if the line defines a symbol
@@ -296,6 +320,7 @@ unit tests in <code>src/search/engine/tests.rs</code>.</p>
         <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../theme/mermaid-d2ae65e9.js"></script>
 
 
 

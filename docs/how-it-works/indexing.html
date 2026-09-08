@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../theme/fcs-a2b6dcbb.css">
+        <link rel="stylesheet" href="../theme/fcs-869a8c82.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-e1cc8b2e.js";
+            window.path_to_searchindex_js = "../searchindex-2ca3f317.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -185,6 +185,21 @@
 <p>A build turns a set of directories into three structures held in memory:
 a trigram index, per-file symbol and reference tables, and an import
 graph. Searches are served throughout.</p>
+<pre><code class="language-mermaid">flowchart TB
+    R[(roots)] --&gt; D[Discovery&lt;br/&gt;excludes, extensions,&lt;br/&gt;size, .gitignore]
+    D --&gt; B{{batch of files}}
+    B --&gt; T[Read + trigrams&lt;br/&gt;parallel]
+    B --&gt; S[Symbols, references,&lt;br/&gt;imports&lt;br/&gt;tree-sitter, parallel]
+    T --&gt; M[Merge&lt;br/&gt;under the write lock]
+    S --&gt; M
+    M --&gt; I[(trigram index)]
+    M --&gt; Y[(symbol + reference tables)]
+    M --&gt; G[(import graph)]
+    M -. every N files .-&gt; P[/checkpoint to index_path/]
+    I --&gt; Q[searches served&lt;br/&gt;between batches]
+    Y --&gt; Q
+    G --&gt; Q
+</code></pre>
 <ol>
 <li><strong>Discovery.</strong> Each root is walked with the exclude patterns, the
 include-extension list, the binary and size rules and <code>.gitignore</code>
@@ -270,6 +285,7 @@ for full-text and regex search without symbols.</p>
         <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../theme/mermaid-d2ae65e9.js"></script>
 
 
 

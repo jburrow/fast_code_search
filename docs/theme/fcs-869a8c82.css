@@ -9,3 +9,7 @@
 .content table { font-size: .95em; }
 .content code { font-size: .92em; }
 .content .fcs-callout { border-left: 4px solid var(--fcs-yellow); background: rgba(255, 249, 0, .10); padding: .6em 1em; margin: 1em 0; }
+
+/* Diagrams (theme/mermaid.js) */
+pre.mermaid { background: transparent; border: 0; padding: 0; margin: 1.2em 0; text-align: center; overflow-x: auto; font-family: "Open Sans", "Helvetica Neue", Arial, sans-serif; font-size: 14px; line-height: 1.3; }
+pre.mermaid svg { max-width: 100%; height: auto; }

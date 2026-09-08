@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../theme/fcs-a2b6dcbb.css">
+        <link rel="stylesheet" href="../theme/fcs-869a8c82.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-e1cc8b2e.js";
+            window.path_to_searchindex_js = "../searchindex-2ca3f317.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -209,6 +209,47 @@ mkdir -p ~/.local/bin &amp;&amp; cp fast_code_search_server fcs ~/.local/bin/
 <p>Each archive also contains <code>config.toml.example</code>, the startup unit files
 under <code>deploy/</code>, and the CLI and startup guides. On macOS, a downloaded
 binary may need <code>xattr -d com.apple.quarantine &lt;file&gt;</code> before it runs.</p>
+<h3 id="verifying-a-download"><a class="header" href="#verifying-a-download">Verifying a download</a></h3>
+<p>Every archive ships with a <code>.sha256</code> file and, for releases after v0.13.0,
+a Sigstore bundle (<code>.sigstore.json</code>) produced by the release workflow’s own
+identity.
+The checksum proves the file is intact; the signature proves it was built
+by this repository’s release workflow for this tag, and not merely
+uploaded by someone holding the account.</p>
+<pre><code class="language-bash">sha256sum -c fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+cosign verify-blob \
+  --bundle fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz
+</code></pre>
+<p><a href="https://docs.sigstore.dev/cosign/installation/"><code>cosign</code></a> is a single
+binary; no key management is involved because the signing is keyless.</p>
+<h2 id="with-cargo"><a class="header" href="#with-cargo">With cargo</a></h2>
+<p><a href="https://github.com/cargo-bins/cargo-binstall"><code>cargo binstall</code></a> downloads
+the release archive for your platform instead of compiling, using the
+metadata in <code>Cargo.toml</code>. Until the crate is on crates.io, point it at the
+repository:</p>
+<pre><code class="language-bash">cargo binstall --git https://github.com/jburrow/fast_code_search fast_code_search
+</code></pre>
+<p>Once <code>fast_code_search</code> is published on crates.io, <code>cargo binstall fast_code_search</code> and <code>cargo install fast_code_search</code> work without the
+<code>--git</code> flag.</p>
+<h2 id="homebrew"><a class="header" href="#homebrew">Homebrew</a></h2>
+<p>A tap is wired into the release workflow and will be announced here once
+its repository exists; until then use the archive, <code>cargo binstall</code> or the
+container image.</p>
+<h2 id="container-image"><a class="header" href="#container-image">Container image</a></h2>
+<p>Every release from v0.13.0 is also published as
+<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.13</code>, <code>0.13.0</code>). The
+image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
+serves the web UI and REST API on port 8080 and gRPC on 50051:</p>
+<pre><code class="language-bash">docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search
+</code></pre>
+<p>To keep the index between runs mount a volume at
+<code>/var/lib/fast_code_search</code>; to change any setting mount your own file at
+<code>/etc/fast_code_search/config.toml</code> (the baked-in one is
+<a href="https://github.com/jburrow/fast_code_search/blob/main/deploy/docker/config.toml"><code>deploy/docker/config.toml</code></a>).
+The <code>fcs</code> client is in the image too: <code>docker exec &lt;container&gt; fcs 'fn main'</code>.</p>
 <h2 id="from-source"><a class="header" href="#from-source">From source</a></h2>
 <p>Requires Rust 1.89 or newer and the Protocol Buffers compiler (<code>protoc</code>,
 from your package manager or
@@ -274,6 +315,7 @@ fcs --version
         <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../theme/mermaid-d2ae65e9.js"></script>
 
 
 
