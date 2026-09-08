@@ -5,9 +5,13 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# Own group: sharing one with the benchmark workflow meant every pending
+# site deploy was cancelled whenever a benchmark run queued behind it (GitHub
+# keeps at most one pending run per group). The deploy pushes without force
+# and rebases on conflict, so a benchmark push to dev/bench cannot be lost.
 concurrency:
-  group: gh-pages-deploy
-  cancel-in-progress: false
+  group: pages-deploy
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -122,4 +126,6 @@ jobs:
           clean: true
           clean-exclude: |
             dev/**
+          force: false                # rebase and retry instead of overwriting a benchmark push
+          attempt-limit: 5
           commit-message: "docs: deploy gh-pages site for ${{ steps.version.outputs.VERSION }} @ ${{ github.sha }}"
