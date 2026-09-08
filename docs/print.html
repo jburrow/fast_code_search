@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e2fe761c.js";
+            window.path_to_searchindex_js = "searchindex-1bc25194.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-f198a439.js"></script>
@@ -2537,7 +2537,15 @@ references, 5.9k dependency edges.</p>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.1...HEAD">Unreleased</a></a></h2>
+<h2 id="0121---2026-09-08"><a class="header" href="#0121---2026-09-08"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.0...v0.12.1">0.12.1</a> - 2026-09-08</a></h2>
+<h3 id="changed-dependencies-and-ci"><a class="header" href="#changed-dependencies-and-ci">Changed (dependencies and CI)</a></h3>
+<ul>
+<li><code>toml</code> 1.x, <code>actions/upload-artifact</code> 7, <code>actions/download-artifact</code> 8,
+<code>actions/setup-node</code> 7, <code>codecov/codecov-action</code> 7,
+<code>softprops/action-gh-release</code> 3; the Pages deploy has its own concurrency
+group and pushes without force.</li>
+</ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
 <li>A documentation site built with mdBook (<code>docs/book</code>, published under
