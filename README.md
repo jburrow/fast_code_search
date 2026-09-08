@@ -119,10 +119,22 @@ The same run's Criterion suite over a synthetic corpus puts a common-word text
 search at 0.39 ms and a no-match query at 0.45 µs
 ([data](https://jburrow.github.io/fast_code_search/dev/bench/)). A nightly job
 indexes the `rust-lang/rust` 1.89.0 tree and records throughput and memory in its
-job summary. Reproduce any of it locally:
+job summary.
+
+Speed is only half of it. The same workflow runs a
+[ranking-quality suite](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html):
+twenty labelled queries over the same two repositories, each naming the file and
+line a reader would want first (`struct Runtime` → the definition, not a doc
+comment; `Field` → the model field, not the GDAL one). It currently scores
+precision@1 = 1.00 and precision@5 = 1.00, and the build fails below 0.90 / 0.95.
+It also times the same queries through ripgrep and ugrep on the same tree
+([comparison](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html)).
+Reproduce any of it locally:
 
 ```bash
 cargo run --release --example corpus_bench -- path/to/repo [more paths]
+cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
+scripts/bench/compare.sh path/to/repo      # ripgrep / ugrep / fcs on the same queries
 cargo bench
 ```
 

@@ -49,6 +49,7 @@ node_modules/
 
 # Pinned real-world corpora checked out by the benchmark workflow
 bench-corpus/
+bench-results/
 
 # mdBook build output and the canonical docs copied into the book at build time
 docs/book/book/

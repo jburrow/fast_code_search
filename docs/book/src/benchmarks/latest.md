@@ -1,5 +1,39 @@
 # Latest results
 
+<div id="live-results"><em>Loading the latest results from the benchmark workflow…</em></div>
+<script>
+(function () {
+  const el = document.getElementById("live-results");
+  const ms = ns => (ns / 1e6).toFixed(2) + " ms";
+  fetch("../../dev/bench/results/latest.json", { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(d => {
+      const c = d.corpus, m = c.machine, b = c.build, rq = d.ranking_quality;
+      let h = `<p><strong>From <a href="${d.run_url}">the latest benchmark run</a></strong> on commit <code>${d.commit.slice(0,7)}</code> (${d.generated_at.slice(0,10)}), ${m.cpu_model}, ${m.logical_cpus} logical CPUs, ${(m.mem_total_bytes/1e9).toFixed(0)} GB RAM, ${m.os}.</p>`;
+      h += `<table><thead><tr><th>Build (${c.corpus.files.toLocaleString()} files, ${(c.corpus.bytes/1e6).toFixed(1)} MB)</th><th>Value</th></tr></thead><tbody>`;
+      h += `<tr><td>Build</td><td>${(b.build_ns/1e9).toFixed(2)} s (${Math.round(b.files_per_second).toLocaleString()} files/s)</td></tr>`;
+      h += `<tr><td>Resident memory after build</td><td>${(b.rss_after_bytes/1e6).toFixed(0)} MB</td></tr>`;
+      h += `<tr><td>Index save / load</td><td>${ms(b.save_ns)} / ${ms(b.load_ns)} (${(b.index_bytes/1e6).toFixed(1)} MB on disk)</td></tr></tbody></table>`;
+      h += `<table><thead><tr><th>Query</th><th>p50</th><th>p95</th></tr></thead><tbody>`;
+      for (const q of c.queries) h += `<tr><td>${q.name}</td><td>${ms(q.p50_ns)}</td><td>${ms(q.p95_ns)}</td></tr>`;
+      h += `</tbody></table>`;
+      if (rq) h += `<p><strong>Ranking quality:</strong> precision@1 ${rq.precision_at_1.toFixed(2)}, precision@5 ${rq.precision_at_5.toFixed(2)} over ${rq.queries} labelled queries.</p>`;
+      const cmp = d.comparison;
+      if (cmp) {
+        const f = v => v == null ? "—" : v.toFixed(1) + " ms";
+        h += `<h3>Against scan tools (${cmp.tree_files.toLocaleString()} files, warm cache, median of ${cmp.runs})</h3>`;
+        h += `<table><thead><tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr></thead><tbody>`;
+        for (const q of cmp.queries) h += `<tr><td>${q.label} <code>${q.query.replace(/</g,"&lt;")}</code></td><td>${f(q.ripgrep_ms)}</td><td>${f(q.ugrep_ms)}</td><td>${f(q.fcs_client_ms)}</td><td>${q.fcs_engine_ms.toFixed(2)} ms</td></tr>`;
+        h += `</tbody></table><p>${cmp.tools.ripgrep}${cmp.tools.ugrep ? "; " + cmp.tools.ugrep : ""}. The fcs client time includes process start and the HTTP round trip; see <a href="comparison.html">the comparison page</a> for what these numbers do and do not mean.</p>`;
+      }
+      el.innerHTML = h;
+    })
+    .catch(() => { el.innerHTML = "<p><em>Live results are not available (the benchmark workflow has not published them yet); the table below is from the last hand-checked run.</em></p>"; });
+})();
+</script>
+
+## Last hand-checked run
+
 From [run 34254363545](https://github.com/jburrow/fast_code_search/actions/runs/34254363545)
 on commit `f46e7bf` (2026-09-08), GitHub-hosted `ubuntu-latest`. The
 [README](https://github.com/jburrow/fast_code_search#benchmarks) carries the

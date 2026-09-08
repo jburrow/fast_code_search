@@ -1011,7 +1011,7 @@ fn log_completion_stats(
 
     let indexed_size = index_engine
         .read()
-        .map(|e| e.get_stats().total_size)
+        .map(|e| e.get_stats().total_content_bytes)
         .unwrap_or(0);
 
     // Get current process memory usage

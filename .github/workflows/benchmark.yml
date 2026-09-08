@@ -87,6 +87,17 @@ jobs:
             --min-p1 0.90 --min-p5 0.95
           cat ranking_quality.md >> "$GITHUB_STEP_SUMMARY"
 
+      # The same queries through ripgrep, ugrep and fcs on the same tree
+      # (scripts/bench/compare.sh): warm cache, median of 7 runs, wall time.
+      - name: Install ripgrep and ugrep
+        run: sudo apt-get install -y ripgrep ugrep
+      - name: Compare with scan tools (ripgrep, ugrep)
+        run: |
+          cargo build --release --bins
+          scripts/bench/compare.sh bench-corpus/tokio bench-corpus/django \
+            --runs 7 --json compare.json --markdown compare.md
+          cat compare.md >> "$GITHUB_STEP_SUMMARY"
+
       # Machine-readable results for the documentation site
       # (docs/benchmarks/latest.html reads dev/bench/results/latest.json).
       - name: Assemble results for the site
@@ -96,6 +107,7 @@ jobs:
           import json, os, datetime
           corpus = json.load(open("corpus_result.json"))
           ranking = json.load(open("ranking_quality.json"))
+          compare = json.load(open("compare.json"))
           out = {
             "schema": 1,
             "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -103,6 +115,7 @@ jobs:
             "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
             "corpus": corpus,
             "ranking_quality": ranking,
+            "comparison": compare,
           }
           json.dump(out, open("bench-results/latest.json", "w"), indent=1)
           stamp = out["generated_at"][:10] + "-" + out["commit"][:7]
@@ -124,6 +137,8 @@ jobs:
             corpus_result.json
             ranking_quality.md
             ranking_quality.json
+            compare.md
+            compare.json
 
       - name: Keep only bencher lines for trend tracking
         run: |

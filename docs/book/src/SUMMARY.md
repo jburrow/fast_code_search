@@ -41,6 +41,8 @@
 
 - [Methodology](benchmarks/methodology.md)
 - [Latest results](benchmarks/latest.md)
+- [Against ripgrep and ugrep](benchmarks/comparison.md)
+- [Ranking quality](benchmarks/ranking-quality.md)
 
 # Project
 

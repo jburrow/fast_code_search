@@ -46,9 +46,31 @@ cargo bench --bench search_benchmark        # search only
 `corpus_bench` prints the same table CI does (`--markdown`) and can emit
 bencher lines for tracking (`--bencher`).
 
-## Planned
+## Ranking quality
 
-A ranking-quality suite (labelled queries with expected top results over
-the pinned corpora, precision@1 and @5 per commit) and a scripted
-comparison with ripgrep, ugrep and Zoekt on the same machine are in the
-[roadmap](../project/roadmap.md).
+Latency says how fast the engine is; this says whether what it puts first
+is what a reader wanted. `benches/ranking_quality.toml` holds labelled
+queries over the pinned corpora — text, symbols, regex and references —
+each naming the file and line that should come first (`struct Runtime` →
+the definition in `runtime.rs`, not a doc comment; `Field` in symbols mode
+→ the model field, not `FieldOverridePost` in a test). The suite reports
+**precision@1** (the expected result is the first hit) and **precision@5**,
+runs on every push, and fails the run below 0.90 / 0.95, so a change that
+makes searches faster but worse cannot land. Its first run scored 0.30 and
+surfaced six ranking defects; see the [changelog](../imported/changelog.md).
+
+```bash
+cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
+cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
+```
+
+## Comparison with scan tools
+
+`scripts/bench/compare.sh <dir>` times the same queries through ripgrep,
+ugrep (if installed) and `fcs` against a server on the same tree, warm
+cache, median of seven runs, and records the machine. It reports both the
+`fcs` client's wall time (process start plus HTTP) and the engine's own
+time. The point is not that a scan tool is slow — it is the right tool for
+a one-off search — but that an index answers in the same time however
+large the tree is, and ranks. Results are on the
+[latest results](latest.md) page when the comparison job has run.

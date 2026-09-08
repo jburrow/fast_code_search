@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust items wrapped in brace-delimited macro invocations (`cfg_rt! { … }`)
   are extracted as definitions and references. Existing indexes re-extract
   symbols once on the first start.
+- `scripts/bench/compare.sh` times the same queries through ripgrep, ugrep
+  and `fcs` on the same tree (warm cache, median of seven runs, machine
+  recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
+  slow. CI runs it and the documentation site shows the result alongside
+  the latency and ranking-quality figures, with two new book pages.
 
 ### Changed
 - Ranking: single-term lines of a multi-term query are capped per file and
@@ -27,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the symbol cache before reading files, weights exact names above
   prefixes more strongly, and ranks `impl` blocks below the type. The
   suite went from 0.30 to 1.00 precision@1 on the labelled set.
+- The "Background indexing completed" log line reports the bytes of text
+  indexed rather than the bytes currently memory-mapped.
 
 ## [0.12.1] - 2026-09-08
 
