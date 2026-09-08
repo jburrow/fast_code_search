@@ -29,8 +29,9 @@ binary may need `xattr -d com.apple.quarantine <file>` before it runs.
 
 ### Verifying a download
 
-Every archive ships with a `.sha256` file and, from v0.13.0, a Sigstore
-bundle (`.sigstore.json`) produced by the release workflow's own identity.
+Every archive ships with a `.sha256` file and, for releases after v0.13.0,
+a Sigstore bundle (`.sigstore.json`) produced by the release workflow's own
+identity.
 The checksum proves the file is intact; the signature proves it was built
 by this repository's release workflow for this tag, and not merely
 uploaded by someone holding the account.
