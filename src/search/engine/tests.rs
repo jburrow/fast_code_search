@@ -1128,13 +1128,21 @@ fn test_line_length_penalty_is_gentle() {
         "do_thing",
         false,
         false,
+        false,
         1.0,
     );
 
     // Medium line (~80 chars)
     let medium_line = "fn do_thing(arg1: String, arg2: i32, arg3: bool) -> Result<()> { todo!() }";
-    let medium_score =
-        calculate_score_inline(medium_line, "do_thing", "do_thing", false, false, 1.0);
+    let medium_score = calculate_score_inline(
+        medium_line,
+        "do_thing",
+        "do_thing",
+        false,
+        false,
+        false,
+        1.0,
+    );
 
     // Long line (~200 chars)
     let long_line = format!(
@@ -1144,7 +1152,8 @@ fn test_line_length_penalty_is_gentle() {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let long_score = calculate_score_inline(&long_line, "do_thing", "do_thing", false, false, 1.0);
+    let long_score =
+        calculate_score_inline(&long_line, "do_thing", "do_thing", false, false, false, 1.0);
 
     // The medium line should retain a decent fraction of the short line's score
     assert!(
@@ -2031,14 +2040,22 @@ fn test_multi_term_lines_rank_by_terms_matched() {
         .filter(|h| name(h) == "big.rs")
         .map(|h| h.line_number)
         .collect();
-    assert_eq!(big_lines.len(), SearchEngine::MAX_MATCHES_PER_DOC);
+    // The joint line plus a few single-term lines: with several terms the
+    // lowest tier is capped per document so it cannot exhaust the budget.
+    assert_eq!(
+        big_lines.len(),
+        1 + SearchEngine::MAX_SINGLE_TERM_LINES_PER_DOC
+    );
     assert_eq!(big_lines[0], 151, "joint line first");
-    // Single-term lines follow in document order and the cap still applies
-    // to them, so the `main`-only line 152 is cut off like `fn` line 150.
+    // Single-term lines follow in document order and the cap applies to
+    // them, so the `main`-only line 152 is cut off like `fn` line 150.
     assert!(!big_lines.contains(&152), "{big_lines:?}");
     let mut rest = big_lines[1..].to_vec();
     rest.sort_unstable();
-    assert_eq!(rest, (1..100).collect::<Vec<usize>>());
+    assert_eq!(
+        rest,
+        (1..=SearchEngine::MAX_SINGLE_TERM_LINES_PER_DOC).collect::<Vec<usize>>()
+    );
     // The multiplier is exactly the number of distinct terms on the line.
     let joint = hits.iter().find(|h| h.line_number == 3).unwrap();
     let single = hits
@@ -2543,4 +2560,59 @@ fn test_results_interleave_files_within_a_tier() {
         hits[0].file_path.ends_with("phrase.rs") && hits[1].file_path.ends_with("phrase.rs"),
         "{hits:?}"
     );
+}
+
+/// Items wrapped in a brace-delimited macro invocation (tokio's `cfg_rt!`)
+/// are re-parsed as Rust, so `JoinHandle` inside `cfg_rt! { … }` is a
+/// definition at its real line and its type mentions are references.
+#[test]
+fn test_rust_items_inside_cfg_macros_are_symbols() {
+    let temp_dir = TempDir::new().unwrap();
+    let f = temp_dir.path().join("join.rs");
+    fs::write(
+        &f,
+        "use std::marker::PhantomData;\n\
+         cfg_rt! {\n\
+             /// A handle.\n\
+             pub struct JoinHandle<T> {\n\
+                 raw: PhantomData<T>,\n\
+             }\n\
+             impl<T> JoinHandle<T> {\n\
+                 pub fn abort(&self) {}\n\
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(temp_dir.path());
+    engine.index_file(&f).unwrap();
+    engine.finalize();
+
+    let (hits, _) = engine
+        .search_symbols_parsed(
+            &crate::search::query_syntax::parse("JoinHandle"),
+            "",
+            "",
+            SearchLimits::new(10),
+        )
+        .unwrap();
+    assert!(
+        hits.iter()
+            .any(|h| h.line_number == 4 && h.content.contains("pub struct JoinHandle")),
+        "{hits:?}"
+    );
+    // The struct outranks its impl block.
+    assert!(
+        hits[0].content.contains("pub struct JoinHandle"),
+        "{hits:?}"
+    );
+    let (hits, _) = engine
+        .search_symbols_parsed(
+            &crate::search::query_syntax::parse("abort"),
+            "",
+            "",
+            SearchLimits::new(10),
+        )
+        .unwrap();
+    assert_eq!(hits.first().map(|h| h.line_number), Some(8), "{hits:?}");
 }

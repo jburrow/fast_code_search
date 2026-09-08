@@ -578,12 +578,9 @@ impl FileMetadata {
             base_score += (dependency_count as f32).log2().min(w.dependency_log2_cap);
         }
 
-        // Penalty for test/example directories
-        if path_lower.contains("/test")
-            || path_lower.contains("\\test")
-            || path_lower.contains("/example")
-            || path_lower.contains("\\example")
-        {
+        // Penalty for test/example/mock directories (same predicate as the
+        // line-level score)
+        if crate::search::ranking::is_test_or_example_path(&path_lower) {
             base_score *= w.test_example_penalty;
         }
 

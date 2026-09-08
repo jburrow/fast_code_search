@@ -91,7 +91,30 @@ impl SearchEngine {
     /// Added per extra term a line holds beyond the first; larger than any
     /// single-term score, so the tiers never interleave.
     const MULTI_TERM_TIER: f64 = 100.0;
+    /// For a multi-term query, single-term lines kept per document.
+    pub(super) const MAX_SINGLE_TERM_LINES_PER_DOC: usize = 3;
+    /// Symbol search opens at least this many files (the best by metadata)
+    /// before line-level scoring; more when the page or offset is larger.
+    const SYMBOL_PREFILTER_MIN_FILES: usize = 200;
+    /// Phase-2 budget per selected file (the per-document cap is 100).
+    const SYMBOL_MATCHES_PER_FILE_BUDGET: usize = 20;
+}
 
+/// No identifier character immediately before `at` in `line`.
+fn is_word_boundary_before(line: &str, at: usize) -> bool {
+    at == 0 || !is_ident_byte(line.as_bytes()[at - 1])
+}
+
+/// No identifier character at `at` in `line` (i.e. the match ends a word).
+fn is_word_boundary_after(line: &str, at: usize) -> bool {
+    at >= line.len() || !is_ident_byte(line.as_bytes()[at])
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+impl SearchEngine {
     /// Fast-mode boost for a file whose trigrams contain the query phrase:
     /// large enough that such files are always among the ones opened.
     const PHRASE_CANDIDATE_BOOST: f32 = 1_000_000.0;
@@ -109,8 +132,9 @@ impl SearchEngine {
         rank_mode: RankMode,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
         let primary_lower = terms.terms.first().map(|(_, l)| l.as_str()).unwrap_or("");
-        self.run_candidates(
+        self.run_candidates_prioritised(
             candidates,
+            phrase_docs,
             rank_mode,
             limits,
             |id, meta| {
@@ -178,15 +202,85 @@ impl SearchEngine {
         let query_lower = query.to_lowercase();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         let opts = parsed.options;
-        Ok(self.run_candidates(
-            &candidates,
+
+        // Phase 1, no I/O: score every matching symbol from the cache alone
+        // (name match quality, kind, file metadata) and keep the files
+        // holding the best ones. Reading every file with a substring match
+        // — thousands for a short name — burned the match budget on
+        // `FieldInfo` and `Fieldset` before the file defining `Field` was
+        // opened.
+        let name_matches = |name: &str| -> bool {
+            match (opts.case_sensitive, opts.whole_word) {
+                (true, true) => name == query,
+                (true, false) => name.contains(query),
+                (false, true) => {
+                    name.eq_ignore_ascii_case(query) || name.to_lowercase() == query_lower
+                }
+                (false, false) => contains_case_insensitive(name, &query_lower),
+            }
+        };
+        let w = &RankingWeights::DEFAULT;
+        let mut scored: Vec<(f32, u32)> = candidates
+            .iter()
+            .filter_map(|id| {
+                let symbols = self.symbol_cache.get(id as usize)?;
+                let meta = self.get_file_metadata(id);
+                let best = symbols
+                    .iter()
+                    .filter(|s| s.symbol_type != SymbolType::FileName && name_matches(&s.name))
+                    .map(|s| {
+                        let lower = s.name.to_lowercase();
+                        let name_factor = if lower == query_lower {
+                            w.symbol_exact_name
+                        } else if lower.starts_with(&query_lower) {
+                            w.symbol_prefix_name
+                        } else {
+                            1.0
+                        };
+                        let kind = match s.symbol_type {
+                            SymbolType::Variable | SymbolType::Constant => w.symbol_value_kind,
+                            _ => 1.0,
+                        };
+                        (name_factor * kind) as f32 * meta.base_score.max(0.1)
+                    })
+                    .fold(None, |acc: Option<f32>, v| {
+                        Some(acc.map_or(v, |a| a.max(v)))
+                    })?;
+                Some((best, id))
+            })
+            .collect();
+        scored.sort_unstable_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        let keep = (limits.offset.saturating_add(limits.max_results))
+            .saturating_mul(8)
+            .max(Self::SYMBOL_PREFILTER_MIN_FILES);
+        let selected: roaring::RoaringBitmap =
+            scored.iter().take(keep).map(|(_, id)| *id).collect();
+        let total_candidates = candidates.len() as usize;
+
+        // Phase 2: read only the selected files and score their lines. The
+        // file set is already bounded, so the budget is sized to cover every
+        // symbol in it rather than letting the scan order decide which of
+        // the selected files get read.
+        let phase2 = limits.with_match_budget(
+            limits
+                .match_budget
+                .max(selected.len() as usize * Self::SYMBOL_MATCHES_PER_FILE_BUDGET),
+        );
+        let (matches, mut info) = self.run_candidates(
+            &selected,
             RankMode::Full,
-            limits,
+            phase2,
             |_, meta| meta.base_score,
             |doc_id, run| {
                 self.search_symbols_in_document_opts(doc_id, query, &query_lower, opts, run)
             },
-        ))
+        );
+        info.total_candidates = total_candidates;
+        Ok((matches, info))
     }
 
     /// The one place every search goes through: picks fast vs full ranking,
@@ -198,6 +292,26 @@ impl SearchEngine {
     pub(super) fn run_candidates<S, F>(
         &self,
         candidates: &roaring::RoaringBitmap,
+        rank_mode: RankMode,
+        limits: SearchLimits,
+        fast_score: S,
+        per_doc: F,
+    ) -> (Vec<SearchMatch>, SearchRankingInfo)
+    where
+        S: Fn(u32, &FileMetadata) -> f32,
+        F: Fn(u32, &QueryRun) -> Option<Vec<SearchMatch>> + Sync,
+    {
+        self.run_candidates_prioritised(candidates, None, rank_mode, limits, fast_score, per_doc)
+    }
+
+    /// [`Self::run_candidates`] opening `priority` documents before the
+    /// rest in every mode. The scan stops on its match budget, so the files
+    /// most likely to hold the best hits (those containing a multi-term
+    /// query's phrase) must be read first, not wherever their id falls.
+    pub(super) fn run_candidates_prioritised<S, F>(
+        &self,
+        candidates: &roaring::RoaringBitmap,
+        priority: Option<&roaring::RoaringBitmap>,
         rank_mode: RankMode,
         limits: SearchLimits,
         fast_score: S,
@@ -239,22 +353,38 @@ impl SearchEngine {
             // Fast ranking requested but no metadata yet (freshly loaded index):
             // cap the number of files opened rather than reading everything.
             candidates.iter().take(Self::FAST_RANKING_TOP_N).collect()
+        } else if let Some(first) = priority.filter(|p| !p.is_empty()) {
+            let head = candidates & first;
+            let tail = candidates - &head;
+            head.iter().chain(tail.iter()).collect()
         } else {
             candidates.iter().collect()
         };
         let candidates_searched = doc_ids.len();
 
+        // Priority documents are scanned in a pass of their own before the
+        // rest: in one parallel pass, threads working on later chunks can
+        // spend the match budget before the first chunk (where the priority
+        // documents sit) has been reached, and which files get skipped
+        // then depends on scheduling.
+        let head_len = priority
+            .filter(|p| !p.is_empty())
+            .map(|p| doc_ids.iter().take_while(|id| p.contains(**id)).count())
+            .unwrap_or(0);
         let run = QueryRun::new(&limits);
-        let mut matches: Vec<SearchMatch> = doc_ids
-            .par_iter()
-            .filter_map(|&doc_id| {
-                if run.exhausted() {
-                    return None;
-                }
-                per_doc(doc_id, &run)
-            })
-            .flatten()
-            .collect();
+        let scan = |ids: &[u32]| -> Vec<SearchMatch> {
+            ids.par_iter()
+                .filter_map(|&doc_id| {
+                    if run.exhausted() {
+                        return None;
+                    }
+                    per_doc(doc_id, &run)
+                })
+                .flatten()
+                .collect()
+        };
+        let mut matches: Vec<SearchMatch> = scan(&doc_ids[..head_len]);
+        matches.extend(scan(&doc_ids[head_len..]));
         let found = matches.len();
         Self::sort_and_page(&mut matches, &limits);
 
@@ -789,6 +919,7 @@ impl SearchEngine {
             || contains_bytes(path_bytes, b"\\src\\")
             || contains_bytes(path_bytes, b"/lib/")
             || contains_bytes(path_bytes, b"\\lib\\");
+        let is_test_path = crate::search::ranking::is_test_or_example_path(&raw_path_str);
         let display_path = self.make_display_path(&file.path);
 
         // Collect lines into a vector for indexed access
@@ -850,6 +981,7 @@ impl SearchEngine {
                 query_lower,
                 true,
                 is_src_lib,
+                is_test_path,
                 dependency_boost,
             );
 
@@ -866,6 +998,16 @@ impl SearchEngine {
             };
             let kind_factor = match symbol.symbol_type {
                 SymbolType::Variable | SymbolType::Constant => w.symbol_value_kind,
+                // `impl Runtime {` is a definition too, but the reader asking
+                // for `Runtime` wants the struct first.
+                _ if {
+                    let t = line.trim_start();
+                    let t = t.strip_prefix("unsafe ").unwrap_or(t).trim_start();
+                    t.starts_with("impl ") || t.starts_with("impl<")
+                } =>
+                {
+                    w.symbol_impl_kind
+                }
                 _ => 1.0,
             };
             let score = base_score * name_factor * kind_factor;
@@ -976,6 +1118,7 @@ impl SearchEngine {
         // Lazy-compute path info only if we find matches
         let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
+        let mut is_test_path = false;
 
         {
             // Turn one matching line into a result. Returns false once the
@@ -995,6 +1138,7 @@ impl SearchEngine {
                         || contains_bytes(path_bytes, b"\\src\\")
                         || contains_bytes(path_bytes, b"/lib/")
                         || contains_bytes(path_bytes, b"\\lib\\");
+                    is_test_path = crate::search::ranking::is_test_or_example_path(&raw);
                     self.make_display_path(&file.path)
                 });
 
@@ -1231,7 +1375,12 @@ impl SearchEngine {
                 let all = terms.terms.len();
                 for hit in line_hits(&content, po, pl, opts) {
                     if let Some(entry) = by_line.get_mut(&hit.line_num) {
-                        entry.1 = all + 1;
+                        // `class ModelForm(` is one tier above `class
+                        // ModelFormOptions:`: the phrase as a whole word
+                        // beats the phrase as a prefix of something longer.
+                        let whole = is_word_boundary_before(hit.line, hit.start)
+                            && is_word_boundary_after(hit.line, hit.end);
+                        entry.1 = if whole { all + 2 } else { all + 1 };
                     }
                 }
             }
@@ -1263,6 +1412,7 @@ impl SearchEngine {
         // beyond the budget) must cost nothing beyond the scan itself.
         let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
+        let mut is_test_path = false;
         let mut symbol_maps: Option<SymbolLineMaps<'_>> = None;
 
         // Per-hit body; `term_hits` is the number of distinct query terms on
@@ -1283,6 +1433,7 @@ impl SearchEngine {
                     || contains_bytes(path_bytes, b"\\src\\")
                     || contains_bytes(path_bytes, b"/lib/")
                     || contains_bytes(path_bytes, b"\\lib\\");
+                is_test_path = crate::search::ranking::is_test_or_example_path(&raw);
                 self.display_path_for(doc_id, &file.path)
             });
             let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
@@ -1294,6 +1445,7 @@ impl SearchEngine {
                 query_lower,
                 is_symbol_def,
                 is_src_lib,
+                is_test_path,
                 dependency_boost,
             );
             if term_hits > 1 {
@@ -1329,7 +1481,20 @@ impl SearchEngine {
             true
         };
 
+        // With several terms, lines holding only one of them are the lowest
+        // tier and there can be hundreds per file (every `fn` line for
+        // `fn main`); emitting them all exhausted the query's match budget
+        // before the files holding the phrase were reached. Keep a few per
+        // document as context; the tiers above are never capped here.
+        let multi = terms.terms.len() > 1;
+        let mut single_term_lines = 0usize;
         for (hit, term_hits) in all_hits {
+            if multi && term_hits == 1 {
+                single_term_lines += 1;
+                if single_term_lines > Self::MAX_SINGLE_TERM_LINES_PER_DOC {
+                    break;
+                }
+            }
             if !emit(hit.line_num, hit.line, hit.start, hit.end, term_hits) {
                 break;
             }

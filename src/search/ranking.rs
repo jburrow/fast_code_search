@@ -4,6 +4,25 @@
 //! the line-level scorers and the file-level fast-ranking metadata agree,
 //! and so tuning is a one-file change.
 
+/// Is this a test, example or mock path? Such files are demoted both in
+/// fast-mode file ordering and in every line-level score: a reader asking
+/// for `Field` wants the model field, not `FieldOverridePost` in a test.
+pub fn is_test_or_example_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [
+        "/test",
+        "\\test",
+        "/example",
+        "\\example",
+        "/mock",
+        "\\mock",
+        "/fixture",
+        "\\fixture",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 /// Multiplicative boosts applied to a line-level match score.
 #[derive(Debug, Clone, Copy)]
 pub struct RankingWeights {
@@ -29,6 +48,12 @@ pub struct RankingWeights {
     pub filename_hit: f64,
     /// Per-dependent scale in `1 + log10(dependents) * dependency_log10`.
     pub dependency_log10: f64,
+    /// Line-level penalty for test, example, mock and fixture paths.
+    pub test_path: f64,
+    /// Symbol search: an `impl` block ranks below the type it implements.
+    pub symbol_impl_kind: f64,
+    /// A definition line that is `pub` / `export` / `public`.
+    pub public_definition: f64,
 }
 
 impl RankingWeights {
@@ -39,11 +64,14 @@ impl RankingWeights {
         src_lib_dir: 1.5,
         line_start: 1.5,
         min_line_length_factor: 0.3,
-        symbol_exact_name: 2.0,
-        symbol_prefix_name: 1.5,
+        symbol_exact_name: 2.5,
+        symbol_prefix_name: 1.4,
         symbol_value_kind: 0.9,
         filename_hit: 3.0,
         dependency_log10: 0.5,
+        test_path: 0.6,
+        symbol_impl_kind: 0.8,
+        public_definition: 1.6,
     };
 
     /// `1 + log10(dependents) * dependency_log10`; 1.0 for files nobody imports.

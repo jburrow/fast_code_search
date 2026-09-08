@@ -632,6 +632,47 @@ impl TermSet {
     }
 }
 
+/// Drop leading item modifiers (`pub`, `pub(crate)`, `export`, `public`,
+/// `static`, `async`, `unsafe`, `const`, `default`, `extern "C"`) so the
+/// start-of-line test sees the keyword a reader reads first.
+pub(super) fn strip_item_modifiers(mut s: &str) -> &str {
+    loop {
+        let before = s.len();
+        for kw in [
+            "pub ",
+            "export ",
+            "public ",
+            "private ",
+            "protected ",
+            "static ",
+            "async ",
+            "unsafe ",
+            "const ",
+            "default ",
+            "abstract ",
+            "final ",
+            "override ",
+        ] {
+            if let Some(rest) = s.strip_prefix(kw) {
+                s = rest.trim_start();
+            }
+        }
+        if let Some(rest) = s.strip_prefix("pub(") {
+            if let Some(close) = rest.find(')') {
+                s = rest[close + 1..].trim_start();
+            }
+        }
+        if let Some(rest) = s.strip_prefix("extern \"") {
+            if let Some(close) = rest.find('"') {
+                s = rest[close + 1..].trim_start();
+            }
+        }
+        if s.len() == before {
+            return s;
+        }
+    }
+}
+
 /// Inline scoring function with pre-computed values (no method call overhead, no redundant lookups)
 ///
 /// `original_query` is the un-lowered query for exact case-sensitive match boosting.
@@ -643,10 +684,16 @@ pub(super) fn calculate_score_inline(
     query_lower: &str,
     is_symbol_def: bool,
     is_src_lib: bool,
+    is_test_path: bool,
     dependency_boost: f64,
 ) -> f64 {
     let w = &RankingWeights::DEFAULT;
     let mut score = 1.0;
+
+    // Tests, examples, mocks and fixtures mention everything; demote them.
+    if is_test_path {
+        score *= w.test_path;
+    }
 
     // Boost for exact case-sensitive matches (using the original un-lowered query)
     if line.contains(original_query) {
@@ -666,10 +713,23 @@ pub(super) fn calculate_score_inline(
     // Boost for shorter lines (more relevant) — gentle logarithmic curve
     score *= w.line_length_factor(line.len());
 
-    // Boost for query appearing at the start of the line
+    // A public definition is what a reader usually wants first: `pub fn
+    // block_on` in runtime.rs over the scheduler's internal `fn block_on`.
     let trimmed = line.trim_start();
-    if trimmed.len() >= query_lower.len()
-        && trimmed.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes())
+    if is_symbol_def
+        && (trimmed.starts_with("pub ")
+            || trimmed.starts_with("export ")
+            || trimmed.starts_with("public "))
+    {
+        score *= w.public_definition;
+    }
+
+    // Boost for the query appearing at the start of the line, ignoring
+    // visibility and other item modifiers: `pub fn block_on` starts with
+    // `fn block_on` as far as a reader is concerned.
+    let head = strip_item_modifiers(trimmed);
+    if head.len() >= query_lower.len()
+        && head.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes())
     {
         score *= w.line_start;
     }
