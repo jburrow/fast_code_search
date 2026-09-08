@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a8020d46.js";
+            window.path_to_searchindex_js = "../searchindex-c9e9329b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -196,6 +196,11 @@ as JSON (<code>corpus_bench --json</code>) and published to the site per run.</l
 <li>Rust items wrapped in brace-delimited macro invocations (<code>cfg_rt! { … }</code>)
 are extracted as definitions and references. Existing indexes re-extract
 symbols once on the first start.</li>
+<li>The benchmark trend page (<code>dev/bench/</code>) is now the project’s own: it
+groups the charts by suite, says what each one measures and what would
+move it, labels every axis with its unit and “lower is better”, shades
+each run’s spread, and links each point to its commit. The README’s
+benchmark section explains the three measurements and how to read them.</li>
 <li><code>scripts/bench/compare.sh</code> times the same queries through ripgrep, ugrep
 and <code>fcs</code> on the same tree (warm cache, median of seven runs, machine
 recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly

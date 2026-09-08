@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a8020d46.js";
+            window.path_to_searchindex_js = "searchindex-c9e9329b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -2461,6 +2461,15 @@ cargo bench --bench search_benchmark        # search only
 </code></pre>
 <p><code>corpus_bench</code> prints the same table CI does (<code>--markdown</code>) and can emit
 bencher lines for tracking (<code>--bencher</code>).</p>
+<h2 id="reading-the-trend-charts"><a class="header" href="#reading-the-trend-charts">Reading the trend charts</a></h2>
+<p>The <a href="../dev/bench">trend page</a> charts every measurement per commit to
+<code>main</code>. Each chart is a cost, so lower is better; the vertical axis is time
+per operation in the unit that fits the chart (or bytes for memory). The
+shaded band is that run’s spread: median to 95th percentile for the
+real-corpus rows, Criterion’s reported deviation for the synthetic rows. A
+step on every chart at the same commit is a change of runner, not of code.
+Each chart carries a sentence saying what it measures and what would move
+it.</p>
 <h2 id="ranking-quality"><a class="header" href="#ranking-quality">Ranking quality</a></h2>
 <p>Latency says how fast the engine is; this says whether what it puts first
 is what a reader wanted. <code>benches/ranking_quality.toml</code> holds labelled
@@ -2806,6 +2815,11 @@ as JSON (<code>corpus_bench --json</code>) and published to the site per run.</l
 <li>Rust items wrapped in brace-delimited macro invocations (<code>cfg_rt! { … }</code>)
 are extracted as definitions and references. Existing indexes re-extract
 symbols once on the first start.</li>
+<li>The benchmark trend page (<code>dev/bench/</code>) is now the project’s own: it
+groups the charts by suite, says what each one measures and what would
+move it, labels every axis with its unit and “lower is better”, shades
+each run’s spread, and links each point to its commit. The README’s
+benchmark section explains the three measurements and how to read them.</li>
 <li><code>scripts/bench/compare.sh</code> times the same queries through ripgrep, ugrep
 and <code>fcs</code> on the same tree (warm cache, median of seven runs, machine
 recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
