@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-08
+
+### Changed (dependencies and CI)
+- `toml` 1.x, `actions/upload-artifact` 7, `actions/download-artifact` 8,
+  `actions/setup-node` 7, `codecov/codecov-action` 7,
+  `softprops/action-gh-release` 3; the Pages deploy has its own concurrency
+  group and pushes without force.
+
 ### Added
 - A documentation site built with mdBook (`docs/book`, published under
   `/docs/` on GitHub Pages): Start here, Guides, Reference, How it works,
@@ -911,7 +919,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/jburrow/fast_code_search/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/jburrow/fast_code_search/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jburrow/fast_code_search/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/jburrow/fast_code_search/compare/v0.10.0...v0.10.1
