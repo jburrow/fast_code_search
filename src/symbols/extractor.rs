@@ -1110,7 +1110,17 @@ impl SymbolExtractor {
             return Ok((Vec::new(), Vec::new(), Vec::new()));
         };
         let root_node = tree.root_node();
-        let (symbols, refs) = self.symbols_and_refs_from_tree(&tree, source);
+        let (mut symbols, mut refs) = self.symbols_and_refs_from_tree(&tree, source);
+        if self.extension == "rs" {
+            self.extract_from_macro_bodies(
+                language,
+                &root_node,
+                source,
+                &mut symbols,
+                &mut refs,
+                0,
+            );
+        }
 
         let mut imports = Vec::new();
         match self.extension.as_str() {
@@ -1124,6 +1134,83 @@ impl SymbolExtractor {
         imports.sort_by_key(|i| i.line);
 
         Ok((symbols, imports, refs))
+    }
+
+    /// Items wrapped in a brace-delimited macro invocation (tokio's
+    /// `cfg_rt! { pub struct JoinHandle … }`, `cfg_if!`, …) are a token tree
+    /// to tree-sitter, not items, so their definitions and references were
+    /// invisible. Re-parse each such body as Rust source and shift the
+    /// rows; nested wrappers are followed two levels deep.
+    fn extract_from_macro_bodies(
+        &self,
+        language: LanguageFn,
+        node: &tree_sitter::Node,
+        source: &str,
+        symbols: &mut Vec<Symbol>,
+        refs: &mut Vec<SymbolRef>,
+        depth: u8,
+    ) {
+        if depth > 2 {
+            return;
+        }
+        let mut stack = vec![*node];
+        while let Some(current) = stack.pop() {
+            let mut cursor = current.walk();
+            for child in current.children(&mut cursor) {
+                if child.kind() == "macro_invocation" {
+                    let Some(body) = child
+                        .children(&mut child.walk())
+                        .find(|c| c.kind() == "token_tree")
+                    else {
+                        continue;
+                    };
+                    let text = &source[body.byte_range()];
+                    if !(text.starts_with('{') && text.ends_with('}')) {
+                        continue;
+                    }
+                    let inner = &text[1..text.len() - 1];
+                    if ![
+                        "fn ", "struct ", "enum ", "trait ", "impl ", "type ", "const ", "static ",
+                        "mod ",
+                    ]
+                    .iter()
+                    .any(|kw| inner.contains(kw))
+                    {
+                        continue;
+                    }
+                    // Keep the body's original column/row layout: replace the
+                    // braces by spaces so byte and row offsets line up with
+                    // the real file (rows are what we store).
+                    let padded = format!(" {inner} ");
+                    let row_offset = body.start_position().row as u32;
+                    if let Ok(Some(sub)) = parse_with_reused_parser(language, &padded) {
+                        let (mut inner_symbols, mut inner_refs) =
+                            self.symbols_and_refs_from_tree(&sub, &padded);
+                        // Nested wrappers (rows relative to `padded`, like
+                        // the direct ones), then shift everything at once.
+                        let sub_root = sub.root_node();
+                        self.extract_from_macro_bodies(
+                            language,
+                            &sub_root,
+                            &padded,
+                            &mut inner_symbols,
+                            &mut inner_refs,
+                            depth + 1,
+                        );
+                        for s in &mut inner_symbols {
+                            s.line += row_offset as usize;
+                        }
+                        for r in &mut inner_refs {
+                            r.line += row_offset;
+                        }
+                        symbols.extend(inner_symbols);
+                        refs.extend(inner_refs);
+                    }
+                } else if child.child_count() > 0 {
+                    stack.push(child);
+                }
+            }
+        }
     }
 
     /// Extract Rust use statements and mod declarations
