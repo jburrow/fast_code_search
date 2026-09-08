@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a container image (`ghcr.io/jburrow/fast_code_search`) built per release
   with a documented `docker run` line; release archives signed keylessly
   through Sigstore with the verification command in the release notes; a
-  crates.io publish job that runs when a registry token is configured.
+  crates.io publish job and a Homebrew-tap update job (formula generated
+  from the archives' checksums) that run when their tokens are configured.
 - Diagrams in the documentation: the indexing pipeline, how a score is
   composed, and the parts of a deployment.
 

@@ -251,6 +251,45 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Homebrew tap, when a HOMEBREW_TAP_TOKEN secret (a token that can push to
+  # jburrow/homebrew-tap) is configured. The formula is generated from the
+  # archives' checksums, so it can only describe what was actually released.
+  homebrew:
+    name: Update the Homebrew tap
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref, '-') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for a tap token
+        id: token
+        run: echo "present=${{ secrets.HOMEBREW_TAP_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Download checksums
+        if: steps.token.outputs.present == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: release-*
+          merge-multiple: true
+      - name: Generate and push the formula
+        if: steps.token.outputs.present == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/jburrow/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          python3 scripts/release/homebrew-formula.py "$tag" artifacts > tap/Formula/fast_code_search.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/fast_code_search.rb
+          git commit -m "fast_code_search $tag" || { echo "formula unchanged"; exit 0; }
+          git push
+      - name: No token
+        if: steps.token.outputs.present != 'true'
+        run: echo "HOMEBREW_TAP_TOKEN is not set; skipping the tap. Create jburrow/homebrew-tap and add a token that can push to it."
+
   # crates.io, when a CARGO_REGISTRY_TOKEN secret is configured. Idempotent:
   # a version that is already published is reported and skipped.
   publish:

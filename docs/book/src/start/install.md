@@ -62,6 +62,12 @@ Once `fast_code_search` is published on crates.io, `cargo binstall
 fast_code_search` and `cargo install fast_code_search` work without the
 `--git` flag.
 
+## Homebrew
+
+A tap is wired into the release workflow and will be announced here once
+its repository exists; until then use the archive, `cargo binstall` or the
+container image.
+
 ## Container image
 
 Every release from v0.13.0 is also published as
