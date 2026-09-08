@@ -1,281 +1,298 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1, user-scalable=yes" />
-    <style>
-      html {
-        font-family: BlinkMacSystemFont,-apple-system,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,"Fira Sans","Droid Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
-        -webkit-font-smoothing: antialiased;
-        background-color: #fff;
-        font-size: 16px;
-      }
-      body {
-        color: #4a4a4a;
-        margin: 8px;
-        font-size: 1em;
-        font-weight: 400;
-      }
-      header {
-        margin-bottom: 8px;
-        display: flex;
-        flex-direction: column;
-      }
-      main {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-      a {
-        color: #3273dc;
-        cursor: pointer;
-        text-decoration: none;
-      }
-      a:hover {
-        color: #000;
-      }
-      button {
-        color: #fff;
-        background-color: #3298dc;
-        border-color: transparent;
-        cursor: pointer;
-        text-align: center;
-      }
-      button:hover {
-        background-color: #2793da;
-        flex: none;
-      }
-      .spacer {
-        flex: auto;
-      }
-      .small {
-        font-size: 0.75rem;
-      }
-      footer {
-        margin-top: 16px;
-        display: flex;
-        align-items: center;
-      }
-      .header-label {
-        margin-right: 4px;
-      }
-      .benchmark-set {
-        margin: 8px 0;
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-      .benchmark-title {
-        font-size: 3rem;
-        font-weight: 600;
-        word-break: break-word;
-        text-align: center;
-      }
-      .benchmark-graphs {
-        display: flex;
-        flex-direction: row;
-        justify-content: space-around;
-        align-items: center;
-        flex-wrap: wrap;
-        width: 100%;
-      }
-      .benchmark-chart {
-        max-width: 1000px;
-      }
-    </style>
-    <title>Benchmarks</title>
-  </head>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmark trends — fast_code_search</title>
+<meta name="description" content="Every commit to main, measured on a GitHub-hosted runner: index build, query latency, memory and persistence, with an explanation of each chart.">
+<style>
+  @font-face { font-family: 'Inter'; font-weight: 400; font-display: swap; src: url(../../fonts/inter-latin-400-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Inter'; font-weight: 500; font-display: swap; src: url(../../fonts/inter-latin-500-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Inter'; font-weight: 600; font-display: swap; src: url(../../fonts/inter-latin-600-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'Inter'; font-weight: 700; font-display: swap; src: url(../../fonts/inter-latin-700-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'JetBrains Mono'; font-weight: 400; font-display: swap; src: url(../../fonts/jetbrains-mono-latin-400-normal.woff2) format('woff2'); }
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Menlo, monospace;
+    --bg: #ffffff; --bg-alt: #f6f8fa; --bg-card: #ffffff; --border: #d0d7de;
+    --text: #1f2328; --text-muted: #57606a; --link: #0969da; --accent: #cf222e;
+    --grid: rgba(31,35,40,.08); --band: .14;
+    --s1: #cf222e; --s2: #0969da; --s3: #1a7f37; --s4: #8250df; --s5: #bf8700; --s6: #0e7c86;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --bg-alt: #161b22; --bg-card: #1c2128; --border: #30363d;
+      --text: #e6edf3; --text-muted: #8b949e; --link: #58a6ff; --accent: #f78166;
+      --grid: rgba(230,237,243,.08); --band: .18;
+      --s1: #f78166; --s2: #58a6ff; --s3: #3fb950; --s4: #bc8cff; --s5: #d29922; --s6: #39c5cf;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { margin: 0; font-family: var(--font-sans); color: var(--text); background: var(--bg); line-height: 1.55; font-size: 15px; }
+  a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; }
+  code { font-family: var(--font-mono); font-size: .9em; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 4px; padding: .05em .35em; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px 64px; }
+  header.top { display: flex; align-items: center; gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--border); margin-bottom: 28px; flex-wrap: wrap; }
+  header.top .brand { font-weight: 700; font-size: 17px; color: var(--text); }
+  header.top nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -.01em; text-wrap: balance; }
+  .lede { color: var(--text-muted); font-size: 16px; max-width: 70ch; margin: 0 0 22px; }
+  .howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 0 0 36px; }
+  .howto div { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; font-size: 14px; }
+  .howto strong { display: block; font-weight: 600; margin-bottom: 4px; }
+  .howto .arrow { font-family: var(--font-mono); color: var(--accent); }
+  .meta { font-size: 13px; color: var(--text-muted); margin: -20px 0 30px; }
+  .toc { font-size: 14px; margin: 0 0 32px; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  section.group { margin: 0 0 44px; }
+  section.group > h2 { font-size: 21px; margin: 0 0 4px; padding-top: 8px; }
+  section.group > p { color: var(--text-muted); max-width: 78ch; margin: 0 0 18px; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 18px; }
+  @media (max-width: 560px) { .charts { grid-template-columns: 1fr; } }
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 10px; min-width: 0; }
+  .card h3 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  .card p.desc { font-size: 13px; color: var(--text-muted); margin: 0 0 8px; }
+  .card .latest { font-size: 13px; margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+  .card .latest b { font-weight: 600; }
+  .card .latest span { color: var(--text-muted); }
+  .card .plot { position: relative; height: 230px; }
+  .axis-note { font-size: 12px; color: var(--text-muted); text-align: right; margin: 2px 0 0; }
+  .empty { color: var(--text-muted); font-style: italic; padding: 24px 0; }
+  footer { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 16px; font-size: 13px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="../../">fast_code_search</a>
+    <nav>
+      <a href="../../docs/benchmarks/methodology.html">Methodology</a>
+      <a href="../../docs/benchmarks/latest.html">Latest results</a>
+      <a href="../../docs/benchmarks/comparison.html">vs ripgrep</a>
+      <a href="../../docs/benchmarks/ranking-quality.html">Ranking quality</a>
+      <a href="https://github.com/jburrow/fast_code_search">GitHub</a>
+    </nav>
+  </header>
 
-  <body>
-    <header id="header">
-      <div class="header-item">
-        <strong class="header-label">Last Update:</strong>
-        <span id="last-update"></span>
-      </div>
-      <div class="header-item">
-        <strong class="header-label">Repository:</strong>
-        <a id="repository-link" rel="noopener"></a>
-      </div>
-    </header>
-    <main id="main"></main>
-    <footer>
-      <button id="dl-button">Download data as JSON</button>
-      <div class="spacer"></div>
-      <div class="small">Powered by <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark">github-action-benchmark</a></div>
-    </footer>
+  <h1>Benchmark trends</h1>
+  <p class="lede">Every commit to <code>main</code> runs the benchmark workflow on a GitHub-hosted runner and appends one point to each chart below. These charts exist to catch a regression the day it lands, not to make a marketing claim: for the numbers that matter, read the <a href="../../docs/benchmarks/latest.html">latest results</a> and the <a href="../../docs/benchmarks/methodology.html">methodology</a>.</p>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
-    <script src="data.js"></script>
-    <script id="main-script">
-      'use strict';
-      (function() {
-        // Colors from https://github.com/github/linguist/blob/master/lib/linguist/languages.yml
-        const toolColors = {
-          cargo: '#dea584',
-          go: '#00add8',
-          benchmarkjs: '#f1e05a',
-          benchmarkluau: '#000080',
-          pytest: '#3572a5',
-          googlecpp: '#f34b7d',
-          catch2: '#f34b7d',
-          julia: '#a270ba',
-          jmh: '#b07219',
-          benchmarkdotnet: '#178600',
-          customBiggerIsBetter: '#38ff38',
-          customSmallerIsBetter: '#ff3838',
-          _: '#333333'
-        };
+  <div class="howto">
+    <div><strong>Lower is better</strong>The vertical axis is time per operation (or bytes, where labelled). Every chart is a cost. A line going down is an improvement; a line going up is a regression.</div>
+    <div><strong>One point, one commit</strong>Left is older, right is newer. Hover a point for the commit message and the exact value; click it to open the commit on GitHub.</div>
+    <div><strong>The band is the spread</strong>The shaded band is the run's own spread: for the real-corpus rows the distance from the median to the 95th percentile, for the Criterion rows the deviation it reports. Compare the lines, not the edges of the bands.</div>
+    <div><strong>Machines vary</strong>Runners are shared virtual machines. A step on <em>every</em> chart at the same commit is a different runner, not the code. A step on one chart is the code.</div>
+  </div>
+  <p class="meta" id="meta">Loading data…</p>
 
-        function init() {
-          function collectBenchesPerTestCase(entries) {
-            const map = new Map();
-            for (const entry of entries) {
-              const {commit, date, tool, benches} = entry;
-              for (const bench of benches) {
-                const result = { commit, date, tool, bench };
-                const arr = map.get(bench.name);
-                if (arr === undefined) {
-                  map.set(bench.name, [result]);
-                } else {
-                  arr.push(result);
-                }
-              }
-            }
-            return map;
-          }
+  <ul class="toc" id="toc"></ul>
+  <div id="groups"></div>
 
-          const data = window.BENCHMARK_DATA;
+  <footer>
+    Raw data: <a href="data.js">data.js</a> (written by the <a href="https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml">benchmark workflow</a>) and <a href="results/latest.json">results/latest.json</a> (machine specification, ranking quality and the scan-tool comparison for the latest run). Reproduce locally with <code>cargo bench</code> and <code>cargo run --release --example corpus_bench -- path/to/repo</code>.
+  </footer>
+</div>
 
-          // Render header
-          document.getElementById('last-update').textContent = new Date(data.lastUpdate).toString();
-          const repoLink = document.getElementById('repository-link');
-          repoLink.href = data.repoUrl;
-          repoLink.textContent = data.repoUrl;
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  'use strict';
 
-          // Render footer
-          document.getElementById('dl-button').onclick = () => {
-            const dataUrl = 'data:,' + JSON.stringify(data, null, 2);
-            const a = document.createElement('a');
-            a.href = dataUrl;
-            a.download = 'benchmark_data.json';
-            a.click();
-          };
+  // ── What each chart is ──────────────────────────────────────────────────
+  // A chart takes every benchmark whose name matches `re`; the first capture
+  // group names the series (one line per distinct capture). Charts are tried
+  // in order, so a name belongs to the first chart that matches it.
+  const CORPUS = 'corpus_bench/tokio\\+django/';
+  const GROUPS = [
+    {
+      id: 'corpus', title: 'Real corpus: tokio 1.45.0 + Django 5.2',
+      blurb: 'A pinned checkout of two real repositories (about 6,200 files, 40 MB of text) indexed from scratch on every run, then each query timed 30 times in-process after warm-up. The line is the median (p50). This is the section to watch: it is the same engine the server runs, on real code.',
+      charts: [
+        { re: new RegExp('^' + CORPUS + '(index_build)$'), title: 'Full index build', unit: 'time',
+          desc: 'Wall time to read, tokenise, extract symbols and imports, and merge the whole corpus into a fresh in-memory index, using all cores. Grows with corpus size and with any extra per-file work (a new extractor pass, for example).' },
+        { re: new RegExp('^' + CORPUS + '(index_save|index_load)$'), title: 'Index save and reconciling load', unit: 'time',
+          desc: 'Save writes the index to disk; load reads it back and checks every file against the tree before serving. Load is what a server restart costs, which is why it is far below a full build.' },
+        { re: new RegExp('^' + CORPUS + 'text/(common|identifier|short|full_rank|filtered)$'), title: 'Text search', unit: 'time',
+          desc: '"common" is a word in most files, "identifier" a name in a few hundred, "short" a two-character query (worst case for a trigram index), "full_rank" forces the full scoring path, "filtered" adds a path filter. Each returns the top 50 ranked hits.' },
+        { re: new RegExp('^' + CORPUS + 'text/(no_match)$'), title: 'Text search, no match', unit: 'time',
+          desc: 'A query whose trigrams occur nowhere. The index answers from the trigram sets alone without opening a file, which is why this is measured in microseconds rather than milliseconds.' },
+        { re: new RegExp('^' + CORPUS + 'regex/(literal|case_insensitive|no_literal)$'), title: 'Regular expressions', unit: 'time',
+          desc: '"literal" is a pattern with a required literal the index can use to narrow candidates; "no_literal" has none and every candidate file is scanned; "case_insensitive" uses a (?i) pattern. The gap between literal and no_literal is what regex analysis buys.' },
+        { re: new RegExp('^' + CORPUS + 'symbol/(exact|prefix|references)$'), title: 'Symbols and references', unit: 'time',
+          desc: 'Definition search by exact name and by prefix, and a reference (call-site) search. Symbol search reads the symbol cache before any file, so its cost follows the number of candidate definitions, not the corpus.' },
+        { re: new RegExp('^' + CORPUS + 'incremental/(modify_file)$'), title: 'Incremental update of one file', unit: 'time',
+          desc: 'Time for the watcher path to re-index a single edited file: remove its old trigrams, symbols and edges, and add the new ones. This is the latency between saving a file and its new content being searchable.' },
+        { re: new RegExp('^' + CORPUS + '(rss_after_build_bytes)$'), title: 'Resident memory after build', unit: 'bytes',
+          desc: 'Resident set size of the benchmark process once the index is built, so roughly the memory the server needs for this corpus. Reported in bytes; the trend action labels everything ns/iter, ignore that here.' },
+      ],
+    },
+    {
+      id: 'search', title: 'Synthetic search suite (Criterion)',
+      blurb: 'Criterion micro-benchmarks over generated Rust files (50 lines each; 100 files unless the series says otherwise). The corpus is tiny and artificial, so absolute values mean little; the point is that each measures one code path in isolation with statistical rigour, so a regression in that path stands out. The line is Criterion\'s estimate for one call.',
+      charts: [
+        { re: /^text_search\/common_query\/(\d+)$/, title: 'Text search, common word, by corpus size', unit: 'time', series: n => n + ' files',
+          desc: 'The word "result" appears in every generated file. Time grows with the number of files because every one is a candidate, scored and ranked.' },
+        { re: /^text_search\/rare_query\/(\d+)$/, title: 'Text search, rare word, by corpus size', unit: 'time', series: n => n + ' files',
+          desc: 'A word present in few files. The trigram index rejects the rest before any content is read, so this should stay flat as the corpus grows.' },
+        { re: /^text_search\/no_match\/(\d+)$/, title: 'Text search, no match, by corpus size', unit: 'time', series: n => n + ' files',
+          desc: 'No file contains the query. Answered from the trigram sets alone; a change here is a change to the query-parsing or candidate-set code.' },
+        { re: /^regex_search\/(simple_literal|alternation|char_class|no_literal)$/, title: 'Regex search by pattern shape', unit: 'time',
+          desc: '"simple_literal" can be narrowed by a literal, "alternation" (a|b) by several, "char_class" ([a-z]) by none inside the class, "no_literal" by nothing at all. Ordering here should match how much of the corpus each must scan.' },
+        { re: /^filtered_search\/(no_filter|include_filter|exclude_filter|include_and_exclude)$/, title: 'Path filters', unit: 'time',
+          desc: 'The same query with no path filter, an include glob, an exclude glob, and both. Filters are applied to the candidate set before content is read, so an include filter that removes most files should be cheaper than no filter.' },
+        { re: /^case_sensitivity\/(lowercase|uppercase|mixed_case)$/, title: 'Case handling', unit: 'time',
+          desc: 'The same identifier searched in three spellings. The index is case-insensitive, so these should cost the same; a gap means one spelling is taking a slower path.' },
+        { re: /^result_limits\/limit\/(\d+)$/, title: 'Result limit', unit: 'time', series: n => 'limit ' + n,
+          desc: 'Asking for 10, 100 or 500 results. Cost grows with the limit because every returned hit is scored, sorted and interleaved by file; the search itself is the same.' },
+        { re: /^query_length\/(short_2|medium_8|long_16)$/, title: 'Query length', unit: 'time',
+          desc: 'A two-character query ("fn") has one trigram\'s worth of selectivity and matches nearly everything; sixteen characters name one function. Longer queries are cheaper because they select fewer candidates.' },
+        { re: /^indexing\/index_files\/(\d+)$/, title: 'Indexing files from disk', unit: 'time', series: n => n + ' files',
+          desc: 'Time to index N generated files into a fresh engine, including reading them. Should scale linearly with N.' },
+        { re: /^import_resolution\/(batch_resolve|incremental_every_10)\/50$/, title: 'Import resolution, 50 files', unit: 'time',
+          desc: 'Building the dependency graph either once at the end (batch) or every ten files (incremental, what the watcher does). Incremental is expected to cost a little more; a large gap would mean the incremental path is redoing work.' },
+        { re: /^import_resolution\/(batch_resolve|incremental_every_10)\/100$/, title: 'Import resolution, 100 files', unit: 'time',
+          desc: 'The same comparison at twice the size.' },
+      ],
+    },
+    {
+      id: 'persist', title: 'Persistence (Criterion)',
+      blurb: 'Saving an index to disk and loading it back, over generated corpora of 100, 500 and 1,000 files. These decide how fast a server restarts.',
+      charts: [
+        { re: /^index_save\/(\d+)$/, title: 'Index save', unit: 'time', series: n => n + ' files',
+          desc: 'Serialise the whole index (trigram sets, symbols, references, file table) to one file. Should scale linearly with corpus size.' },
+        { re: /^index_load\/(\d+)$/, title: 'Index load', unit: 'time', series: n => n + ' files',
+          desc: 'Read the file back into a usable engine, including the parallel trigram deserialisation below.' },
+        { re: /^trigram_deserialization\/(\d+)$/, title: 'Trigram deserialisation', unit: 'time', series: n => n + ' files',
+          desc: 'Only the trigram-set part of a load. It is the largest section of the file and is decoded on all cores.' },
+        { re: /^file_staleness_check\/(\d+)$/, title: 'Staleness check on load', unit: 'time', series: n => n + ' files',
+          desc: 'After a load, every file\'s size and mtime are compared with the tree to find what changed while the server was down. Linear in the number of files; this is most of a restart on a large tree.' },
+      ],
+    },
+  ];
 
-          // Prepare data points for charts
-          return Object.keys(data.entries).map(name => ({
-            name,
-            dataSet: collectBenchesPerTestCase(data.entries[name]),
-          }));
-        }
+  // ── Units ──────────────────────────────────────────────────────────────
+  const TIME = [['ns', 1], ['µs', 1e3], ['ms', 1e6], ['s', 1e9]];
+  const BYTES = [['B', 1], ['KB', 1e3], ['MB', 1e6], ['GB', 1e9]];
+  function pickUnit(kind, max) {
+    const table = kind === 'bytes' ? BYTES : TIME;
+    let u = table[0];
+    for (const t of table) if (max >= t[1] * 1.0) u = t;
+    return u;
+  }
+  const fmt = (v, u) => { const x = v / u[1]; const d = x >= 100 ? 0 : 2; return x.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) + ' ' + u[0]; };
+  const fmtAny = (kind, v) => fmt(v, pickUnit(kind, v));
 
-        function renderAllChars(dataSets) {
+  // ── Data ───────────────────────────────────────────────────────────────
+  const data = window.BENCHMARK_DATA || { entries: {} };
+  const runs = Object.values(data.entries).flat().sort((a, b) => a.date - b.date);
+  const meta = document.getElementById('meta');
+  if (!runs.length) { meta.textContent = 'No benchmark data has been published yet.'; return; }
+  const last = runs[runs.length - 1];
+  meta.innerHTML = `${runs.length} commits charted. Latest: <a href="${last.commit.url}"><code>${last.commit.id.slice(0, 7)}</code></a>, ${new Date(last.date).toISOString().slice(0, 10)}, ${last.benches.length} measurements. Data updated ${new Date(data.lastUpdate).toISOString().replace('T', ' ').slice(0, 16)} UTC.`;
 
-          function renderGraph(parent, name, dataset) {
-            const canvas = document.createElement('canvas');
-            canvas.className = 'benchmark-chart';
-            parent.appendChild(canvas);
+  // name -> [{run, bench}] in commit order
+  const byName = new Map();
+  for (const run of runs) for (const b of run.benches) {
+    if (!byName.has(b.name)) byName.set(b.name, []);
+    byName.get(b.name).push({ run, bench: b });
+  }
+  const claimed = new Set();
+  const COLORS = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6'].map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+  const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--grid').trim();
+  const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim();
+  const bandAlpha = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--band'));
+  const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
 
-            const color = toolColors[dataset.length > 0 ? dataset[0].tool : '_'];
-            const data = {
-              labels: dataset.map(d => d.commit.id.slice(0, 7)),
-              datasets: [
-                {
-                  label: name,
-                  data: dataset.map(d => d.bench.value),
-                  borderColor: color,
-                  backgroundColor: color + '60', // Add alpha for #rrggbbaa
-                }
-              ],
-            };
-            const options = {
-              scales: {
-                xAxes: [
-                  {
-                    scaleLabel: {
-                      display: true,
-                      labelString: 'commit',
-                    },
-                  }
-                ],
-                yAxes: [
-                  {
-                    scaleLabel: {
-                      display: true,
-                      labelString: dataset.length > 0 ? dataset[0].bench.unit : '',
-                    },
-                    ticks: {
-                      beginAtZero: true,
-                    }
-                  }
-                ],
-              },
-              tooltips: {
-                callbacks: {
-                  afterTitle: items => {
-                    const {index} = items[0];
-                    const data = dataset[index];
-                    return '\n' + data.commit.message + '\n\n' + data.commit.timestamp + ' committed by @' + data.commit.committer.username + '\n';
-                  },
-                  label: item => {
-                    let label = item.value;
-                    const { range, unit } = dataset[item.index].bench;
-                    label += ' ' + unit;
-                    if (range) {
-                      label += ' (' + range + ')';
-                    }
-                    return label;
-                  },
-                  afterLabel: item => {
-                    const { extra } = dataset[item.index].bench;
-                    return extra ? '\n' + extra : '';
-                  }
-                }
-              },
-              onClick: (_mouseEvent, activeElems) => {
-                if (activeElems.length === 0) {
-                  return;
-                }
-                // XXX: Undocumented. How can we know the index?
-                const index = activeElems[0]._index;
-                const url = dataset[index].commit.url;
-                window.open(url, '_blank');
-              },
-            };
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.color = textColor;
 
-            new Chart(canvas, {
-              type: 'line',
-              data,
-              options,
-            });
-          }
+  function seriesFor(chart) {
+    const out = [];
+    for (const [name, points] of byName) {
+      if (claimed.has(name)) continue;
+      const m = chart.re.exec(name);
+      if (!m) continue;
+      claimed.add(name);
+      const label = chart.series ? chart.series(m[1]) : m[1].replace(/_/g, ' ');
+      out.push({ name, label, points });
+    }
+    return out;
+  }
 
-          function renderBenchSet(name, benchSet, main) {
-            const setElem = document.createElement('div');
-            setElem.className = 'benchmark-set';
-            main.appendChild(setElem);
+  function render(container, chart, series, note) {
+    const card = document.createElement('div'); card.className = 'card';
+    const kind = chart.unit || 'time';
+    const max = Math.max(...series.flatMap(s => s.points.map(p => p.bench.value + (p.bench.range ? parseFloat(String(p.bench.range).replace(/[^\d.]/g, '')) || 0 : 0))));
+    const unit = pickUnit(kind, max);
+    const latest = series.map(s => { const p = s.points[s.points.length - 1]; return `<b>${fmt(p.bench.value, unit)}</b> <span>${series.length > 1 ? s.label : ''}</span>`; }).join(' · ');
+    card.innerHTML = `<h3>${chart.title}</h3><p class="desc">${chart.desc || ''}</p><p class="latest">Latest: ${latest}${note ? ` <span>${note}</span>` : ''}</p><div class="plot"><canvas></canvas></div><p class="axis-note">${unit[0]} per ${kind === 'bytes' ? 'process' : 'operation'} · lower is better</p>`;
+    container.appendChild(card);
 
-            const nameElem = document.createElement('h1');
-            nameElem.className = 'benchmark-title';
-            nameElem.textContent = name;
-            setElem.appendChild(nameElem);
+    // x axis: the union of commits across the series, in date order
+    const commits = runs.filter(r => series.some(s => s.points.some(p => p.run === r)));
+    const labels = commits.map(r => r.commit.id.slice(0, 7));
+    const datasets = [];
+    series.forEach((s, i) => {
+      const color = COLORS[i % COLORS.length];
+      const at = new Map(s.points.map(p => [p.run, p.bench]));
+      const val = commits.map(r => at.has(r) ? at.get(r).value / unit[1] : null);
+      const spread = commits.map(r => { const b = at.get(r); return b && b.range ? (parseFloat(String(b.range).replace(/[^\d.]/g, '')) || 0) / unit[1] : 0; });
+      datasets.push({ label: s.label + ' (upper)', data: val.map((v, k) => v == null ? null : v + spread[k]), borderWidth: 0, pointRadius: 0, fill: false, backgroundColor: rgba(color, bandAlpha), borderColor: 'transparent', _band: true, order: 2 });
+      datasets.push({ label: s.label + ' (lower)', data: val.map((v, k) => v == null ? null : Math.max(0, v - spread[k])), borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: rgba(color, bandAlpha), borderColor: 'transparent', _band: true, order: 2 });
+      datasets.push({ label: s.label, data: val, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: commits.length > 80 ? 1.5 : 2.5, pointHoverRadius: 5, tension: .15, spanGaps: true, order: 1, _bench: at });
+    });
+    new Chart(card.querySelector('canvas'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false, axis: 'x' },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8, font: { family: 'JetBrains Mono, monospace', size: 11 } }, grid: { display: false } },
+          y: { beginAtZero: true, title: { display: true, text: unit[0] + (kind === 'bytes' ? '' : ' per operation') }, grid: { color: gridColor }, ticks: { callback: v => v.toLocaleString() } },
+        },
+        plugins: {
+          legend: { display: series.length > 1, labels: { filter: it => !datasets[it.datasetIndex]._band, boxWidth: 10, usePointStyle: true } },
+          tooltip: {
+            filter: it => !it.dataset._band,
+            callbacks: {
+              title: items => { const r = commits[items[0].dataIndex]; return `${r.commit.id.slice(0, 7)} · ${new Date(r.commit.timestamp).toISOString().slice(0, 10)}`; },
+              label: it => { const b = it.dataset._bench.get(commits[it.dataIndex]); const sp = b.range ? ` ± ${fmt(parseFloat(String(b.range).replace(/[^\d.]/g, '')) || 0, unit)}` : ''; return `${it.dataset.label}: ${fmt(b.value, unit)}${sp}`; },
+              afterBody: items => { const r = commits[items[0].dataIndex]; return [(r.commit.message || '').split('\n')[0].slice(0, 90), 'click to open the commit']; },
+            },
+          },
+        },
+        onClick: (e, els) => { if (els.length) { const r = commits[els[0].index]; if (r && r.commit.url) window.open(r.commit.url, '_blank', 'noopener'); } },
+      },
+    });
+  }
 
-            const graphsElem = document.createElement('div');
-            graphsElem.className = 'benchmark-graphs';
-            setElem.appendChild(graphsElem);
-
-            for (const [benchName, benches] of benchSet.entries()) {
-              renderGraph(graphsElem, benchName, benches)
-            }
-          }
-
-          const main = document.getElementById('main');
-          for (const {name, dataSet} of dataSets) {
-            renderBenchSet(name, dataSet, main);
-          }
-        }
-
-        renderAllChars(init()); // Start
-      })();
-    </script>
-  </body>
+  const groupsEl = document.getElementById('groups');
+  const toc = document.getElementById('toc');
+  function section(g) {
+    const sec = document.createElement('section'); sec.className = 'group'; sec.id = g.id;
+    sec.innerHTML = `<h2>${g.title}</h2><p>${g.blurb}</p><div class="charts"></div>`;
+    groupsEl.appendChild(sec);
+    const li = document.createElement('li'); li.innerHTML = `<a href="#${g.id}">${g.title}</a>`; toc.appendChild(li);
+    return sec.querySelector('.charts');
+  }
+  for (const g of GROUPS) {
+    const charts = g.charts.map(c => [c, seriesFor(c)]).filter(([, s]) => s.length);
+    if (!charts.length) continue;
+    const el = section(g);
+    for (const [c, s] of charts) render(el, c, s);
+  }
+  // Anything the catalogue does not describe yet still gets a chart.
+  const rest = [...byName.keys()].filter(n => !claimed.has(n));
+  if (rest.length) {
+    const el = section({ id: 'other', title: 'Other measurements', blurb: 'Benchmarks added since this page was last described. Same rules: one point per commit, lower is better.' });
+    const groups = new Map();
+    for (const n of rest) { const k = n.split('/').slice(0, -1).join('/') || n; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(n); }
+    for (const [k, names] of groups) render(el, { title: k, unit: 'time', re: new RegExp('^' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.+)$'), desc: '' }, names.map(n => ({ name: n, label: n.slice(k.length + 1) || n, points: byName.get(n) })));
+  }
+})();
+</script>
+</body>
 </html>
