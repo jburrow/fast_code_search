@@ -187,7 +187,7 @@
 <script>
 (function () {
   const el = document.getElementById("live-results");
-  const ms = ns => (ns / 1e6).toFixed(2) + " ms";
+  const ms = ns => ns < 1e4 ? (ns / 1e3).toFixed(1) + " µs" : (ns / 1e6).toFixed(2) + " ms";
   fetch("../../dev/bench/results/latest.json", { cache: "no-store" })
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(d => {
