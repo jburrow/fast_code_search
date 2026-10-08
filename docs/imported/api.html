@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -206,9 +206,9 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
 <tr><td><code>GET /api/status</code></td><td>Indexing progress</td></tr>
-<tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…}</code>)</td></tr>
+<tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…,"problems":N}</code>); <code>problems</code> counts startup and storage problems</td></tr>
 <tr><td><code>GET /api/ready</code></td><td>Readiness: 200 once there is an index to search, 503 otherwise</td></tr>
-<tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests</td></tr>
+<tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests, and <code>service</code>: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status <code>degraded</code>)</td></tr>
 <tr><td><code>GET /metrics</code></td><td>Prometheus text format (request counters, latency histogram, index gauges)</td></tr>
 <tr><td><code>WS /ws/progress</code></td><td>Live indexing progress frames</td></tr>
 </tbody>
@@ -226,8 +226,8 @@ when the request timeout is hit.</p>
 <tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most 10,000.</td></tr>
 <tr><td><code>regex</code></td><td>false</td><td>Treat <code>q</code> as a regex (Rust <code>regex</code> syntax, matched one line at a time unless the pattern mentions <code>\n</code> or sets <code>(?s)</code>).</td></tr>
 <tr><td><code>symbols</code></td><td>false</td><td>Definitions only (functions, types, classes, …) plus filename matches.</td></tr>
-<tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code>.</td></tr>
-<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query.</td></tr>
+<tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code> (400).</td></tr>
+<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. A regex is case-sensitive by default; <code>case=false</code> adds <code>(?i)</code>.</td></tr>
 <tr><td><code>word</code></td><td>—</td><td><code>true</code> for whole-word matching.</td></tr>
 <tr><td><code>include</code> / <code>exclude</code></td><td>—</td><td>Semicolon-separated path globs (<code>src/**/*.rs;lib/**</code>).</td></tr>
 <tr><td><code>rank</code></td><td>auto</td><td><code>auto</code>, <code>fast</code> (metadata-ranked sample, used above 5,000 candidates) or <code>full</code>.</td></tr>
@@ -391,17 +391,24 @@ request timeout.</p>
       --web-address &lt;ADDR&gt;  Web UI / REST listen address (overrides config)
   -i, --index &lt;PATH&gt;        Additional path to index (repeatable)
       --no-auto-index       Skip indexing on startup
+      --no-grpc             Do not start the gRPC API (same as enable_grpc = false)
       --init &lt;FILE&gt;         Write a documented template configuration and exit
       --static-dir &lt;DIR&gt;    Serve the UI from disk (development)
   -v, --verbose             Debug logging
 </code></pre>
 <p>Configuration discovery: <code>--config</code>, then <code>$FCS_CONFIG</code>, then
-<code>./fast_code_search.toml</code>, then <code>~/.config/fast_code_search/config.toml</code>.</p>
+<code>./fast_code_search.toml</code>, then <code>~/.config/fast_code_search/config.toml</code>.
+The first log lines say which file was used (or that none was found and
+the defaults apply) and any warnings about it.</p>
+<p>If one of the ports cannot be bound, the server logs which port and keeps
+running on the other API; it exits only when neither could start. The
+diagnostics page and <code>/api/health</code> report the failure.</p>
 <h2 id="configuration-file"><a class="header" href="#configuration-file">Configuration file</a></h2>
 <p><code>fast_code_search_server --init config.toml</code> writes a fully commented
 template. The keys that matter most:</p>
 <pre><code class="language-toml">[server]
 address = "127.0.0.1:50051"       # gRPC
+enable_grpc = true                # false (or --no-grpc) for web UI / REST / fcs only
 web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED
@@ -421,6 +428,19 @@ checkpoint_interval_files = 20000
 watch = true                      # follow edits, renames, deletes
 save_after_updates = 100          # save after this many watched file changes
 </code></pre>
+<p><code>--init</code> writes every key with its default, and sets <code>index_path</code> from the
+template’s own name (<code>--init work.toml</code> gives
+<code>~/.local/share/fast_code_search/work.fcsidx</code>). Without <code>index_path</code> the
+index lives only in memory and is rebuilt on every start; the startup log
+warns about it.</p>
+<p>Only one server writes an index. A server holds a lock on
+<code>&lt;index_path&gt;.lock</code> and records its PID and addresses in
+<code>&lt;index_path&gt;.lock.owner</code>; a second server given the same <code>index_path</code>
+logs who owns it, loads the index read-only and never saves. Give each
+configuration its own <code>index_path</code>.</p>
+<p>At startup and before each save the server checks free space and free
+inodes on the filesystem holding the index (and inodes where indexed
+source lives), and warns when either is low.</p>
 <p>Changing exclude patterns, extensions, the size cap or a <code>.gitignore</code> takes
 effect on the next start: files that are no longer eligible are dropped
 when the persisted index is reconciled.</p>

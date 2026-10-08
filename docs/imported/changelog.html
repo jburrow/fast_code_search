@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.13.0...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>A ripgrep backtest: <code>examples/rg_backtest.rs</code> runs every query in
+<code>benches/rg_backtest.toml</code> (124 queries, including cases adapted from
+ripgrep’s and Zoekt’s own regression tests) through fcs and through
+<code>rg</code> over tokio 1.45.0, Django 5.2 and the edge-case files in
+<code>tests/fixtures/backtest</code>, and fails on any line one finds and the other
+does not. It also checks that a page of results is repeatable and that
+LOAD MORE ends with every hit exactly once. Runs in CI on changes to the
+engine. Two new documentation pages: how the backtest works and how to
+extend it (“Correctness against ripgrep”), and where fcs’s matching
+agrees with or differs from grep, ripgrep and git grep (“Matching
+compared with grep and ripgrep”).</li>
 <li>MCP server for coding agents at <code>/mcp</code> on the web server (streamable
 HTTP), with six read-only tools: <code>search_code</code>, <code>read_file</code>,
 <code>file_dependencies</code>, <code>change_impact</code>, <code>import_path</code> and
@@ -240,40 +251,66 @@ messages accepted across encryption-level boundaries).</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
-<li>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
+<li>
+<p>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
 instead of “1234 RESULTS FOUND · LATENCY: 42.3ms · FULL (5,678 files)”.
 The ranking mode and file count moved to tooltips; the header still says
-when fast ranking searched only some of the files.</li>
-<li>An invalid regex’s error now carries the parser’s explanation and points
+when fast ranking searched only some of the files.</p>
+</li>
+<li>
+<p>An invalid regex’s error now carries the parser’s explanation and points
 at the problem in the pattern as typed (it used to repeat only the
-pattern).</li>
-<li>Rust imports through the crate’s own name (<code>use my_crate::search::X</code> in
+pattern).</p>
+</li>
+<li>
+<p>Rust imports through the crate’s own name (<code>use my_crate::search::X</code> in
 <code>main.rs</code>, <code>src/bin/</code> and <code>tests/</code>) now resolve to the library’s files, so
 those files have import edges and the library modules they use get the
-dependency ranking boost. Existing indexes pick this up on rebuild.</li>
-<li>A busy or forbidden port no longer stops the server. If the gRPC or web
+dependency ranking boost. Existing indexes pick this up on rebuild.</p>
+</li>
+<li>
+<p>A busy or forbidden port no longer stops the server. If the gRPC or web
 port cannot be bound, the server logs an error naming the port and how to
 find what holds it, and keeps indexing and serving on the other API. It
 exits only when no API could start. Previously a busy gRPC port shut the
 server down at once, interrupting indexing at 0 files while the web UI
-stayed up, and the cause appeared only after Ctrl+C.</li>
-<li>Startup logs where the config came from (or that none was found and
+stayed up, and the cause appeared only after Ctrl+C.</p>
+</li>
+<li>
+<p>Startup logs where the config came from (or that none was found and
 defaults are used) and the config warnings; both were previously
-discarded because they were emitted before logging was set up.</li>
-<li>An unset <code>indexer.index_path</code> is now a warning when indexing starts (“Index
+discarded because they were emitted before logging was set up.</p>
+</li>
+<li>
+<p>An unset <code>indexer.index_path</code> is now a warning when indexing starts (“Index
 persistence OFF … lost when the server stops”), and the ready line shows
 <code>index=memory only, not saved</code>. A missing <code>index_path</code> directory is a
-warning rather than an error, since the first save creates it.</li>
-<li><code>--init</code> writes every config key with its default. <code>index_path</code> is now set
+warning rather than an error, since the first save creates it.</p>
+</li>
+<li>
+<p><code>--init</code> writes every config key with its default. <code>index_path</code> is now set
 in the generated file, named after it (<code>--init work.toml</code> gives
 <code>~/.local/share/fast_code_search/work.fcsidx</code>); <code>cors_origins</code>,
 <code>max_concurrent_searches</code>, <code>request_timeout_secs</code>, <code>respect_gitignore</code>,
 <code>include_extensions</code>, <code>exclude_files</code> and <code>batch_size</code> are no longer
-missing or commented out. A test keeps the template complete.</li>
-<li><code>fast_code_search_semantic</code> logs where its config came from, and a busy
+missing or commented out. A test keeps the template complete.</p>
+</li>
+<li>
+<p><code>fast_code_search_semantic</code> logs where its config came from, and a busy
 gRPC or web port is a clear error that disables only that API, instead of
 a panic inside a background task that left the process running with
-nothing listening.</li>
+nothing listening.</p>
+</li>
+<li>
+<p>Documentation brought up to date with the above: the dependency
+explorer and <code>/api/graph/*</code> in the in-app docs, regex help in the web UI
+and query-syntax pages, <code>enable_grpc</code> / <code>--no-grpc</code>, the index lock,
+storage warnings and the diagnostics Service card in the API reference,
+configuration cookbook and troubleshooting guide. The deployment guide
+is rewritten around the published container image, HTTP health and
+readiness probes, and one index per server (its gRPC examples relied on
+reflection, which the server does not offer).</p>
+</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
@@ -287,6 +324,20 @@ and <code>-file:</code> words no longer match the indexed root folder’s own na
 (<code>-file:search</code> dropped every file of a root named <code>fast_code_search</code>);
 a filename-only hit obeys <code>case:yes</code> and <code>word:yes</code>; <code>fcs search -e -i</code>
 against an index file now ignores case, as it does against a server.</li>
+<li>A search that stopped at its match limit returned a different first
+page on almost every run (threads raced for the budget), and LOAD MORE
+repeated some results and skipped others. Documents are now taken in a
+fixed order, and LOAD MORE fetches the whole list again at the bigger
+size and redraws it (up to 1000 results; past that it pages as before),
+so nothing repeats or goes missing. Results already shown can move.</li>
+<li>Greek: a query or line with a word-final sigma (<code>ς</code>, or a capital <code>Σ</code>
+that lowercases to it) missed matches written with the other sigma.</li>
+<li>A file starting with a UTF-8 byte order mark (an invisible marker some
+editors write) kept it as part of line 1, so <code>^text</code> missed that line and
+the result showed a stray character. The mark is now skipped when a file
+is read, as ripgrep does. Files on disk are untouched.</li>
+<li>A regex that can match the empty string (<code>x*</code>, <code>^\s*$</code>) reported a hit
+on a line past the end of a file that ends with a newline.</li>
 <li>Plain-text search for code containing quotes (<code>{ "success": True</code>,
 <code>"key":"value"</code>) found nothing: the query parser stripped every <code>"</code>, so
 the term became <code>success:</code>. A quote now opens a phrase only when it
@@ -1350,7 +1401,7 @@ cargo build --release
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../benchmarks/ranking-quality.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../benchmarks/correctness.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -1364,7 +1415,7 @@ cargo build --release
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../benchmarks/ranking-quality.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../benchmarks/correctness.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

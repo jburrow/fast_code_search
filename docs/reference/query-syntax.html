@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -184,7 +184,9 @@
                         <h1 id="query-syntax"><a class="header" href="#query-syntax">Query syntax</a></h1>
 <p>The same syntax everywhere: the web UI’s search box, <code>fcs</code>, and the <code>q</code>
 parameter of the API. It applies to plain-text queries; with <code>regex=true</code>
-(<code>fcs -e</code>) the whole query is a regular expression instead.</p>
+(<code>fcs -e</code>) the whole query is a regular expression instead. For how the
+results compare with grep, ripgrep and git grep, see <a href="matching.html">Matching compared
+with grep and ripgrep</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -192,7 +194,7 @@ parameter of the API. It applies to plain-text queries; with <code>regex=true</c
 </thead>
 <tbody>
 <tr><td><code>fn main</code></td><td>Files containing <strong>every</strong> term. Lines holding the phrase <code>fn main</code> rank first, then lines holding both terms, then the rest.</td></tr>
-<tr><td><code>"fn main"</code></td><td>One term: the exact phrase, spaces included.</td></tr>
+<tr><td><code>"fn main"</code></td><td>One term: the exact phrase, spaces included. A quote opens a phrase only when it wraps a whole word; other quotes are searched for as written, so <code>{ "success": True</code> finds that text with its quotes.</td></tr>
 <tr><td><code>-tests</code></td><td>Drop files that contain <code>tests</code>. Only a <code>-</code> before a letter, <code>_</code> or quote negates, so <code>-&gt;</code>, <code>-1</code> and <code>--flag</code> are ordinary terms.</td></tr>
 <tr><td><code>file:src/</code></td><td>Only paths under a <code>src</code> directory. A bare word matches anywhere in the path (<code>file:parser</code>); globs are used as written (<code>file:*.rs</code>, <code>file:crates/**/tests/**</code>).</td></tr>
 <tr><td><code>-file:vendor</code></td><td>Never paths matching the pattern.</td></tr>
@@ -225,8 +227,15 @@ parameter of the API. It applies to plain-text queries; with <code>regex=true</c
 with no required literal of three or more characters scans every file.</li>
 <li><code>^</code> and <code>$</code> anchor at line boundaries (CRLF included); <code>\s</code> does not
 cross a line break unless the pattern is a multi-line one.</li>
-<li><code>(?i)</code> makes the pattern case-insensitive; the <code>case</code> parameter does the
-same.</li>
+<li>A regex is case-sensitive, unlike plain search: <code>true</code> does not find
+<code>True</code>. <code>(?i)</code> makes the pattern case-insensitive; <code>case=false</code> on the
+API adds it for you.</li>
+<li><code>{ } ( ) [ ] . * + ? | ^ $ \</code> are syntax; escape one with <code>\</code> to match
+it (<code>\{</code>, <code>\.</code>). For code exactly as written, search without regex.</li>
+<li>Spaces are exact: <code>\{ "a"</code> misses <code>{"a"</code>. Use <code>\s*</code> for any amount of
+space, including none.</li>
+<li>In the web UI the <strong>?</strong> next to REGEX has runnable examples, and a
+search that finds nothing offers close variants that do.</li>
 <li>Patterns are compiled with size limits; an absurd one is rejected with a
 400 rather than run.</li>
 </ul>
@@ -239,7 +248,7 @@ same.</li>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../reference/cli-help.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/matching.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -253,7 +262,7 @@ same.</li>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../reference/cli-help.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/matching.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -201,6 +201,19 @@ scan was cut short by its budget.</li>
 <li>The URL carries the query and modes, so a link reproduces a search; Back
 returns to the previous one.</li>
 </ul>
+<h2 id="regex-help"><a class="header" href="#regex-help">Regex help</a></h2>
+<ul>
+<li>The <strong>?</strong> next to <strong>REGEX</strong> opens a cheat-sheet: common patterns you can
+run with one click, and the rules that catch people out (regex is
+case-sensitive, <code>{ ( . *</code> and friends need a <code>\</code> to match literally,
+spaces are exact).</li>
+<li>When a search finds nothing, the page tries close variants (flexible
+spacing, ignoring case, the same text without regex, or regex for a
+plain query that looks like one) and offers the ones that find
+something.</li>
+<li>An invalid regex shows where the pattern is wrong and offers to search
+the text literally or with its special characters escaped.</li>
+</ul>
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
 <li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
@@ -237,7 +250,11 @@ resolved for Rust, Python and JavaScript/TypeScript.</p>
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the
-configuration in effect, and self-tests that search for sampled files.</li>
+configuration in effect, and self-tests that search for sampled files.
+Its <strong>Service</strong> card says whether the web UI and gRPC started, where the
+index is saved (or that it is memory only or read-only), and any startup
+or storage problems. When there are some, the search page shows “Server
+started with N problems” with a link to it.</li>
 <li><strong>Docs</strong> (<code>/docs.html</code>): the REST reference with live examples.</li>
 </ul>
 <p>The UI talks to the same <code>/api/search</code> you can call yourself, so anything

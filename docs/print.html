@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4e79abd4.js"></script>
+        <script src="toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -239,7 +239,8 @@ for changes, and serves the web UI on <code>127.0.0.1:8080</code> and gRPC on
 <code>--json</code> for tools, and an offline fallback that searches the saved index
 when the server is down.</li>
 <li><strong>The web UI</strong> is embedded in the server: search-as-you-type, hover
-previews, references, dependency popovers, a diagnostics page.</li>
+previews, references, regex help, a dependency explorer for the import
+graph, a diagnostics page.</li>
 <li><strong>REST and gRPC</strong> expose the same queries to editors and scripts.</li>
 </ul>
 <p>Source, issues and releases: <a href="https://github.com/jburrow/fast_code_search">github.com/jburrow/fast_code_search</a>.</p>
@@ -517,6 +518,19 @@ scan was cut short by its budget.</li>
 <li>The URL carries the query and modes, so a link reproduces a search; Back
 returns to the previous one.</li>
 </ul>
+<h2 id="regex-help"><a class="header" href="#regex-help">Regex help</a></h2>
+<ul>
+<li>The <strong>?</strong> next to <strong>REGEX</strong> opens a cheat-sheet: common patterns you can
+run with one click, and the rules that catch people out (regex is
+case-sensitive, <code>{ ( . *</code> and friends need a <code>\</code> to match literally,
+spaces are exact).</li>
+<li>When a search finds nothing, the page tries close variants (flexible
+spacing, ignoring case, the same text without regex, or regex for a
+plain query that looks like one) and offers the ones that find
+something.</li>
+<li>An invalid regex shows where the pattern is wrong and offers to search
+the text literally or with its special characters escaped.</li>
+</ul>
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
 <li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
@@ -553,7 +567,11 @@ resolved for Rust, Python and JavaScript/TypeScript.</p>
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the
-configuration in effect, and self-tests that search for sampled files.</li>
+configuration in effect, and self-tests that search for sampled files.
+Its <strong>Service</strong> card says whether the web UI and gRPC started, where the
+index is saved (or that it is memory only or read-only), and any startup
+or storage problems. When there are some, the search page shows “Server
+started with N problems” with a link to it.</li>
 <li><strong>Docs</strong> (<code>/docs.html</code>): the REST reference with live examples.</li>
 </ul>
 <p>The UI talks to the same <code>/api/search</code> you can call yourself, so anything
@@ -756,6 +774,26 @@ checkpoint_interval_files = 20000
 <p>Use <code>exclude_patterns</code> for whole trees and <code>exclude_files</code> for individual
 paths. A <code>.gitignore</code> in any indexed tree is honoured as well (also outside
 git repositories), so what your VCS ignores, the index ignores.</p>
+<h2 id="two-configurations-on-one-machine"><a class="header" href="#two-configurations-on-one-machine">Two configurations on one machine</a></h2>
+<p>Say a <code>work.toml</code> and a <code>personal.toml</code>, each run by its own server. Give
+each its own ports and, above all, its own <code>index_path</code>: only one server
+can write an index, and a second one pointed at the same file loads it
+read-only and never saves (the log names the process that owns it).
+<code>fast_code_search_server --init work.toml</code> already names the index after
+the file (<code>work.fcsidx</code>).</p>
+<pre><code class="language-toml">[server]
+address = "127.0.0.1:50052"
+web_address = "127.0.0.1:8081"
+
+[indexer]
+index_path = "~/.local/share/fast_code_search/work.fcsidx"
+</code></pre>
+<h2 id="web-ui-and-fcs-only-no-grpc"><a class="header" href="#web-ui-and-fcs-only-no-grpc">Web UI and <code>fcs</code> only, no gRPC</a></h2>
+<p><code>fcs</code>, the web UI and the REST API all use the web port. If nothing of
+yours speaks gRPC, turn it off (or pass <code>--no-grpc</code>):</p>
+<pre><code class="language-toml">[server]
+enable_grpc = false
+</code></pre>
 <h2 id="change-a-rule-on-a-running-index"><a class="header" href="#change-a-rule-on-a-running-index">Change a rule on a running index</a></h2>
 <p>Edit the file and restart the server. Files that are no longer eligible
 under the new patterns, extensions, size cap or <code>.gitignore</code> are dropped
@@ -847,11 +885,14 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tr><td>Files from an excluded directory still appear</td><td>Rules changed while the server ran</td><td>Restart; reconciliation drops files the current rules exclude</td></tr>
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
 <tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.12 lines with the phrase rank first; upgrade</td></tr>
+<tr><td>A regex finds nothing that plain search finds</td><td>Regex is case-sensitive, and <code>{ ( .</code> are syntax</td><td>Start with <code>(?i)</code>, escape special characters with <code>\</code>, use <code>\s*</code> for spacing; the web UI’s suggestions under an empty result do this for you</td></tr>
 <tr><td>A regex is slow</td><td>No required literal, so every file is scanned</td><td>Anchor it with a literal (<code>fn\s+main</code> rather than <code>\w+\s+\w+</code>)</td></tr>
 <tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
 <tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>
 <tr><td>Nothing indexed, <code>paths_count=0</code></td><td>No config file found: without <code>--config</code> only <code>$FCS_CONFIG</code>, <code>./fast_code_search.toml</code> and <code>~/.config/fast_code_search/config.toml</code> are read</td><td>Pass <code>--config FILE</code>; the <code>Configuration source</code> log line says which file was used. Add <code>--verbose</code> (or <code>RUST_LOG=debug</code>) to see each path and ignore file</td></tr>
 <tr><td><code>Index NOT writable: another fast_code_search server is already using this index</code></td><td>Two servers share one <code>index_path</code> (often an old one still running)</td><td>The log names the other PID and ports. Stop it, or give each config its own <code>index_path</code>; until then this server loads the index read-only</td></tr>
+<tr><td>“Server started with N problems” on the search page</td><td>A port was busy, the index belongs to another server, or storage is low</td><td>Open the Index page: its Service card lists each problem (<code>/api/diagnostics</code> has the same list)</td></tr>
+<tr><td><code>No space left on device</code> when saving, while <code>df -h</code> shows free space</td><td>The filesystem ran out of inodes</td><td>The log says whether bytes or inodes ran out; <code>df -i</code> confirms. Free inodes (often many small files) or move <code>index_path</code> elsewhere. The server also warns at startup when either is low</td></tr>
 <tr><td>Index rebuilt on every start</td><td><code>index_path</code> unset (startup warns) or unwritable</td><td>Set it to a writable location; the log names the path it tried</td></tr>
 <tr><td>Windows: <code>C:\Users\NAME~1\…</code> paths</td><td>Short-name spelling of a root</td><td>Harmless; roots are compared in canonical form</td></tr>
 <tr><td>504 from the API</td><td>Request timeout</td><td>The search also stopped; narrow the query or pass <code>timeout_ms</code> for a partial answer</td></tr>
@@ -862,8 +903,9 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <h2 id="getting-more-information"><a class="header" href="#getting-more-information">Getting more information</a></h2>
 <ul>
 <li><code>fcs status</code> prints the server, version, readiness and index size.</li>
-<li>The <strong>Index</strong> page in the UI (<code>/diagnostics.html</code>) runs self-tests that
-search for sampled files.</li>
+<li>The <strong>Index</strong> page in the UI (<code>/diagnostics.html</code>) shows the service
+status (APIs, where the index is saved, startup and storage problems)
+and runs self-tests that search for sampled files.</li>
 <li><code>RUST_LOG=debug fast_code_search_server</code> logs every batch, watch and save;
 <code>RUST_LOG=info</code> is the default.</li>
 <li><code>/metrics</code> exposes request counters and a latency histogram for
@@ -903,97 +945,112 @@ then rebuilds. Keep the old binary’s <code>index_path</code> separate if you n
 switch back and forth.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deployment-guide"><a class="header" href="#deployment-guide">Deployment Guide</a></h1>
-<p>This guide covers deploying fast_code_search in various environments.</p>
+<p>This guide covers running fast_code_search as a shared service: a
+system-wide unit, a reverse proxy, a container and Kubernetes. For a
+single developer’s machine (a per-user service started at login on Linux,
+macOS or Windows) see <a href="#running-the-server-at-login">RUN-AT-STARTUP.md</a>.</p>
 <h2 id="table-of-contents"><a class="header" href="#table-of-contents">Table of Contents</a></h2>
 <ul>
+<li><a href="#what-runs">What runs</a></li>
 <li><a href="#quick-start">Quick Start</a></li>
 <li><a href="#production-deployment">Production Deployment</a></li>
-<li><a href="#docker-deployment">Docker Deployment</a></li>
+<li><a href="#container">Container</a></li>
 <li><a href="#kubernetes-deployment">Kubernetes Deployment</a></li>
 <li><a href="#configuration">Configuration</a></li>
 <li><a href="#monitoring">Monitoring</a></li>
 <li><a href="#troubleshooting-2">Troubleshooting</a></li>
 </ul>
+<h2 id="what-runs"><a class="header" href="#what-runs">What runs</a></h2>
+<p>One process, <code>fast_code_search_server</code>, holds the index in memory, watches
+the indexed trees, and serves two listeners:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Listener</th><th>Config key</th><th>Default</th><th>Serves</th></tr>
+</thead>
+<tbody>
+<tr><td>Web</td><td><code>server.web_address</code></td><td><code>127.0.0.1:8080</code></td><td>The web UI, the REST API (<code>/api/…</code>), <code>/metrics</code>, and what <code>fcs</code> talks to</td></tr>
+<tr><td>gRPC</td><td><code>server.address</code></td><td><code>127.0.0.1:50051</code></td><td><code>search.CodeSearch</code> (see <code>proto/search.proto</code>) and <code>grpc.health.v1</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Both bind to loopback by default because the server has no authentication
+and returns file contents. Turn gRPC off with <code>enable_grpc = false</code> (or
+<code>--no-grpc</code>) if nothing uses it. If one port cannot be bound the server
+logs which one and keeps running on the other; it exits only when neither
+could start.</p>
+<p>The index is saved to <code>indexer.index_path</code> and reloaded on the next start,
+so a restart takes seconds rather than a full build. Only one server writes
+a given index: a second one pointed at the same <code>index_path</code> loads it
+read-only and never saves.</p>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
 <h3 id="local-deployment"><a class="header" href="#local-deployment">Local Deployment</a></h3>
 <ol>
-<li>Build the release binary:</li>
+<li>Build the release binaries (or download a release archive):</li>
 </ol>
 <pre><code class="language-bash">cargo build --release
 </code></pre>
 <ol start="2">
-<li>Start the server:</li>
+<li>Write a configuration, add your paths to <code>[indexer] paths</code>, and start
+the server:</li>
 </ol>
-<pre><code class="language-bash">./target/release/fast_code_search_server
+<pre><code class="language-bash">./target/release/fast_code_search_server --init config.toml
+./target/release/fast_code_search_server --config config.toml
 </code></pre>
 <ol start="3">
-<li>The server will listen on <code>127.0.0.1:50051</code> (loopback; set <code>address = "0.0.0.0:50051"</code> in the config to expose it)</li>
+<li>Open <a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a>, or search from a terminal with
+<code>./target/release/fcs 'fn main'</code>.</li>
 </ol>
 <h3 id="testing-the-deployment"><a class="header" href="#testing-the-deployment">Testing the Deployment</a></h3>
-<p>Use the example client:</p>
-<pre><code class="language-bash">cargo run --example client
+<pre><code class="language-bash"># Liveness, readiness and the index size
+curl http://127.0.0.1:8080/api/health
+curl http://127.0.0.1:8080/api/ready
+fcs status
+
+# A search over REST
+curl "http://127.0.0.1:8080/api/search?q=fn%20main&amp;max=5"
 </code></pre>
-<p>Or use <code>grpcurl</code> to test manually:</p>
-<pre><code class="language-bash"># Install grpcurl
-go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+<p>Over gRPC, use the example client or <code>grpcurl</code> with the schema (the server
+does not offer gRPC reflection, so <code>grpcurl</code> needs the <code>.proto</code>):</p>
+<pre><code class="language-bash">cargo run --example client
 
-# List services
-grpcurl -plaintext localhost:50051 list
-
-# Index a directory
-grpcurl -plaintext -d '{"paths": ["."]}' \
-    localhost:50051 search.CodeSearch/Index
-
-# Search
-grpcurl -plaintext -d '{"query": "fn main", "max_results": 10}' \
+grpcurl -plaintext -import-path proto -proto search.proto \
+    -d '{"query": "fn main", "max_results": 10}' \
     localhost:50051 search.CodeSearch/Search
+
+grpcurl -plaintext -import-path proto -proto search.proto \
+    -d '{"paths": ["/srv/repos/api/new-module"]}' \
+    localhost:50051 search.CodeSearch/Index    # a path under a configured root
 </code></pre>
 <h2 id="production-deployment"><a class="header" href="#production-deployment">Production Deployment</a></h2>
 <h3 id="system-requirements"><a class="header" href="#system-requirements">System Requirements</a></h3>
-<p><strong>Minimum</strong>:</p>
-<ul>
-<li>2 CPU cores</li>
-<li>4GB RAM</li>
-<li>10GB disk space</li>
-</ul>
-<p><strong>Recommended</strong> (for 10GB+ codebases):</p>
-<ul>
-<li>8+ CPU cores</li>
-<li>16GB+ RAM</li>
-<li>SSD storage</li>
-<li>50GB+ disk space</li>
-</ul>
-<h3 id="building-for-production"><a class="header" href="#building-for-production">Building for Production</a></h3>
-<pre><code class="language-bash"># Build optimized release binary
-cargo build --release
-
-# Strip debug symbols to reduce binary size
-strip target/release/fast_code_search_server
-
-# Verify binary
-./target/release/fast_code_search_server --version
-</code></pre>
+<p>Memory is the constraint. The index keeps trigram posting lists and
+symbols in memory and maps file contents; as a rough guide, the
+<a href="https://jburrow.github.io/fast_code_search/docs/benchmarks/latest.html">benchmark</a>
+tree of 6,200 files and 39 MB of text uses about 120 MB resident. See
+<a href="https://jburrow.github.io/fast_code_search/docs/guides/performance.html">Performance and memory</a>
+for sizing. Indexing uses every core; searching is fast on any of them.
+Keep the index on local storage with free space and free inodes (the
+server warns at startup and before each save when either runs low).</p>
 <h3 id="running-as-a-system-service"><a class="header" href="#running-as-a-system-service">Running as a System Service</a></h3>
-<p>For a single developer’s machine (a per-user service started at login on
-Linux, macOS or Windows, with the <code>fcs</code> command-line client) see
-<a href="#running-the-server-at-login">RUN-AT-STARTUP.md</a>. The unit below is the shared,
-system-wide variant.</p>
 <h4 id="systemd-linux"><a class="header" href="#systemd-linux">systemd (Linux)</a></h4>
-<p>Create <code>/etc/systemd/system/fast-code-search.service</code>:</p>
+<p>The repository’s <code>deploy/systemd/fast-code-search.service</code> is the per-user
+variant. A system-wide one, <code>/etc/systemd/system/fast-code-search.service</code>:</p>
 <pre><code class="language-ini">[Unit]
-Description=Fast Code Search gRPC Service
+Description=fast_code_search server
 After=network.target
 
 [Service]
 Type=simple
 User=codeuser
 Group=codeuser
-WorkingDirectory=/opt/fast_code_search
-ExecStart=/opt/fast_code_search/fast_code_search_server
+ExecStart=/usr/local/bin/fast_code_search_server --config /etc/fast_code_search/config.toml
+# SIGINT lets the server save the index before exiting.
+KillSignal=SIGINT
+TimeoutStopSec=120
 Restart=on-failure
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
+Environment=RUST_LOG=info
 
 # Security hardening
 NoNewPrivileges=true
@@ -1005,139 +1062,76 @@ ReadWritePaths=/var/lib/fast_code_search
 [Install]
 WantedBy=multi-user.target
 </code></pre>
-<p>Enable and start:</p>
+<p>With <code>index_path = "/var/lib/fast_code_search/index.fcsidx"</code> in the config.
+<code>ProtectHome=true</code> hides <code>/home</code>; drop it if the indexed trees live there.</p>
 <pre><code class="language-bash">sudo systemctl daemon-reload
-sudo systemctl enable fast-code-search
-sudo systemctl start fast-code-search
-sudo systemctl status fast-code-search
-</code></pre>
-<p>View logs:</p>
-<pre><code class="language-bash">sudo journalctl -u fast-code-search -f
+sudo systemctl enable --now fast-code-search
+sudo journalctl -u fast-code-search -f
 </code></pre>
 <h3 id="reverse-proxy-with-nginx"><a class="header" href="#reverse-proxy-with-nginx">Reverse Proxy with nginx</a></h3>
-<p>For HTTPS and load balancing:</p>
-<pre><code class="language-nginx">upstream grpc_backend {
-    server 127.0.0.1:50051;
-}
-
-server {
+<p>The server has no authentication: put it behind a proxy that has. The web
+listener needs WebSocket upgrades for <code>/ws/progress</code>; gRPC needs HTTP/2.</p>
+<pre><code class="language-nginx">server {
     listen 443 ssl http2;
     server_name code-search.example.com;
 
     ssl_certificate /etc/ssl/certs/code-search.crt;
     ssl_certificate_key /etc/ssl/private/code-search.key;
 
+    # auth_request / auth_basic / your SSO here
+
     location / {
-        grpc_pass grpc://grpc_backend;
-        grpc_set_header Host $host;
-        grpc_set_header X-Real-IP $remote_addr;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location /search.CodeSearch/ {
+        grpc_pass grpc://127.0.0.1:50051;
     }
 }
 </code></pre>
-<h2 id="docker-deployment"><a class="header" href="#docker-deployment">Docker Deployment</a></h2>
-<h3 id="dockerfile"><a class="header" href="#dockerfile">Dockerfile</a></h3>
-<p>Create <code>Dockerfile</code> in project root:</p>
-<pre><code class="language-dockerfile"># Build stage
-FROM rust:1.75 as builder
-
-# Install protobuf compiler
-RUN apt-get update &amp;&amp; \
-    apt-get install -y protobuf-compiler &amp;&amp; \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-COPY . .
-
-# Build release binary
-RUN cargo build --release
-
-# Runtime stage
-FROM debian:bookworm-slim
-
-# Install runtime dependencies
-RUN apt-get update &amp;&amp; \
-    apt-get install -y ca-certificates &amp;&amp; \
-    rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -m -u 1000 codeuser
-
-WORKDIR /app
-
-# Copy binary from builder
-COPY --from=builder /app/target/release/fast_code_search_server /app/
-
-# Set ownership
-RUN chown -R codeuser:codeuser /app
-
-USER codeuser
-
-EXPOSE 50051
-
-CMD ["/app/fast_code_search_server"]
+<h2 id="container"><a class="header" href="#container">Container</a></h2>
+<p>Every release publishes an image built from the repository’s <code>Dockerfile</code>.
+It indexes <code>/src</code>, serves the web UI and REST API on 8080 and gRPC on
+50051, and saves the index under <code>/var/lib/fast_code_search</code>:</p>
+<pre><code class="language-bash">docker run -d --name fast-code-search \
+    -p 127.0.0.1:8080:8080 \
+    -v /path/to/code:/src:ro \
+    -v fcs-index:/var/lib/fast_code_search \
+    ghcr.io/jburrow/fast_code_search
 </code></pre>
-<h3 id="build-and-run"><a class="header" href="#build-and-run">Build and Run</a></h3>
-<pre><code class="language-bash"># Build image
-docker build -t fast_code_search:latest .
-
-# Run container
-docker run -d \
-    --name fast-code-search \
-    -p 50051:50051 \
-    -v /path/to/code:/data:ro \
-    fast_code_search:latest
-
-# View logs
-docker logs -f fast-code-search
-
-# Stop container
-docker stop fast-code-search
-</code></pre>
+<p>The baked-in configuration is <code>deploy/docker/config.toml</code>. To use your own,
+mount it over it: <code>-v ./config.toml:/etc/fast_code_search/config.toml:ro</code>.
+The image’s health check runs <code>fcs status</code>. To build the image yourself:
+<code>docker build -t fast_code_search .</code>.</p>
 <h3 id="docker-compose"><a class="header" href="#docker-compose">Docker Compose</a></h3>
-<p>Create <code>docker-compose.yml</code>:</p>
-<pre><code class="language-yaml">version: '3.8'
-
-services:
+<pre><code class="language-yaml">services:
   code-search:
-    build: .
-    container_name: fast-code-search
+    image: ghcr.io/jburrow/fast_code_search
     ports:
-      - "50051:50051"
+      - "127.0.0.1:8080:8080"
     volumes:
-      - /path/to/code:/data:ro
-      - search-data:/var/lib/fast_code_search
+      - /path/to/code:/src:ro
+      - search-index:/var/lib/fast_code_search
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "grpcurl", "-plaintext", "localhost:50051", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 4G
 
 volumes:
-  search-data:
-</code></pre>
-<p>Run with:</p>
-<pre><code class="language-bash">docker-compose up -d
+  search-index:
 </code></pre>
 <h2 id="kubernetes-deployment"><a class="header" href="#kubernetes-deployment">Kubernetes Deployment</a></h2>
-<h3 id="deployment-manifest"><a class="header" href="#deployment-manifest">Deployment Manifest</a></h3>
-<p>Create <code>k8s/deployment.yaml</code>:</p>
+<p>Each replica builds and holds its own index, so give each its own storage
+for <code>index_path</code> (an <code>emptyDir</code> rebuilds on every pod start; a
+<code>StatefulSet</code> volume keeps it). Never point two replicas at one index file
+on a shared volume: the second loads it read-only and never saves.</p>
 <pre><code class="language-yaml">apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fast-code-search
-  labels:
-    app: fast-code-search
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: fast-code-search
@@ -1148,69 +1142,63 @@ spec:
     spec:
       containers:
       - name: fast-code-search
-        image: fast_code_search:latest
+        image: ghcr.io/jburrow/fast_code_search
         ports:
+        - containerPort: 8080
+          name: http
         - containerPort: 50051
-          protocol: TCP
           name: grpc
         resources:
           requests:
-            memory: "4Gi"
+            memory: "2Gi"
             cpu: "2"
           limits:
             memory: "8Gi"
-            cpu: "4"
         livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "grpcurl -plaintext localhost:50051 list"
-          initialDelaySeconds: 30
+          httpGet:
+            path: /api/health
+            port: http
           periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/ready
+            port: http
+          periodSeconds: 5
         volumeMounts:
-        - name: code-volume
-          mountPath: /data
+        - name: code
+          mountPath: /src
           readOnly: true
+        - name: index
+          mountPath: /var/lib/fast_code_search
       volumes:
-      - name: code-volume
+      - name: code
         persistentVolumeClaim:
           claimName: code-pvc
-</code></pre>
-<h3 id="service-manifest"><a class="header" href="#service-manifest">Service Manifest</a></h3>
-<p>Create <code>k8s/service.yaml</code>:</p>
-<pre><code class="language-yaml">apiVersion: v1
+      - name: index
+        emptyDir: {}
+---
+apiVersion: v1
 kind: Service
 metadata:
-  name: fast-code-search-service
+  name: fast-code-search
 spec:
   selector:
     app: fast-code-search
   ports:
-  - protocol: TCP
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: grpc
     port: 50051
-    targetPort: 50051
-  type: LoadBalancer
+    targetPort: grpc
 </code></pre>
-<h3 id="deploy-to-kubernetes"><a class="header" href="#deploy-to-kubernetes">Deploy to Kubernetes</a></h3>
-<pre><code class="language-bash"># Create namespace
-kubectl create namespace code-search
-
-# Apply configurations
-kubectl apply -f k8s/deployment.yaml -n code-search
-kubectl apply -f k8s/service.yaml -n code-search
-
-# Check status
-kubectl get pods -n code-search
-kubectl get svc -n code-search
-
-# View logs
-kubectl logs -f deployment/fast-code-search -n code-search
-</code></pre>
+<p><code>/api/ready</code> answers 503 until there is an index to search, so a pod
+receives traffic only once it can answer. A gRPC-native probe
+(<code>grpc: {port: 50051}</code>) works too: the standard health service is served.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
-<p>Most settings live in the TOML config (<code>--init</code> writes a commented template).
-The environment variables the server actually reads are:</p>
+<p>Most settings live in the TOML config (<code>--init</code> writes every key with its
+default and a comment). The environment variables the server reads are:</p>
 <pre><code class="language-bash"># Config file to load (checked before ./fast_code_search.toml and the user config dir)
 export FCS_CONFIG="/etc/fast_code_search/config.toml"
 
@@ -1222,211 +1210,91 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://collector:4317"
 export OTEL_SERVICE_NAME="fast_code_search"
 export OTEL_SDK_DISABLED="true"        # final: disables export regardless of config
 export FCS_TRACING_ENABLED="true"      # overrides telemetry.enabled in the TOML
-</code></pre>
-<p>Listen addresses are <code>server.address</code> / <code>server.web_address</code> in the config or
-<code>--address</code> / <code>--web-address</code> on the command line; the search concurrency cap is
-<code>server.max_concurrent_searches</code> and the request timeout <code>server.request_timeout_secs</code>.
-The configuration is validated at startup: unknown keys, unparseable addresses
-and zero limits are errors; a missing index path is a warning.</p>
-<h3 id="performance-tuning"><a class="header" href="#performance-tuning">Performance Tuning</a></h3>
-<h4 id="for-large-codebases-10gb"><a class="header" href="#for-large-codebases-10gb">For Large Codebases (10GB+)</a></h4>
-<ul>
-<li>Increase system file descriptor limit:</li>
-</ul>
-<pre><code class="language-bash">ulimit -n 65536
-</code></pre>
-<ul>
-<li>Adjust memory limits in systemd service:</li>
-</ul>
-<pre><code class="language-ini">[Service]
-MemoryMax=16G
-</code></pre>
-<ul>
-<li>Use faster storage (SSD/NVMe)</li>
-</ul>
-<h4 id="cpu-optimization"><a class="header" href="#cpu-optimization">CPU Optimization</a></h4>
-<p>The server automatically uses all available CPU cores via rayon. To limit:</p>
-<pre><code class="language-bash"># Use only 4 cores
+
+# Indexing threads (default: every core)
 export RAYON_NUM_THREADS=4
 </code></pre>
+<p>Listen addresses are <code>server.address</code> / <code>server.web_address</code> in the config or
+<code>--address</code> / <code>--web-address</code> on the command line; <code>server.enable_grpc</code> (or
+<code>--no-grpc</code>) turns gRPC off; the search concurrency cap is
+<code>server.max_concurrent_searches</code> and the request timeout
+<code>server.request_timeout_secs</code>. The configuration is validated at startup:
+unknown keys, unparseable addresses and zero limits are errors; a missing
+index directory is a warning (the first save creates it). The first log
+lines say which config file was used.</p>
 <h2 id="monitoring"><a class="header" href="#monitoring">Monitoring</a></h2>
-<h3 id="metrics-to-monitor"><a class="header" href="#metrics-to-monitor">Metrics to Monitor</a></h3>
 <ul>
-<li><strong>CPU Usage</strong>: Should be proportional to search load</li>
-<li><strong>Memory Usage</strong>: Should be &lt; total codebase size (due to memory mapping)</li>
-<li><strong>Request Latency</strong>: Sub-millisecond for most queries</li>
-<li><strong>Active Connections</strong>: gRPC connections to clients</li>
+<li><code>GET /api/health</code>: liveness, always 200 while the process runs, with a
+<code>problems</code> count of startup and storage problems.</li>
+<li><code>GET /api/ready</code>: 200 once the index can serve results, 503 before.</li>
+<li><code>GET /api/diagnostics</code> (the <strong>Index</strong> page in the UI): which APIs
+started, where the index is saved, the problems themselves, and
+self-tests that search for sampled files.</li>
+<li><code>GET /metrics</code>: Prometheus text format: request and error counters, a
+search latency histogram, and index gauges (files, trigrams, dependency
+edges, content bytes, indexing, ready).</li>
+<li>Logs: <code>RUST_LOG=info</code> (the default) logs startup, each build, save and
+watcher batch; <code>debug</code> logs every path and ignore file.</li>
 </ul>
-<h3 id="health-checks"><a class="header" href="#health-checks">Health Checks</a></h3>
-<pre><code class="language-bash"># Check if server is responding
-grpcurl -plaintext localhost:50051 list
-
-# Expected output:
-# search.CodeSearch
-</code></pre>
-<h3 id="log-monitoring"><a class="header" href="#log-monitoring">Log Monitoring</a></h3>
-<p>Enable structured logging for better monitoring:</p>
-<pre><code class="language-bash">RUST_LOG=info cargo run --release --bin fast_code_search_server 2&gt;&amp;1 | \
-    tee -a /var/log/fast_code_search.log
-</code></pre>
 <h2 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h2>
-<h3 id="server-wont-start"><a class="header" href="#server-wont-start">Server Won’t Start</a></h3>
-<p><strong>Issue</strong>: Port already in use</p>
-<pre><code class="language-bash"># Check what's using port 50051
-lsof -i :50051
-
-# Kill the process or use a different port
-</code></pre>
-<p><strong>Issue</strong>: Permission denied</p>
-<pre><code class="language-bash"># Run with appropriate permissions or use port &gt; 1024
-</code></pre>
-<h3 id="high-memory-usage"><a class="header" href="#high-memory-usage">High Memory Usage</a></h3>
-<p><strong>Cause</strong>: Large codebase indexed</p>
-<p><strong>Solution</strong>: Memory mapping keeps RAM usage low, but ensure sufficient system memory exists</p>
-<h3 id="slow-search-performance"><a class="header" href="#slow-search-performance">Slow Search Performance</a></h3>
-<p><strong>Possible causes</strong>:</p>
-<ul>
-<li>Disk I/O bottleneck (use SSD)</li>
-<li>CPU bottleneck (increase cores)</li>
-<li>Large result sets (limit max_results)</li>
-</ul>
-<p><strong>Debug</strong>:</p>
-<pre><code class="language-bash"># Profile the server
-perf record -g ./target/release/fast_code_search_server
-perf report
-</code></pre>
-<h3 id="connection-issues"><a class="header" href="#connection-issues">Connection Issues</a></h3>
-<p><strong>Test connectivity</strong>:</p>
-<pre><code class="language-bash"># Test from client
-telnet server-host 50051
-
-# Use grpcurl for debugging
-grpcurl -plaintext -v server-host:50051 list
-</code></pre>
+<p>The <a href="https://jburrow.github.io/fast_code_search/docs/guides/troubleshooting.html">troubleshooting guide</a>
+covers the common symptoms. Deployment-specific ones:</p>
+<h3 id="a-port-is-already-in-use"><a class="header" href="#a-port-is-already-in-use">A port is already in use</a></h3>
+<p>The log says <code>gRPC API NOT started</code> or <code>Web UI ... NOT started</code> with the
+port, and the server keeps running on the other API. Find the holder with
+<code>ss -ltnp | grep :8080</code> (or <code>lsof -i :8080</code>), then stop it, change the
+address, or set <code>enable_grpc = false</code>.</p>
+<h3 id="another-fast_code_search-server-is-already-using-this-index"><a class="header" href="#another-fast_code_search-server-is-already-using-this-index">“another fast_code_search server is already using this index”</a></h3>
+<p>Two servers share an <code>index_path</code>. The log names the other process’s PID
+and addresses (also in <code>&lt;index_path&gt;.lock.owner</code>). Stop it or give each
+server its own <code>index_path</code>; until then this one runs read-only.</p>
+<h3 id="no-space-left-on-device-with-free-space-showing"><a class="header" href="#no-space-left-on-device-with-free-space-showing">“No space left on device” with free space showing</a></h3>
+<p>The filesystem holding the index has run out of inodes; the log says
+whether bytes or inodes ran out, and <code>df -i</code> confirms.</p>
 <h3 id="memory-allocation-errors-on-rhel7centos7"><a class="header" href="#memory-allocation-errors-on-rhel7centos7">Memory Allocation Errors on RHEL7/CentOS7</a></h3>
 <p><strong>Symptoms</strong>:</p>
 <ul>
 <li>“cannot allocate memory” during indexing</li>
 <li>“Reached mmap limit” error message</li>
-<li>Server crashes with mmap errors</li>
 <li>Works fine on other systems</li>
 </ul>
 <p><strong>Root Cause</strong>: Low <code>vm.max_map_count</code> limit (often 65530 on RHEL7, need 262144+)</p>
-<p><strong>Automatic Detection</strong>: The server automatically detects your system’s mmap limit at startup
-and will refuse to index more files once it reaches 85% of the safe limit.</p>
-<p><strong>Solution 1: WITH sudo access (recommended for large codebases)</strong>:</p>
-<pre><code class="language-bash"># Check current limit
-sysctl vm.max_map_count
-
-# Temporary fix (until reboot)
-sudo sysctl -w vm.max_map_count=524288
-
-# Permanent fix
+<p><strong>Automatic Detection</strong>: The server reads the limit at startup (Linux only)
+and stops mapping new files at 85% of it, with an error that names the
+remedy. Files already indexed remain searchable.</p>
+<p><strong>Solution 1: with sudo access</strong>:</p>
+<pre><code class="language-bash">sysctl vm.max_map_count                                   # current limit
+sudo sysctl -w vm.max_map_count=524288                    # until reboot
 echo "vm.max_map_count=524288" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
-
-# Verify
-sysctl vm.max_map_count
 </code></pre>
-<p><strong>Solution 2: WITHOUT sudo access (reduce indexing scope)</strong>:</p>
-<p>Edit <code>config.toml</code>:</p>
+<p><strong>Solution 2: without sudo access</strong>, index less:</p>
 <pre><code class="language-toml">[indexer]
-# Reduce file size limit
 max_file_size = 2097152  # 2MB instead of 10MB
-
-# Exclude more directories
 exclude_patterns = [
-    "**/node_modules/**",
-    "**/target/**",
-    "**/.git/**",
-    "**/build/**",
-    "**/dist/**",
-    "**/vendor/**",
-    "**/*.min.js",
-    "**/*.min.css",
-    "**/*.lock",
-    "**/*.svg"
+    "**/node_modules/**", "**/target/**", "**/.git/**", "**/build/**",
+    "**/dist/**", "**/vendor/**", "**/*.min.js", "**/*.min.css", "**/*.lock", "**/*.svg"
 ]
-
-# Only index specific file types  
 include_extensions = ["rs", "py", "js", "ts", "java", "go", "c", "cpp", "h"]
 </code></pre>
-<p><strong>How the Automatic Limit Works</strong>:</p>
-<ol>
-<li>Server detects <code>vm.max_map_count</code> at startup (Linux only)</li>
-<li>Calculates safe limit at 85% of maximum</li>
-<li>Tracks mapped file count during indexing</li>
-<li>Stops indexing with clear error when limit would be exceeded</li>
-<li>Existing indexed files remain searchable</li>
-</ol>
-<p><strong>Verification</strong>:</p>
-<pre><code class="language-bash"># Watch mmap usage during indexing
-watch -n 1 "cat /proc/\$(pgrep fast_code_search)/maps | wc -l"
-
-# Check system limits
-ulimit -a
-cat /proc/sys/vm/max_map_count
-</code></pre>
-<p><strong>Example</strong>: With default RHEL7 limit of 65530:</p>
-<ul>
-<li>Safe limit: ~55,700 mappings (85%)</li>
-<li>Can index ~55,000 files before hitting limit</li>
-<li>Server will stop and show clear error message with remediation steps</li>
-</ul>
 <h2 id="security-considerations"><a class="header" href="#security-considerations">Security Considerations</a></h2>
-<h3 id="network-security"><a class="header" href="#network-security">Network Security</a></h3>
 <ul>
-<li>Use TLS for production deployments</li>
-<li>Restrict access via firewall rules</li>
-<li>Use VPN or private networks for internal access</li>
-</ul>
-<h3 id="file-system-security"><a class="header" href="#file-system-security">File System Security</a></h3>
-<ul>
-<li>Run as non-root user</li>
-<li>Use read-only mounts for code directories</li>
-<li>Restrict file permissions</li>
-</ul>
-<h3 id="resource-limits"><a class="header" href="#resource-limits">Resource Limits</a></h3>
-<ul>
-<li>Set memory limits to prevent OOM</li>
-<li>Set CPU limits to prevent resource exhaustion</li>
-<li>Limit concurrent connections</li>
+<li>Keep both listeners on loopback or a private network, and put an
+authenticating proxy in front of anything shared; see <a href="#security-policy">SECURITY.md</a>.</li>
+<li>Run as a non-root user and mount the indexed code read-only.</li>
+<li><code>cors_origins</code> stays empty unless a page on another origin calls the API.</li>
 </ul>
 <h2 id="backup-and-recovery"><a class="header" href="#backup-and-recovery">Backup and Recovery</a></h2>
-<h3 id="data-to-backup"><a class="header" href="#data-to-backup">Data to Backup</a></h3>
-<p>The server is stateless - it rebuilds indexes on startup. Backup:</p>
-<ul>
-<li>Server configuration files</li>
-<li>Deployment scripts</li>
-<li>The codebase being indexed</li>
-</ul>
-<h3 id="recovery-procedure"><a class="header" href="#recovery-procedure">Recovery Procedure</a></h3>
-<ol>
-<li>Restore server binary</li>
-<li>Restore configuration</li>
-<li>Start server</li>
-<li>Re-index codebase via gRPC Index call</li>
-</ol>
+<p>The index file is a cache of the indexed trees: losing it costs one full
+build, nothing else. Back up the configuration file; to recover, restore
+it and start the server.</p>
 <h2 id="scaling"><a class="header" href="#scaling">Scaling</a></h2>
-<h3 id="horizontal-scaling"><a class="header" href="#horizontal-scaling">Horizontal Scaling</a></h3>
-<p>Deploy multiple instances behind a load balancer:</p>
 <ul>
-<li>Each instance indexes the same codebase</li>
-<li>Load balancer distributes search requests</li>
-<li>Stateless design allows easy scaling</li>
-</ul>
-<h3 id="vertical-scaling"><a class="header" href="#vertical-scaling">Vertical Scaling</a></h3>
-<ul>
-<li>Add more CPU cores for faster parallel search</li>
-<li>Add more RAM for larger codebases</li>
-<li>Use faster storage for reduced I/O latency</li>
-</ul>
-<h2 id="support"><a class="header" href="#support">Support</a></h2>
-<p>For deployment issues:</p>
-<ul>
-<li>Check logs first</li>
-<li>Review this guide</li>
-<li>Open an issue on GitHub with deployment details</li>
+<li><strong>Vertically</strong>: more cores make builds faster; more memory holds larger
+trees.</li>
+<li><strong>Horizontally</strong>: run several instances behind a load balancer, each with
+its own index of the same trees. They are independent; nothing is shared
+between them.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="api-and-configuration-reference"><a class="header" href="#api-and-configuration-reference">API and configuration reference</a></h1>
@@ -1454,9 +1322,9 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
 <tr><td><code>GET /api/status</code></td><td>Indexing progress</td></tr>
-<tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…}</code>)</td></tr>
+<tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…,"problems":N}</code>); <code>problems</code> counts startup and storage problems</td></tr>
 <tr><td><code>GET /api/ready</code></td><td>Readiness: 200 once there is an index to search, 503 otherwise</td></tr>
-<tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests</td></tr>
+<tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests, and <code>service</code>: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status <code>degraded</code>)</td></tr>
 <tr><td><code>GET /metrics</code></td><td>Prometheus text format (request counters, latency histogram, index gauges)</td></tr>
 <tr><td><code>WS /ws/progress</code></td><td>Live indexing progress frames</td></tr>
 </tbody>
@@ -1474,8 +1342,8 @@ when the request timeout is hit.</p>
 <tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most 10,000.</td></tr>
 <tr><td><code>regex</code></td><td>false</td><td>Treat <code>q</code> as a regex (Rust <code>regex</code> syntax, matched one line at a time unless the pattern mentions <code>\n</code> or sets <code>(?s)</code>).</td></tr>
 <tr><td><code>symbols</code></td><td>false</td><td>Definitions only (functions, types, classes, …) plus filename matches.</td></tr>
-<tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code>.</td></tr>
-<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query.</td></tr>
+<tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code> (400).</td></tr>
+<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. A regex is case-sensitive by default; <code>case=false</code> adds <code>(?i)</code>.</td></tr>
 <tr><td><code>word</code></td><td>—</td><td><code>true</code> for whole-word matching.</td></tr>
 <tr><td><code>include</code> / <code>exclude</code></td><td>—</td><td>Semicolon-separated path globs (<code>src/**/*.rs;lib/**</code>).</td></tr>
 <tr><td><code>rank</code></td><td>auto</td><td><code>auto</code>, <code>fast</code> (metadata-ranked sample, used above 5,000 candidates) or <code>full</code>.</td></tr>
@@ -1639,17 +1507,24 @@ request timeout.</p>
       --web-address &lt;ADDR&gt;  Web UI / REST listen address (overrides config)
   -i, --index &lt;PATH&gt;        Additional path to index (repeatable)
       --no-auto-index       Skip indexing on startup
+      --no-grpc             Do not start the gRPC API (same as enable_grpc = false)
       --init &lt;FILE&gt;         Write a documented template configuration and exit
       --static-dir &lt;DIR&gt;    Serve the UI from disk (development)
   -v, --verbose             Debug logging
 </code></pre>
 <p>Configuration discovery: <code>--config</code>, then <code>$FCS_CONFIG</code>, then
-<code>./fast_code_search.toml</code>, then <code>~/.config/fast_code_search/config.toml</code>.</p>
+<code>./fast_code_search.toml</code>, then <code>~/.config/fast_code_search/config.toml</code>.
+The first log lines say which file was used (or that none was found and
+the defaults apply) and any warnings about it.</p>
+<p>If one of the ports cannot be bound, the server logs which port and keeps
+running on the other API; it exits only when neither could start. The
+diagnostics page and <code>/api/health</code> report the failure.</p>
 <h2 id="configuration-file"><a class="header" href="#configuration-file">Configuration file</a></h2>
 <p><code>fast_code_search_server --init config.toml</code> writes a fully commented
 template. The keys that matter most:</p>
 <pre><code class="language-toml">[server]
 address = "127.0.0.1:50051"       # gRPC
+enable_grpc = true                # false (or --no-grpc) for web UI / REST / fcs only
 web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED
@@ -1669,6 +1544,19 @@ checkpoint_interval_files = 20000
 watch = true                      # follow edits, renames, deletes
 save_after_updates = 100          # save after this many watched file changes
 </code></pre>
+<p><code>--init</code> writes every key with its default, and sets <code>index_path</code> from the
+template’s own name (<code>--init work.toml</code> gives
+<code>~/.local/share/fast_code_search/work.fcsidx</code>). Without <code>index_path</code> the
+index lives only in memory and is rebuilt on every start; the startup log
+warns about it.</p>
+<p>Only one server writes an index. A server holds a lock on
+<code>&lt;index_path&gt;.lock</code> and records its PID and addresses in
+<code>&lt;index_path&gt;.lock.owner</code>; a second server given the same <code>index_path</code>
+logs who owns it, loads the index read-only and never saves. Give each
+configuration its own <code>index_path</code>.</p>
+<p>At startup and before each save the server checks free space and free
+inodes on the filesystem holding the index (and inodes where indexed
+source lives), and warns when either is low.</p>
 <p>Changing exclude patterns, extensions, the size cap or a <code>.gitignore</code> takes
 effect on the next start: files that are no longer eligible are dropped
 when the persisted index is reconciled.</p>
@@ -1680,7 +1568,9 @@ server and no index). See <a href="#fcs--the-command-line-client">CLI.md</a>.</p
 <h1 id="query-syntax-1"><a class="header" href="#query-syntax-1">Query syntax</a></h1>
 <p>The same syntax everywhere: the web UI’s search box, <code>fcs</code>, and the <code>q</code>
 parameter of the API. It applies to plain-text queries; with <code>regex=true</code>
-(<code>fcs -e</code>) the whole query is a regular expression instead.</p>
+(<code>fcs -e</code>) the whole query is a regular expression instead. For how the
+results compare with grep, ripgrep and git grep, see <a href="#how-matching-compares-with-grep-ripgrep-and-git-grep">Matching compared
+with grep and ripgrep</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -1688,7 +1578,7 @@ parameter of the API. It applies to plain-text queries; with <code>regex=true</c
 </thead>
 <tbody>
 <tr><td><code>fn main</code></td><td>Files containing <strong>every</strong> term. Lines holding the phrase <code>fn main</code> rank first, then lines holding both terms, then the rest.</td></tr>
-<tr><td><code>"fn main"</code></td><td>One term: the exact phrase, spaces included.</td></tr>
+<tr><td><code>"fn main"</code></td><td>One term: the exact phrase, spaces included. A quote opens a phrase only when it wraps a whole word; other quotes are searched for as written, so <code>{ "success": True</code> finds that text with its quotes.</td></tr>
 <tr><td><code>-tests</code></td><td>Drop files that contain <code>tests</code>. Only a <code>-</code> before a letter, <code>_</code> or quote negates, so <code>-&gt;</code>, <code>-1</code> and <code>--flag</code> are ordinary terms.</td></tr>
 <tr><td><code>file:src/</code></td><td>Only paths under a <code>src</code> directory. A bare word matches anywhere in the path (<code>file:parser</code>); globs are used as written (<code>file:*.rs</code>, <code>file:crates/**/tests/**</code>).</td></tr>
 <tr><td><code>-file:vendor</code></td><td>Never paths matching the pattern.</td></tr>
@@ -1721,11 +1611,95 @@ parameter of the API. It applies to plain-text queries; with <code>regex=true</c
 with no required literal of three or more characters scans every file.</li>
 <li><code>^</code> and <code>$</code> anchor at line boundaries (CRLF included); <code>\s</code> does not
 cross a line break unless the pattern is a multi-line one.</li>
-<li><code>(?i)</code> makes the pattern case-insensitive; the <code>case</code> parameter does the
-same.</li>
+<li>A regex is case-sensitive, unlike plain search: <code>true</code> does not find
+<code>True</code>. <code>(?i)</code> makes the pattern case-insensitive; <code>case=false</code> on the
+API adds it for you.</li>
+<li><code>{ } ( ) [ ] . * + ? | ^ $ \</code> are syntax; escape one with <code>\</code> to match
+it (<code>\{</code>, <code>\.</code>). For code exactly as written, search without regex.</li>
+<li>Spaces are exact: <code>\{ "a"</code> misses <code>{"a"</code>. Use <code>\s*</code> for any amount of
+space, including none.</li>
+<li>In the web UI the <strong>?</strong> next to REGEX has runnable examples, and a
+search that finds nothing offers close variants that do.</li>
 <li>Patterns are compiled with size limits; an absurd one is rejected with a
 400 rather than run.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-matching-compares-with-grep-ripgrep-and-git-grep"><a class="header" href="#how-matching-compares-with-grep-ripgrep-and-git-grep">How matching compares with grep, ripgrep and git grep</a></h1>
+<p>fcs aims to find exactly the lines ripgrep finds for the same search. Every
+difference listed below is either deliberate, or the result of fcs being an
+index rather than a scan tool. ripgrep is the reference because it is the
+closest well-known tool: the same regex engine (Rust <code>regex</code>), Unicode-aware
+case folding, and <code>.gitignore</code> handling. The <a href="#correctness-against-ripgrep-1">ripgrep
+backtest</a> checks this on every engine change.
+It runs a fixed set of searches through both tools and fails on any line one
+finds and the other does not.</p>
+<h2 id="where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep"><a class="header" href="#where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep">Where fcs agrees with ripgrep and differs from grep and git grep</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Behaviour</th><th>fcs</th><th>ripgrep</th><th>GNU grep</th><th>git grep</th></tr>
+</thead>
+<tbody>
+<tr><td>Regex dialect</td><td>Rust <code>regex</code></td><td>Rust <code>regex</code> (PCRE2 with <code>-P</code>)</td><td>POSIX BRE/ERE (<code>-E</code>), PCRE with <code>-P</code></td><td>POSIX BRE/ERE, PCRE with <code>-P</code></td></tr>
+<tr><td>Byte order mark at the start of a file</td><td>ignored, so <code>^</code> matches line 1</td><td>ignored (kept with <code>-E none</code>)</td><td>part of line 1, so <code>^</code> misses it</td><td>part of line 1, so <code>^</code> misses it</td></tr>
+<tr><td><code>$</code> on a line ending in CRLF</td><td>matches before the <code>\r</code></td><td>only with <code>--crlf</code></td><td>no</td><td>no</td></tr>
+<tr><td>Pattern that mentions <code>\n</code></td><td>runs over the whole file and reports the line where the match starts</td><td>needs <code>-U</code></td><td>not supported</td><td>not supported</td></tr>
+<tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter; <code>ß</code> is not <code>ss</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
+<tr><td>Hidden files (<code>.github/</code>, <code>.env.example</code>)</td><td>searched</td><td>skipped unless <code>--hidden</code></td><td>searched</td><td>searched if tracked</td></tr>
+<tr><td>Files searched</td><td>the indexed tree, honouring <code>.gitignore</code></td><td>the tree, honouring <code>.gitignore</code></td><td>what you name</td><td>tracked files only</td></tr>
+</tbody>
+</table>
+</div>
+<p>These were checked with GNU grep 3.11, git 2.43 and ripgrep 14.1.</p>
+<h2 id="where-fcs-differs-from-all-of-them"><a class="header" href="#where-fcs-differs-from-all-of-them">Where fcs differs from all of them</a></h2>
+<p>These follow from fcs being a code search server rather than a line filter.</p>
+<ul>
+<li><strong>Case-insensitive by default.</strong> Text searches ignore case unless the query
+says <code>case:yes</code>. grep, git grep and ripgrep are case-sensitive by default.
+A regex is case-sensitive unless it uses <code>(?i)</code> or the request sets the
+case option. The backtest passes <code>-i</code> to ripgrep whenever fcs ignores
+case.</li>
+<li><strong>Several words are not a phrase.</strong> <code>fn main</code> finds files that contain
+both words, anywhere in the file. Lines holding the phrase rank first,
+then lines holding both words, then at most three lines per file holding
+only one of them. Quote the words (<code>"fn main"</code>) to search for the exact
+phrase, as grep would.</li>
+<li><strong>Operators.</strong> <code>-term</code>, <code>file:</code>, <code>lang:</code>, <code>case:</code> and <code>word:</code> are query
+syntax, not text. To search for one literally, quote it: <code>"-test"</code>,
+<code>"file:"</code>. A <code>-</code> only negates before a letter, <code>_</code> or quote, so <code>-&gt;</code>,
+<code>-1.5</code> and <code>--flag</code> are searched as written. See <a href="#query-syntax-1">Query
+syntax</a>.</li>
+<li><strong>File names match too.</strong> A text search also lists files whose <em>name</em>
+matches, as a hit without a line number. grep has no equivalent, so the
+backtest leaves these out of the comparison.</li>
+<li><strong>One result per line.</strong> A line with several matches is one result. For a
+multi-line match, the result is the line where it starts. ripgrep counts
+lines the same way (<code>rg -c</code>).</li>
+<li><strong>Ranked, and capped.</strong> Results come back best first rather than in file
+order. To keep a broad search fast, a request reads a bounded number of
+matches: by default 100 from one file on the first page, and a budget of
+about eight times the requested page. When either limit is reached, the
+total is shown as “N+” rather than as a count. LOAD MORE in the web UI
+fetches the whole list again at the bigger size, up to 1000 results, so
+every match ends up shown exactly once. Results already on screen can
+move when it does. Past 1000 results it fetches the next page instead.
+An API client asking for <code>offset</code> pages of a search that hit its budget
+can see a result repeated or skipped between pages. Asking again from
+offset 0 with a larger <code>max</code> avoids that.</li>
+<li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
+Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
+(<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16
+with a byte order mark, or when given <code>-E</code>. grep and git grep match raw
+bytes. Binary files are not indexed.</li>
+<li><strong>Index scope.</strong> Files over <code>max_file_size</code> (10 MB by default) and paths
+matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target</code>, <code>.git</code>, <code>build</code>,
+<code>dist</code>, Python virtual environments) are not indexed, so they are never
+searched.</li>
+</ul>
+<h2 id="known-differences"><a class="header" href="#known-differences">Known differences</a></h2>
+<p>None at the moment. A known difference would be listed here, and marked
+<code>known</code> with its reason in <code>benches/rg_backtest.toml</code>, so the backtest still
+reports it without failing.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="fcs-command-line"><a class="header" href="#fcs-command-line"><code>fcs</code> command line</a></h1>
 <!-- Generated by scripts/docs/generate-reference.sh from `fcs --help`; do not edit. -->
@@ -2624,6 +2598,13 @@ metadata, trigram directory and bitmaps are streamed into a uniquely
 named temporary file next to the target, fsynced, and renamed into place.
 Two saves cannot interleave, and a crash at any point leaves the previous
 file intact. Checkpoints during a long build use the same path.</p>
+<h2 id="one-server-per-index"><a class="header" href="#one-server-per-index">One server per index</a></h2>
+<p>A server takes an exclusive lock on <code>&lt;index_path&gt;.lock</code> before it loads
+and records its PID and listen addresses in <code>&lt;index_path&gt;.lock.owner</code>.
+A second server started with the same <code>index_path</code> logs which process
+holds it, loads the index read-only and never saves, so two servers can no
+longer overwrite each other’s file. The lock is released when the process
+exits, however it exits.</p>
 <h2 id="load"><a class="header" href="#load">Load</a></h2>
 <ol>
 <li>Map the file, validate header, lengths, checksum and directory order.</li>
@@ -2759,6 +2740,11 @@ surfaced six ranking defects; see the <a href="#changelog">changelog</a>.</p>
 <pre><code class="language-bash">cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
 cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
 </code></pre>
+<h2 id="correctness-against-ripgrep"><a class="header" href="#correctness-against-ripgrep">Correctness against ripgrep</a></h2>
+<p>Fast and well ranked is worthless if a match is missing. A backtest runs
+124 searches through fcs and through ripgrep on the same trees and fails on
+any line one finds and the other does not; see <a href="#correctness-against-ripgrep-1">Correctness against
+ripgrep</a> for how it works and how to extend it.</p>
 <h2 id="comparison-with-scan-tools"><a class="header" href="#comparison-with-scan-tools">Comparison with scan tools</a></h2>
 <p><code>scripts/bench/compare.sh &lt;dir&gt;</code> times the same queries through ripgrep,
 ugrep (if installed) and <code>fcs</code> against a server on the same tree, warm
@@ -3075,6 +3061,134 @@ gate, as CI does. Adding a query is a five-line TOML entry; the point of
 the suite is that every ranking change comes with the example that
 motivated it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="correctness-against-ripgrep-1"><a class="header" href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></h1>
+<p>A search tool that misses a line is worse than a slow one: nobody notices
+the line that was not shown. Unit tests check the cases someone thought of.
+The backtest checks fcs against an independent, widely used tool on real
+code, and runs on every change to the engine.</p>
+<h2 id="the-idea"><a class="header" href="#the-idea">The idea</a></h2>
+<p>ripgrep is the oracle. For each search in a fixed query set, the backtest:</p>
+<ol>
+<li>runs the search through the fcs engine with every result limit switched
+off,</li>
+<li>runs the same search through <code>rg</code> with the flags that mean the same
+thing,</li>
+<li>compares the two answers line by line.</li>
+</ol>
+<p>A line ripgrep reports and fcs does not is a <strong>miss</strong>. A line fcs reports and
+ripgrep does not is an <strong>extra</strong>. Either one fails the run, unless the query
+is marked <code>known</code> with a written reason.</p>
+<p>The translation to <code>rg</code> flags comes from the query alone, never from fcs’s
+own matching code, so a bug in fcs cannot hide by also being in the oracle.
+Where fcs syntax has no rg equivalent (<code>file:</code>, <code>lang:</code>), the query states
+what it means in rg terms, as <code>-g</code> globs written by hand.</p>
+<p>ripgrep was chosen over grep and git grep because it shares fcs’s regex
+engine and Unicode case folding, so any difference is a real difference.
+See <a href="#how-matching-compares-with-grep-ripgrep-and-git-grep">Matching compared with grep and ripgrep</a> for
+where fcs, ripgrep, grep and git grep behave differently, and why.</p>
+<h2 id="how-a-query-is-translated"><a class="header" href="#how-a-query-is-translated">How a query is translated</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>fcs query</th><th>ripgrep run</th><th>Compared how</th></tr>
+</thead>
+<tbody>
+<tr><td>One term (<code>Runtime</code>)</td><td><code>rg -F -i -e Runtime</code></td><td>the same lines exactly</td></tr>
+<tr><td><code>case:yes</code></td><td>drops <code>-i</code></td><td>the same lines exactly</td></tr>
+<tr><td><code>word:yes</code></td><td>adds <code>-w</code></td><td>the same lines exactly</td></tr>
+<tr><td>Several terms (<code>fn main</code>)</td><td>one <code>rg -F</code> run per term</td><td>the files must be those holding every term; every line holding all terms must be reported; every reported line must hold at least one term (fcs keeps only a few single-term lines per file by design)</td></tr>
+<tr><td><code>-term</code></td><td>an rg run for <code>term</code>, then those files are removed</td><td>as above</td></tr>
+<tr><td><code>file:</code> / <code>lang:</code></td><td>the query’s own <code>globs</code> (<code>-g</code>)</td><td>as above</td></tr>
+<tr><td>Regex</td><td><code>rg -e PATTERN</code>, plus <code>-U</code> when the pattern spans lines</td><td>the line where each match starts</td></tr>
+</tbody>
+</table>
+</div>
+<p>rg always runs with <code>--no-config -uu --crlf</code>, one tree at a time. Only files
+fcs indexed are compared, so differences in which files get searched (size
+limits, excluded folders, binary files) never show up as search
+differences. File-name hits have no rg counterpart and are left out.</p>
+<h2 id="what-it-runs-on"><a class="header" href="#what-it-runs-on">What it runs on</a></h2>
+<ul>
+<li><strong>Real code:</strong> tokio 1.45.0 and Django 5.2, the same pinned trees as the
+speed benchmarks. About 6,000 files of Rust and Python.</li>
+<li><strong>Edge cases:</strong> <code>tests/fixtures/backtest</code>, small files that real
+repositories rarely contain. They include CRLF line endings, a file with
+no final newline, a file with 250 matches, a very long line, Unicode
+(Greek, German, Japanese, emoji), quotes, operator-like text, a byte order
+mark and a vertical tab.</li>
+<li><strong>Cases borrowed from other tools:</strong> <code>tests/fixtures/backtest/mined</code>
+holds 37 cases adapted from ripgrep’s regression tests
+(<code>tests/regression.rs</code>, named after the issue they fixed) and Zoekt’s
+index tests (<code>index/index_test.go</code>). These are the kinds of patterns a
+trigram index or regex literal extractor tends to get wrong: one- and
+two-byte terms, trigrams present but in the wrong order or split across
+files, optional groups and <code>{0}</code> repeats, character classes, flags
+changed mid-pattern, word boundaries next to punctuation, and matches that
+start on a newline.</li>
+</ul>
+<p>The query set, <code>benches/rg_backtest.toml</code>, has 124 queries. Each one says
+what it exercises (<code>why</code>). They cover literals, short terms, quotes, case
+and whole-word options, Unicode, path and language filters, several terms,
+negation and regex.</p>
+<h2 id="beyond-matching"><a class="header" href="#beyond-matching">Beyond matching</a></h2>
+<p>Two more checks run on every query:</p>
+<ul>
+<li><strong>Repeatable.</strong> The first page (50 results) is fetched three times and
+must be identical. A search that stops at its match budget must still
+give the same answer every time.</li>
+<li><strong>LOAD MORE</strong> (<code>--check-paging</code>, on in CI). Each query with up to 1000
+matches is loaded the way the web UI’s LOAD MORE does it: the whole list
+again, 50 longer each time, while the server says more exist. Every match
+must end up shown exactly once.</li>
+</ul>
+<h2 id="running-it-1"><a class="header" href="#running-it-1">Running it</a></h2>
+<pre><code class="language-bash"># what CI runs (the corpora are shallow clones; see .github/workflows/backtest.yml)
+cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --check-paging --markdown report.md --json report.json
+
+# just the edge cases: no clones needed, a few seconds
+cargo run --release --example rg_backtest -- tests/fixtures/backtest
+
+# only queries whose text contains "needle"
+cargo run --release --example rg_backtest -- tests/fixtures/backtest --only needle
+</code></pre>
+<p>The report lists every query with ripgrep’s and fcs’s line counts, and shows
+sample lines for each miss or extra. The run exits non-zero on any
+difference that is not marked <code>known</code>. CI runs it on every pull request that
+touches <code>src/</code>, the query set or the fixtures, and on every push to <code>main</code>.
+The report appears in the job summary.</p>
+<h2 id="keeping-it-honest"><a class="header" href="#keeping-it-honest">Keeping it honest</a></h2>
+<ul>
+<li><strong>Every search bug fixed gets a query.</strong> When a search bug is fixed, add
+the query that showed it to <code>benches/rg_backtest.toml</code>, with a fixture
+file if the corpora do not already contain the case. Then it stays fixed.</li>
+<li><strong>A difference is fixed or explained, never hidden.</strong> If fcs differs from
+ripgrep on purpose, mark the query <code>known = "…"</code> with the reason, and
+list it under “Known differences” in <a href="#how-matching-compares-with-grep-ripgrep-and-git-grep">Matching compared with grep and
+ripgrep</a>. The backtest still reports it and
+says when it stops differing, so a stale <code>known</code> is noticed.</li>
+<li><strong>The oracle stays independent.</strong> Never derive rg flags or globs from fcs
+code. Write them out in the query.</li>
+</ul>
+<h2 id="what-it-has-caught"><a class="header" href="#what-it-has-caught">What it has caught</a></h2>
+<p>When it was first run, the backtest found that a broad search returned a
+different first page on almost every run, and that LOAD MORE repeated some
+results and skipped others. It also found that Greek words with a final
+sigma were missed, that a regex able to match nothing reported a line past
+the end of a file, and that a byte order mark stopped <code>^</code> from matching
+line 1. All five are fixed (see the <a href="#changelog">changelog</a>).</p>
+<h2 id="what-it-does-not-cover"><a class="header" href="#what-it-does-not-cover">What it does not cover</a></h2>
+<ul>
+<li><strong>Symbol and reference searches.</strong> They have no grep equivalent.</li>
+<li><strong>Ranking order.</strong> That is the <a href="#ranking-quality-1">ranking-quality
+suite</a>.</li>
+<li><strong>API <code>offset</code> paging across a search that hit its budget.</strong> It is not
+stable (see <a href="#where-fcs-differs-from-all-of-them">Matching compared with grep and
+ripgrep</a>).
+Only the web UI’s LOAD MORE is checked.</li>
+<li><strong>GNU grep’s test suite.</strong> It has not been mined yet.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
@@ -3082,6 +3196,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.13.0...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>A ripgrep backtest: <code>examples/rg_backtest.rs</code> runs every query in
+<code>benches/rg_backtest.toml</code> (124 queries, including cases adapted from
+ripgrep’s and Zoekt’s own regression tests) through fcs and through
+<code>rg</code> over tokio 1.45.0, Django 5.2 and the edge-case files in
+<code>tests/fixtures/backtest</code>, and fails on any line one finds and the other
+does not. It also checks that a page of results is repeatable and that
+LOAD MORE ends with every hit exactly once. Runs in CI on changes to the
+engine. Two new documentation pages: how the backtest works and how to
+extend it (“Correctness against ripgrep”), and where fcs’s matching
+agrees with or differs from grep, ripgrep and git grep (“Matching
+compared with grep and ripgrep”).</li>
 <li>MCP server for coding agents at <code>/mcp</code> on the web server (streamable
 HTTP), with six read-only tools: <code>search_code</code>, <code>read_file</code>,
 <code>file_dependencies</code>, <code>change_impact</code>, <code>import_path</code> and
@@ -3134,40 +3259,66 @@ messages accepted across encryption-level boundaries).</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
-<li>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
+<li>
+<p>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
 instead of “1234 RESULTS FOUND · LATENCY: 42.3ms · FULL (5,678 files)”.
 The ranking mode and file count moved to tooltips; the header still says
-when fast ranking searched only some of the files.</li>
-<li>An invalid regex’s error now carries the parser’s explanation and points
+when fast ranking searched only some of the files.</p>
+</li>
+<li>
+<p>An invalid regex’s error now carries the parser’s explanation and points
 at the problem in the pattern as typed (it used to repeat only the
-pattern).</li>
-<li>Rust imports through the crate’s own name (<code>use my_crate::search::X</code> in
+pattern).</p>
+</li>
+<li>
+<p>Rust imports through the crate’s own name (<code>use my_crate::search::X</code> in
 <code>main.rs</code>, <code>src/bin/</code> and <code>tests/</code>) now resolve to the library’s files, so
 those files have import edges and the library modules they use get the
-dependency ranking boost. Existing indexes pick this up on rebuild.</li>
-<li>A busy or forbidden port no longer stops the server. If the gRPC or web
+dependency ranking boost. Existing indexes pick this up on rebuild.</p>
+</li>
+<li>
+<p>A busy or forbidden port no longer stops the server. If the gRPC or web
 port cannot be bound, the server logs an error naming the port and how to
 find what holds it, and keeps indexing and serving on the other API. It
 exits only when no API could start. Previously a busy gRPC port shut the
 server down at once, interrupting indexing at 0 files while the web UI
-stayed up, and the cause appeared only after Ctrl+C.</li>
-<li>Startup logs where the config came from (or that none was found and
+stayed up, and the cause appeared only after Ctrl+C.</p>
+</li>
+<li>
+<p>Startup logs where the config came from (or that none was found and
 defaults are used) and the config warnings; both were previously
-discarded because they were emitted before logging was set up.</li>
-<li>An unset <code>indexer.index_path</code> is now a warning when indexing starts (“Index
+discarded because they were emitted before logging was set up.</p>
+</li>
+<li>
+<p>An unset <code>indexer.index_path</code> is now a warning when indexing starts (“Index
 persistence OFF … lost when the server stops”), and the ready line shows
 <code>index=memory only, not saved</code>. A missing <code>index_path</code> directory is a
-warning rather than an error, since the first save creates it.</li>
-<li><code>--init</code> writes every config key with its default. <code>index_path</code> is now set
+warning rather than an error, since the first save creates it.</p>
+</li>
+<li>
+<p><code>--init</code> writes every config key with its default. <code>index_path</code> is now set
 in the generated file, named after it (<code>--init work.toml</code> gives
 <code>~/.local/share/fast_code_search/work.fcsidx</code>); <code>cors_origins</code>,
 <code>max_concurrent_searches</code>, <code>request_timeout_secs</code>, <code>respect_gitignore</code>,
 <code>include_extensions</code>, <code>exclude_files</code> and <code>batch_size</code> are no longer
-missing or commented out. A test keeps the template complete.</li>
-<li><code>fast_code_search_semantic</code> logs where its config came from, and a busy
+missing or commented out. A test keeps the template complete.</p>
+</li>
+<li>
+<p><code>fast_code_search_semantic</code> logs where its config came from, and a busy
 gRPC or web port is a clear error that disables only that API, instead of
 a panic inside a background task that left the process running with
-nothing listening.</li>
+nothing listening.</p>
+</li>
+<li>
+<p>Documentation brought up to date with the above: the dependency
+explorer and <code>/api/graph/*</code> in the in-app docs, regex help in the web UI
+and query-syntax pages, <code>enable_grpc</code> / <code>--no-grpc</code>, the index lock,
+storage warnings and the diagnostics Service card in the API reference,
+configuration cookbook and troubleshooting guide. The deployment guide
+is rewritten around the published container image, HTTP health and
+readiness probes, and one index per server (its gRPC examples relied on
+reflection, which the server does not offer).</p>
+</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
@@ -3181,6 +3332,20 @@ and <code>-file:</code> words no longer match the indexed root folder’s own na
 (<code>-file:search</code> dropped every file of a root named <code>fast_code_search</code>);
 a filename-only hit obeys <code>case:yes</code> and <code>word:yes</code>; <code>fcs search -e -i</code>
 against an index file now ignores case, as it does against a server.</li>
+<li>A search that stopped at its match limit returned a different first
+page on almost every run (threads raced for the budget), and LOAD MORE
+repeated some results and skipped others. Documents are now taken in a
+fixed order, and LOAD MORE fetches the whole list again at the bigger
+size and redraws it (up to 1000 results; past that it pages as before),
+so nothing repeats or goes missing. Results already shown can move.</li>
+<li>Greek: a query or line with a word-final sigma (<code>ς</code>, or a capital <code>Σ</code>
+that lowercases to it) missed matches written with the other sigma.</li>
+<li>A file starting with a UTF-8 byte order mark (an invisible marker some
+editors write) kept it as part of line 1, so <code>^text</code> missed that line and
+the result showed a stray character. The mark is now skipped when a file
+is read, as ripgrep does. Files on disk are untouched.</li>
+<li>A regex that can match the empty string (<code>x*</code>, <code>^\s*$</code>) reported a hit
+on a line past the end of a file that ends with a newline.</li>
 <li>Plain-text search for code containing quotes (<code>{ "success": True</code>,
 <code>"key":"value"</code>) found nothing: the query parser stripped every <code>"</code>, so
 the term became <code>success:</code>. A quote now opens a phrase only when it
@@ -4269,6 +4434,10 @@ cross-language import resolution improvements.</li>
 </ul>
 <h2 id="done-recently"><a class="header" href="#done-recently">Done recently</a></h2>
 <ul>
+<li>Unreleased: the dependency explorer (<code>/graph.html</code>) and <code>/api/graph/*</code>;
+regex help, no-result suggestions and clearer regex errors; one server
+per index, storage checks and a Service card on the diagnostics page;
+the server stays up when a port is busy.</li>
 <li>0.12: result diversity, inline SVG icons, on-demand rendering, JS test
 harness and Tailwind check in CI.</li>
 <li>0.11: the review fixes (save races, regex candidate generation, phrase
@@ -5744,6 +5913,8 @@ impl SearchEngine {
 <tr><td><strong>Symbol</strong></td><td>A named code element like a function, class, method, or variable. Extracted using tree-sitter parsing. Symbol matches are boosted 3x in search results.</td></tr>
 <tr><td><strong>TF-IDF</strong></td><td>Term Frequency–Inverse Document Frequency. A text vectorization technique that weights words by how important they are to a document relative to the corpus. Used for semantic search embeddings.</td></tr>
 <tr><td><strong>Embedding</strong></td><td>A vector (array of numbers) representing text in a high-dimensional space where similar meanings are close together. Enables “find similar code” queries.</td></tr>
+<tr><td><strong>Import graph</strong></td><td>Which indexed file imports which, resolved from import statements (Rust, Python, JavaScript/TypeScript). Drives the dependency ranking boost, the deps popover and the dependency explorer (<code>/graph.html</code>, <code>/api/graph/*</code>).</td></tr>
+<tr><td><strong>Containment edge</strong></td><td>A Rust <code>mod foo;</code> declaration (or a <code>pub use foo::X</code> re-export of a child module): an edge from a parent module to its own child. It describes structure rather than a dependency, so the explorer hides it by default.</td></tr>
 <tr><td><strong>gRPC</strong></td><td>Google Remote Procedure Call. A high-performance protocol for server communication. Used for streaming search results to IDE clients.</td></tr>
 </tbody>
 </table>

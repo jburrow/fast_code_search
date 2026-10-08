@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,6 +191,13 @@ metadata, trigram directory and bitmaps are streamed into a uniquely
 named temporary file next to the target, fsynced, and renamed into place.
 Two saves cannot interleave, and a crash at any point leaves the previous
 file intact. Checkpoints during a long build use the same path.</p>
+<h2 id="one-server-per-index"><a class="header" href="#one-server-per-index">One server per index</a></h2>
+<p>A server takes an exclusive lock on <code>&lt;index_path&gt;.lock</code> before it loads
+and records its PID and listen addresses in <code>&lt;index_path&gt;.lock.owner</code>.
+A second server started with the same <code>index_path</code> logs which process
+holds it, loads the index read-only and never saves, so two servers can no
+longer overwrite each other’s file. The lock is released when the process
+exits, however it exits.</p>
 <h2 id="load"><a class="header" href="#load">Load</a></h2>
 <ol>
 <li>Map the file, validate header, lengths, checksum and directory order.</li>

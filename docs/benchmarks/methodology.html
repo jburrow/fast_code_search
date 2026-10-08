@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -249,6 +249,11 @@ surfaced six ranking defects; see the <a href="../imported/changelog.html">chang
 <pre><code class="language-bash">cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
 cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
 </code></pre>
+<h2 id="correctness-against-ripgrep"><a class="header" href="#correctness-against-ripgrep">Correctness against ripgrep</a></h2>
+<p>Fast and well ranked is worthless if a match is missing. A backtest runs
+124 searches through fcs and through ripgrep on the same trees and fails on
+any line one finds and the other does not; see <a href="correctness.html">Correctness against
+ripgrep</a> for how it works and how to extend it.</p>
 <h2 id="comparison-with-scan-tools"><a class="header" href="#comparison-with-scan-tools">Comparison with scan tools</a></h2>
 <p><code>scripts/bench/compare.sh &lt;dir&gt;</code> times the same queries through ripgrep,
 ugrep (if installed) and <code>fcs</code> against a server on the same tree, warm

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Editors - fast_code_search</title>
+        <title>Correctness against ripgrep - fast_code_search</title>
 
 
         <!-- Custom HTML head -->
@@ -147,7 +147,7 @@
                         <a href="https://github.com/jburrow/fast_code_search" title="Git repository" aria-label="Git repository">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
                         </a>
-                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/start/editors.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/benchmarks/correctness.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
                             <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
                         </a>
 
@@ -181,46 +181,143 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="editors"><a class="header" href="#editors">Editors</a></h1>
-<p><code>fcs</code> prints <code>path:line:col:text</code> when its output is not a terminal, which
-is the format editors’ quickfix and “go to file:line” features read.</p>
-<h2 id="vim-and-neovim"><a class="header" href="#vim-and-neovim">Vim and Neovim</a></h2>
-<pre><code class="language-vim">" one-off: results as a quickfix list
-:cexpr system('fcs --format vimgrep ' . shellescape('fn main'))
+                        <h1 id="correctness-against-ripgrep"><a class="header" href="#correctness-against-ripgrep">Correctness against ripgrep</a></h1>
+<p>A search tool that misses a line is worse than a slow one: nobody notices
+the line that was not shown. Unit tests check the cases someone thought of.
+The backtest checks fcs against an independent, widely used tool on real
+code, and runs on every change to the engine.</p>
+<h2 id="the-idea"><a class="header" href="#the-idea">The idea</a></h2>
+<p>ripgrep is the oracle. For each search in a fixed query set, the backtest:</p>
+<ol>
+<li>runs the search through the fcs engine with every result limit switched
+off,</li>
+<li>runs the same search through <code>rg</code> with the flags that mean the same
+thing,</li>
+<li>compares the two answers line by line.</li>
+</ol>
+<p>A line ripgrep reports and fcs does not is a <strong>miss</strong>. A line fcs reports and
+ripgrep does not is an <strong>extra</strong>. Either one fails the run, unless the query
+is marked <code>known</code> with a written reason.</p>
+<p>The translation to <code>rg</code> flags comes from the query alone, never from fcs’s
+own matching code, so a bug in fcs cannot hide by also being in the oracle.
+Where fcs syntax has no rg equivalent (<code>file:</code>, <code>lang:</code>), the query states
+what it means in rg terms, as <code>-g</code> globs written by hand.</p>
+<p>ripgrep was chosen over grep and git grep because it shares fcs’s regex
+engine and Unicode case folding, so any difference is a real difference.
+See <a href="../reference/matching.html">Matching compared with grep and ripgrep</a> for
+where fcs, ripgrep, grep and git grep behave differently, and why.</p>
+<h2 id="how-a-query-is-translated"><a class="header" href="#how-a-query-is-translated">How a query is translated</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>fcs query</th><th>ripgrep run</th><th>Compared how</th></tr>
+</thead>
+<tbody>
+<tr><td>One term (<code>Runtime</code>)</td><td><code>rg -F -i -e Runtime</code></td><td>the same lines exactly</td></tr>
+<tr><td><code>case:yes</code></td><td>drops <code>-i</code></td><td>the same lines exactly</td></tr>
+<tr><td><code>word:yes</code></td><td>adds <code>-w</code></td><td>the same lines exactly</td></tr>
+<tr><td>Several terms (<code>fn main</code>)</td><td>one <code>rg -F</code> run per term</td><td>the files must be those holding every term; every line holding all terms must be reported; every reported line must hold at least one term (fcs keeps only a few single-term lines per file by design)</td></tr>
+<tr><td><code>-term</code></td><td>an rg run for <code>term</code>, then those files are removed</td><td>as above</td></tr>
+<tr><td><code>file:</code> / <code>lang:</code></td><td>the query’s own <code>globs</code> (<code>-g</code>)</td><td>as above</td></tr>
+<tr><td>Regex</td><td><code>rg -e PATTERN</code>, plus <code>-U</code> when the pattern spans lines</td><td>the line where each match starts</td></tr>
+</tbody>
+</table>
+</div>
+<p>rg always runs with <code>--no-config -uu --crlf</code>, one tree at a time. Only files
+fcs indexed are compared, so differences in which files get searched (size
+limits, excluded folders, binary files) never show up as search
+differences. File-name hits have no rg counterpart and are left out.</p>
+<h2 id="what-it-runs-on"><a class="header" href="#what-it-runs-on">What it runs on</a></h2>
+<ul>
+<li><strong>Real code:</strong> tokio 1.45.0 and Django 5.2, the same pinned trees as the
+speed benchmarks. About 6,000 files of Rust and Python.</li>
+<li><strong>Edge cases:</strong> <code>tests/fixtures/backtest</code>, small files that real
+repositories rarely contain. They include CRLF line endings, a file with
+no final newline, a file with 250 matches, a very long line, Unicode
+(Greek, German, Japanese, emoji), quotes, operator-like text, a byte order
+mark and a vertical tab.</li>
+<li><strong>Cases borrowed from other tools:</strong> <code>tests/fixtures/backtest/mined</code>
+holds 37 cases adapted from ripgrep’s regression tests
+(<code>tests/regression.rs</code>, named after the issue they fixed) and Zoekt’s
+index tests (<code>index/index_test.go</code>). These are the kinds of patterns a
+trigram index or regex literal extractor tends to get wrong: one- and
+two-byte terms, trigrams present but in the wrong order or split across
+files, optional groups and <code>{0}</code> repeats, character classes, flags
+changed mid-pattern, word boundaries next to punctuation, and matches that
+start on a newline.</li>
+</ul>
+<p>The query set, <code>benches/rg_backtest.toml</code>, has 124 queries. Each one says
+what it exercises (<code>why</code>). They cover literals, short terms, quotes, case
+and whole-word options, Unicode, path and language filters, several terms,
+negation and regex.</p>
+<h2 id="beyond-matching"><a class="header" href="#beyond-matching">Beyond matching</a></h2>
+<p>Two more checks run on every query:</p>
+<ul>
+<li><strong>Repeatable.</strong> The first page (50 results) is fetched three times and
+must be identical. A search that stops at its match budget must still
+give the same answer every time.</li>
+<li><strong>LOAD MORE</strong> (<code>--check-paging</code>, on in CI). Each query with up to 1000
+matches is loaded the way the web UI’s LOAD MORE does it: the whole list
+again, 50 longer each time, while the server says more exist. Every match
+must end up shown exactly once.</li>
+</ul>
+<h2 id="running-it"><a class="header" href="#running-it">Running it</a></h2>
+<pre><code class="language-bash"># what CI runs (the corpora are shallow clones; see .github/workflows/backtest.yml)
+cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --check-paging --markdown report.md --json report.json
 
-" make :grep use it
-set grepprg=fcs\ --format\ vimgrep\ --absolute
-set grepformat=%f:%l:%c:%m
+# just the edge cases: no clones needed, a few seconds
+cargo run --release --example rg_backtest -- tests/fixtures/backtest
+
+# only queries whose text contains "needle"
+cargo run --release --example rg_backtest -- tests/fixtures/backtest --only needle
 </code></pre>
-<p>Then <code>:grep 'fn main'</code>, <code>:copen</code>. <code>--absolute</code> maps the workspace-relative
-paths back to absolute ones through your configuration, so the list works
-from any working directory.</p>
-<h2 id="vs-code"><a class="header" href="#vs-code">VS Code</a></h2>
-<p>Run <code>fcs</code> in the integrated terminal: <code>path:line:col</code> output is clickable.
-With <code>--absolute</code> the links resolve regardless of the folder you opened.
-The repository also contains a
-<a href="https://github.com/jburrow/fast_code_search/tree/main/vscode-extension">VS Code extension</a>
-that talks to the server directly.</p>
-<h2 id="emacs"><a class="header" href="#emacs">Emacs</a></h2>
-<p><code>M-x grep</code> with <code>fcs --format vimgrep --absolute QUERY</code> produces a
-compilation buffer whose entries jump to the file and line.</p>
-<h2 id="shell"><a class="header" href="#shell">Shell</a></h2>
-<pre><code class="language-bash">fcs -l TODO | xargs $EDITOR           # open every file containing TODO
-fcs -l 'fn main' | fzf | xargs $EDITOR
-fcs --json 'parse_query' | jq '.results[] | [.file_path, .line_number]'
-</code></pre>
-<p>Exit status follows grep: 0 when there were matches, 1 when none, 2 on
-error, so <code>fcs -q pattern &amp;&amp; …</code> works in scripts.</p>
+<p>The report lists every query with ripgrep’s and fcs’s line counts, and shows
+sample lines for each miss or extra. The run exits non-zero on any
+difference that is not marked <code>known</code>. CI runs it on every pull request that
+touches <code>src/</code>, the query set or the fixtures, and on every push to <code>main</code>.
+The report appears in the job summary.</p>
+<h2 id="keeping-it-honest"><a class="header" href="#keeping-it-honest">Keeping it honest</a></h2>
+<ul>
+<li><strong>Every search bug fixed gets a query.</strong> When a search bug is fixed, add
+the query that showed it to <code>benches/rg_backtest.toml</code>, with a fixture
+file if the corpora do not already contain the case. Then it stays fixed.</li>
+<li><strong>A difference is fixed or explained, never hidden.</strong> If fcs differs from
+ripgrep on purpose, mark the query <code>known = "…"</code> with the reason, and
+list it under “Known differences” in <a href="../reference/matching.html">Matching compared with grep and
+ripgrep</a>. The backtest still reports it and
+says when it stops differing, so a stale <code>known</code> is noticed.</li>
+<li><strong>The oracle stays independent.</strong> Never derive rg flags or globs from fcs
+code. Write them out in the query.</li>
+</ul>
+<h2 id="what-it-has-caught"><a class="header" href="#what-it-has-caught">What it has caught</a></h2>
+<p>When it was first run, the backtest found that a broad search returned a
+different first page on almost every run, and that LOAD MORE repeated some
+results and skipped others. It also found that Greek words with a final
+sigma were missed, that a regex able to match nothing reported a line past
+the end of a file, and that a byte order mark stopped <code>^</code> from matching
+line 1. All five are fixed (see the <a href="../imported/changelog.html">changelog</a>).</p>
+<h2 id="what-it-does-not-cover"><a class="header" href="#what-it-does-not-cover">What it does not cover</a></h2>
+<ul>
+<li><strong>Symbol and reference searches.</strong> They have no grep equivalent.</li>
+<li><strong>Ranking order.</strong> That is the <a href="ranking-quality.html">ranking-quality
+suite</a>.</li>
+<li><strong>API <code>offset</code> paging across a search that hit its budget.</strong> It is not
+stable (see <a href="../reference/matching.html#where-fcs-differs-from-all-of-them">Matching compared with grep and
+ripgrep</a>).
+Only the web UI’s LOAD MORE is checked.</li>
+<li><strong>GNU grep’s test suite.</strong> It has not been mined yet.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../start/web-ui.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../benchmarks/ranking-quality.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../imported/run-at-startup.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../imported/changelog.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -230,11 +327,11 @@ error, so <code>fcs -q pattern &amp;&amp; …</code> works in scripts.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../start/web-ui.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../benchmarks/ranking-quality.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../imported/run-at-startup.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../imported/changelog.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,6 +195,8 @@
 <tr><td><strong>Symbol</strong></td><td>A named code element like a function, class, method, or variable. Extracted using tree-sitter parsing. Symbol matches are boosted 3x in search results.</td></tr>
 <tr><td><strong>TF-IDF</strong></td><td>Term Frequency–Inverse Document Frequency. A text vectorization technique that weights words by how important they are to a document relative to the corpus. Used for semantic search embeddings.</td></tr>
 <tr><td><strong>Embedding</strong></td><td>A vector (array of numbers) representing text in a high-dimensional space where similar meanings are close together. Enables “find similar code” queries.</td></tr>
+<tr><td><strong>Import graph</strong></td><td>Which indexed file imports which, resolved from import statements (Rust, Python, JavaScript/TypeScript). Drives the dependency ranking boost, the deps popover and the dependency explorer (<code>/graph.html</code>, <code>/api/graph/*</code>).</td></tr>
+<tr><td><strong>Containment edge</strong></td><td>A Rust <code>mod foo;</code> declaration (or a <code>pub use foo::X</code> re-export of a child module): an edge from a parent module to its own child. It describes structure rather than a dependency, so the explorer hides it by default.</td></tr>
 <tr><td><strong>gRPC</strong></td><td>Google Remote Procedure Call. A high-performance protocol for server communication. Used for streaming search results to IDE clients.</td></tr>
 </tbody>
 </table>

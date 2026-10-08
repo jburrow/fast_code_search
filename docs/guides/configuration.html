@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-38dc6b85.js";
+            window.path_to_searchindex_js = "../searchindex-0f175ca1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-4e79abd4.js"></script>
+        <script src="../toc-0ff2f94c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -221,6 +221,26 @@ checkpoint_interval_files = 20000
 <p>Use <code>exclude_patterns</code> for whole trees and <code>exclude_files</code> for individual
 paths. A <code>.gitignore</code> in any indexed tree is honoured as well (also outside
 git repositories), so what your VCS ignores, the index ignores.</p>
+<h2 id="two-configurations-on-one-machine"><a class="header" href="#two-configurations-on-one-machine">Two configurations on one machine</a></h2>
+<p>Say a <code>work.toml</code> and a <code>personal.toml</code>, each run by its own server. Give
+each its own ports and, above all, its own <code>index_path</code>: only one server
+can write an index, and a second one pointed at the same file loads it
+read-only and never saves (the log names the process that owns it).
+<code>fast_code_search_server --init work.toml</code> already names the index after
+the file (<code>work.fcsidx</code>).</p>
+<pre><code class="language-toml">[server]
+address = "127.0.0.1:50052"
+web_address = "127.0.0.1:8081"
+
+[indexer]
+index_path = "~/.local/share/fast_code_search/work.fcsidx"
+</code></pre>
+<h2 id="web-ui-and-fcs-only-no-grpc"><a class="header" href="#web-ui-and-fcs-only-no-grpc">Web UI and <code>fcs</code> only, no gRPC</a></h2>
+<p><code>fcs</code>, the web UI and the REST API all use the web port. If nothing of
+yours speaks gRPC, turn it off (or pass <code>--no-grpc</code>):</p>
+<pre><code class="language-toml">[server]
+enable_grpc = false
+</code></pre>
 <h2 id="change-a-rule-on-a-running-index"><a class="header" href="#change-a-rule-on-a-running-index">Change a rule on a running index</a></h2>
 <p>Edit the file and restart the server. Files that are no longer eligible
 under the new patterns, extensions, size cap or <code>.gitignore</code> are dropped

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Editors - fast_code_search</title>
+        <title>Matching compared with grep and ripgrep - fast_code_search</title>
 
 
         <!-- Custom HTML head -->
@@ -147,7 +147,7 @@
                         <a href="https://github.com/jburrow/fast_code_search" title="Git repository" aria-label="Git repository">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
                         </a>
-                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/start/editors.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/reference/matching.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
                             <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
                         </a>
 
@@ -181,46 +181,92 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="editors"><a class="header" href="#editors">Editors</a></h1>
-<p><code>fcs</code> prints <code>path:line:col:text</code> when its output is not a terminal, which
-is the format editors’ quickfix and “go to file:line” features read.</p>
-<h2 id="vim-and-neovim"><a class="header" href="#vim-and-neovim">Vim and Neovim</a></h2>
-<pre><code class="language-vim">" one-off: results as a quickfix list
-:cexpr system('fcs --format vimgrep ' . shellescape('fn main'))
-
-" make :grep use it
-set grepprg=fcs\ --format\ vimgrep\ --absolute
-set grepformat=%f:%l:%c:%m
-</code></pre>
-<p>Then <code>:grep 'fn main'</code>, <code>:copen</code>. <code>--absolute</code> maps the workspace-relative
-paths back to absolute ones through your configuration, so the list works
-from any working directory.</p>
-<h2 id="vs-code"><a class="header" href="#vs-code">VS Code</a></h2>
-<p>Run <code>fcs</code> in the integrated terminal: <code>path:line:col</code> output is clickable.
-With <code>--absolute</code> the links resolve regardless of the folder you opened.
-The repository also contains a
-<a href="https://github.com/jburrow/fast_code_search/tree/main/vscode-extension">VS Code extension</a>
-that talks to the server directly.</p>
-<h2 id="emacs"><a class="header" href="#emacs">Emacs</a></h2>
-<p><code>M-x grep</code> with <code>fcs --format vimgrep --absolute QUERY</code> produces a
-compilation buffer whose entries jump to the file and line.</p>
-<h2 id="shell"><a class="header" href="#shell">Shell</a></h2>
-<pre><code class="language-bash">fcs -l TODO | xargs $EDITOR           # open every file containing TODO
-fcs -l 'fn main' | fzf | xargs $EDITOR
-fcs --json 'parse_query' | jq '.results[] | [.file_path, .line_number]'
-</code></pre>
-<p>Exit status follows grep: 0 when there were matches, 1 when none, 2 on
-error, so <code>fcs -q pattern &amp;&amp; …</code> works in scripts.</p>
+                        <h1 id="how-matching-compares-with-grep-ripgrep-and-git-grep"><a class="header" href="#how-matching-compares-with-grep-ripgrep-and-git-grep">How matching compares with grep, ripgrep and git grep</a></h1>
+<p>fcs aims to find exactly the lines ripgrep finds for the same search. Every
+difference listed below is either deliberate, or the result of fcs being an
+index rather than a scan tool. ripgrep is the reference because it is the
+closest well-known tool: the same regex engine (Rust <code>regex</code>), Unicode-aware
+case folding, and <code>.gitignore</code> handling. The <a href="../benchmarks/correctness.html">ripgrep
+backtest</a> checks this on every engine change.
+It runs a fixed set of searches through both tools and fails on any line one
+finds and the other does not.</p>
+<h2 id="where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep"><a class="header" href="#where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep">Where fcs agrees with ripgrep and differs from grep and git grep</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Behaviour</th><th>fcs</th><th>ripgrep</th><th>GNU grep</th><th>git grep</th></tr>
+</thead>
+<tbody>
+<tr><td>Regex dialect</td><td>Rust <code>regex</code></td><td>Rust <code>regex</code> (PCRE2 with <code>-P</code>)</td><td>POSIX BRE/ERE (<code>-E</code>), PCRE with <code>-P</code></td><td>POSIX BRE/ERE, PCRE with <code>-P</code></td></tr>
+<tr><td>Byte order mark at the start of a file</td><td>ignored, so <code>^</code> matches line 1</td><td>ignored (kept with <code>-E none</code>)</td><td>part of line 1, so <code>^</code> misses it</td><td>part of line 1, so <code>^</code> misses it</td></tr>
+<tr><td><code>$</code> on a line ending in CRLF</td><td>matches before the <code>\r</code></td><td>only with <code>--crlf</code></td><td>no</td><td>no</td></tr>
+<tr><td>Pattern that mentions <code>\n</code></td><td>runs over the whole file and reports the line where the match starts</td><td>needs <code>-U</code></td><td>not supported</td><td>not supported</td></tr>
+<tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter; <code>ß</code> is not <code>ss</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
+<tr><td>Hidden files (<code>.github/</code>, <code>.env.example</code>)</td><td>searched</td><td>skipped unless <code>--hidden</code></td><td>searched</td><td>searched if tracked</td></tr>
+<tr><td>Files searched</td><td>the indexed tree, honouring <code>.gitignore</code></td><td>the tree, honouring <code>.gitignore</code></td><td>what you name</td><td>tracked files only</td></tr>
+</tbody>
+</table>
+</div>
+<p>These were checked with GNU grep 3.11, git 2.43 and ripgrep 14.1.</p>
+<h2 id="where-fcs-differs-from-all-of-them"><a class="header" href="#where-fcs-differs-from-all-of-them">Where fcs differs from all of them</a></h2>
+<p>These follow from fcs being a code search server rather than a line filter.</p>
+<ul>
+<li><strong>Case-insensitive by default.</strong> Text searches ignore case unless the query
+says <code>case:yes</code>. grep, git grep and ripgrep are case-sensitive by default.
+A regex is case-sensitive unless it uses <code>(?i)</code> or the request sets the
+case option. The backtest passes <code>-i</code> to ripgrep whenever fcs ignores
+case.</li>
+<li><strong>Several words are not a phrase.</strong> <code>fn main</code> finds files that contain
+both words, anywhere in the file. Lines holding the phrase rank first,
+then lines holding both words, then at most three lines per file holding
+only one of them. Quote the words (<code>"fn main"</code>) to search for the exact
+phrase, as grep would.</li>
+<li><strong>Operators.</strong> <code>-term</code>, <code>file:</code>, <code>lang:</code>, <code>case:</code> and <code>word:</code> are query
+syntax, not text. To search for one literally, quote it: <code>"-test"</code>,
+<code>"file:"</code>. A <code>-</code> only negates before a letter, <code>_</code> or quote, so <code>-&gt;</code>,
+<code>-1.5</code> and <code>--flag</code> are searched as written. See <a href="query-syntax.html">Query
+syntax</a>.</li>
+<li><strong>File names match too.</strong> A text search also lists files whose <em>name</em>
+matches, as a hit without a line number. grep has no equivalent, so the
+backtest leaves these out of the comparison.</li>
+<li><strong>One result per line.</strong> A line with several matches is one result. For a
+multi-line match, the result is the line where it starts. ripgrep counts
+lines the same way (<code>rg -c</code>).</li>
+<li><strong>Ranked, and capped.</strong> Results come back best first rather than in file
+order. To keep a broad search fast, a request reads a bounded number of
+matches: by default 100 from one file on the first page, and a budget of
+about eight times the requested page. When either limit is reached, the
+total is shown as “N+” rather than as a count. LOAD MORE in the web UI
+fetches the whole list again at the bigger size, up to 1000 results, so
+every match ends up shown exactly once. Results already on screen can
+move when it does. Past 1000 results it fetches the next page instead.
+An API client asking for <code>offset</code> pages of a search that hit its budget
+can see a result repeated or skipped between pages. Asking again from
+offset 0 with a larger <code>max</code> avoids that.</li>
+<li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
+Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
+(<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16
+with a byte order mark, or when given <code>-E</code>. grep and git grep match raw
+bytes. Binary files are not indexed.</li>
+<li><strong>Index scope.</strong> Files over <code>max_file_size</code> (10 MB by default) and paths
+matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target</code>, <code>.git</code>, <code>build</code>,
+<code>dist</code>, Python virtual environments) are not indexed, so they are never
+searched.</li>
+</ul>
+<h2 id="known-differences"><a class="header" href="#known-differences">Known differences</a></h2>
+<p>None at the moment. A known difference would be listed here, and marked
+<code>known</code> with its reason in <code>benches/rg_backtest.toml</code>, so the backtest still
+reports it without failing.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../start/web-ui.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../reference/query-syntax.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../imported/run-at-startup.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/cli-help.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -230,11 +276,11 @@ error, so <code>fcs -q pattern &amp;&amp; …</code> works in scripts.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../start/web-ui.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../reference/query-syntax.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../imported/run-at-startup.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/cli-help.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
