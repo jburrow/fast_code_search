@@ -48,7 +48,8 @@ const INSTRUCTIONS: &str = "fast_code_search keeps a trigram index and a file-le
      grep, read_file to read source with line numbers, file_dependencies and change_impact \
      before changing a file other code relies on, import_path to see how two files are \
      connected, and dependency_overview to get oriented in an unfamiliar repository. Paths are \
-     root-relative (`<root>/src/main.rs`), as every tool returns them. All tools are read-only.";
+     root-relative (`<root>/src/main.rs`, or `src/main.rs` when the server hides the root \
+     folder's name), as every tool returns them. All tools are read-only.";
 
 // ------------------------------------------------------------------ transport
 

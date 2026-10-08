@@ -2994,3 +2994,85 @@ fn test_byte_order_mark_is_not_part_of_line_one() {
     let first = hits.iter().find(|m| m.line_number == 1).unwrap();
     assert_eq!(first.content, "test123");
 }
+
+/// `show_root_name = false` with one root leaves the root folder's name off
+/// every path a caller sees, while path filters keep matching the
+/// root-qualified form, so `file:` behaves exactly as with the name shown.
+#[test]
+fn test_hidden_root_name_single_root() {
+    let t = TempDir::new().unwrap();
+    let root = t.path().join("search_proj");
+    let files = [
+        ("src/a.rs", "needle\n"),
+        ("src/search/b.rs", "needle\n"),
+        // A folder named like the root must not be mistaken for it.
+        ("search_proj/c.rs", "needle\n"),
+        ("top.rs", "needle\n"),
+    ];
+    let mut e = SearchEngine::new();
+    e.show_root_name = false;
+    e.add_root_path(&root);
+    for (name, content) in files {
+        let p = root.join(name);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, content).unwrap();
+        e.index_file(&p).unwrap();
+    }
+    e.finalize();
+    assert!(e.hides_root_name());
+
+    let found = |q: &str| -> Vec<String> {
+        let mut v: Vec<String> = review_text(&e, q, SearchLimits::new(10))
+            .0
+            .into_iter()
+            .map(|m| m.file_path)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        found("needle"),
+        vec!["search_proj/c.rs", "src/a.rs", "src/search/b.rs", "top.rs"]
+    );
+    // Filters are unchanged by hiding the name (see
+    // test_file_operator_ignores_the_root_folder_name).
+    assert_eq!(found("needle -file:search"), vec!["src/a.rs", "top.rs"]);
+    assert_eq!(found("needle file:search_proj/").len(), 4);
+    assert_eq!(found("needle file:top"), vec!["top.rs"]);
+    assert_eq!(
+        found("needle file:src/"),
+        vec!["src/a.rs", "src/search/b.rs"]
+    );
+
+    // Displayed paths resolve back to their own file, including the folder
+    // that shares the root's name.
+    for shown in ["src/a.rs", "search_proj/c.rs", "top.rs"] {
+        let id = e.find_file_id(shown).unwrap();
+        assert_eq!(e.display_path(id).unwrap(), shown);
+        assert_eq!(e.get_file_path(id).unwrap(), shown);
+    }
+    // The root-qualified form still resolves too.
+    let id = e.find_file_id("search_proj/src/a.rs").unwrap();
+    assert_eq!(e.display_path(id).unwrap(), "src/a.rs");
+}
+
+/// With several roots the name is what tells `alpha/utils.rs` from
+/// `beta/utils.rs`, so `show_root_name = false` is not honoured.
+#[test]
+fn test_hidden_root_name_ignored_with_multiple_roots() {
+    let t = TempDir::new().unwrap();
+    let mut engine = SearchEngine::new();
+    engine.show_root_name = false;
+    let mut files = Vec::new();
+    for name in ["alpha", "beta"] {
+        let root = t.path().join(name);
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("utils.rs");
+        fs::write(&file, "// utils").unwrap();
+        engine.add_root_path(&root);
+        files.push(file.canonicalize().unwrap());
+    }
+    assert!(!engine.hides_root_name());
+    assert_eq!(engine.make_display_path(&files[0]), "alpha/utils.rs");
+    assert_eq!(engine.make_display_path(&files[1]), "beta/utils.rs");
+}

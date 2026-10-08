@@ -118,6 +118,12 @@ watch = false
 # Disable to reduce memory usage and indexing time at the cost of reduced relevance.
 enable_symbols = true
 
+# Start result paths with the indexed folder's name (default: true).
+# Indexing /code/myapp shows myapp/src/main.rs; false shows src/main.rs.
+# Only applies when a single path is indexed. Display only: file: filters
+# and the saved index are unaffected.
+show_root_name = true
+
 # Files read and indexed per batch during the initial build (default: 500).
 # Peak RAM scales with batch_size x average file size x ~4: lower it on small
 # machines, raise it on large ones to reduce lock contention.

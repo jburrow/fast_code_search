@@ -41,6 +41,23 @@ max_file_size = 2097152          # 2 MB: skips generated blobs
 checkpoint_interval_files = 20000
 ```
 
+## Results without the folder name
+
+With one root, every result starts with that folder's name: indexing
+`~/work/myapp` shows `myapp/src/main.rs`. To show `src/main.rs` instead:
+
+```toml
+[indexer]
+paths = ["~/work/myapp"]
+show_root_name = false
+```
+
+This only changes what is displayed (web UI, REST, `fcs`, MCP). It has no
+effect with more than one root, where the name is what tells their files
+apart, and `file:` filters match the same files either way: a bare word
+never matches the root's name, and `file:myapp/` still selects the whole
+root. No re-index is needed; restart the server.
+
 ## Only some languages
 
 ```toml

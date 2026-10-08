@@ -648,7 +648,7 @@ impl SearchEngine {
                 _ => self
                     .file_store
                     .get(doc_id)
-                    .map(|f| path_filter.matches(&self.make_display_path(&f.path)))
+                    .map(|f| path_filter.matches(&self.root_qualified_path(&f.path)))
                     .unwrap_or(false),
             };
             if keep {
@@ -661,7 +661,9 @@ impl SearchEngine {
     /// Display path for a file id: precomputed when available.
     pub(super) fn display_path_for(&self, doc_id: u32, path: &Path) -> String {
         match self.file_metadata.get(doc_id as usize) {
-            Some(meta) if !meta.display_path.is_empty() => meta.display_path.clone(),
+            Some(meta) if !meta.display_path.is_empty() => {
+                meta.display_path[meta.display_start as usize..].to_string()
+            }
             _ => self.make_display_path(path),
         }
     }

@@ -14,9 +14,10 @@ use std::path::PathBuf;
 /// - Include patterns: Files must match at least one pattern (if any specified)
 /// - Exclude patterns: Files must not match any pattern
 ///
-/// Patterns are matched against workspace-relative display paths produced by
-/// `SearchEngine::make_display_path`.  Display paths always include the indexed
-/// root folder's own name as the first component, e.g. `project/src/main.rs`
+/// Patterns are matched against root-qualified paths produced by
+/// `SearchEngine::root_qualified_path`.  These always include the indexed
+/// root folder's own name as the first component (even when results hide
+/// it with `show_root_name = false`), e.g. `project/src/main.rs`
 /// (not just `src/main.rs`), so patterns like `src/**/*.rs` are automatically
 /// expanded to `**/src/**/*.rs` and will match at any depth.
 #[derive(Debug, Default, Clone)]
