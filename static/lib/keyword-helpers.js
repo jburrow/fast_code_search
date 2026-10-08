@@ -387,6 +387,69 @@ function matcherRanges(text, matcher) {
     return out;
 }
 
+// ---------- Results header ----------
+
+/**
+ * The results-count badge. `total_matches` is present when the scan ran to
+ * completion; when the match budget or deadline stopped it early the server
+ * sets `truncated_by_budget` and the total is unknown, which is not something
+ * a bigger page size fixes.
+ * @param {object} data last page of the search response
+ * @param {number} n results loaded so far (all pages)
+ * @returns {{text: string, title: string}}
+ */
+function resultsCountLabel(data, n) {
+    const num = (k) => Number(k).toLocaleString('en-US');
+    const plural = (k) => `${num(k)} RESULT${k !== 1 ? 'S' : ''}`;
+    if (typeof data.total_matches === 'number') {
+        return n < data.total_matches
+            ? { text: `${num(n)} OF ${plural(data.total_matches)}`, title: 'Use LOAD MORE to fetch the next page' }
+            : { text: plural(n), title: '' };
+    }
+    if (data.truncated_by_budget) {
+        return {
+            text: `${num(n)}+ RESULTS`,
+            title: 'The search stopped at its match limit or time limit, so the total is unknown. LOAD MORE continues from where it stopped.',
+        };
+    }
+    return data.has_more
+        ? { text: `${num(n)}+ RESULTS`, title: 'More results are available' }
+        : { text: plural(n), title: '' };
+}
+
+/** "36 ms", or one decimal under 10 ms ("4.2 ms"). */
+function formatDurationMs(ms) {
+    const v = Number(ms) || 0;
+    return `${v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('en-US')} ms`;
+}
+
+/**
+ * The muted text beside the count. Normally just the time ("36 ms"): the
+ * ranking mode and candidate-file count are internals, so they live in the
+ * tooltip. The one case worth showing is fast ranking skipping files, since
+ * results may then be missing ("Searched 2,000 of 12,000 files · 36 ms").
+ * @param {object} data search response
+ * @param {number} durationMs
+ * @returns {{text: string, title: string}}
+ */
+function searchMetaLabel(data, durationMs) {
+    const time = formatDurationMs(durationMs);
+    const total = data.total_candidates;
+    if (typeof total !== 'number') return { text: time, title: '' };
+    const searched = typeof data.candidates_searched === 'number' ? data.candidates_searched : total;
+    const num = (k) => k.toLocaleString('en-US');
+    if (searched < total) {
+        return {
+            text: `Searched ${num(searched)} of ${num(total)} files · ${time}`,
+            title: 'Fast ranking only opened the most likely files. Set Ranking to Full under FILTER to search them all.',
+        };
+    }
+    return {
+        text: time,
+        title: `${num(total)} file${total !== 1 ? 's' : ''} could contain the query`,
+    };
+}
+
 // ---------- highlight.js output ----------
 
 /**
@@ -450,5 +513,8 @@ if (typeof module !== 'undefined' && module.exports) {
         buildQueryMatcher,
         matcherRanges,
         splitHighlightedHtml,
+        resultsCountLabel,
+        formatDurationMs,
+        searchMetaLabel,
     };
 }

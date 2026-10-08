@@ -18,8 +18,7 @@ const contextLinesSelect = document.getElementById('context-lines');
 const resultsContainer = document.getElementById('results');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
-const rankingInfoEl = document.getElementById('ranking-info');
-const searchTimeEl = document.getElementById('search-time');
+const searchMetaEl = document.getElementById('search-meta');
 const searchHistoryDropdown = document.getElementById('search-history-dropdown');
 
 // Stats elements
@@ -1239,56 +1238,18 @@ async function loadMoreResults() {
     }
 }
 
-/**
- * The results-count label. `total_matches` is present when the scan ran to
- * completion; when the match budget or deadline stopped it early the server
- * sets `truncated_by_budget` and the total is unknown, which is not something
- * a bigger page size fixes.
- */
-function resultsCountLabel(search) {
-    const data = search.last;
-    const n = search.results.length;
-    const plural = (k) => `${k} RESULT${k !== 1 ? 'S' : ''}`;
-    if (typeof data.total_matches === 'number') {
-        return n < data.total_matches
-            ? { text: `${n} OF ${data.total_matches.toLocaleString()} RESULTS`, title: 'Use LOAD MORE to fetch the next page' }
-            : { text: `${plural(n)} FOUND`, title: '' };
-    }
-    if (data.truncated_by_budget) {
-        return {
-            text: `${n}+ RESULTS (SCAN BUDGET REACHED)`,
-            title: 'The search stopped at its match budget or deadline, so the total is unknown. LOAD MORE continues from where it stopped.',
-        };
-    }
-    return data.has_more
-        ? { text: `${n}+ RESULTS`, title: 'More results are available' }
-        : { text: `${plural(n)} FOUND`, title: '' };
-}
-
 /** Render the current search (all pages loaded so far) into the results area. */
 function renderSearch(search, durationMs, opts = {}) {
     const data = search.last;
     const query = search.query;
 
     resultsHeader.style.display = 'flex';
-    const label = resultsCountLabel(search);
+    const label = resultsCountLabel(data, search.results.length);
     resultsCount.textContent = label.text;
     resultsCount.title = label.title;
-    searchTimeEl.textContent = `LATENCY: ${Number(durationMs || 0).toFixed(1)}ms`;
-
-    // Show ranking info if available
-    if (data.rank_mode && data.total_candidates !== undefined) {
-        // Plain mono labels (no emoji) to match the brutalist design language.
-        const modeLabel = data.rank_mode === 'fast' ? 'FAST' : (data.rank_mode === 'full' ? 'FULL' : 'AUTO');
-        const candidateInfo = data.candidates_searched !== data.total_candidates
-            ? `${data.candidates_searched.toLocaleString()}/${data.total_candidates.toLocaleString()} files`
-            : `${data.total_candidates.toLocaleString()} files`;
-        rankingInfoEl.textContent = `${modeLabel} (${candidateInfo})`;
-        rankingInfoEl.title = `Ranking mode: ${data.rank_mode}\nTotal candidates: ${data.total_candidates}\nSearched: ${data.candidates_searched}`;
-    } else {
-        rankingInfoEl.textContent = '';
-        rankingInfoEl.title = '';
-    }
+    const meta = searchMetaLabel(data, durationMs);
+    searchMetaEl.textContent = meta.text;
+    searchMetaEl.title = meta.title;
 
     if (search.results.length === 0) {
         resetRenderState();
