@@ -3009,6 +3009,9 @@ fn test_hidden_root_name_single_root() {
         ("search_proj/c.rs", "needle\n"),
         ("top.rs", "needle\n"),
     ];
+    // The root must exist before it is registered: it is canonicalized then
+    // (on macOS the temp dir is under a /var -> /private/var symlink).
+    fs::create_dir_all(&root).unwrap();
     let mut e = SearchEngine::new();
     e.show_root_name = false;
     e.add_root_path(&root);
