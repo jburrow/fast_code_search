@@ -376,6 +376,33 @@
         /* Copy-path button feedback (set briefly by setCopyButtonState) */
         .copy-path-btn.copy-ok { color: #1e6868 !important; }
         .copy-path-btn.copy-failed { color: #ba1a1a !important; }
+        /* Regex cheat-sheet and search suggestions */
+        #regex-help { display: none; background: #fff; border: 1px solid #000; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #1d1c0f; }
+        #regex-help.open { display: block; }
+        .regex-help-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+        .regex-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem 2rem; }
+        .regex-help-title { font-weight: 700; margin-bottom: 0.4rem; }
+        .regex-help-examples, .regex-help-rules { list-style: none; padding: 0; margin: 0 0 0.5rem; display: grid; gap: 0.35rem; }
+        .regex-help-examples button { background: #f2eed9; border: 1px solid #000; padding: 0.1rem 0.4rem; margin-right: 0.4rem; cursor: pointer; }
+        .regex-help-examples button:hover { background: #fff900; }
+        #regex-help code, .search-suggestions code, .regex-error code { background: #f2eed9; padding: 0 0.2rem; }
+        #regex-help a { text-decoration: underline; }
+        .regex-help-link { background: none; border: none; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; color: inherit; }
+        .search-suggestions { margin-top: 1rem; display: grid; gap: 0.6rem; justify-items: center; }
+        .suggestion-hint { color: #5f5d48; }
+        .suggestion-list { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
+        .suggestion-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; max-width: 100%; text-align: left; background: #fff; color: #1d1c0f; border: 1px solid #000; box-shadow: 2px 2px 0 #000; padding: 0.4rem 0.7rem; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+        .suggestion-btn:hover { background: #fff900; }
+        .suggestion-btn code { overflow-wrap: anywhere; }
+        .suggestion-label { font-weight: 700; }
+        .suggestion-count { font-weight: 400; color: #5f5d48; }
+        .regex-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #fff; border: 1px solid #ba1a1a; padding: 0.5rem; margin: 0.5rem 0; color: #1d1c0f; }
+        .regex-error .suggestion-list { justify-content: flex-start; }
+        /* Phone width: the toggles wrap instead of FILTER being cut off */
+        @media (max-width: 767px) {
+            #mode-toggle-group { flex-wrap: wrap; flex-shrink: 1; }
+            #mode-toggle-group > * { flex-grow: 1; justify-content: center; border-bottom: 1px solid #000; margin-bottom: -1px; }
+        }
         /* Filter panel */
         #filter-panel { display: none; }
         #filter-panel.open { display: block; }
@@ -571,7 +598,7 @@
                     <div id="search-history-dropdown" style="display:none" class="absolute top-full left-0 right-0 z-50 bg-white border border-black border-t-0 shadow-md max-h-64 overflow-y-auto"></div>
                 </div>
                 <!-- Toggle group -->
-                <div class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
+                <div id="mode-toggle-group" class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
                     <!-- Mode toggles: the "on" look comes from the .toggle-on class,
                          which keyword.js derives from the checkbox state
                          (syncToggleVisuals), so URL/storage/history changes
@@ -581,6 +608,10 @@
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-code"/></svg>
                         <span>REGEX</span>
                     </label>
+                    <button type="button" id="regex-help-btn" aria-expanded="false" aria-controls="regex-help" aria-label="Regex help and examples" title="Regex help and examples"
+                        class="flex items-center px-2 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors border-r border-black">
+                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-help-outline"/></svg>
+                    </button>
                     <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Only match symbol definitions">
                         <input type="checkbox" id="symbols-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-function"/></svg>
@@ -602,6 +633,40 @@
                 <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
                     EXECUTE_QUERY
                 </button>
+            </div>
+
+            <!-- Regex cheat-sheet (toggled by the ? next to REGEX; keyword.js) -->
+            <div id="regex-help" role="region" aria-label="Regex help">
+                <div class="regex-help-head">
+                    <strong>REGEX CHEAT-SHEET</strong>
+                    <button type="button" id="regex-help-close" class="regex-help-link">Close</button>
+                </div>
+                <div class="regex-help-grid">
+                    <div>
+                        <p class="regex-help-title">Click an example to run it</p>
+                        <ul class="regex-help-examples">
+                            <li><button type="button" data-example="fn \w+\("><code>fn \w+\(</code></button> function definitions</li>
+                            <li><button type="button" data-example="TODO|FIXME"><code>TODO|FIXME</code></button> either word</li>
+                            <li><button type="button" data-example="(?i)error"><code>(?i)error</code></button> ignore case</li>
+                            <li><button type="button" data-example="\bconfig\b"><code>\bconfig\b</code></button> whole word only</li>
+                            <li><button type="button" data-example="\{\s*&quot;success&quot;:\s*True"><code>\{\s*"success":\s*True</code></button> any spacing</li>
+                            <li><button type="button" data-example="^import "><code>^import </code></button> at the start of a line</li>
+                            <li><button type="button" data-example="\d{3,}"><code>\d{3,}</code></button> three or more digits</li>
+                            <li><button type="button" data-example="(?s)BEGIN.*END"><code>(?s)BEGIN.*END</code></button> across lines</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <p class="regex-help-title">Things that catch people out</p>
+                        <ul class="regex-help-rules">
+                            <li><strong>Case-sensitive.</strong> Plain search ignores case; regex does not. Start with <code>(?i)</code> to ignore it.</li>
+                            <li><strong>Special characters.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> mean something. Put <code>\</code> before one to match it: <code>\{</code>, <code>\.</code>, <code>\(</code>.</li>
+                            <li><strong>Spaces are exact.</strong> <code>a b</code> needs exactly one space. Use <code>\s*</code> (any, even none) or <code>\s+</code> (at least one).</li>
+                            <li><strong>One line at a time.</strong> <code>.</code> and <code>\s</code> stop at the end of a line. Use <code>\n</code> or <code>(?s)</code> to match across lines.</li>
+                            <li><strong>Literal text?</strong> Turn REGEX off: plain search matches what you type, quotes included.</li>
+                        </ul>
+                        <p><a href="/docs.html#regex-search">Full regex guide</a></p>
+                    </div>
+                </div>
             </div>
 
             <!-- Results meta bar (shown after search) -->

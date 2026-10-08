@@ -239,9 +239,40 @@
                 <code>--server</code>, <code>$FCS_SERVER</code> or the configuration, and can search
                 the saved index offline. See <code>docs/CLI.md</code> in the repository.</p>
 
-            <h3>Regex Search</h3>
-            <p>Enable the <code>Regex</code> checkbox to search with regular expression patterns. When possible,
-                literals in the regex are used to accelerate the search via trigram filtering.</p>
+            <h3 id="regex-search">Regex Search</h3>
+            <p>Enable the <code>Regex</code> toggle to search with regular expression patterns (the
+                syntax of Rust's <code>regex</code> crate). When possible, literals in the regex are used
+                to accelerate the search via trigram filtering. The <code>?</code> button next to the toggle
+                opens a cheat-sheet with runnable examples.</p>
+            <table>
+                <tr><th>Pattern</th><th>Finds</th></tr>
+                <tr><td><code>fn \w+\(</code></td><td>Function definitions (<code>\w+</code> is one or more word characters)</td></tr>
+                <tr><td><code>TODO|FIXME</code></td><td>Either word</td></tr>
+                <tr><td><code>(?i)error</code></td><td><code>error</code>, <code>Error</code>, <code>ERROR</code>…</td></tr>
+                <tr><td><code>\bconfig\b</code></td><td><code>config</code> as a whole word, not <code>configure</code></td></tr>
+                <tr><td><code>\{\s*"success":\s*True</code></td><td><code>{ "success": True</code> with any spacing, including none</td></tr>
+                <tr><td><code>^import </code></td><td>Lines that start with <code>import </code></td></tr>
+                <tr><td><code>\d{3,}</code></td><td>Three or more digits in a row</td></tr>
+                <tr><td><code>(?s)BEGIN.*?END</code></td><td>A block from <code>BEGIN</code> to the next <code>END</code>, across lines</td></tr>
+            </table>
+            <p>Things that catch people out:</p>
+            <ul>
+                <li><strong>Regex is case-sensitive.</strong> Plain search ignores case, regex does not:
+                    <code>true</code> does not find <code>True</code>. Start the pattern with <code>(?i)</code>
+                    to ignore case.</li>
+                <li><strong>Some characters are syntax.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> have a
+                    meaning; put <code>\</code> before one to match it literally (<code>\{</code>, <code>\.</code>,
+                    <code>\(</code>). An unescaped <code>{</code> at the start of a pattern is an error
+                    ("repetition operator missing expression"). To search for code exactly as written,
+                    turn Regex off instead.</li>
+                <li><strong>Spaces are exact.</strong> <code>\{ "a"</code> needs exactly one space after the
+                    brace, so it misses <code>{"a"</code>. Use <code>\s*</code> for any amount of space
+                    (including none) or <code>\s+</code> for at least one.</li>
+            </ul>
+            <p>When a regex finds nothing, the results area tries a few close variants (flexible spacing,
+                ignoring case, the same text without regex) and offers the ones that find something. When a
+                pattern is invalid, the error points at the problem and offers to search the text literally
+                or with its special characters escaped.</p>
             <p>Patterns are matched one line at a time, so <code>\s</code> and <code>.</code> never cross a
                 line break. To match across lines, mention a newline in the pattern (<code>\n</code>,
                 <code>\r</code>, <code>\x0a</code>) or set the <code>s</code> flag, e.g.

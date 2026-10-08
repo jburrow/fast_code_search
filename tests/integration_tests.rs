@@ -3654,6 +3654,8 @@ async fn test_http_rejects_conflicting_modes_and_reports_display_paths() -> Resu
     let body: serde_json::Value = resp.json().await?;
     let msg = body["error"].as_str().unwrap_or("");
     assert_eq!(msg.matches("Invalid regex pattern").count(), 1, "{msg}");
+    // ...and carries the parser's explanation, not just the pattern.
+    assert!(msg.contains("unclosed character class"), "{msg}");
 
     // /api/context reports the same display path as search results.
     let resp = client
