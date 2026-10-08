@@ -21,6 +21,19 @@ the binary.
 - The URL carries the query and modes, so a link reproduces a search; Back
   returns to the previous one.
 
+## Regex help
+
+- The **?** next to **REGEX** opens a cheat-sheet: common patterns you can
+  run with one click, and the rules that catch people out (regex is
+  case-sensitive, `{ ( . *` and friends need a `\` to match literally,
+  spaces are exact).
+- When a search finds nothing, the page tries close variants (flexible
+  spacing, ignoring case, the same text without regex, or regex for a
+  plain query that looks like one) and offers the ones that find
+  something.
+- An invalid regex shows where the pattern is wrong and offers to search
+  the text literally or with its special characters escaped.
+
 ## Reading results
 
 - Hover a hit to preview the surrounding lines; click **View file** for the
@@ -61,6 +74,10 @@ resolved for Rust, Python and JavaScript/TypeScript.
 
 - **Index** (`/diagnostics.html`): file counts, extension breakdown, the
   configuration in effect, and self-tests that search for sampled files.
+  Its **Service** card says whether the web UI and gRPC started, where the
+  index is saved (or that it is memory only or read-only), and any startup
+  or storage problems. When there are some, the search page shows "Server
+  started with N problems" with a link to it.
 - **Docs** (`/docs.html`): the REST reference with live examples.
 
 The UI talks to the same `/api/search` you can call yourself, so anything

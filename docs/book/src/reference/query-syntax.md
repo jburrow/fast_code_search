@@ -9,7 +9,7 @@ with grep and ripgrep](matching.md).
 | Write | To get |
 |---|---|
 | `fn main` | Files containing **every** term. Lines holding the phrase `fn main` rank first, then lines holding both terms, then the rest. |
-| `"fn main"` | One term: the exact phrase, spaces included. |
+| `"fn main"` | One term: the exact phrase, spaces included. A quote opens a phrase only when it wraps a whole word; other quotes are searched for as written, so `{ "success": True` finds that text with its quotes. |
 | `-tests` | Drop files that contain `tests`. Only a `-` before a letter, `_` or quote negates, so `->`, `-1` and `--flag` are ordinary terms. |
 | `file:src/` | Only paths under a `src` directory. A bare word matches anywhere in the path (`file:parser`); globs are used as written (`file:*.rs`, `file:crates/**/tests/**`). |
 | `-file:vendor` | Never paths matching the pattern. |
@@ -37,7 +37,14 @@ References are exact and case-sensitive on the identifier; `file:` and
   with no required literal of three or more characters scans every file.
 - `^` and `$` anchor at line boundaries (CRLF included); `\s` does not
   cross a line break unless the pattern is a multi-line one.
-- `(?i)` makes the pattern case-insensitive; the `case` parameter does the
-  same.
+- A regex is case-sensitive, unlike plain search: `true` does not find
+  `True`. `(?i)` makes the pattern case-insensitive; `case=false` on the
+  API adds it for you.
+- `{ } ( ) [ ] . * + ? | ^ $ \` are syntax; escape one with `\` to match
+  it (`\{`, `\.`). For code exactly as written, search without regex.
+- Spaces are exact: `\{ "a"` misses `{"a"`. Use `\s*` for any amount of
+  space, including none.
+- In the web UI the **?** next to REGEX has runnable examples, and a
+  search that finds nothing offers close variants that do.
 - Patterns are compiled with size limits; an absurd one is rejected with a
   400 rather than run.

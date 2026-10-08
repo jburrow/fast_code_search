@@ -23,9 +23,9 @@ when the request timeout is hit.
 | `GET /api/graph/…` | The import graph: neighbourhoods, impact, import chains, the folder map. See [Import graph](#import-graph) |
 | `GET /api/stats` | Index statistics (files, trigrams, dependency edges, content bytes) |
 | `GET /api/status` | Indexing progress |
-| `GET /api/health` | Liveness (`{"status":"healthy","version":…}`) |
+| `GET /api/health` | Liveness (`{"status":"healthy","version":…,"problems":N}`); `problems` counts startup and storage problems |
 | `GET /api/ready` | Readiness: 200 once there is an index to search, 503 otherwise |
-| `GET /api/diagnostics` | Index health, extension breakdown, self-tests |
+| `GET /api/diagnostics` | Index health, extension breakdown, self-tests, and `service`: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status `degraded`) |
 | `GET /metrics` | Prometheus text format (request counters, latency histogram, index gauges) |
 | `WS /ws/progress` | Live indexing progress frames |
 
@@ -38,8 +38,8 @@ when the request timeout is hit.
 | `offset` | 0 | Hits to skip; ordering is deterministic, so `offset=max` is page two. At most 10,000. |
 | `regex` | false | Treat `q` as a regex (Rust `regex` syntax, matched one line at a time unless the pattern mentions `\n` or sets `(?s)`). |
 | `symbols` | false | Definitions only (functions, types, classes, …) plus filename matches. |
-| `references` | false | Uses of the identifier in `q`: call sites and type mentions. Cannot be combined with `regex` or `symbols`. |
-| `case` | — | `true` / `false` overrides `case:` in the query. |
+| `references` | false | Uses of the identifier in `q`: call sites and type mentions. Cannot be combined with `regex` or `symbols` (400). |
+| `case` | — | `true` / `false` overrides `case:` in the query. A regex is case-sensitive by default; `case=false` adds `(?i)`. |
 | `word` | — | `true` for whole-word matching. |
 | `include` / `exclude` | — | Semicolon-separated path globs (`src/**/*.rs;lib/**`). |
 | `rank` | auto | `auto`, `fast` (metadata-ranked sample, used above 5,000 candidates) or `full`. |
@@ -204,6 +204,7 @@ fast_code_search_server [OPTIONS]
       --web-address <ADDR>  Web UI / REST listen address (overrides config)
   -i, --index <PATH>        Additional path to index (repeatable)
       --no-auto-index       Skip indexing on startup
+      --no-grpc             Do not start the gRPC API (same as enable_grpc = false)
       --init <FILE>         Write a documented template configuration and exit
       --static-dir <DIR>    Serve the UI from disk (development)
   -v, --verbose             Debug logging
@@ -211,6 +212,12 @@ fast_code_search_server [OPTIONS]
 
 Configuration discovery: `--config`, then `$FCS_CONFIG`, then
 `./fast_code_search.toml`, then `~/.config/fast_code_search/config.toml`.
+The first log lines say which file was used (or that none was found and
+the defaults apply) and any warnings about it.
+
+If one of the ports cannot be bound, the server logs which port and keeps
+running on the other API; it exits only when neither could start. The
+diagnostics page and `/api/health` report the failure.
 
 ## Configuration file
 
@@ -220,6 +227,7 @@ template. The keys that matter most:
 ```toml
 [server]
 address = "127.0.0.1:50051"       # gRPC
+enable_grpc = true                # false (or --no-grpc) for web UI / REST / fcs only
 web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED
@@ -239,6 +247,22 @@ checkpoint_interval_files = 20000
 watch = true                      # follow edits, renames, deletes
 save_after_updates = 100          # save after this many watched file changes
 ```
+
+`--init` writes every key with its default, and sets `index_path` from the
+template's own name (`--init work.toml` gives
+`~/.local/share/fast_code_search/work.fcsidx`). Without `index_path` the
+index lives only in memory and is rebuilt on every start; the startup log
+warns about it.
+
+Only one server writes an index. A server holds a lock on
+`<index_path>.lock` and records its PID and addresses in
+`<index_path>.lock.owner`; a second server given the same `index_path`
+logs who owns it, loads the index read-only and never saves. Give each
+configuration its own `index_path`.
+
+At startup and before each save the server checks free space and free
+inodes on the filesystem holding the index (and inodes where indexed
+source lives), and warns when either is low.
 
 Changing exclude patterns, extensions, the size cap or a `.gitignore` takes
 effect on the next start: files that are no longer eligible are dropped

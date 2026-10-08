@@ -1,111 +1,124 @@
 # Deployment Guide
 
-This guide covers deploying fast_code_search in various environments.
+This guide covers running fast_code_search as a shared service: a
+system-wide unit, a reverse proxy, a container and Kubernetes. For a
+single developer's machine (a per-user service started at login on Linux,
+macOS or Windows) see [RUN-AT-STARTUP.md](RUN-AT-STARTUP.md).
 
 ## Table of Contents
 
+- [What runs](#what-runs)
 - [Quick Start](#quick-start)
 - [Production Deployment](#production-deployment)
-- [Docker Deployment](#docker-deployment)
+- [Container](#container)
 - [Kubernetes Deployment](#kubernetes-deployment)
 - [Configuration](#configuration)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
 
+## What runs
+
+One process, `fast_code_search_server`, holds the index in memory, watches
+the indexed trees, and serves two listeners:
+
+| Listener | Config key | Default | Serves |
+|----------|------------|---------|--------|
+| Web | `server.web_address` | `127.0.0.1:8080` | The web UI, the REST API (`/api/…`), `/metrics`, and what `fcs` talks to |
+| gRPC | `server.address` | `127.0.0.1:50051` | `search.CodeSearch` (see `proto/search.proto`) and `grpc.health.v1` |
+
+Both bind to loopback by default because the server has no authentication
+and returns file contents. Turn gRPC off with `enable_grpc = false` (or
+`--no-grpc`) if nothing uses it. If one port cannot be bound the server
+logs which one and keeps running on the other; it exits only when neither
+could start.
+
+The index is saved to `indexer.index_path` and reloaded on the next start,
+so a restart takes seconds rather than a full build. Only one server writes
+a given index: a second one pointed at the same `index_path` loads it
+read-only and never saves.
+
 ## Quick Start
 
 ### Local Deployment
 
-1. Build the release binary:
+1. Build the release binaries (or download a release archive):
 ```bash
 cargo build --release
 ```
 
-2. Start the server:
+2. Write a configuration, add your paths to `[indexer] paths`, and start
+   the server:
 ```bash
-./target/release/fast_code_search_server
+./target/release/fast_code_search_server --init config.toml
+./target/release/fast_code_search_server --config config.toml
 ```
 
-3. The server will listen on `127.0.0.1:50051` (loopback; set `address = "0.0.0.0:50051"` in the config to expose it)
+3. Open <http://127.0.0.1:8080>, or search from a terminal with
+   `./target/release/fcs 'fn main'`.
 
 ### Testing the Deployment
 
-Use the example client:
 ```bash
-cargo run --example client
+# Liveness, readiness and the index size
+curl http://127.0.0.1:8080/api/health
+curl http://127.0.0.1:8080/api/ready
+fcs status
+
+# A search over REST
+curl "http://127.0.0.1:8080/api/search?q=fn%20main&max=5"
 ```
 
-Or use `grpcurl` to test manually:
+Over gRPC, use the example client or `grpcurl` with the schema (the server
+does not offer gRPC reflection, so `grpcurl` needs the `.proto`):
+
 ```bash
-# Install grpcurl
-go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+cargo run --example client
 
-# List services
-grpcurl -plaintext localhost:50051 list
-
-# Index a directory
-grpcurl -plaintext -d '{"paths": ["."]}' \
-    localhost:50051 search.CodeSearch/Index
-
-# Search
-grpcurl -plaintext -d '{"query": "fn main", "max_results": 10}' \
+grpcurl -plaintext -import-path proto -proto search.proto \
+    -d '{"query": "fn main", "max_results": 10}' \
     localhost:50051 search.CodeSearch/Search
+
+grpcurl -plaintext -import-path proto -proto search.proto \
+    -d '{"paths": ["/srv/repos/api/new-module"]}' \
+    localhost:50051 search.CodeSearch/Index    # a path under a configured root
 ```
 
 ## Production Deployment
 
 ### System Requirements
 
-**Minimum**:
-- 2 CPU cores
-- 4GB RAM
-- 10GB disk space
-
-**Recommended** (for 10GB+ codebases):
-- 8+ CPU cores
-- 16GB+ RAM
-- SSD storage
-- 50GB+ disk space
-
-### Building for Production
-
-```bash
-# Build optimized release binary
-cargo build --release
-
-# Strip debug symbols to reduce binary size
-strip target/release/fast_code_search_server
-
-# Verify binary
-./target/release/fast_code_search_server --version
-```
+Memory is the constraint. The index keeps trigram posting lists and
+symbols in memory and maps file contents; as a rough guide, the
+[benchmark](https://jburrow.github.io/fast_code_search/docs/benchmarks/latest.html)
+tree of 6,200 files and 39 MB of text uses about 120 MB resident. See
+[Performance and memory](https://jburrow.github.io/fast_code_search/docs/guides/performance.html)
+for sizing. Indexing uses every core; searching is fast on any of them.
+Keep the index on local storage with free space and free inodes (the
+server warns at startup and before each save when either runs low).
 
 ### Running as a System Service
 
-For a single developer's machine (a per-user service started at login on
-Linux, macOS or Windows, with the `fcs` command-line client) see
-[RUN-AT-STARTUP.md](RUN-AT-STARTUP.md). The unit below is the shared,
-system-wide variant.
-
 #### systemd (Linux)
 
-Create `/etc/systemd/system/fast-code-search.service`:
+The repository's `deploy/systemd/fast-code-search.service` is the per-user
+variant. A system-wide one, `/etc/systemd/system/fast-code-search.service`:
 
 ```ini
 [Unit]
-Description=Fast Code Search gRPC Service
+Description=fast_code_search server
 After=network.target
 
 [Service]
 Type=simple
 User=codeuser
 Group=codeuser
-WorkingDirectory=/opt/fast_code_search
-ExecStart=/opt/fast_code_search/fast_code_search_server
+ExecStart=/usr/local/bin/fast_code_search_server --config /etc/fast_code_search/config.toml
+# SIGINT lets the server save the index before exiting.
+KillSignal=SIGINT
+TimeoutStopSec=120
 Restart=on-failure
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
+Environment=RUST_LOG=info
 
 # Security hardening
 NoNewPrivileges=true
@@ -118,28 +131,21 @@ ReadWritePaths=/var/lib/fast_code_search
 WantedBy=multi-user.target
 ```
 
-Enable and start:
+With `index_path = "/var/lib/fast_code_search/index.fcsidx"` in the config.
+`ProtectHome=true` hides `/home`; drop it if the indexed trees live there.
+
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable fast-code-search
-sudo systemctl start fast-code-search
-sudo systemctl status fast-code-search
-```
-
-View logs:
-```bash
+sudo systemctl enable --now fast-code-search
 sudo journalctl -u fast-code-search -f
 ```
 
 ### Reverse Proxy with nginx
 
-For HTTPS and load balancing:
+The server has no authentication: put it behind a proxy that has. The web
+listener needs WebSocket upgrades for `/ws/progress`; gRPC needs HTTP/2.
 
 ```nginx
-upstream grpc_backend {
-    server 127.0.0.1:50051;
-}
-
 server {
     listen 443 ssl http2;
     server_name code-search.example.com;
@@ -147,136 +153,72 @@ server {
     ssl_certificate /etc/ssl/certs/code-search.crt;
     ssl_certificate_key /etc/ssl/private/code-search.key;
 
+    # auth_request / auth_basic / your SSO here
+
     location / {
-        grpc_pass grpc://grpc_backend;
-        grpc_set_header Host $host;
-        grpc_set_header X-Real-IP $remote_addr;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location /search.CodeSearch/ {
+        grpc_pass grpc://127.0.0.1:50051;
     }
 }
 ```
 
-## Docker Deployment
+## Container
 
-### Dockerfile
-
-Create `Dockerfile` in project root:
-
-```dockerfile
-# Build stage
-FROM rust:1.75 as builder
-
-# Install protobuf compiler
-RUN apt-get update && \
-    apt-get install -y protobuf-compiler && \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-COPY . .
-
-# Build release binary
-RUN cargo build --release
-
-# Runtime stage
-FROM debian:bookworm-slim
-
-# Install runtime dependencies
-RUN apt-get update && \
-    apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -m -u 1000 codeuser
-
-WORKDIR /app
-
-# Copy binary from builder
-COPY --from=builder /app/target/release/fast_code_search_server /app/
-
-# Set ownership
-RUN chown -R codeuser:codeuser /app
-
-USER codeuser
-
-EXPOSE 50051
-
-CMD ["/app/fast_code_search_server"]
-```
-
-### Build and Run
+Every release publishes an image built from the repository's `Dockerfile`.
+It indexes `/src`, serves the web UI and REST API on 8080 and gRPC on
+50051, and saves the index under `/var/lib/fast_code_search`:
 
 ```bash
-# Build image
-docker build -t fast_code_search:latest .
-
-# Run container
-docker run -d \
-    --name fast-code-search \
-    -p 50051:50051 \
-    -v /path/to/code:/data:ro \
-    fast_code_search:latest
-
-# View logs
-docker logs -f fast-code-search
-
-# Stop container
-docker stop fast-code-search
+docker run -d --name fast-code-search \
+    -p 127.0.0.1:8080:8080 \
+    -v /path/to/code:/src:ro \
+    -v fcs-index:/var/lib/fast_code_search \
+    ghcr.io/jburrow/fast_code_search
 ```
+
+The baked-in configuration is `deploy/docker/config.toml`. To use your own,
+mount it over it: `-v ./config.toml:/etc/fast_code_search/config.toml:ro`.
+The image's health check runs `fcs status`. To build the image yourself:
+`docker build -t fast_code_search .`.
 
 ### Docker Compose
 
-Create `docker-compose.yml`:
-
 ```yaml
-version: '3.8'
-
 services:
   code-search:
-    build: .
-    container_name: fast-code-search
+    image: ghcr.io/jburrow/fast_code_search
     ports:
-      - "50051:50051"
+      - "127.0.0.1:8080:8080"
     volumes:
-      - /path/to/code:/data:ro
-      - search-data:/var/lib/fast_code_search
+      - /path/to/code:/src:ro
+      - search-index:/var/lib/fast_code_search
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "grpcurl", "-plaintext", "localhost:50051", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 4G
 
 volumes:
-  search-data:
-```
-
-Run with:
-```bash
-docker-compose up -d
+  search-index:
 ```
 
 ## Kubernetes Deployment
 
-### Deployment Manifest
-
-Create `k8s/deployment.yaml`:
+Each replica builds and holds its own index, so give each its own storage
+for `index_path` (an `emptyDir` rebuilds on every pod start; a
+`StatefulSet` volume keeps it). Never point two replicas at one index file
+on a shared volume: the second loads it read-only and never saves.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fast-code-search
-  labels:
-    app: fast-code-search
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: fast-code-search
@@ -287,79 +229,67 @@ spec:
     spec:
       containers:
       - name: fast-code-search
-        image: fast_code_search:latest
+        image: ghcr.io/jburrow/fast_code_search
         ports:
+        - containerPort: 8080
+          name: http
         - containerPort: 50051
-          protocol: TCP
           name: grpc
         resources:
           requests:
-            memory: "4Gi"
+            memory: "2Gi"
             cpu: "2"
           limits:
             memory: "8Gi"
-            cpu: "4"
         livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "grpcurl -plaintext localhost:50051 list"
-          initialDelaySeconds: 30
+          httpGet:
+            path: /api/health
+            port: http
           periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/ready
+            port: http
+          periodSeconds: 5
         volumeMounts:
-        - name: code-volume
-          mountPath: /data
+        - name: code
+          mountPath: /src
           readOnly: true
+        - name: index
+          mountPath: /var/lib/fast_code_search
       volumes:
-      - name: code-volume
+      - name: code
         persistentVolumeClaim:
           claimName: code-pvc
-```
-
-### Service Manifest
-
-Create `k8s/service.yaml`:
-
-```yaml
+      - name: index
+        emptyDir: {}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: fast-code-search-service
+  name: fast-code-search
 spec:
   selector:
     app: fast-code-search
   ports:
-  - protocol: TCP
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: grpc
     port: 50051
-    targetPort: 50051
-  type: LoadBalancer
+    targetPort: grpc
 ```
 
-### Deploy to Kubernetes
-
-```bash
-# Create namespace
-kubectl create namespace code-search
-
-# Apply configurations
-kubectl apply -f k8s/deployment.yaml -n code-search
-kubectl apply -f k8s/service.yaml -n code-search
-
-# Check status
-kubectl get pods -n code-search
-kubectl get svc -n code-search
-
-# View logs
-kubectl logs -f deployment/fast-code-search -n code-search
-```
+`/api/ready` answers 503 until there is an index to search, so a pod
+receives traffic only once it can answer. A gRPC-native probe
+(`grpc: {port: 50051}`) works too: the standard health service is served.
 
 ## Configuration
 
 ### Environment Variables
 
-Most settings live in the TOML config (`--init` writes a commented template).
-The environment variables the server actually reads are:
+Most settings live in the TOML config (`--init` writes every key with its
+default and a comment). The environment variables the server reads are:
 
 ```bash
 # Config file to load (checked before ./fast_code_search.toml and the user config dir)
@@ -373,247 +303,106 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://collector:4317"
 export OTEL_SERVICE_NAME="fast_code_search"
 export OTEL_SDK_DISABLED="true"        # final: disables export regardless of config
 export FCS_TRACING_ENABLED="true"      # overrides telemetry.enabled in the TOML
-```
 
-Listen addresses are `server.address` / `server.web_address` in the config or
-`--address` / `--web-address` on the command line; the search concurrency cap is
-`server.max_concurrent_searches` and the request timeout `server.request_timeout_secs`.
-The configuration is validated at startup: unknown keys, unparseable addresses
-and zero limits are errors; a missing index path is a warning.
-
-### Performance Tuning
-
-#### For Large Codebases (10GB+)
-
-- Increase system file descriptor limit:
-```bash
-ulimit -n 65536
-```
-
-- Adjust memory limits in systemd service:
-```ini
-[Service]
-MemoryMax=16G
-```
-
-- Use faster storage (SSD/NVMe)
-
-#### CPU Optimization
-
-The server automatically uses all available CPU cores via rayon. To limit:
-
-```bash
-# Use only 4 cores
+# Indexing threads (default: every core)
 export RAYON_NUM_THREADS=4
 ```
 
+Listen addresses are `server.address` / `server.web_address` in the config or
+`--address` / `--web-address` on the command line; `server.enable_grpc` (or
+`--no-grpc`) turns gRPC off; the search concurrency cap is
+`server.max_concurrent_searches` and the request timeout
+`server.request_timeout_secs`. The configuration is validated at startup:
+unknown keys, unparseable addresses and zero limits are errors; a missing
+index directory is a warning (the first save creates it). The first log
+lines say which config file was used.
+
 ## Monitoring
 
-### Metrics to Monitor
-
-- **CPU Usage**: Should be proportional to search load
-- **Memory Usage**: Should be < total codebase size (due to memory mapping)
-- **Request Latency**: Sub-millisecond for most queries
-- **Active Connections**: gRPC connections to clients
-
-### Health Checks
-
-```bash
-# Check if server is responding
-grpcurl -plaintext localhost:50051 list
-
-# Expected output:
-# search.CodeSearch
-```
-
-### Log Monitoring
-
-Enable structured logging for better monitoring:
-
-```bash
-RUST_LOG=info cargo run --release --bin fast_code_search_server 2>&1 | \
-    tee -a /var/log/fast_code_search.log
-```
+- `GET /api/health`: liveness, always 200 while the process runs, with a
+  `problems` count of startup and storage problems.
+- `GET /api/ready`: 200 once the index can serve results, 503 before.
+- `GET /api/diagnostics` (the **Index** page in the UI): which APIs
+  started, where the index is saved, the problems themselves, and
+  self-tests that search for sampled files.
+- `GET /metrics`: Prometheus text format: request and error counters, a
+  search latency histogram, and index gauges (files, trigrams, dependency
+  edges, content bytes, indexing, ready).
+- Logs: `RUST_LOG=info` (the default) logs startup, each build, save and
+  watcher batch; `debug` logs every path and ignore file.
 
 ## Troubleshooting
 
-### Server Won't Start
+The [troubleshooting guide](https://jburrow.github.io/fast_code_search/docs/guides/troubleshooting.html)
+covers the common symptoms. Deployment-specific ones:
 
-**Issue**: Port already in use
-```bash
-# Check what's using port 50051
-lsof -i :50051
+### A port is already in use
 
-# Kill the process or use a different port
-```
+The log says `gRPC API NOT started` or `Web UI ... NOT started` with the
+port, and the server keeps running on the other API. Find the holder with
+`ss -ltnp | grep :8080` (or `lsof -i :8080`), then stop it, change the
+address, or set `enable_grpc = false`.
 
-**Issue**: Permission denied
-```bash
-# Run with appropriate permissions or use port > 1024
-```
+### "another fast_code_search server is already using this index"
 
-### High Memory Usage
+Two servers share an `index_path`. The log names the other process's PID
+and addresses (also in `<index_path>.lock.owner`). Stop it or give each
+server its own `index_path`; until then this one runs read-only.
 
-**Cause**: Large codebase indexed
+### "No space left on device" with free space showing
 
-**Solution**: Memory mapping keeps RAM usage low, but ensure sufficient system memory exists
-
-### Slow Search Performance
-
-**Possible causes**:
-- Disk I/O bottleneck (use SSD)
-- CPU bottleneck (increase cores)
-- Large result sets (limit max_results)
-
-**Debug**:
-```bash
-# Profile the server
-perf record -g ./target/release/fast_code_search_server
-perf report
-```
-
-### Connection Issues
-
-**Test connectivity**:
-```bash
-# Test from client
-telnet server-host 50051
-
-# Use grpcurl for debugging
-grpcurl -plaintext -v server-host:50051 list
-```
+The filesystem holding the index has run out of inodes; the log says
+whether bytes or inodes ran out, and `df -i` confirms.
 
 ### Memory Allocation Errors on RHEL7/CentOS7
 
 **Symptoms**:
 - "cannot allocate memory" during indexing
 - "Reached mmap limit" error message
-- Server crashes with mmap errors
 - Works fine on other systems
 
 **Root Cause**: Low `vm.max_map_count` limit (often 65530 on RHEL7, need 262144+)
 
-**Automatic Detection**: The server automatically detects your system's mmap limit at startup
-and will refuse to index more files once it reaches 85% of the safe limit.
+**Automatic Detection**: The server reads the limit at startup (Linux only)
+and stops mapping new files at 85% of it, with an error that names the
+remedy. Files already indexed remain searchable.
 
-**Solution 1: WITH sudo access (recommended for large codebases)**:
+**Solution 1: with sudo access**:
 ```bash
-# Check current limit
-sysctl vm.max_map_count
-
-# Temporary fix (until reboot)
-sudo sysctl -w vm.max_map_count=524288
-
-# Permanent fix
+sysctl vm.max_map_count                                   # current limit
+sudo sysctl -w vm.max_map_count=524288                    # until reboot
 echo "vm.max_map_count=524288" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
-
-# Verify
-sysctl vm.max_map_count
 ```
 
-**Solution 2: WITHOUT sudo access (reduce indexing scope)**:
-
-Edit `config.toml`:
+**Solution 2: without sudo access**, index less:
 ```toml
 [indexer]
-# Reduce file size limit
 max_file_size = 2097152  # 2MB instead of 10MB
-
-# Exclude more directories
 exclude_patterns = [
-    "**/node_modules/**",
-    "**/target/**",
-    "**/.git/**",
-    "**/build/**",
-    "**/dist/**",
-    "**/vendor/**",
-    "**/*.min.js",
-    "**/*.min.css",
-    "**/*.lock",
-    "**/*.svg"
+    "**/node_modules/**", "**/target/**", "**/.git/**", "**/build/**",
+    "**/dist/**", "**/vendor/**", "**/*.min.js", "**/*.min.css", "**/*.lock", "**/*.svg"
 ]
-
-# Only index specific file types  
 include_extensions = ["rs", "py", "js", "ts", "java", "go", "c", "cpp", "h"]
 ```
 
-**How the Automatic Limit Works**:
-1. Server detects `vm.max_map_count` at startup (Linux only)
-2. Calculates safe limit at 85% of maximum
-3. Tracks mapped file count during indexing
-4. Stops indexing with clear error when limit would be exceeded
-5. Existing indexed files remain searchable
-
-**Verification**:
-```bash
-# Watch mmap usage during indexing
-watch -n 1 "cat /proc/\$(pgrep fast_code_search)/maps | wc -l"
-
-# Check system limits
-ulimit -a
-cat /proc/sys/vm/max_map_count
-```
-
-**Example**: With default RHEL7 limit of 65530:
-- Safe limit: ~55,700 mappings (85%)
-- Can index ~55,000 files before hitting limit
-- Server will stop and show clear error message with remediation steps
-
 ## Security Considerations
 
-### Network Security
-
-- Use TLS for production deployments
-- Restrict access via firewall rules
-- Use VPN or private networks for internal access
-
-### File System Security
-
-- Run as non-root user
-- Use read-only mounts for code directories
-- Restrict file permissions
-
-### Resource Limits
-
-- Set memory limits to prevent OOM
-- Set CPU limits to prevent resource exhaustion
-- Limit concurrent connections
+- Keep both listeners on loopback or a private network, and put an
+  authenticating proxy in front of anything shared; see [SECURITY.md](../SECURITY.md).
+- Run as a non-root user and mount the indexed code read-only.
+- `cors_origins` stays empty unless a page on another origin calls the API.
 
 ## Backup and Recovery
 
-### Data to Backup
-
-The server is stateless - it rebuilds indexes on startup. Backup:
-- Server configuration files
-- Deployment scripts
-- The codebase being indexed
-
-### Recovery Procedure
-
-1. Restore server binary
-2. Restore configuration
-3. Start server
-4. Re-index codebase via gRPC Index call
+The index file is a cache of the indexed trees: losing it costs one full
+build, nothing else. Back up the configuration file; to recover, restore
+it and start the server.
 
 ## Scaling
 
-### Horizontal Scaling
-
-Deploy multiple instances behind a load balancer:
-- Each instance indexes the same codebase
-- Load balancer distributes search requests
-- Stateless design allows easy scaling
-
-### Vertical Scaling
-
-- Add more CPU cores for faster parallel search
-- Add more RAM for larger codebases
-- Use faster storage for reduced I/O latency
-
-## Support
-
-For deployment issues:
-- Check logs first
-- Review this guide
-- Open an issue on GitHub with deployment details
+- **Vertically**: more cores make builds faster; more memory holds larger
+  trees.
+- **Horizontally**: run several instances behind a load balancer, each with
+  its own index of the same trees. They are independent; nothing is shared
+  between them.

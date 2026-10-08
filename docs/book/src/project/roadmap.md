@@ -29,6 +29,10 @@ under `docs/internal/plans/`; individual items are GitHub issues labelled
 
 ## Done recently
 
+- Unreleased: the dependency explorer (`/graph.html`) and `/api/graph/*`;
+  regex help, no-result suggestions and clearer regex errors; one server
+  per index, storage checks and a Service card on the diagnostics page;
+  the server stays up when a port is busy.
 - 0.12: result diversity, inline SVG icons, on-demand rendering, JS test
   harness and Tailwind check in CI.
 - 0.11: the review fixes (save races, regex candidate generation, phrase

@@ -104,6 +104,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a panic inside a background task that left the process running with
   nothing listening.
 
+- Documentation brought up to date with the above: the dependency
+  explorer and `/api/graph/*` in the in-app docs, regex help in the web UI
+  and query-syntax pages, `enable_grpc` / `--no-grpc`, the index lock,
+  storage warnings and the diagnostics Service card in the API reference,
+  configuration cookbook and troubleshooting guide. The deployment guide
+  is rewritten around the published container image, HTTP health and
+  readiness probes, and one index per server (its gRPC examples relied on
+  reflection, which the server does not offer).
+
 ### Fixed
 - Search correctness review: a file with more than 100 hits now reports
   the total as unknown and LOAD MORE reaches its later lines (it claimed an

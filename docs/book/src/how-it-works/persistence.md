@@ -12,6 +12,15 @@ named temporary file next to the target, fsynced, and renamed into place.
 Two saves cannot interleave, and a crash at any point leaves the previous
 file intact. Checkpoints during a long build use the same path.
 
+## One server per index
+
+A server takes an exclusive lock on `<index_path>.lock` before it loads
+and records its PID and listen addresses in `<index_path>.lock.owner`.
+A second server started with the same `index_path` logs which process
+holds it, loads the index read-only and never saves, so two servers can no
+longer overwrite each other's file. The lock is released when the process
+exits, however it exits.
+
 ## Load
 
 1. Map the file, validate header, lengths, checksum and directory order.

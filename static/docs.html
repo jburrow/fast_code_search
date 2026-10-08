@@ -289,6 +289,19 @@
                 all usages.
             </p>
 
+            <h3>References</h3>
+            <p>Enable <code>References</code> to list the uses of an identifier: call sites, type mentions and
+                implemented traits, across languages. The name is matched exactly and case-sensitively;
+                <code>file:</code> and <code>lang:</code> still narrow the files.</p>
+
+            <h3>Dependency Explorer</h3>
+            <p><a href="/graph.html">GRAPH</a> shows the import graph around one file next to its source: what it
+                imports and what imports it, the impact of changing it (with the affected tests), the shortest
+                import chain between two files, and a folder-level module map with import cycles marked. Search
+                results, the deps popover and the file viewer link into it, and <strong>Search these files</strong>
+                runs a keyword search limited to the files on screen. Imports are resolved for Rust, Python and
+                JavaScript/TypeScript.</p>
+
             <h2>Ranking System</h2>
 
             <p>For large candidate sets (>5,000 files), the search engine uses a two-phase ranking system to maintain
@@ -383,15 +396,16 @@
                     <td><code>regex</code></td>
                     <td>boolean</td>
                     <td>false</td>
-                    <td>Treat query as regex pattern. Ignored when <code>symbols</code> or
-                        <code>references</code> is set (those take precedence).</td>
+                    <td>Treat query as regex pattern. Ignored when <code>symbols</code> is set; combined
+                        with <code>references</code> it is a 400.</td>
                 </tr>
                 <tr>
                     <td><code>case</code></td>
                     <td>boolean</td>
                     <td></td>
-                    <td>Case-sensitive matching; overrides <code>case:</code> in the query. Not
-                        applied in regex mode (use <code>(?i)</code> in the pattern).</td>
+                    <td>Case-sensitive matching; overrides <code>case:</code> in the query. A regex is
+                        case-sensitive unless it starts with <code>(?i)</code>; <code>case=false</code>
+                        adds that flag for you.</td>
                 </tr>
                 <tr>
                     <td><code>word</code></td>
@@ -406,7 +420,8 @@
                     <td>Return the references (call sites, type mentions, implemented traits) of the
                         identifier in <code>q</code>; results have <code>match_type</code>
                         <code>SYMBOL_REFERENCE</code>. Exact, case-sensitive name; <code>file:</code> /
-                        <code>lang:</code> operators still narrow the files.</td>
+                        <code>lang:</code> operators still narrow the files. Cannot be combined with
+                        <code>regex</code> or <code>symbols</code> (400).</td>
                 </tr>
                 <tr>
                     <td><code>symbols</code></td>
@@ -597,8 +612,10 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                 </tr>
                 <tr>
                     <td><code>GET /api/health</code></td>
-                    <td>Liveness check: <code>{ status, version, server_type }</code>, always 200 while
-                        the process runs</td>
+                    <td>Liveness check: <code>{ status, version, server_type, problems }</code>, always 200
+                        while the process runs. <code>problems</code> counts startup and storage
+                        problems (a busy port, an index owned by another server, a disk short of
+                        space or inodes); the diagnostics endpoint lists them.</td>
                 </tr>
                 <tr>
                     <td><code>GET /api/ready</code></td>
@@ -623,6 +640,32 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                     <td>List files that a given file imports</td>
                 </tr>
                 <tr>
+                    <td><code>GET /api/graph/neighborhood?file=...</code></td>
+                    <td>The file's import neighbourhood: what it imports and what imports it, up to
+                        <code>depth</code> hops (1&ndash;4, default 2), with busy levels folded</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/graph/impact?file=...</code></td>
+                    <td>Every file that transitively imports the file, by distance, and the test
+                        files among them</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/graph/path?from=...&amp;to=...</code></td>
+                    <td>The shortest import chain between two files</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/graph/modules</code></td>
+                    <td>The graph collapsed to folders, with import cycles marked</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/graph/imports?file=...</code></td>
+                    <td>The file's import statements and the indexed file each resolves to</td>
+                </tr>
+                <tr>
+                    <td><code>GET /api/graph/files?q=...</code></td>
+                    <td>Files matching a path substring, most connected first</td>
+                </tr>
+                <tr>
                     <td><code>GET /api/file?file=...</code></td>
                     <td>Full UTF-8 content of an indexed file:
                         <code>{ file, content, size_bytes, line_count }</code></td>
@@ -633,13 +676,20 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                 </tr>
                 <tr>
                     <td><code>GET /api/diagnostics?sample_count=N</code></td>
-                    <td>Index health, extension breakdown, and self-tests</td>
+                    <td>Index health, extension breakdown, self-tests, and <code>service</code>:
+                        whether the web UI and gRPC started, where the index is saved (or that it is
+                        memory only or read-only), and the problems behind <code>/api/health</code>'s
+                        count. Any problem marks the status as degraded.</td>
                 </tr>
                 <tr>
                     <td><code>WS /ws/progress</code></td>
                     <td>WebSocket for real-time indexing progress</td>
                 </tr>
             </table>
+            <p>The <code>/api/graph/*</code> endpoints back the <a href="/graph.html">GRAPH</a> page.
+                Rust <code>mod foo;</code> edges (and <code>pub use child::X</code> re-exports) are left out
+                unless <code>containment=true</code>. Every parameter is described in
+                <code>docs/API.md</code> in the repository.</p>
             <p><strong>Errors:</strong> non-2xx responses return JSON <code>{ "error": "…" }</code>.
                 A <code>503</code> (index updating) includes a <code>Retry-After</code> header.</p>
         </div>
