@@ -425,6 +425,128 @@ function splitHighlightedHtml(html) {
     return lines;
 }
 
+// ---------- Regex search help ----------
+
+/** Characters the server's regex engine treats as syntax. */
+const REGEX_META = /[\\.^$|?*+()[\]{}]/g;
+
+/** Escape every regex metacharacter so `text` matches literally. */
+function escapeRegex(text) {
+    return String(text).replace(REGEX_META, '\\$&');
+}
+
+/**
+ * The literal text a regex matches when it has no regex features beyond
+ * escaped punctuation (`\{ "success": True` → `{ "success": True`), or
+ * null when it uses classes, groups, repetition and the like.
+ */
+function regexToLiteral(pattern) {
+    let out = '';
+    const src = String(pattern || '');
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (c === '\\') {
+            const next = src[i + 1];
+            if (next === undefined || /[A-Za-z0-9]/.test(next)) return null;
+            out += next;
+            i++;
+        } else if ('.^$|?*+()[]{}'.includes(c)) {
+            return null;
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+/**
+ * `pattern` with every run of literal spaces (outside `[...]`) replaced by
+ * `\s*`, so `\{ "a": 1` also finds `{"a":1` and `{  "a":  1`. Null when the
+ * pattern has no such spaces.
+ */
+function relaxRegexSpacing(pattern) {
+    const src = String(pattern || '');
+    let out = '';
+    let inClass = false;
+    let changed = false;
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (c === '\\') {
+            out += c + (src[i + 1] ?? '');
+            i++;
+        } else if (inClass) {
+            if (c === ']') inClass = false;
+            out += c;
+        } else if (c === '[') {
+            inClass = true;
+            out += c;
+        } else if (c === ' ') {
+            while (src[i + 1] === ' ') i++;
+            out += '\\s*';
+            changed = true;
+        } else {
+            out += c;
+        }
+    }
+    return changed ? out : null;
+}
+
+/** Does the pattern already switch case-insensitivity on at its start? */
+function regexIgnoresCase(pattern) {
+    return /^\(\?[a-zA-Z]*i[a-zA-Z]*\)/.test(String(pattern || ''));
+}
+
+/** Does a plain-text query look like it was meant as a regex? */
+function looksLikeRegex(query) {
+    return /\\[wdsbWDSB.(){}[\]|+*?^$]|\.[*+?]|\[[^\]\s]+\]|\w\|\w|^\^|\$$/.test(String(query || ''));
+}
+
+/**
+ * Alternative searches to offer when a search finds nothing. Each is
+ * `{label, query, regex}`; the caller runs them and shows the ones that
+ * find something.
+ * @param {string} query
+ * @param {boolean} isRegex
+ * @returns {Array<{label: string, query: string, regex: boolean}>}
+ */
+function noResultSuggestions(query, isRegex) {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const out = [];
+    const add = (label, text, regex) => {
+        const same = (a, b) => a.query === b.query && a.regex === b.regex;
+        const candidate = { label, query: text, regex };
+        if (text && !same(candidate, { query: q, regex: isRegex }) && !out.some(s => same(s, candidate))) {
+            out.push(candidate);
+        }
+    };
+    if (!isRegex) {
+        if (looksLikeRegex(q)) add('Search as regex', q, true);
+        return out;
+    }
+    const relaxed = relaxRegexSpacing(q);
+    const caseable = /[A-Za-z]/.test(q) && !regexIgnoresCase(q);
+    if (relaxed) add('Flexible spacing', relaxed, true);
+    if (caseable) add('Ignore case', `(?i)${q}`, true);
+    if (relaxed && caseable) add('Flexible spacing, ignore case', `(?i)${relaxed}`, true);
+    const literal = regexToLiteral(q);
+    if (literal !== null && literal.trim().length >= 3) add('Search as plain text', literal, false);
+    return out;
+}
+
+/**
+ * Ways out of a regex that does not compile: search the same text without
+ * regex, or with every metacharacter escaped.
+ */
+function regexErrorSuggestions(pattern) {
+    const q = String(pattern || '').trim();
+    if (!q) return [];
+    const out = [{ label: 'Search as plain text', query: q, regex: false }];
+    const escaped = escapeRegex(q);
+    if (escaped !== q) out.push({ label: 'Escape special characters', query: escaped, regex: true });
+    return out;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         MAX_RESULTS_LIMIT,
@@ -450,5 +572,12 @@ if (typeof module !== 'undefined' && module.exports) {
         buildQueryMatcher,
         matcherRanges,
         splitHighlightedHtml,
+        escapeRegex,
+        regexToLiteral,
+        relaxRegexSpacing,
+        regexIgnoresCase,
+        looksLikeRegex,
+        noResultSuggestions,
+        regexErrorSuggestions,
     };
 }

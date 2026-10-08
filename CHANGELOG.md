@@ -40,12 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and storage problems, which also mark the status as degraded.
   `/api/health` reports the problem count, and the search page shows
   "Server started with N problems" linking to it.
+- Regex search help in the web UI: a `?` cheat-sheet next to the REGEX
+  toggle with runnable examples and the rules that catch people out; when a
+  search finds nothing, close variants that do find something (flexible
+  spacing, ignore case, the same text without regex, or regex for a plain
+  query that looks like one) are offered as one-click suggestions; an
+  invalid regex shows where it is wrong and offers to search the text
+  literally or escaped. The regex docs gained examples and pitfalls.
 
 ### Security
 - rustls 0.23.36 -> 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
   messages accepted across encryption-level boundaries).
 
 ### Changed
+- An invalid regex's error now carries the parser's explanation and points
+  at the problem in the pattern as typed (it used to repeat only the
+  pattern).
 - Rust imports through the crate's own name (`use my_crate::search::X` in
   `main.rs`, `src/bin/` and `tests/`) now resolve to the library's files, so
   those files have import edges and the library modules they use get the

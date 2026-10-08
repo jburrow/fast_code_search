@@ -1183,9 +1183,133 @@ async function performSearch(opts = {}) {
         // search's results/UI are not clobbered by a stale error.
         if (error.name === 'AbortError') return;
         console.error('Search error:', error);
-        showError('results', error.message);
+        if (search.isRegex && /regex/i.test(error.message)) {
+            showRegexError(search, error.message);
+        } else {
+            showError('results', error.message);
+        }
     }
 }
+
+// ============================================
+// REGEX SEARCH HELP (no-result suggestions, regex errors, cheat-sheet)
+// ============================================
+
+/** Switch the form to `suggestion` ({query, regex}) and search. */
+function applySuggestion(suggestion) {
+    queryInput.value = suggestion.query;
+    if (regexModeCheckbox) regexModeCheckbox.checked = suggestion.regex;
+    if (suggestion.regex) {
+        modeCheckboxes().forEach(cb => { if (cb !== regexModeCheckbox) cb.checked = false; });
+    }
+    syncToggleVisuals();
+    submitSearch();
+}
+
+/** A row of suggestion buttons; `counts` (optional) labels each with its hits. */
+function suggestionButtonsHtml(suggestions, counts) {
+    return suggestions.map((s, i) => {
+        const count = counts ? ` <span class="suggestion-count">${escapeHtml(counts[i])}</span>` : '';
+        return `<button type="button" class="suggestion-btn" data-suggestion="${i}">`
+            + `<span class="suggestion-label">${escapeHtml(s.label)}${count}</span>`
+            + `<code>${escapeHtml(s.query)}</code></button>`;
+    }).join('');
+}
+
+function bindSuggestionButtons(container, suggestions) {
+    container.querySelectorAll('[data-suggestion]').forEach(btn => {
+        btn.addEventListener('click', () => applySuggestion(suggestions[Number(btn.dataset.suggestion)]));
+    });
+}
+
+const REGEX_HELP_LINK = '<button type="button" class="regex-help-link" data-open-regex-help>Regex tips</button>';
+
+function bindRegexHelpLinks(container) {
+    container.querySelectorAll('[data-open-regex-help]').forEach(btn => {
+        btn.addEventListener('click', () => toggleRegexHelp(true));
+    });
+}
+
+/**
+ * After a search with no results, try the alternatives from
+ * noResultSuggestions (one result each, in parallel) and offer the ones that
+ * find something. Runs only on an empty result, so normal searches cost
+ * nothing extra; a newer search aborts the probes.
+ */
+async function showNoResultSuggestions(search) {
+    const box = document.getElementById('search-suggestions');
+    if (!box) return;
+    const signal = _searchAbort?.signal;
+    const candidates = noResultSuggestions(search.query, search.isRegex);
+    const tips = search.isRegex
+        ? `<p class="suggestion-hint">Regex is case-sensitive and matches one line at a time. ${REGEX_HELP_LINK}</p>`
+        : '';
+    if (candidates.length === 0) {
+        box.innerHTML = tips;
+        bindRegexHelpLinks(box);
+        return;
+    }
+    box.innerHTML = '<p class="suggestion-hint">Checking similar searches…</p>';
+    const probes = await Promise.all(candidates.map(async (c) => {
+        const params = buildSearchParams({ ...search, query: c.query, isRegex: c.regex, maxResults: 1, contextLines: 0 });
+        try {
+            const data = await fetchSearchPage(params, signal);
+            const n = typeof data.total_matches === 'number' ? data.total_matches : data.results.length;
+            if (n === 0) return null;
+            const label = typeof data.total_matches === 'number' || !data.has_more ? `${n.toLocaleString()} found` : `${n}+ found`;
+            return { suggestion: c, label };
+        } catch (_) {
+            return null; // an alternative that errors (or was aborted) is simply not offered
+        }
+    }));
+    if (signal?.aborted || !box.isConnected) return;
+    const found = probes.filter(Boolean);
+    if (found.length === 0) {
+        box.innerHTML = tips;
+    } else {
+        const suggestions = found.map(f => f.suggestion);
+        box.innerHTML = '<p class="suggestion-hint">These similar searches find something:</p>'
+            + `<div class="suggestion-list">${suggestionButtonsHtml(suggestions, found.map(f => f.label))}</div>`
+            + tips;
+        bindSuggestionButtons(box, suggestions);
+    }
+    bindRegexHelpLinks(box);
+}
+
+/**
+ * A regex that does not compile: show the parser's message as written (its
+ * caret points at the problem) with ways out: search the text literally,
+ * escape it, or open the cheat-sheet.
+ */
+function showRegexError(search, message) {
+    const suggestions = regexErrorSuggestions(search.query);
+    resultsHeader.style.display = 'none';
+    resultsContainer.innerHTML = `<div class="error-message regex-error">`
+        + `<strong>This is not a valid regex.</strong>`
+        + ` Characters such as <code>{ ( [ . * + ?</code> have a special meaning; put <code>\\</code> before one to match it literally.`
+        + `<pre>${escapeHtml(message)}</pre>`
+        + `<div class="suggestion-list">${suggestionButtonsHtml(suggestions)}</div>`
+        + `<p class="suggestion-hint">${REGEX_HELP_LINK}</p></div>`;
+    bindSuggestionButtons(resultsContainer, suggestions);
+    bindRegexHelpLinks(resultsContainer);
+}
+
+/** Show (`open` true), hide (false) or toggle (undefined) the regex cheat-sheet. */
+function toggleRegexHelp(open) {
+    const panel = document.getElementById('regex-help');
+    const btn = document.getElementById('regex-help-btn');
+    if (!panel) return;
+    const show = open === undefined ? !panel.classList.contains('open') : open;
+    panel.classList.toggle('open', show);
+    if (btn) btn.setAttribute('aria-expanded', String(show));
+    if (show) panel.scrollIntoView({ block: 'nearest' });
+}
+
+document.getElementById('regex-help-btn')?.addEventListener('click', () => toggleRegexHelp());
+document.getElementById('regex-help-close')?.addEventListener('click', () => toggleRegexHelp(false));
+document.querySelectorAll('#regex-help [data-example]').forEach(btn => {
+    btn.addEventListener('click', () => applySuggestion({ query: btn.dataset.example, regex: true }));
+});
 
 /** Fetch the next page (`offset` = hits loaded so far) and append it. */
 async function loadMoreResults() {
@@ -1294,7 +1418,9 @@ function renderSearch(search, durationMs, opts = {}) {
         resetRenderState();
         resultsContainer.removeAttribute('role');
         resultsContainer.removeAttribute('aria-label');
-        resultsContainer.innerHTML = `<div class="empty-state no-results"><p>No results found for "${escapeHtml(query)}"</p></div>`;
+        resultsContainer.innerHTML = `<div class="empty-state no-results"><p>No results found for "${escapeHtml(query)}"</p>`
+            + '<div id="search-suggestions" class="search-suggestions" aria-live="polite"></div></div>';
+        if (!search.symbolsOnly && !search.isReferences) showNoResultSuggestions(search);
         return;
     }
 

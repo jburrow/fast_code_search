@@ -296,6 +296,72 @@ test('colour helpers: parsing and WCAG contrast', () => {
     assert.equal(H.contrastRatio(white, white), 1);
 });
 
+// ---------- regex search help ----------
+
+test('escapeRegex escapes every metacharacter', () => {
+    assert.equal(H.escapeRegex('{ "a": f(x) }'), '\\{ "a": f\\(x\\) \\}');
+    assert.equal(H.escapeRegex('a.b*c+d?e|f^g$h[i]\\'), 'a\\.b\\*c\\+d\\?e\\|f\\^g\\$h\\[i\\]\\\\');
+    assert.ok(new RegExp(H.escapeRegex('x.(y)[z]{1}')).test('x.(y)[z]{1}'));
+});
+
+test('regexToLiteral unescapes punctuation and rejects regex features', () => {
+    assert.equal(H.regexToLiteral('\\{ "success": True'), '{ "success": True');
+    assert.equal(H.regexToLiteral('foo\\.bar'), 'foo.bar');
+    assert.equal(H.regexToLiteral('plain'), 'plain');
+    assert.equal(H.regexToLiteral('fn \\w+'), null);
+    assert.equal(H.regexToLiteral('a.b'), null);
+    assert.equal(H.regexToLiteral('(a)'), null);
+    assert.equal(H.regexToLiteral('trailing\\'), null);
+});
+
+test('relaxRegexSpacing turns literal spaces into \\s*', () => {
+    assert.equal(H.relaxRegexSpacing('\\{ "success": True'), '\\{\\s*"success":\\s*True');
+    assert.equal(H.relaxRegexSpacing('a   b'), 'a\\s*b');
+    assert.equal(H.relaxRegexSpacing('[ ]x y'), '[ ]x\\s*y');
+    assert.equal(H.relaxRegexSpacing('a\\ b'), null);
+    assert.equal(H.relaxRegexSpacing('nospace'), null);
+    const re = new RegExp(H.relaxRegexSpacing('\\{ "success": True'));
+    assert.ok(re.test('{"success":True'));
+    assert.ok(re.test('{  "success":   True'));
+});
+
+test('looksLikeRegex spots regex syntax in a plain query', () => {
+    for (const q of ['fn \\w+', 'foo.*bar', '\\{ "a"', 'TODO|FIXME', '[A-Z]+_ID', '^use ', 'end$']) {
+        assert.ok(H.looksLikeRegex(q), q);
+    }
+    for (const q of ['fn main', '{ "success": True', 'a.b', 'x = 1', '->', 'path/to/file.rs']) {
+        assert.ok(!H.looksLikeRegex(q), q);
+    }
+});
+
+test('noResultSuggestions for a regex offers spacing, case and plain text', () => {
+    const s = H.noResultSuggestions('\\{ "success": True', true);
+    assert.deepEqual(s.map(x => [x.label, x.query, x.regex]), [
+        ['Flexible spacing', '\\{\\s*"success":\\s*True', true],
+        ['Ignore case', '(?i)\\{ "success": True', true],
+        ['Flexible spacing, ignore case', '(?i)\\{\\s*"success":\\s*True', true],
+        ['Search as plain text', '{ "success": True', false],
+    ]);
+    // Already case-insensitive, no spaces, not a literal: nothing to offer.
+    assert.deepEqual(H.noResultSuggestions('(?i)fn\\w+', true), []);
+    assert.deepEqual(H.noResultSuggestions('', true), []);
+});
+
+test('noResultSuggestions for plain text offers regex only when it looks like one', () => {
+    assert.deepEqual(H.noResultSuggestions('fn \\w+', false), [
+        { label: 'Search as regex', query: 'fn \\w+', regex: true },
+    ]);
+    assert.deepEqual(H.noResultSuggestions('fn main', false), []);
+});
+
+test('regexErrorSuggestions offers plain text and an escaped pattern', () => {
+    assert.deepEqual(H.regexErrorSuggestions('{ "success": True'), [
+        { label: 'Search as plain text', query: '{ "success": True', regex: false },
+        { label: 'Escape special characters', query: '\\{ "success": True', regex: true },
+    ]);
+    assert.deepEqual(H.regexErrorSuggestions('abc').length, 1);
+});
+
 // ---------- dependency explorer links ----------
 
 test('hasImportGraph: only languages whose imports are resolved', () => {
