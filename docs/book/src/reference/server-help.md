@@ -13,6 +13,7 @@ Options:
       --web-address <ADDR>  Web UI / REST listen address (overrides config file)
   -i, --index <PATH>        Additional paths to index (can be repeated, adds to config file paths)
       --no-auto-index       Skip automatic indexing on startup
+      --no-grpc             Do not start the gRPC API (same as `enable_grpc = false` in the config)
   -v, --verbose             Enable verbose logging
       --init <FILE>         Generate a template configuration file and exit
       --static-dir <DIR>    Serve static UI files from this directory instead of the embedded assets. Useful during development: UI changes are visible without recompiling. Example: --static-dir static

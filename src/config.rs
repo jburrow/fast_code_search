@@ -97,6 +97,11 @@ pub struct ServerConfig {
     #[serde(default = "default_address")]
     pub address: String,
 
+    /// Start the gRPC API. When false, `address` is ignored and only the web
+    /// UI / REST API is served.
+    #[serde(default = "default_true")]
+    pub enable_grpc: bool,
+
     /// Address to bind the HTTP/Web UI server to
     #[serde(default = "default_web_address")]
     pub web_address: String,
@@ -271,6 +276,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             address: default_address(),
+            enable_grpc: true,
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
             cors_origins: Vec::new(),
@@ -456,6 +462,11 @@ impl Config {
 # contents. Use "0.0.0.0:50051" only on a trusted network.
 address = "127.0.0.1:50051"
 
+# Start the gRPC API (default: true). Set false if you only use the web UI,
+# REST API and fcs CLI. If the gRPC port is busy at startup the server logs
+# an error and keeps running without gRPC rather than exiting.
+enable_grpc = true
+
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"
 
@@ -519,10 +530,13 @@ max_file_size = 10485760
 # Disable for UTF-8-only codebases for slightly faster indexing.
 transcode_non_utf8 = true
 
-# Path to persistent index storage (optional)
-# If set, the index will be saved to disk and loaded on restart for faster startup
-# The index file stores trigrams, file metadata, and config fingerprint for reconciliation
-# index_path = "/var/lib/fast_code_search/index.bin"
+# Path to persistent index storage (optional, no default)
+# If set, the index is saved to disk and loaded on restart, so a restart takes
+# seconds and only changed files are re-read. If unset, the index lives in
+# memory only and is rebuilt from scratch on every start (the server logs a
+# warning saying so). Use one file per config; the directory is created on
+# first save. `~` is expanded; relative paths resolve against this file.
+# index_path = "~/.local/share/fast_code_search/index.fcsidx"
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
@@ -608,18 +622,26 @@ service_name = "fast_code_search"
 
     /// Check the configuration before anything binds or indexes.
     ///
-    /// Hard errors (unparseable addresses, zero limits, an index_path whose
-    /// directory does not exist) are returned; soft problems (an index path
-    /// that does not exist yet, no paths at all) come back as warnings so
-    /// the caller can log them and continue.
+    /// Hard errors (unparseable addresses, zero limits) are returned; soft
+    /// problems (no paths at all, no index_path, an index directory that
+    /// does not exist yet) come back as warnings so the caller can log them
+    /// and continue.
     pub fn validate(&self) -> Result<Vec<String>> {
         use std::net::SocketAddr;
         let mut warnings = Vec::new();
 
-        self.server
-            .address
-            .parse::<SocketAddr>()
-            .with_context(|| format!("server.address is not host:port: {}", self.server.address))?;
+        if self.server.enable_grpc {
+            self.server.address.parse::<SocketAddr>().with_context(|| {
+                format!("server.address is not host:port: {}", self.server.address)
+            })?;
+        }
+        if !self.server.enable_grpc && !self.server.enable_web_ui {
+            warnings.push(
+                "server.enable_grpc and server.enable_web_ui are both false: \
+                 the index is built but nothing can search it"
+                    .to_string(),
+            );
+        }
         if self.server.enable_web_ui {
             self.server
                 .web_address
@@ -630,7 +652,7 @@ service_name = "fast_code_search"
                         self.server.web_address
                     )
                 })?;
-            if self.server.web_address == self.server.address {
+            if self.server.enable_grpc && self.server.web_address == self.server.address {
                 anyhow::bail!(
                     "server.address and server.web_address are both {}",
                     self.server.address
@@ -650,10 +672,11 @@ service_name = "fast_code_search"
             let p = Path::new(index_path);
             if let Some(parent) = p.parent() {
                 if !parent.as_os_str().is_empty() && !parent.is_dir() {
-                    anyhow::bail!(
-                        "indexer.index_path directory does not exist: {}",
+                    warnings.push(format!(
+                        "indexer.index_path directory does not exist yet and will be \
+                         created on first save: {}",
                         parent.display()
-                    );
+                    ));
                 }
             }
         }
@@ -664,6 +687,15 @@ service_name = "fast_code_search"
             if !Path::new(p).exists() {
                 warnings.push(format!("indexer.paths entry does not exist (yet): {p}"));
             }
+        }
+        if self.indexer.index_path.is_none() && !self.indexer.paths.is_empty() {
+            warnings.push(
+                "indexer.index_path is not set: the index is kept in memory only and \
+                 rebuilt from scratch on every start. To keep it between restarts add \
+                 e.g. index_path = \"~/.local/share/fast_code_search/index.fcsidx\" \
+                 under [indexer]"
+                    .to_string(),
+            );
         }
         if self.indexer.save_after_updates > 0 && self.indexer.index_path.is_none() {
             warnings.push(
@@ -746,11 +778,26 @@ mod tests {
         assert!(cfg.validate().is_err());
         cfg.indexer.batch_size = 10;
         cfg.indexer.index_path = Some("/definitely/not/here/index.bin".to_string());
-        assert!(cfg.validate().is_err());
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings.iter().any(|w| w.contains("created on first save")));
         cfg.indexer.index_path = None;
         cfg.indexer.paths = vec!["/no/such/dir".to_string()];
         let warnings = cfg.validate().unwrap();
         assert!(warnings.iter().any(|w| w.contains("does not exist")));
+        assert!(warnings.iter().any(|w| w.contains("index_path is not set")));
+    }
+
+    #[test]
+    fn test_validate_grpc_disabled() {
+        let mut cfg = Config::default();
+        cfg.server.enable_grpc = false;
+        cfg.server.address = "not-an-address".to_string();
+        assert!(cfg.validate().is_ok(), "address is ignored without gRPC");
+        cfg.server.address = cfg.server.web_address.clone();
+        assert!(cfg.validate().is_ok(), "no port clash without gRPC");
+        cfg.server.enable_web_ui = false;
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings.iter().any(|w| w.contains("nothing can search it")));
     }
 
     #[test]

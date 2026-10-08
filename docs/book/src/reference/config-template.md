@@ -15,6 +15,11 @@ and the comment that explains it. The narrative reference is [API and configurat
 # contents. Use "0.0.0.0:50051" only on a trusted network.
 address = "127.0.0.1:50051"
 
+# Start the gRPC API (default: true). Set false if you only use the web UI,
+# REST API and fcs CLI. If the gRPC port is busy at startup the server logs
+# an error and keeps running without gRPC rather than exiting.
+enable_grpc = true
+
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"
 
@@ -78,10 +83,13 @@ max_file_size = 10485760
 # Disable for UTF-8-only codebases for slightly faster indexing.
 transcode_non_utf8 = true
 
-# Path to persistent index storage (optional)
-# If set, the index will be saved to disk and loaded on restart for faster startup
-# The index file stores trigrams, file metadata, and config fingerprint for reconciliation
-# index_path = "/var/lib/fast_code_search/index.bin"
+# Path to persistent index storage (optional, no default)
+# If set, the index is saved to disk and loaded on restart, so a restart takes
+# seconds and only changed files are re-read. If unset, the index lives in
+# memory only and is rebuilt from scratch on every start (the server logs a
+# warning saying so). Use one file per config; the directory is created on
+# first save. `~` is expanded; relative paths resolve against this file.
+# index_path = "~/.local/share/fast_code_search/index.fcsidx"
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
