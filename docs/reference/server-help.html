@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2ca3f317.js";
+            window.path_to_searchindex_js = "../searchindex-e1e934e9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -193,6 +193,7 @@ Options:
       --web-address &lt;ADDR&gt;  Web UI / REST listen address (overrides config file)
   -i, --index &lt;PATH&gt;        Additional paths to index (can be repeated, adds to config file paths)
       --no-auto-index       Skip automatic indexing on startup
+      --no-grpc             Do not start the gRPC API (same as `enable_grpc = false` in the config)
   -v, --verbose             Enable verbose logging
       --init &lt;FILE&gt;         Generate a template configuration file and exit
       --static-dir &lt;DIR&gt;    Serve static UI files from this directory instead of the embedded assets. Useful during development: UI changes are visible without recompiling. Example: --static-dir static

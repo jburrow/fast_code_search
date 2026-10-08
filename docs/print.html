@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2ca3f317.js";
+            window.path_to_searchindex_js = "searchindex-e1e934e9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -813,8 +813,9 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.12 lines with the phrase rank first; upgrade</td></tr>
 <tr><td>A regex is slow</td><td>No required literal, so every file is scanned</td><td>Anchor it with a literal (<code>fn\s+main</code> rather than <code>\w+\s+\w+</code>)</td></tr>
 <tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
-<tr><td>Port already in use</td><td>Another instance (perhaps started by hand)</td><td>Stop it, or change <code>address</code> / <code>web_address</code></td></tr>
-<tr><td>Index rebuilt on every start</td><td><code>index_path</code> unset or unwritable</td><td>Set it to a writable location; the log names the path it tried</td></tr>
+<tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>
+<tr><td>Nothing indexed, <code>paths_count=0</code></td><td>No config file found: without <code>--config</code> only <code>$FCS_CONFIG</code>, <code>./fast_code_search.toml</code> and <code>~/.config/fast_code_search/config.toml</code> are read</td><td>Pass <code>--config FILE</code>; the <code>Configuration source</code> log line says which file was used. Add <code>--verbose</code> (or <code>RUST_LOG=debug</code>) to see each path and ignore file</td></tr>
+<tr><td>Index rebuilt on every start</td><td><code>index_path</code> unset (startup warns) or unwritable</td><td>Set it to a writable location; the log names the path it tried</td></tr>
 <tr><td>Windows: <code>C:\Users\NAME~1\…</code> paths</td><td>Short-name spelling of a root</td><td>Harmless; roots are compared in canonical form</td></tr>
 <tr><td>504 from the API</td><td>Request timeout</td><td>The search also stopped; narrow the query or pass <code>timeout_ms</code> for a partial answer</td></tr>
 <tr><td>macOS: binary “cannot be opened”</td><td>Quarantine flag on a download</td><td><code>xattr -d com.apple.quarantine fast_code_search_server</code></td></tr>
@@ -2054,6 +2055,7 @@ Options:
       --web-address &lt;ADDR&gt;  Web UI / REST listen address (overrides config file)
   -i, --index &lt;PATH&gt;        Additional paths to index (can be repeated, adds to config file paths)
       --no-auto-index       Skip automatic indexing on startup
+      --no-grpc             Do not start the gRPC API (same as `enable_grpc = false` in the config)
   -v, --verbose             Enable verbose logging
       --init &lt;FILE&gt;         Generate a template configuration file and exit
       --static-dir &lt;DIR&gt;    Serve static UI files from this directory instead of the embedded assets. Useful during development: UI changes are visible without recompiling. Example: --static-dir static
@@ -2074,6 +2076,11 @@ and the comment that explains it. The narrative reference is <a href="#configura
 # contents. Use "0.0.0.0:50051" only on a trusted network.
 address = "127.0.0.1:50051"
 
+# Start the gRPC API (default: true). Set false if you only use the web UI,
+# REST API and fcs CLI. If the gRPC port is busy at startup the server logs
+# an error and keeps running without gRPC rather than exiting.
+enable_grpc = true
+
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"
 
@@ -2082,18 +2089,20 @@ enable_web_ui = true
 
 # Origins allowed to call the REST API from another site (CORS).
 # Empty (default) = same-origin only, which is all the embedded UI needs.
-# cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
+# Example: ["http://localhost:3000"], or ["*"] to allow any origin
+cors_origins = []
 
 # Searches executing at once on the REST API; extra requests get 503 + Retry-After
-# max_concurrent_searches = 64
+max_concurrent_searches = 64
 
 # Per-request timeout (seconds) for both servers
-# request_timeout_secs = 30
+request_timeout_secs = 30
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
 # request so that UI edits are visible without recompiling the server.
-# Useful during development; leave commented out for production.
+# Useful during development. Unset (the default) = the assets embedded in the
+# binary; TOML has no "unset" value, so this one key stays commented out.
 # static_dir = "static"
 
 [indexer]
@@ -2106,11 +2115,11 @@ paths = [
 ]
 
 # Honour .gitignore / .ignore files under the indexed paths (default: true)
-# respect_gitignore = true
+respect_gitignore = true
 
 # File extensions to include (empty = all text files)
-# Uncomment and customize to limit indexed file types
-# include_extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+# Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+include_extensions = []
 
 # Patterns to exclude from indexing
 exclude_patterns = [
@@ -2127,7 +2136,8 @@ exclude_patterns = [
 # Exact file paths to permanently exclude from indexing.
 # Useful for files that cause crashes or are too large/noisy to be useful.
 # After a crash, check fcs_last_processed.txt to identify the offending file.
-# exclude_files = ["/repo/src/generated/huge_file.rs"]
+# Example: ["/repo/src/generated/huge_file.rs"]
+exclude_files = []
 
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
@@ -2137,10 +2147,13 @@ max_file_size = 10485760
 # Disable for UTF-8-only codebases for slightly faster indexing.
 transcode_non_utf8 = true
 
-# Path to persistent index storage (optional)
-# If set, the index will be saved to disk and loaded on restart for faster startup
-# The index file stores trigrams, file metadata, and config fingerprint for reconciliation
-# index_path = "/var/lib/fast_code_search/index.bin"
+# Path to persistent index storage.
+# The index is saved here and loaded on restart, so a restart takes seconds
+# and only changed files are re-read. Remove the line to keep the index in
+# memory only: it is then rebuilt from scratch on every start, and the server
+# logs a warning saying so. Use one file per config. The directory is created
+# on first save; `~` is expanded and relative paths resolve against this file.
+index_path = "~/.local/share/fast_code_search/config.fcsidx"
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
@@ -2165,6 +2178,11 @@ watch = false
 # and used to boost search relevance for symbol matches.
 # Disable to reduce memory usage and indexing time at the cost of reduced relevance.
 enable_symbols = true
+
+# Files read and indexed per batch during the initial build (default: 500).
+# Peak RAM scales with batch_size x average file size x ~4: lower it on small
+# machines, raise it on large ones to reduce lock contention.
+batch_size = 500
 
 [telemetry]
 # Enable OpenTelemetry trace export (default: false)
@@ -2914,6 +2932,35 @@ crates.io publish job and a Homebrew-tap update job (formula generated
 from the archives’ checksums) that run when their tokens are configured.</li>
 <li>Diagrams in the documentation: the indexing pipeline, how a score is
 composed, and the parts of a deployment.</li>
+<li><code>server.enable_grpc</code> (default <code>true</code>) and <code>--no-grpc</code> to run without the
+gRPC API.</li>
+<li>Storage health checks. At startup and before each save the server warns
+when the filesystem holding the index is out of inodes or short of space,
+and when a filesystem holding indexed source is out of inodes. A failed
+save with “No space left on device” says whether bytes or inodes ran out,
+since an inode-exhausted disk still shows free space.</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>A busy or forbidden port no longer stops the server. If the gRPC or web
+port cannot be bound, the server logs an error naming the port and how to
+find what holds it, and keeps indexing and serving on the other API. It
+exits only when no API could start. Previously a busy gRPC port shut the
+server down at once, interrupting indexing at 0 files while the web UI
+stayed up, and the cause appeared only after Ctrl+C.</li>
+<li>Startup logs where the config came from (or that none was found and
+defaults are used) and the config warnings; both were previously
+discarded because they were emitted before logging was set up.</li>
+<li>An unset <code>indexer.index_path</code> is now a warning when indexing starts (“Index
+persistence OFF … lost when the server stops”), and the ready line shows
+<code>index=memory only, not saved</code>. A missing <code>index_path</code> directory is a
+warning rather than an error, since the first save creates it.</li>
+<li><code>--init</code> writes every config key with its default. <code>index_path</code> is now set
+in the generated file, named after it (<code>--init work.toml</code> gives
+<code>~/.local/share/fast_code_search/work.fcsidx</code>); <code>cors_origins</code>,
+<code>max_concurrent_searches</code>, <code>request_timeout_secs</code>, <code>respect_gitignore</code>,
+<code>include_extensions</code>, <code>exclude_files</code> and <code>batch_size</code> are no longer
+missing or commented out. A test keeps the template complete.</li>
 </ul>
 <h2 id="0130---2026-09-08"><a class="header" href="#0130---2026-09-08"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.1...v0.13.0">0.13.0</a> - 2026-09-08</a></h2>
 <h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>
@@ -2939,7 +2986,7 @@ recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
 slow. CI runs it and the documentation site shows the result alongside
 the latency and ranking-quality figures, with two new book pages.</li>
 </ul>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
 <li>Ranking: single-term lines of a multi-term query are capped per file and
 the files holding the phrase are scanned first, so the match budget can
@@ -2981,7 +3028,7 @@ reference, moved out of the README.</li>
 <li>Release pages carry an install table, checksum instructions and a
 first-run line alongside the changelog section.</li>
 </ul>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li>README rewritten as a landing page that leads with how results are
 ranked; benchmark figures are from the latest CI run and link to it.</li>
@@ -2997,7 +3044,7 @@ moved under <code>docs/internal/</code>.</li>
 built-in runner over <code>static/tests</code>) and fails if the committed
 <code>tailwind.css</code> does not match the markup.</li>
 </ul>
-<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
 <ul>
 <li>Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
 icon font (which stays only for the semantic pages); result groups are
@@ -3034,7 +3081,7 @@ HTTP client).</li>
 </ul>
 <p>Fixes from the 2026-09-06 engine and UI review
 (<code>docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md</code>).</p>
-<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
+<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
 <ul>
 <li>Line-mode regex patterns are matched in one pass per file (compiled with
 <code>(?mR)</code>, one hit per line, per-line semantics for <code>^</code>, <code>$</code>, <code>\s</code> and CRLF
@@ -3228,7 +3275,7 @@ and the standard <code>grpc.health.v1</code> service.</li>
 <li>gRPC <code>SearchRequest.offset</code> / <code>rank</code> / <code>deadline_ms</code>; results carry
 <code>dependency_count</code>.</li>
 </ul>
-<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
+<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
 <ul>
 <li>Build: the semantic engine is behind the <code>semantic</code> Cargo feature (off by
 default; <code>ml-models</code> implies it), release binaries use thin LTO and are
@@ -3334,7 +3381,7 @@ refresh, dependency-edge removal) instead of leaving stale entries until restart
 <li>Keyboard navigation in results (<code>j</code>/<code>k</code>/arrows to move, Enter to open, <code>/</code> to focus).</li>
 <li>Per-result copy-path button.</li>
 </ul>
-<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
+<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
 <ul>
 <li>API errors are now consistent JSON (<code>{ "error": … }</code>); 503s include <code>Retry-After</code>.</li>
 <li>Static assets use compile-time content hashes for ETags and honor <code>If-None-Match</code>
@@ -3373,7 +3420,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Dependency popover and tooltip interactions in the web UI to improve code navigation context.</li>
 <li>Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.</li>
 </ul>
-<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
+<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
 <ul>
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
@@ -3388,7 +3435,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
 <h2 id="074---2026-03-20"><a class="header" href="#074---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.3...v0.7.4">0.7.4</a> - 2026-03-20</a></h2>
-<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
+<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
 <ul>
 <li>New UI theme for the keyword search interface with improved layout and styling.</li>
 </ul>
@@ -3397,7 +3444,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li>New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.</li>
 </ul>
-<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
+<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
 <ul>
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
@@ -3412,7 +3459,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).</li>
 <li>New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.</li>
 </ul>
-<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
+<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
 <ul>
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
@@ -3433,7 +3480,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>URL state encoding for semantic search UI; refactored shared helpers into <code>common.js</code> (#93).</li>
 <li>VS Code configuration and tasks for Rust development.</li>
 </ul>
-<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
+<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
 <ul>
 <li>Refactor code structure for improved readability and maintainability.</li>
 </ul>
@@ -3443,7 +3490,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li><strong>GitHub Pages site</strong> (<code>docs/site/</code>): A static project site deployed to <code>gh-pages</code> on every push to <code>main</code> via a new <code>pages.yml</code> workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from <code>dev/bench/</code> pushed by <code>github-action-benchmark</code>), Codecov coverage badge, dynamically-rendered changelog (from <code>changelog.json</code> generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses <code>clean-exclude: dev/</code> to preserve benchmark data, and both <code>pages.yml</code> and <code>benchmark.yml</code> share a <code>gh-pages-deploy</code> concurrency group to prevent simultaneous pushes.</li>
 </ul>
 <h2 id="069---2026-02-28"><a class="header" href="#069---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.8...v0.6.9">0.6.9</a> - 2026-02-28</a></h2>
-<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
+<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
 <ul>
 <li>Version bump and release.</li>
 </ul>
@@ -3574,7 +3621,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
 <h2 id="055---2026-02-26"><a class="header" href="#055---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5">0.5.5</a> - 2026-02-26</a></h2>
-<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
+<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
 <ul>
 <li>Maintenance release: version/changelog update only; no functional code changes.</li>
 </ul>
@@ -3638,7 +3685,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
+<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
 <ul>
 <li>Semantic search vector index now uses HNSW instead of linear search</li>
 <li>Updated documentation with HNSW configuration and tuning guide</li>
@@ -3671,7 +3718,7 @@ are serialised.</li>
 <p><strong>Semantic model download verification</strong>: Optional SHA256 verification via <code>FCS_MODEL_SHA256</code> or <code>FCS_MODEL_SHA256_&lt;MODEL&gt;</code></p>
 </li>
 </ul>
-<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
+<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
 <ul>
 <li>Tracing subscriber upgraded from simple <code>FmtSubscriber</code> to layered <code>Registry</code> (fmt + OTel)</li>
 <li><code>tracing-subscriber</code> now uses <code>registry</code> feature alongside <code>env-filter</code></li>
@@ -3712,7 +3759,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
+<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
 <ul>
 <li>Symbol extractor now handles C/C++ function declarators correctly (name is in <code>declarator</code> field, not <code>name</code>)</li>
 </ul>
@@ -3747,7 +3794,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
+<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
 <ul>
 <li>Search methods now use file metadata ranking instead of early termination for large candidate sets</li>
 <li><code>search_regex()</code> and <code>search_symbols()</code> also use fast ranking for consistency</li>
@@ -3805,7 +3852,7 @@ are serialised.</li>
 <p><strong>Symbols-only search mode</strong>: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via <code>symbols=true</code> query parameter in REST API or <code>symbols_only=true</code> in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.</p>
 </li>
 </ul>
-<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
+<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
@@ -3828,7 +3875,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="022---2026-02-01"><a class="header" href="#022---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.1...v0.2.2">0.2.2</a> - 2026-02-01</a></h2>
-<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
+<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
 <ul>
 <li><strong>Improved indexing log readability</strong>: The background indexing completion message now formats large numbers with underscore separators (e.g., <code>89_210</code>), rounds <code>files_per_sec</code> to whole numbers, and removes redundant raw byte values.</li>
 </ul>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2ca3f317.js";
+            window.path_to_searchindex_js = "../searchindex-e1e934e9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -194,6 +194,11 @@ and the comment that explains it. The narrative reference is <a href="../importe
 # contents. Use "0.0.0.0:50051" only on a trusted network.
 address = "127.0.0.1:50051"
 
+# Start the gRPC API (default: true). Set false if you only use the web UI,
+# REST API and fcs CLI. If the gRPC port is busy at startup the server logs
+# an error and keeps running without gRPC rather than exiting.
+enable_grpc = true
+
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"
 
@@ -202,18 +207,20 @@ enable_web_ui = true
 
 # Origins allowed to call the REST API from another site (CORS).
 # Empty (default) = same-origin only, which is all the embedded UI needs.
-# cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
+# Example: ["http://localhost:3000"], or ["*"] to allow any origin
+cors_origins = []
 
 # Searches executing at once on the REST API; extra requests get 503 + Retry-After
-# max_concurrent_searches = 64
+max_concurrent_searches = 64
 
 # Per-request timeout (seconds) for both servers
-# request_timeout_secs = 30
+request_timeout_secs = 30
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
 # request so that UI edits are visible without recompiling the server.
-# Useful during development; leave commented out for production.
+# Useful during development. Unset (the default) = the assets embedded in the
+# binary; TOML has no "unset" value, so this one key stays commented out.
 # static_dir = "static"
 
 [indexer]
@@ -226,11 +233,11 @@ paths = [
 ]
 
 # Honour .gitignore / .ignore files under the indexed paths (default: true)
-# respect_gitignore = true
+respect_gitignore = true
 
 # File extensions to include (empty = all text files)
-# Uncomment and customize to limit indexed file types
-# include_extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+# Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+include_extensions = []
 
 # Patterns to exclude from indexing
 exclude_patterns = [
@@ -247,7 +254,8 @@ exclude_patterns = [
 # Exact file paths to permanently exclude from indexing.
 # Useful for files that cause crashes or are too large/noisy to be useful.
 # After a crash, check fcs_last_processed.txt to identify the offending file.
-# exclude_files = ["/repo/src/generated/huge_file.rs"]
+# Example: ["/repo/src/generated/huge_file.rs"]
+exclude_files = []
 
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
@@ -257,10 +265,13 @@ max_file_size = 10485760
 # Disable for UTF-8-only codebases for slightly faster indexing.
 transcode_non_utf8 = true
 
-# Path to persistent index storage (optional)
-# If set, the index will be saved to disk and loaded on restart for faster startup
-# The index file stores trigrams, file metadata, and config fingerprint for reconciliation
-# index_path = "/var/lib/fast_code_search/index.bin"
+# Path to persistent index storage.
+# The index is saved here and loaded on restart, so a restart takes seconds
+# and only changed files are re-read. Remove the line to keep the index in
+# memory only: it is then rebuilt from scratch on every start, and the server
+# logs a warning saying so. Use one file per config. The directory is created
+# on first save; `~` is expanded and relative paths resolve against this file.
+index_path = "~/.local/share/fast_code_search/config.fcsidx"
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
@@ -285,6 +296,11 @@ watch = false
 # and used to boost search relevance for symbol matches.
 # Disable to reduce memory usage and indexing time at the cost of reduced relevance.
 enable_symbols = true
+
+# Files read and indexed per batch during the initial build (default: 500).
+# Peak RAM scales with batch_size x average file size x ~4: lower it on small
+# machines, raise it on large ones to reduce lock contention.
+batch_size = 500
 
 [telemetry]
 # Enable OpenTelemetry trace export (default: false)
