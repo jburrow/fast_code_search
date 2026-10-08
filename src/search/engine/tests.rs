@@ -2977,3 +2977,20 @@ fn test_budget_truncated_search_is_repeatable() {
         assert_eq!(page(), first);
     }
 }
+
+/// A UTF-8 byte order mark is not text (as in ripgrep): `^` matches at the
+/// start of line 1 and the line is reported without it.
+#[test]
+fn test_byte_order_mark_is_not_part_of_line_one() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(t.path(), &[("a.txt", "\u{feff}test123\ntest123\n")]);
+    let (hits, _) = e
+        .search_regex_with_limits("^test123", "", "", SearchLimits::new(50), RankMode::Full)
+        .unwrap();
+    let mut lines: Vec<usize> = hits.iter().map(|m| m.line_number).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec![1, 2]);
+    let (hits, _) = review_text(&e, "test123", SearchLimits::new(50));
+    let first = hits.iter().find(|m| m.line_number == 1).unwrap();
+    assert_eq!(first.content, "test123");
+}

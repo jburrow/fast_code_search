@@ -12,9 +12,28 @@ pub struct TranscodeResult {
     pub encoding_name: &'static str,
 }
 
+/// A UTF-8 byte order mark (U+FEFF) at the start of a file.
+const UTF8_BOM: char = '\u{feff}';
+
+/// `s` without a leading UTF-8 byte order mark. The mark is invisible in
+/// editors, so it is not treated as text: `^` matches at the start of line 1
+/// and results do not show a stray character, as in ripgrep.
+pub fn strip_utf8_bom(s: &str) -> &str {
+    s.strip_prefix(UTF8_BOM).unwrap_or(s)
+}
+
+/// [`strip_utf8_bom`] for an owned string, in place.
+pub fn strip_utf8_bom_owned(mut s: String) -> String {
+    if s.starts_with(UTF8_BOM) {
+        s.drain(..UTF8_BOM.len_utf8());
+    }
+    s
+}
+
 /// Detect encoding of raw bytes and transcode to UTF-8 if needed.
 ///
-/// Returns `Ok(None)` if already valid UTF-8 (zero-copy fast path).
+/// Returns `Ok(None)` if already valid UTF-8 (zero-copy fast path; the caller
+/// strips a byte order mark with [`strip_utf8_bom`]).
 /// Returns `Ok(Some(TranscodeResult))` with transcoded content for non-UTF-8 text.
 /// Returns `Err` if the content appears to be binary (not text in any encoding).
 pub fn transcode_to_utf8(bytes: &[u8]) -> Result<Option<TranscodeResult>, &'static str> {
@@ -413,6 +432,14 @@ mod tests {
     }
 
     // --- Encoding transcoding tests ---
+
+    #[test]
+    fn test_strip_utf8_bom() {
+        assert_eq!(strip_utf8_bom("\u{feff}abc"), "abc");
+        assert_eq!(strip_utf8_bom("abc\u{feff}"), "abc\u{feff}");
+        assert_eq!(strip_utf8_bom_owned("\u{feff}abc".to_string()), "abc");
+        assert_eq!(strip_utf8_bom_owned(String::new()), "");
+    }
 
     #[test]
     fn test_transcode_utf8_passthrough() {

@@ -2,7 +2,9 @@
 
 The same syntax everywhere: the web UI's search box, `fcs`, and the `q`
 parameter of the API. It applies to plain-text queries; with `regex=true`
-(`fcs -e`) the whole query is a regular expression instead.
+(`fcs -e`) the whole query is a regular expression instead. For how the
+results compare with grep, ripgrep and git grep, see [Matching compared
+with grep and ripgrep](matching.md).
 
 | Write | To get |
 |---|---|

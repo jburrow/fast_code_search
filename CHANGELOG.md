@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/fixtures/backtest`, and fails on any line one finds and the other
   does not. It also checks that a page of results is repeatable and that
   LOAD MORE ends with every hit exactly once. Runs in CI on changes to the
-  engine.
+  engine. Two new documentation pages: how the backtest works and how to
+  extend it ("Correctness against ripgrep"), and where fcs's matching
+  agrees with or differs from grep, ripgrep and git grep ("Matching
+  compared with grep and ripgrep").
 - MCP server for coding agents at `/mcp` on the web server (streamable
   HTTP), with six read-only tools: `search_code`, `read_file`,
   `file_dependencies`, `change_impact`, `import_path` and
@@ -120,6 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so nothing repeats or goes missing. Results already shown can move.
 - Greek: a query or line with a word-final sigma (`ς`, or a capital `Σ`
   that lowercases to it) missed matches written with the other sigma.
+- A file starting with a UTF-8 byte order mark (an invisible marker some
+  editors write) kept it as part of line 1, so `^text` missed that line and
+  the result showed a stray character. The mark is now skipped when a file
+  is read, as ripgrep does. Files on disk are untouched.
 - A regex that can match the empty string (`x*`, `^\s*$`) reported a hit
   on a line past the end of a file that ends with a newline.
 - Plain-text search for code containing quotes (`{ "success": True`,

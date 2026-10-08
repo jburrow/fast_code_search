@@ -376,7 +376,7 @@ impl PartialIndexedFile {
         let raw_bytes = std::fs::read(path).ok()?;
         // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
         let (content, transcoded) = match String::from_utf8(raw_bytes) {
-            Ok(s) => (s, false), // UTF-8 fast path — zero-copy consume
+            Ok(s) => (crate::utils::strip_utf8_bom_owned(s), false), // UTF-8 fast path — zero-copy consume
             Err(e) => {
                 if !transcode_non_utf8 {
                     return None; // Transcoding disabled
