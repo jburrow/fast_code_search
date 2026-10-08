@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e1e934e9.js";
+            window.path_to_searchindex_js = "searchindex-861700ba.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -815,6 +815,7 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
 <tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>
 <tr><td>Nothing indexed, <code>paths_count=0</code></td><td>No config file found: without <code>--config</code> only <code>$FCS_CONFIG</code>, <code>./fast_code_search.toml</code> and <code>~/.config/fast_code_search/config.toml</code> are read</td><td>Pass <code>--config FILE</code>; the <code>Configuration source</code> log line says which file was used. Add <code>--verbose</code> (or <code>RUST_LOG=debug</code>) to see each path and ignore file</td></tr>
+<tr><td><code>Index NOT writable: another fast_code_search server is already using this index</code></td><td>Two servers share one <code>index_path</code> (often an old one still running)</td><td>The log names the other PID and ports. Stop it, or give each config its own <code>index_path</code>; until then this server loads the index read-only</td></tr>
 <tr><td>Index rebuilt on every start</td><td><code>index_path</code> unset (startup warns) or unwritable</td><td>Set it to a writable location; the log names the path it tried</td></tr>
 <tr><td>Windows: <code>C:\Users\NAME~1\…</code> paths</td><td>Short-name spelling of a root</td><td>Harmless; roots are compared in canonical form</td></tr>
 <tr><td>504 from the API</td><td>Request timeout</td><td>The search also stopped; narrow the query or pass <code>timeout_ms</code> for a partial answer</td></tr>
@@ -2939,6 +2940,15 @@ when the filesystem holding the index is out of inodes or short of space,
 and when a filesystem holding indexed source is out of inodes. A failed
 save with “No space left on device” says whether bytes or inodes ran out,
 since an inode-exhausted disk still shows free space.</li>
+<li>One server per index: the server holds a lock on <code>&lt;index_path&gt;.lock</code> with
+its PID and addresses. A second server given the same <code>index_path</code> logs
+which process owns it, loads the index read-only and never saves, so the
+two can no longer overwrite each other’s index.</li>
+<li>The diagnostics page has a Service card: web UI and gRPC status, where
+the index is saved (or that it is memory only / read-only), and startup
+and storage problems, which also mark the status as degraded.
+<code>/api/health</code> reports the problem count, and the search page shows
+“Server started with N problems” linking to it.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
@@ -2961,6 +2971,10 @@ in the generated file, named after it (<code>--init work.toml</code> gives
 <code>max_concurrent_searches</code>, <code>request_timeout_secs</code>, <code>respect_gitignore</code>,
 <code>include_extensions</code>, <code>exclude_files</code> and <code>batch_size</code> are no longer
 missing or commented out. A test keeps the template complete.</li>
+<li><code>fast_code_search_semantic</code> logs where its config came from, and a busy
+gRPC or web port is a clear error that disables only that API, instead of
+a panic inside a background task that left the process running with
+nothing listening.</li>
 </ul>
 <h2 id="0130---2026-09-08"><a class="header" href="#0130---2026-09-08"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.1...v0.13.0">0.13.0</a> - 2026-09-08</a></h2>
 <h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>

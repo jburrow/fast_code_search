@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-e1e934e9.js";
+            window.path_to_searchindex_js = "../searchindex-861700ba.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -199,6 +199,7 @@
 <tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
 <tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>
 <tr><td>Nothing indexed, <code>paths_count=0</code></td><td>No config file found: without <code>--config</code> only <code>$FCS_CONFIG</code>, <code>./fast_code_search.toml</code> and <code>~/.config/fast_code_search/config.toml</code> are read</td><td>Pass <code>--config FILE</code>; the <code>Configuration source</code> log line says which file was used. Add <code>--verbose</code> (or <code>RUST_LOG=debug</code>) to see each path and ignore file</td></tr>
+<tr><td><code>Index NOT writable: another fast_code_search server is already using this index</code></td><td>Two servers share one <code>index_path</code> (often an old one still running)</td><td>The log names the other PID and ports. Stop it, or give each config its own <code>index_path</code>; until then this server loads the index read-only</td></tr>
 <tr><td>Index rebuilt on every start</td><td><code>index_path</code> unset (startup warns) or unwritable</td><td>Set it to a writable location; the log names the path it tried</td></tr>
 <tr><td>Windows: <code>C:\Users\NAME~1\…</code> paths</td><td>Short-name spelling of a root</td><td>Harmless; roots are compared in canonical form</td></tr>
 <tr><td>504 from the API</td><td>Request timeout</td><td>The search also stopped; narrow the query or pass <code>timeout_ms</code> for a partial answer</td></tr>

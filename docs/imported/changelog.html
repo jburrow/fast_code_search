@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-e1e934e9.js";
+            window.path_to_searchindex_js = "../searchindex-861700ba.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -203,6 +203,15 @@ when the filesystem holding the index is out of inodes or short of space,
 and when a filesystem holding indexed source is out of inodes. A failed
 save with “No space left on device” says whether bytes or inodes ran out,
 since an inode-exhausted disk still shows free space.</li>
+<li>One server per index: the server holds a lock on <code>&lt;index_path&gt;.lock</code> with
+its PID and addresses. A second server given the same <code>index_path</code> logs
+which process owns it, loads the index read-only and never saves, so the
+two can no longer overwrite each other’s index.</li>
+<li>The diagnostics page has a Service card: web UI and gRPC status, where
+the index is saved (or that it is memory only / read-only), and startup
+and storage problems, which also mark the status as degraded.
+<code>/api/health</code> reports the problem count, and the search page shows
+“Server started with N problems” linking to it.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
@@ -225,6 +234,10 @@ in the generated file, named after it (<code>--init work.toml</code> gives
 <code>max_concurrent_searches</code>, <code>request_timeout_secs</code>, <code>respect_gitignore</code>,
 <code>include_extensions</code>, <code>exclude_files</code> and <code>batch_size</code> are no longer
 missing or commented out. A test keeps the template complete.</li>
+<li><code>fast_code_search_semantic</code> logs where its config came from, and a busy
+gRPC or web port is a clear error that disables only that API, instead of
+a panic inside a background task that left the process running with
+nothing listening.</li>
 </ul>
 <h2 id="0130---2026-09-08"><a class="header" href="#0130---2026-09-08"><a href="https://github.com/jburrow/fast_code_search/compare/v0.12.1...v0.13.0">0.13.0</a> - 2026-09-08</a></h2>
 <h3 id="added-1"><a class="header" href="#added-1">Added</a></h3>
