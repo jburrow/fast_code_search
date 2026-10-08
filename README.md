@@ -87,19 +87,29 @@ vim -q <(fcs --format vimgrep TODO)   # quickfix list; exit codes follow grep (0
 ```
 
 The web UI is at http://127.0.0.1:8080, the JSON API under `/api/`
-(`curl "localhost:8080/api/search?q=fn%20main"`), gRPC on `:50051`. To keep the
+(`curl "localhost:8080/api/search?q=fn%20main"`), gRPC on `:50051`
+(`--no-grpc` if you don't need it). To keep the
 server running on a developer machine, start it at login:
 [docs/RUN-AT-STARTUP.md](docs/RUN-AT-STARTUP.md) (systemd, launchd, Task Scheduler).
 
 ## What you get
 
+- **Dependency explorer** (GRAPH in the web UI): a file's imports and
+  importers, what a change to it could reach (and which tests), the import
+  chain between two files, and a folder map with cycles marked, beside the
+  source. The same queries are under `/api/graph/`.
 - **Query syntax** shared by the CLI, UI and API: `"exact phrase"`, `-term`,
   `file:src/`, `lang:rust`, `case:yes`, `word:yes`; regex with literal
-  pre-filtering through the trigram index; symbols-only and references modes.
+  pre-filtering through the trigram index, a cheat-sheet and suggestions
+  when a pattern finds nothing; symbols-only and references modes.
 - **Live index.** A file watcher applies edits, renames and deletes in place; a
   branch switch re-indexes a burst of files with one pass over the index.
 - **Persistent index.** Atomic, checksummed save and mmap load; a restart of a
   60k-file index takes seconds and reconciles what changed while it was down.
+  A lock keeps a second server from writing the same index.
+- **Tells you what is wrong.** The Index page reports which APIs started,
+  where the index is saved, and startup or storage problems (a busy port, a
+  disk out of space or inodes).
 - **Bounded by design.** Every search runs under a deadline and a match budget,
   page sizes and offsets are capped, regexes have size limits, and results are
   interleaved by file so one file cannot fill a page.

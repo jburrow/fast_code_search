@@ -55,6 +55,34 @@ Use `exclude_patterns` for whole trees and `exclude_files` for individual
 paths. A `.gitignore` in any indexed tree is honoured as well (also outside
 git repositories), so what your VCS ignores, the index ignores.
 
+## Two configurations on one machine
+
+Say a `work.toml` and a `personal.toml`, each run by its own server. Give
+each its own ports and, above all, its own `index_path`: only one server
+can write an index, and a second one pointed at the same file loads it
+read-only and never saves (the log names the process that owns it).
+`fast_code_search_server --init work.toml` already names the index after
+the file (`work.fcsidx`).
+
+```toml
+[server]
+address = "127.0.0.1:50052"
+web_address = "127.0.0.1:8081"
+
+[indexer]
+index_path = "~/.local/share/fast_code_search/work.fcsidx"
+```
+
+## Web UI and `fcs` only, no gRPC
+
+`fcs`, the web UI and the REST API all use the web port. If nothing of
+yours speaks gRPC, turn it off (or pass `--no-grpc`):
+
+```toml
+[server]
+enable_grpc = false
+```
+
 ## Change a rule on a running index
 
 Edit the file and restart the server. Files that are no longer eligible

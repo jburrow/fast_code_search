@@ -59,7 +59,8 @@ flowchart LR
   `--json` for tools, and an offline fallback that searches the saved index
   when the server is down.
 - **The web UI** is embedded in the server: search-as-you-type, hover
-  previews, references, dependency popovers, a diagnostics page.
+  previews, references, regex help, a dependency explorer for the import
+  graph, a diagnostics page.
 - **REST and gRPC** expose the same queries to editors and scripts.
 
 Source, issues and releases: [github.com/jburrow/fast_code_search](https://github.com/jburrow/fast_code_search).

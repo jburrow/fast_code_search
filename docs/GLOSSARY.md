@@ -9,4 +9,6 @@
 | **Symbol** | A named code element like a function, class, method, or variable. Extracted using tree-sitter parsing. Symbol matches are boosted 3x in search results. |
 | **TF-IDF** | Term Frequency–Inverse Document Frequency. A text vectorization technique that weights words by how important they are to a document relative to the corpus. Used for semantic search embeddings. |
 | **Embedding** | A vector (array of numbers) representing text in a high-dimensional space where similar meanings are close together. Enables "find similar code" queries. |
+| **Import graph** | Which indexed file imports which, resolved from import statements (Rust, Python, JavaScript/TypeScript). Drives the dependency ranking boost, the deps popover and the dependency explorer (`/graph.html`, `/api/graph/*`). |
+| **Containment edge** | A Rust `mod foo;` declaration (or a `pub use foo::X` re-export of a child module): an edge from a parent module to its own child. It describes structure rather than a dependency, so the explorer hides it by default. |
 | **gRPC** | Google Remote Procedure Call. A high-performance protocol for server communication. Used for streaming search results to IDE clients. |

@@ -9,11 +9,14 @@
 | Files from an excluded directory still appear | Rules changed while the server ran | Restart; reconciliation drops files the current rules exclude |
 | Results stop at "50+ (scan budget reached)" | Broad query, budget hit | Narrow with `file:`, `lang:` or a longer literal; use Load more / `--offset` for the next page |
 | `fn main` returns lines without `main` | Older version | Since 0.12 lines with the phrase rank first; upgrade |
+| A regex finds nothing that plain search finds | Regex is case-sensitive, and `{ ( .` are syntax | Start with `(?i)`, escape special characters with `\`, use `\s*` for spacing; the web UI's suggestions under an empty result do this for you |
 | A regex is slow | No required literal, so every file is scanned | Anchor it with a literal (`fn\s+main` rather than `\w+\s+\w+`) |
 | `references` finds nothing for a name | Language without call-site capture, or the index predates extraction changes | Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction |
 | `gRPC API NOT started` / `Web UI ... NOT started` at startup | Port already in use by another instance (perhaps started by hand) | The server keeps running on the other API; `ss -ltnp \| grep :PORT` finds the holder. Stop it, change `address` / `web_address`, or set `enable_grpc = false` |
 | Nothing indexed, `paths_count=0` | No config file found: without `--config` only `$FCS_CONFIG`, `./fast_code_search.toml` and `~/.config/fast_code_search/config.toml` are read | Pass `--config FILE`; the `Configuration source` log line says which file was used. Add `--verbose` (or `RUST_LOG=debug`) to see each path and ignore file |
 | `Index NOT writable: another fast_code_search server is already using this index` | Two servers share one `index_path` (often an old one still running) | The log names the other PID and ports. Stop it, or give each config its own `index_path`; until then this server loads the index read-only |
+| "Server started with N problems" on the search page | A port was busy, the index belongs to another server, or storage is low | Open the Index page: its Service card lists each problem (`/api/diagnostics` has the same list) |
+| `No space left on device` when saving, while `df -h` shows free space | The filesystem ran out of inodes | The log says whether bytes or inodes ran out; `df -i` confirms. Free inodes (often many small files) or move `index_path` elsewhere. The server also warns at startup when either is low |
 | Index rebuilt on every start | `index_path` unset (startup warns) or unwritable | Set it to a writable location; the log names the path it tried |
 | Windows: `C:\Users\NAME~1\…` paths | Short-name spelling of a root | Harmless; roots are compared in canonical form |
 | 504 from the API | Request timeout | The search also stopped; narrow the query or pass `timeout_ms` for a partial answer |
@@ -22,8 +25,9 @@
 ## Getting more information
 
 - `fcs status` prints the server, version, readiness and index size.
-- The **Index** page in the UI (`/diagnostics.html`) runs self-tests that
-  search for sampled files.
+- The **Index** page in the UI (`/diagnostics.html`) shows the service
+  status (APIs, where the index is saved, startup and storage problems)
+  and runs self-tests that search for sampled files.
 - `RUST_LOG=debug fast_code_search_server` logs every batch, watch and save;
   `RUST_LOG=info` is the default.
 - `/metrics` exposes request counters and a latency histogram for
