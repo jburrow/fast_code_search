@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0f175ca1.js";
+            window.path_to_searchindex_js = "searchindex-294f0d3b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -280,12 +280,12 @@ identity.
 The checksum proves the file is intact; the signature proves it was built
 by this repository’s release workflow for this tag, and not merely
 uploaded by someone holding the account.</p>
-<pre><code class="language-bash">sha256sum -c fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+<pre><code class="language-bash">sha256sum -c fast_code_search-v0.14.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 cosign verify-blob \
-  --bundle fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --bundle fast_code_search-v0.14.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz
+  fast_code_search-v0.14.0-x86_64-unknown-linux-gnu.tar.gz
 </code></pre>
 <p><a href="https://docs.sigstore.dev/cosign/installation/"><code>cosign</code></a> is a single
 binary; no key management is involved because the signing is keyless.</p>
@@ -304,7 +304,7 @@ its repository exists; until then use the archive, <code>cargo binstall</code> o
 container image.</p>
 <h2 id="container-image"><a class="header" href="#container-image">Container image</a></h2>
 <p>Every release from v0.13.0 is also published as
-<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.13</code>, <code>0.13.0</code>). The
+<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.14</code>, <code>0.14.0</code>). The
 image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
 serves the web UI and REST API on port 8080 and gRPC on 50051:</p>
 <pre><code class="language-bash">docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search
@@ -3193,7 +3193,8 @@ Only the web UI’s LOAD MORE is checked.</li>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.13.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.14.0...HEAD">Unreleased</a></a></h2>
+<h2 id="0140---2026-10-08"><a class="header" href="#0140---2026-10-08"><a href="https://github.com/jburrow/fast_code_search/compare/v0.13.0...v0.14.0">0.14.0</a> - 2026-10-08</a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
 <li>A ripgrep backtest: <code>examples/rg_backtest.rs</code> runs every query in
