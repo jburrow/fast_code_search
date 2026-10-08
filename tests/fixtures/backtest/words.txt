@@ -1,0 +1,11 @@
+foo
+foobar
+barfoo
+_foo
+foo_bar
+foo.bar
+(foo)
+foo-bar
+FOO
+Foo
+food foo

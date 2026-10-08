@@ -75,6 +75,13 @@ cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus
 cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
 ```
 
+## Correctness against ripgrep
+
+Fast and well ranked is worthless if a match is missing. A backtest runs
+124 searches through fcs and through ripgrep on the same trees and fails on
+any line one finds and the other does not; see [Correctness against
+ripgrep](correctness.md) for how it works and how to extend it.
+
 ## Comparison with scan tools
 
 `scripts/bench/compare.sh <dir>` times the same queries through ripgrep,

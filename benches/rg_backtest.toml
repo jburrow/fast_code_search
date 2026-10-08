@@ -1,0 +1,545 @@
+# Query set for the ripgrep backtest (examples/rg_backtest.rs).
+#
+# Every query runs through fcs with no result limits and through ripgrep
+# with the equivalent flags, and the hits must match line for line (see the
+# example's docs for how each kind of query is translated). Written against
+# the pinned benchmark corpora, tokio 1.45.0 and Django 5.2 (bench-corpus/),
+# plus the hand-written edge cases in tests/fixtures/backtest. Add a query
+# whenever a search bug is fixed, so it stays fixed.
+#
+# Fields: q (what a user types), mode (text | regex, default text), globs
+# (rg -g equivalents of file:/lang:, relative to each tree), known (an
+# accepted difference and why), why (what the query exercises).
+
+description = "tokio 1.45.0 + Django 5.2 + edge cases"
+
+# ---------------------------------------------------------------- literals
+
+[[query]]
+q = "needle"
+why = "plain term; one file has 250 hits (per-document cap)"
+
+[[query]]
+q = "Runtime"
+why = "common identifier, case-insensitive by default"
+
+[[query]]
+q = "spawn_blocking"
+
+[[query]]
+q = "QuerySet"
+
+[[query]]
+q = "def __init__"
+why = "two terms: AND by file, phrase lines"
+
+[[query]]
+q = "fn main"
+why = "two terms, includes `fn  main` and `fn\\tmain` variants"
+
+[[query]]
+q = "\"fn main\""
+why = "quoted phrase is one literal term"
+
+[[query]]
+q = "self.assertEqual"
+why = "dot in a literal"
+
+[[query]]
+q = "::new("
+why = "punctuation-only edges"
+
+[[query]]
+q = "#[tokio::test]"
+why = "brackets and colons"
+
+[[query]]
+q = "{% block"
+why = "Django template syntax"
+
+[[query]]
+q = "->"
+why = "a lone `-` prefix that is not negation"
+
+[[query]]
+q = "-1.5"
+why = "negative number is a term"
+
+[[query]]
+q = "-Wall gcc"
+why = "-Wall negates: files with gcc but not Wall"
+
+# Short terms (fewer than 3 bytes: no trigrams, every file is a candidate).
+[[query]]
+q = "_"
+
+[[query]]
+q = "x"
+
+[[query]]
+q = "if"
+
+# ------------------------------------------------------------------ quotes
+
+[[query]]
+q = "{ \"success\": True"
+why = "the quote-stripping bug fixed in #127"
+
+[[query]]
+q = "\"key\":\"value\""
+
+[[query]]
+q = "say(\"hi\")"
+
+[[query]]
+q = "x = \"\""
+why = "empty quote pair is literal"
+
+[[query]]
+q = "'\"inner\"'"
+
+[[query]]
+q = "\\\"hi\\\""
+why = "escaped quotes inside a string"
+
+[[query]]
+q = "\"use strict\""
+
+# ------------------------------------------------------- case / whole word
+
+[[query]]
+q = "case:yes Runtime"
+
+[[query]]
+q = "case:yes runtime"
+
+[[query]]
+q = "case:yes FOO"
+
+[[query]]
+q = "word:yes foo"
+why = "foo_bar and food must not match; foo.bar and (foo) must"
+
+[[query]]
+q = "word:yes spawn"
+
+[[query]]
+q = "word:yes case:yes Foo"
+
+[[query]]
+q = "word:yes self"
+
+[[query]]
+q = "case:yes word:yes Ok"
+
+# ---------------------------------------------------------------- Unicode
+
+[[query]]
+q = "über"
+why = "non-ASCII case-insensitive (Unicode fold path)"
+
+[[query]]
+q = "ÜBER"
+
+[[query]]
+q = "café"
+
+[[query]]
+q = "日本語"
+
+[[query]]
+q = "🎉"
+
+[[query]]
+q = "straße"
+why = "neither side maps ß to ss (simple case folding)"
+
+[[query]]
+q = "ΟΣ"
+why = "a word-final Σ lowercases to ς, so the query is `ος` while `ΟΣΑ` is indexed as `οσα`"
+
+[[query]]
+q = "k"
+why = "short ASCII term; the corpus has a Kelvin sign (U+212A), which neither side folds to k"
+
+# ------------------------------------------------------- operators / paths
+
+[[query]]
+q = "needle file:src/"
+globs = ["**/src/**"]
+
+[[query]]
+q = "needle -file:test"
+globs = ["!*test*", "!**/*test*/**"]
+why = "bare word: any component below the tree root containing `test`"
+
+[[query]]
+q = "Runtime lang:rust"
+globs = ["*.rs"]
+
+[[query]]
+q = "QuerySet lang:py -file:tests/"
+globs = ["*.{py,pyi,pyw}", "!**/tests/**", "!tests/**"]
+
+[[query]]
+q = "needle file:*.txt"
+globs = ["*.txt"]
+
+[[query]]
+q = "\"file:\""
+why = "quoted operator is a literal term"
+
+[[query]]
+q = "file:notanoperator"
+globs = ["*notanoperator*", "**/*notanoperator*/**"]
+why = "a file: filter with nothing to search: fcs returns nothing"
+
+# --------------------------------------------------------- several terms
+
+[[query]]
+q = "async fn spawn"
+
+[[query]]
+q = "class Meta"
+
+[[query]]
+q = "import os sys"
+
+[[query]]
+q = "Runtime -test"
+
+[[query]]
+q = "needle -needle_1"
+
+[[query]]
+q = "struct Point"
+
+# ------------------------------------------------------------------ regex
+
+[[query]]
+q = "fn\\s+main"
+mode = "regex"
+
+[[query]]
+q = "^use tokio"
+mode = "regex"
+
+[[query]]
+q = "^\\s*def test_\\w+"
+mode = "regex"
+
+[[query]]
+q = "Runtime|Handle"
+mode = "regex"
+why = "alternation: union of trigram constraints"
+
+[[query]]
+q = "impl\\s+\\w+\\s+for\\s+Runtime"
+mode = "regex"
+
+[[query]]
+q = "(?i)queryset"
+mode = "regex"
+
+[[query]]
+q = "fo+bar"
+mode = "regex"
+why = "variable repetition splits trigram runs"
+
+[[query]]
+q = "\\bfoo\\b"
+mode = "regex"
+
+[[query]]
+q = "TODO|FIXME"
+mode = "regex"
+
+[[query]]
+q = "\\d{3,}"
+mode = "regex"
+why = "no literal: full scan"
+
+[[query]]
+q = ";$"
+mode = "regex"
+why = "$ on LF and CRLF lines"
+
+[[query]]
+q = "^end"
+mode = "regex"
+
+[[query]]
+q = "here$"
+mode = "regex"
+why = "$ before \\r\\n"
+
+[[query]]
+q = "^$"
+mode = "regex"
+why = "empty lines"
+
+[[query]]
+q = "needle$"
+mode = "regex"
+
+[[query]]
+q = "\\(foo\\)"
+mode = "regex"
+
+[[query]]
+q = "printf\\(\"hi\\\\n\"\\)"
+mode = "regex"
+why = "escaped backslash: a literal \\n, not a newline"
+
+[[query]]
+q = "^\\}\\n\\nstruct"
+mode = "regex"
+why = "multiline with line anchors"
+
+[[query]]
+q = "struct Point \\{\\n\\s+int x;"
+mode = "regex"
+
+[[query]]
+q = "(?s)TODO.*FIXME"
+mode = "regex"
+why = "dot-all crosses lines"
+
+[[query]]
+q = "x\\s+=\\s+\\w"
+mode = "regex"
+why = "\\s+ must not cross a line break in line mode"
+
+[[query]]
+q = "[A-Z][a-z]+Error\\b"
+mode = "regex"
+
+[[query]]
+q = "über|ÜBER"
+mode = "regex"
+
+[[query]]
+q = "(?i)ÜBER"
+mode = "regex"
+
+[[query]]
+q = "needle.*needle"
+mode = "regex"
+why = "two hits on one (long) line: one result per line"
+
+[[query]]
+q = "async fn \\w+\\(&self"
+mode = "regex"
+
+[[query]]
+q = "@pytest\\.mark\\.\\w+"
+mode = "regex"
+
+[[query]]
+q = "x*"
+mode = "regex"
+why = "matches the empty string: every line once, none past the end"
+
+[[query]]
+q = "(?m)^\\s*$"
+mode = "regex"
+
+# ------------------------------------------------------------ Greek sigma
+
+[[query]]
+q = "οσ"
+why = "medial sigma in the query, final sigma in some content"
+
+[[query]]
+q = "ΟΔΟΣ"
+why = "word-final capital sigma lowercases to ς"
+
+[[query]]
+q = "case:yes ΟΣΑ"
+
+[[query]]
+q = "(?i)ΟΣ"
+mode = "regex"
+why = "regex prefilter over a sigma literal"
+
+[[query]]
+q = "ΟΣ"
+mode = "regex"
+
+# ------------------------------------------- mined from ripgrep and Zoekt
+# Cases adapted from ripgrep's tests/regression.rs and tests/feature.rs and
+# Zoekt's index/index_test.go (fixtures in tests/fixtures/backtest/mined):
+# the ones a trigram prefilter or a regex literal extractor could get wrong.
+
+[[query]]
+q = "case:yes x"
+why = "rg #128: one-byte term, last byte of a file with no newline, vertical tabs are not line breaks"
+
+[[query]]
+q = "at orange"
+why = "Zoekt TestAndShort: a 2-byte term must still be required, not dropped"
+
+[[query]]
+q = "bananaq"
+why = "Zoekt brute-force end: match ends at the last byte"
+
+[[query]]
+q = "slashdot"
+why = "Zoekt TestFrequency: every trigram present, never adjacent"
+
+[[query]]
+q = "there"
+why = "Zoekt TestBoundary: trigrams must not span two files"
+
+[[query]]
+q = "foo(bar"
+why = "rg #1176: regex metacharacters in a text query"
+
+[[query]]
+q = "\"-test\""
+why = "rg #270: a quoted leading dash is a term, not negation"
+
+[[query]]
+q = "test123"
+why = "rg #1163: a line starting with a UTF-8 BOM"
+
+[[query]]
+q = "[foo]"
+mode = "regex"
+why = "rg #1259: a class is not the literal `foo`"
+
+[[query]]
+q = "line[235]"
+mode = "regex"
+
+[[query]]
+q = "(\\d{1,3}\\.){3}\\d{1,3}"
+mode = "regex"
+why = "rg #93: no usable literal"
+
+[[query]]
+q = "\\d\\d\\d00"
+mode = "regex"
+why = "rg #1203: 2-byte literal suffix"
+
+[[query]]
+q = "\\d\\d\\d000"
+mode = "regex"
+why = "rg #1203: exactly one trigram"
+
+[[query]]
+q = "TTGAGTCCAGGAG[ATCG]{2}C"
+mode = "regex"
+why = "rg #1319: class repetition expands to 16 literals"
+
+[[query]]
+q = "#(?:parse|include)\\s*\\(\\s*(?:\"|')[./A-Za-z_-]+(?:\"|')"
+mode = "regex"
+why = "rg #156: alternation, optional spaces, trailing `-` in a class"
+
+[[query]]
+q = "TaskID +int"
+mode = "regex"
+why = "rg #1559: `+` must not join the literal into `TaskID int`"
+
+[[query]]
+q = ";(.*,){1}"
+mode = "regex"
+
+[[query]]
+q = "abc(xyz){0}def"
+mode = "regex"
+why = "a repeat of zero must not require `xyz`"
+
+[[query]]
+q = "(foo)?barbaz"
+mode = "regex"
+why = "an optional group is not a required literal"
+
+[[query]]
+q = "[xb][xl][xa]"
+mode = "regex"
+why = "Zoekt TestCaseRegexp: case-sensitive class product"
+
+[[query]]
+q = "[E]conomie"
+mode = "regex"
+why = "rg #229: a one-letter class keeps its case"
+
+[[query]]
+q = "1.208.0.0/12"
+mode = "regex"
+why = "rg #1334: `.` is any character, not a literal dot"
+
+[[query]]
+q = "orange.*apple"
+mode = "regex"
+why = "Zoekt TestAndOrUnicode: `.` matches a 3-byte character"
+
+[[query]]
+q = "\\b(min|max)\\b"
+mode = "regex"
+why = "rg #506: word boundary around an alternation"
+
+[[query]]
+q = "\\b 're \\b"
+mode = "regex"
+why = "rg #493: \\b next to non-word characters"
+
+[[query]]
+q = "\\b(\\w+\\.)*domain\\.(\\w+)\\b"
+mode = "regex"
+why = "rg #2574"
+
+[[query]]
+q = "^start"
+mode = "regex"
+
+[[query]]
+q = "^middle"
+mode = "regex"
+
+[[query]]
+q = "foo(?i)BAR"
+mode = "regex"
+why = "rg #2480: a flag mid-pattern; `foo` stays case-sensitive"
+
+[[query]]
+q = "(apple)(?-s:.)*?(banana)"
+mode = "regex"
+why = "Zoekt TestLineAnd: both words in the file, but on one line only in one file"
+
+[[query]]
+q = "(apple).*?[[:space:]].*?(grape)"
+mode = "regex"
+why = "Zoekt TestMultiLineRegex: a class holding \\n does not make the search multiline"
+
+[[query]]
+q = "[^a]a"
+mode = "regex"
+why = "a negated class holds \\n, still line by line"
+
+[[query]]
+q = "foobar\\nfoobar\\nfoo|quux"
+mode = "regex"
+why = "rg #1866: only one branch spans lines"
+
+[[query]]
+q = "d\\nd"
+mode = "regex"
+why = "a trigram across the line break"
+
+[[query]]
+q = "^(\\n?(# .*\\n)*)(pipc) \\(\\) \\{"
+mode = "regex"
+why = "rg #2208: the match starts on the comment lines above"
+
+[[query]]
+q = "\\na="
+mode = "regex"
+why = "a match starting on the newline is reported on the line before"
+
+[[query]]
+q = "^test123"
+mode = "regex"
+why = "rg #1163: rg strips a BOM, so `^` matches line 1"

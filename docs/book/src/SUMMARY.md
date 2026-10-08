@@ -23,6 +23,7 @@
 
 - [API and configuration](imported/api.md)
 - [Query syntax](reference/query-syntax.md)
+- [Matching compared with grep and ripgrep](reference/matching.md)
 - [`fcs` command line](reference/cli-help.md)
 - [Server command line](reference/server-help.md)
 - [Configuration template](reference/config-template.md)
@@ -43,6 +44,7 @@
 - [Latest results](benchmarks/latest.md)
 - [Against ripgrep and ugrep](benchmarks/comparison.md)
 - [Ranking quality](benchmarks/ranking-quality.md)
+- [Correctness against ripgrep](benchmarks/correctness.md)
 
 # Project
 

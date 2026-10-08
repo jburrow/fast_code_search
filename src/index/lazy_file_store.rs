@@ -151,7 +151,7 @@ impl LazyMappedFile {
     /// Validate / transcode an owned buffer into text.
     fn owned_to_str(&self, bytes: Vec<u8>) -> Result<Cow<'_, str>> {
         match String::from_utf8(bytes) {
-            Ok(s) => Ok(Cow::Owned(s)),
+            Ok(s) => Ok(Cow::Owned(crate::utils::strip_utf8_bom_owned(s))),
             Err(e) => {
                 let raw = e.into_bytes();
                 match crate::utils::transcode_to_utf8(&raw) {
@@ -196,7 +196,8 @@ impl LazyMappedFile {
     /// Get the content as a `Cow<str>`.
     ///
     /// Zero-copy borrow for mapped files; owned for small files and for large
-    /// files whose mapping failed. UTF-8 is validated on every access (the
+    /// files whose mapping failed. A leading UTF-8 byte order mark is not
+    /// part of the text. UTF-8 is validated on every access (the
     /// bytes behind a mapping can change if the file is rewritten on disk).
     pub fn as_str(&self) -> Result<Cow<'_, str>> {
         if let Some(bytes) = self.read_small()? {
@@ -212,7 +213,7 @@ impl LazyMappedFile {
         };
         let bytes = &mmap[..];
         if let Ok(s) = std::str::from_utf8(bytes) {
-            return Ok(Cow::Borrowed(s));
+            return Ok(Cow::Borrowed(crate::utils::strip_utf8_bom(s)));
         }
         // Non-UTF-8 mapped file: transcode once and keep the result.
         let transcoded =

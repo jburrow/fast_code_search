@@ -1,0 +1,79 @@
+name: ripgrep backtest
+
+# Does fcs find exactly what ripgrep finds? examples/rg_backtest.rs runs every
+# query in benches/rg_backtest.toml through the engine and through rg over the
+# pinned corpora and tests/fixtures/backtest, and fails on any difference not
+# marked `known`. It also checks that a page is repeatable and that LOAD MORE
+# ends with every hit exactly once.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "examples/rg_backtest.rs"
+      - "benches/rg_backtest.toml"
+      - "tests/fixtures/backtest/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/backtest.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  backtest:
+    name: fcs vs ripgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same pinned corpora as the benchmarks (bench-corpus/ is gitignored).
+      - name: Check out tokio (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: tokio-rs/tokio
+          ref: tokio-1.45.0
+          path: bench-corpus/tokio
+          fetch-depth: 1
+      - name: Check out django (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: django/django
+          ref: "5.2"
+          path: bench-corpus/django
+          fetch-depth: 1
+
+      - name: Install Protoc and ripgrep
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ripgrep
+
+      - name: Setup Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run the backtest
+        run: |
+          rg --version | head -1
+          cargo run --release --example rg_backtest -- \
+            bench-corpus/tokio bench-corpus/django tests/fixtures/backtest \
+            --check-paging --markdown backtest.md --json backtest.json
+      - name: Report
+        if: always()
+        run: test -f backtest.md && cat backtest.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rg-backtest
+          path: |
+            backtest.md
+            backtest.json
+          if-no-files-found: ignore

@@ -1,0 +1,4 @@
+hello
+start of middle of line
+fooBar
+FOObar

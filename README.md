@@ -163,7 +163,12 @@ Speed is only half of it. The
 [ranking-quality suite](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html)
 names the file and line a reader would want first for each query (`struct
 Runtime` → the definition, not a doc comment; `Field` → the model field, not the
-GDAL one) and currently scores precision@1 = 1.00, precision@5 = 1.00. The
+GDAL one) and currently scores precision@1 = 1.00, precision@5 = 1.00. A
+[ripgrep backtest](https://jburrow.github.io/fast_code_search/docs/benchmarks/correctness.html)
+runs 124 queries through fcs and rg on the same trees and fails CI on any line one
+finds and the other does not; where fcs deliberately differs from grep, ripgrep and
+git grep is
+[documented](https://jburrow.github.io/fast_code_search/docs/reference/matching.html). The
 [comparison](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html)
 page puts ripgrep at 30–80 ms per query on these trees against about a
 millisecond in the engine, and says plainly when a scan tool is the better
@@ -172,6 +177,7 @@ choice. Reproduce any of it locally:
 ```bash
 cargo run --release --example corpus_bench -- path/to/repo [more paths]
 cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus/django
+cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django tests/fixtures/backtest
 scripts/bench/compare.sh path/to/repo      # ripgrep / ugrep / fcs on the same queries
 cargo bench
 ```

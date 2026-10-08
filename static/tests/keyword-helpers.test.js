@@ -375,6 +375,17 @@ test('graphExplorerUrl encodes the path', () => {
 
 // ---------- results header ----------
 
+test('loadMoreRequest: below the cap the whole list is fetched again', () => {
+    assert.deepEqual(H.loadMoreRequest(50, 50), { offset: 0, max: 100, redraw: true });
+    assert.deepEqual(H.loadMoreRequest(950, 100), { offset: 0, max: 1000, redraw: true });
+    assert.deepEqual(H.loadMoreRequest(999, 50), { offset: 0, max: 1000, redraw: true });
+});
+
+test('loadMoreRequest: at the cap it falls back to offset paging', () => {
+    assert.deepEqual(H.loadMoreRequest(1000, 50), { offset: 1000, max: 50, redraw: false });
+    assert.deepEqual(H.loadMoreRequest(1050, 50), { offset: 1050, max: 50, redraw: false });
+});
+
 test('resultsCountLabel: complete scan shows the plain total', () => {
     assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 1234).text, '1,234 RESULTS');
     assert.equal(H.resultsCountLabel({ total_matches: 1 }, 1).text, '1 RESULT');

@@ -2127,7 +2127,17 @@ fn test_multi_term_lines_rank_by_terms_matched() {
         "{joint:?} vs {small_fn_main:?}"
     );
 
-    // Single term: document order within the file, unscaled, capped.
+    // Single term: document order within the file, unscaled, capped (at
+    // the default cap of a first page; a longer list raises it).
+    let (only_fn, _) = engine
+        .search_parsed(
+            &parse("fn"),
+            "",
+            "",
+            SearchLimits::new(500).with_per_doc_cap(SearchEngine::MAX_MATCHES_PER_DOC),
+            RankMode::Full,
+        )
+        .unwrap();
     let big_only: Vec<usize> = only_fn
         .iter()
         .filter(|h| name(h) == "big.rs")
@@ -2743,13 +2753,17 @@ fn test_per_document_cap_reports_unknown_total_and_pages_on() {
     let t = TempDir::new().unwrap();
     let content: String = (0..150).map(|i| format!("needle {i}\n")).collect();
     let e = review_engine(t.path(), &[("a.txt", &content)]);
-    let (page1, info) = review_text(&e, "needle", SearchLimits::new(200));
+    let (page1, info) = review_text(&e, "needle", SearchLimits::new(100));
     assert_eq!(page1.len(), SearchEngine::MAX_MATCHES_PER_DOC);
     assert_eq!(info.total_matches, None, "the total is not known");
     assert!(info.truncated_by_budget);
     let (page2, _) = review_text(&e, "needle", SearchLimits::new(100).with_offset(100));
     let lines: Vec<usize> = page2.iter().map(|m| m.line_number).collect();
     assert_eq!(lines, (101..=150).collect::<Vec<_>>());
+    // A longer list from the start (LOAD MORE) reaches them too.
+    let (longer, info) = review_text(&e, "needle", SearchLimits::new(200));
+    assert_eq!(longer.len(), 150);
+    assert_eq!(info.total_matches, Some(150));
     // Under the cap the total stays exact.
     let small: String = (0..10).map(|i| format!("needle {i}\n")).collect();
     let e = review_engine(t.path(), &[("a.txt", &small)]);
@@ -2885,4 +2899,98 @@ fn test_filename_hit_obeys_case_and_word() {
     assert_eq!(n("case:yes WIDGET"), 0);
     assert_eq!(n("word:yes widg"), 0);
     assert_eq!(n("word:yes widget"), 1);
+}
+
+/// Lowercasing turns a word-final `Σ` into `ς` and any other into `σ`, so
+/// the query `ΟΣ` (lowercased `ος`) missed `ΟΣΑ` (indexed as `οσα`).
+#[test]
+fn test_greek_sigma_matches_in_any_position() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(t.path(), &[("g.txt", "ΟΣΑ word\nΟΔΟΣ end\nΒοσνιακά\n")]);
+    let lines = |q: &str| -> Vec<usize> {
+        let mut v: Vec<usize> = review_text(&e, q, SearchLimits::new(10))
+            .0
+            .iter()
+            .map(|m| m.line_number)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(lines("ΟΣ"), vec![1, 2, 3]);
+    assert_eq!(lines("οσ"), vec![1, 2, 3]);
+    assert_eq!(lines("ΟΔΟΣ"), vec![2]);
+    let (m, _) = e
+        .search_regex_with_limits("(?i)ΟΣ", "", "", SearchLimits::new(10), RankMode::Full)
+        .unwrap();
+    assert_eq!(m.len(), 3);
+}
+
+/// An empty-matching regex (`^$`) reported a blank line past the end of
+/// every file ending in a newline.
+#[test]
+fn test_regex_reports_no_line_past_the_end() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(t.path(), &[("a.txt", "one\n\nthree\n"), ("b.txt", "x\n\n")]);
+    let lines = |p: &str| -> Vec<(String, usize)> {
+        let mut v: Vec<_> = e
+            .search_regex_with_limits(p, "", "", SearchLimits::new(50), RankMode::Full)
+            .unwrap()
+            .0
+            .iter()
+            .map(|m| {
+                (
+                    m.file_path.rsplit('/').next().unwrap().to_string(),
+                    m.line_number,
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let want = vec![("a.txt".to_string(), 2), ("b.txt".to_string(), 2)];
+    assert_eq!(lines("^$"), want);
+    assert_eq!(lines(r"^\s*$"), want);
+}
+
+/// A search that stops at its match budget used to keep whichever files
+/// the threads reached first, so its first page changed between runs.
+#[test]
+fn test_budget_truncated_search_is_repeatable() {
+    let t = TempDir::new().unwrap();
+    let files: Vec<(String, String)> = (0..400)
+        .map(|i| (format!("f{i:03}.txt"), "needle\n".repeat(5)))
+        .collect();
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let e = review_engine(t.path(), &refs);
+    let page = || -> Vec<(String, usize)> {
+        let (m, info) = review_text(&e, "needle", SearchLimits::new(20));
+        assert!(info.truncated_by_budget, "the budget must cut this scan");
+        m.iter()
+            .map(|m| (m.file_path.clone(), m.line_number))
+            .collect()
+    };
+    let first = page();
+    for _ in 0..10 {
+        assert_eq!(page(), first);
+    }
+}
+
+/// A UTF-8 byte order mark is not text (as in ripgrep): `^` matches at the
+/// start of line 1 and the line is reported without it.
+#[test]
+fn test_byte_order_mark_is_not_part_of_line_one() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(t.path(), &[("a.txt", "\u{feff}test123\ntest123\n")]);
+    let (hits, _) = e
+        .search_regex_with_limits("^test123", "", "", SearchLimits::new(50), RankMode::Full)
+        .unwrap();
+    let mut lines: Vec<usize> = hits.iter().map(|m| m.line_number).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec![1, 2]);
+    let (hits, _) = review_text(&e, "test123", SearchLimits::new(50));
+    let first = hits.iter().find(|m| m.line_number == 1).unwrap();
+    assert_eq!(first.content, "test123");
 }
