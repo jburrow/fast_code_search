@@ -19,6 +19,7 @@ when the request timeout is hit.
 | `GET /api/file?file=…` | Full content of an indexed file |
 | `GET /api/context?file=…&line=N&context=K` | Lines around a match (K ≤ 200) |
 | `GET /api/dependents?file=…` / `GET /api/dependencies?file=…` | Files that import this file / files it imports |
+| `GET /api/graph/…` | The import graph: neighbourhoods, impact, import chains, the folder map. See [Import graph](#import-graph) |
 | `GET /api/stats` | Index statistics (files, trigrams, dependency edges, content bytes) |
 | `GET /api/status` | Indexing progress |
 | `GET /api/health` | Liveness (`{"status":"healthy","version":…}`) |
@@ -84,7 +85,7 @@ Plain-text queries (not `regex=true`):
 | Syntax | Meaning |
 |--------|---------|
 | `fn main` | Several terms: a file must contain every term. Lines holding the phrase rank first, then lines holding every term, then the rest. |
-| `"exact phrase"` | One term containing spaces. |
+| `"exact phrase"` | One term containing spaces. Quotes that do not wrap a whole word are part of the term: `{ "success": True` searches for `"success":` with its quotes. |
 | `-term` | Drop files that contain `term` (only before a letter, `_` or a quote, so `->` and `-1` are ordinary terms). |
 | `file:PATTERN` / `-file:PATTERN` | Only / never paths matching the glob; a bare word matches anywhere in the path, `src/` means everything under `src`. |
 | `lang:rust` / `-lang:py` | Only / never files of that language. |
@@ -109,6 +110,31 @@ Each hit's score combines the match with structural signals (weights in
 
 Within a tier, hits are interleaved by file (every file's best hit first)
 so one file cannot fill a page.
+
+### Import graph
+
+The dependency explorer (`/graph.html`) is built on these. Every endpoint
+answers from memory under the engine read lock. `file` accepts a display
+path (`project/src/main.rs`) or any path `/api/file` accepts. Unknown files
+are 404.
+
+Rust `mod foo;` declarations are edges from a parent module to its own
+child. They describe structure, not dependencies, and would put every parent
+and child in a cycle, so they are left out unless `containment=true` (also
+accepted by every endpoint below). A `pub use child::X` re-export is the same
+edge, so it is left out too.
+
+| Endpoint | Parameters | Returns |
+|----------|------------|---------|
+| `GET /api/graph/neighborhood` | `file`, `depth` (1–4, default 2), `limit` (files per level, default 12, max 500), `expand` (comma-separated levels to list up to 500 files, e.g. `-2,1`) | `nodes` (`path`, signed `depth`: negative for files it imports, positive for files importing it; `imports`, `imported_by`, `test`, `cycle`), `edges` among them (`from`, `to`, `cycle`, `containment`), `hidden` (per level: `count` and the shared `folder` or number of `folders`), and `upstream` / `downstream` totals |
+| `GET /api/graph/impact` | `file`, `limit`, `expand` | Every file that transitively imports `file`, by distance: `affected`, `levels`, `tests_total`, `tests` (up to 200, nearest first), plus `nodes` / `edges` / `hidden` as above |
+| `GET /api/graph/path` | `from`, `to` | The shortest import chain as `files` (each imports the next). When there is none from `from` to `to`, the reverse chain with `reversed: true`; `found: false` when neither exists |
+| `GET /api/graph/modules` | — | The graph collapsed to folders: `folders` (`files`, `imports`, `imported_by`, `cycle`) and `edges` (`from`, `to`, `count` of file imports, `cycle`). Cached until the index changes |
+| `GET /api/graph/imports` | `file` | The file's import statements: `line` (1-based), `spec` as written, the indexed `target` it resolves to (`null` for packages, the standard library and files outside the index), `containment` |
+| `GET /api/graph/files` | `q` (case-insensitive substring), `limit` (default 100, max 1000) | `files` most connected first, with `imports` / `imported_by`, and the `total` that matched |
+
+Imports are resolved for Rust (`crate::`, `self::`, `super::`, sibling
+modules and the crate's own name), Python and JavaScript/TypeScript.
 
 ## gRPC
 

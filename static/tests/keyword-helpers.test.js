@@ -89,6 +89,15 @@ test('parseQueryTerms: quoting makes operator-like text literal', () => {
     assert.deepEqual(H.parseQueryTerms('-"file:x"').excludeTerms, ['file:x']);
 });
 
+test('parseQueryTerms: quotes inside a token are literal', () => {
+    assert.deepEqual(H.parseQueryTerms('{ "success": True').terms, ['{', '"success":', 'True']);
+    assert.deepEqual(H.parseQueryTerms('"key":"value"').terms, ['"key":"value"']);
+    assert.deepEqual(H.parseQueryTerms('say("hi")').terms, ['say("hi")']);
+    assert.deepEqual(H.parseQueryTerms('"open x').terms, ['"open', 'x']);
+    assert.deepEqual(H.parseQueryTerms('x = ""').terms, ['x', '=', '""']);
+    assert.deepEqual(H.parseQueryTerms('"a b" c').terms, ['a b', 'c']);
+});
+
 test('parseQueryTerms: an operator without an argument or with a bad language is a term', () => {
     const q = H.parseQueryTerms('file: lang: case: word:');
     assert.deepEqual(q.terms, ['file:', 'lang:', 'case:', 'word:']);
@@ -104,8 +113,8 @@ test('tokenizeQuery records where the first quote stood', () => {
         { text: 'b c', quoteAt: 0 },
         { text: '-d', quoteAt: 1 },
     ]);
-    // an unclosed quote swallows the rest of the query as one token
-    assert.deepEqual(H.tokenizeQuery('"open phrase').map(t => t.text), ['open phrase']);
+    // an unclosed quote is an ordinary character (`print("hello`)
+    assert.deepEqual(H.tokenizeQuery('"open phrase').map(t => t.text), ['"open', 'phrase']);
 });
 
 // ---------- regex translation ----------
@@ -351,4 +360,15 @@ test('regexErrorSuggestions offers plain text and an escaped pattern', () => {
         { label: 'Escape special characters', query: '\\{ "success": True', regex: true },
     ]);
     assert.deepEqual(H.regexErrorSuggestions('abc').length, 1);
+});
+
+// ---------- dependency explorer links ----------
+
+test('hasImportGraph: only languages whose imports are resolved', () => {
+    for (const p of ['r/src/a.rs', 'r/pkg/x.py', 'r/web/a.tsx', 'r/web/b.MJS']) assert.ok(H.hasImportGraph(p), p);
+    for (const p of ['r/README.md', 'r/Cargo.toml', 'r/main.go', '']) assert.ok(!H.hasImportGraph(p), p);
+});
+
+test('graphExplorerUrl encodes the path', () => {
+    assert.equal(H.graphExplorerUrl('r/a b/#x.rs'), '/graph.html?file=r%2Fa%20b%2F%23x.rs');
 });

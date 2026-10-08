@@ -1144,6 +1144,19 @@ impl SearchEngine {
         self.dependency_index.get_dependencies(file_id)
     }
 
+    /// Root-relative display path of an indexed file: the precomputed one
+    /// (no allocation, which graph listings rely on when they scan every
+    /// file), else built from its path.
+    pub fn display_path(&self, file_id: u32) -> Option<std::borrow::Cow<'_, str>> {
+        let file = self.file_store.get(file_id)?;
+        Some(match self.file_metadata.get(file_id as usize) {
+            Some(m) if !m.display_path.is_empty() => {
+                std::borrow::Cow::Borrowed(m.display_path.as_str())
+            }
+            _ => std::borrow::Cow::Owned(self.make_display_path(&file.path)),
+        })
+    }
+
     /// Get file path by ID as a root-relative display string.
     pub fn get_file_path(&self, file_id: u32) -> Option<String> {
         self.file_store

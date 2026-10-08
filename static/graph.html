@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html class="light" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Dependency Explorer — Fast Code Search</title>
+    <link rel="stylesheet" href="/tailwind.css"/>
+    <link rel="stylesheet" href="/fonts.css"/>
+    <link rel="stylesheet" href="/highlight-light.min.css">
+    <style>
+        /* Three panes under the app header: file picker | import graph | source.
+           Stacks to one column on narrow screens. */
+        .icon { display: inline-block; fill: currentColor; vertical-align: middle; flex-shrink: 0; }
+        :root {
+            --bg: #fefae4; --surface: #f8f4df; --surface-2: #f2eed9;
+            --line: #cbc8aa; --line-strong: #7a785f;
+            --fg: #1d1c0f; --muted: #5f5d48;
+            --accent: #ebe77f; --accent-fill: #fff9a8; --accent-ink: #4b4900; --accent-strong: #646100;
+            --dep: #646100; --rdep: #1e6868; --rdep-fill: #d9f5f3;
+            --warn: #ba1a1a; --node: #ffffff;
+            --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+        }
+        body { font-size: 14px; }
+        :focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; }
+
+        .app { height: calc(100vh - 3.5rem); display: grid; grid-template-rows: auto auto 1fr; }
+        .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+        .bar h1 { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+        .tabs { display: flex; border: 1px solid #000; }
+        .tabs button { background: #fff; border: 0; border-right: 1px solid var(--line); padding: 5px 12px; font-family: var(--font-mono); font-size: 12px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.04em; }
+        .tabs button:last-child { border-right: 0; }
+        .tabs button[aria-selected="true"] { background: #fff900; font-weight: 700; }
+        .tabs button:hover:not([aria-selected="true"]) { background: var(--surface-2); }
+        .toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+        .toggle input { accent-color: var(--accent-strong); }
+        .stats { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+        .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--bg); min-height: 42px; }
+        .btn { background: var(--node); border: 1px solid #000; padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: var(--font-mono); color: var(--fg); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+        .btn:hover { background: #fff900; }
+        .btn:disabled { opacity: 0.45; cursor: default; background: var(--node); }
+        select.btn { padding-right: 24px; }
+        .crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-family: var(--font-mono); font-size: 12px; min-width: 0; }
+        .crumbs button { background: none; border: 0; padding: 2px 4px; cursor: pointer; color: var(--muted); }
+        .crumbs button:hover { color: var(--fg); text-decoration: underline; }
+        .crumbs .cur { color: var(--fg); font-weight: 600; padding: 2px 4px; }
+        .crumbs i { color: var(--line-strong); font-style: normal; }
+        .summary { font-size: 13px; }
+        .summary b { font-family: var(--font-mono); font-weight: 600; }
+        .pathfields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+        .pathfields input { width: 300px; max-width: 100%; padding: 3px 8px; border: 1px solid var(--line-strong); background: var(--node); font-family: var(--font-mono); font-size: 12px; }
+
+        .panes { display: grid; grid-template-columns: 260px minmax(0, 1fr) minmax(0, 0.9fr); min-height: 0; }
+        .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+        .pane:last-child { border-right: 0; }
+        .pane-h { padding: 8px 12px; border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: flex; gap: 8px; align-items: center; background: var(--surface); min-width: 0; }
+        .pane-h span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .filter { margin: 8px; padding: 5px 8px; border: 1px solid var(--line-strong); background: var(--node); font-family: var(--font-mono); font-size: 12px; }
+        .files { overflow: auto; flex: 1; padding-bottom: 8px; }
+        .file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 6px; width: 100%; text-align: left; background: none; border: 0; border-left: 3px solid transparent; padding: 3px 10px 3px 12px; cursor: pointer; font-family: var(--font-mono); font-size: 12px; }
+        .file:hover { background: var(--surface-2); }
+        .file.on { background: var(--accent-fill); border-left-color: var(--accent-strong); font-weight: 600; }
+        .file .nm, .file .dr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file .dr { grid-column: 1 / -1; color: var(--muted); font-size: 10.5px; font-weight: 400; direction: rtl; text-align: left; }
+        .file .deg { color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+        .files .note { padding: 6px 12px; color: var(--muted); font-size: 11px; }
+
+        .graphwrap { position: relative; flex: 1; overflow: auto; background: radial-gradient(circle, var(--line) 1px, transparent 1.2px) 0 0 / 22px 22px, var(--bg); }
+        .graphwrap svg { display: block; margin: 0 auto; }
+        .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); background: var(--surface); }
+        .legend span { display: inline-flex; align-items: center; gap: 6px; }
+        .sw { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
+
+        .gnode { cursor: pointer; }
+        .gnode rect.box { fill: var(--node); stroke: var(--line-strong); stroke-width: 1; }
+        .gnode text.t { font-family: var(--font-mono); font-size: 12px; font-weight: 600; fill: var(--fg); }
+        .gnode text.s { font-family: var(--font-mono); font-size: 10px; fill: var(--muted); }
+        .gnode.center rect.box { fill: var(--accent); stroke: #000; stroke-width: 2; }
+        .gnode.dep rect.side { fill: var(--dep); }
+        .gnode.rdep rect.side { fill: var(--rdep); }
+        .gnode.test rect.box { stroke-dasharray: 4 3; }
+        .gnode.preview rect.box { stroke: var(--fg); stroke-width: 2; }
+        .gnode.cyc rect.box { stroke: var(--warn); stroke-width: 2; }
+        .gnode:hover rect.box, .gnode:focus-visible rect.box { stroke: var(--fg); stroke-width: 2; }
+        .gnode:focus { outline: none; }
+        .gnode.more rect.box { fill: var(--surface-2); stroke-dasharray: 3 3; }
+        .gnode.more text.t { font-weight: 500; fill: var(--muted); }
+        .gedge { fill: none; stroke: var(--line-strong); stroke-width: 1.4; }
+        .gedge.dep { stroke: var(--dep); opacity: 0.75; }
+        .gedge.rdep { stroke: var(--rdep); opacity: 0.8; }
+        .gedge.cyc { stroke: var(--warn); opacity: 0.95; }
+        .gedge.mod { stroke-dasharray: 2 3; }
+        .gedge.hl { stroke-width: 3; opacity: 1; }
+        .ehit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+        .collabel { font-family: var(--font-mono); font-size: 10.5px; fill: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+        .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+        .empty.err { color: var(--warn); }
+
+        .tip { position: fixed; z-index: 60; pointer-events: none; background: var(--fg); color: var(--bg); padding: 6px 9px; font-family: var(--font-mono); font-size: 11px; max-width: 380px; line-height: 1.45; overflow-wrap: anywhere; }
+        .tip[hidden] { display: none; }
+
+        .srchead { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); display: grid; gap: 6px; }
+        .srchead .p { font-family: var(--font-mono); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+        .srchead .m { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+        .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 11px; }
+        .chips em { font-style: normal; color: var(--muted); margin-right: 2px; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+        .chips .none { color: var(--muted); }
+        .chip { border: 1px solid var(--rdep); color: var(--rdep); background: transparent; padding: 1px 7px; border-radius: 9999px; font-family: var(--font-mono); font-size: 11px; cursor: pointer; }
+        .chip:hover { background: var(--rdep-fill); }
+        .chip.out { border-color: var(--dep); color: var(--dep); }
+        .chip.out:hover { background: var(--accent-fill); }
+        .code { flex: 1; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--node); }
+        .ln { display: grid; grid-template-columns: 56px minmax(0, 1fr); }
+        .ln .n { text-align: right; padding-right: 10px; color: var(--muted); user-select: none; font-variant-numeric: tabular-nums; border-right: 1px solid var(--line); }
+        .ln .c { padding-left: 10px; white-space: pre; }
+        .ln.imp { background: var(--accent-fill); }
+        .ln.imp .n { color: var(--accent-ink); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent-strong); }
+        .ln.ext { background: var(--surface-2); }
+        .ln.flash { animation: flash 1.2s ease-out; }
+        @keyframes flash { from { background: var(--accent); } }
+        .go { margin-left: 10px; border: 1px solid var(--dep); color: var(--dep); background: var(--node); font-size: 10.5px; padding: 0 6px; cursor: pointer; border-radius: 9999px; }
+        .go:hover { background: var(--accent); color: var(--fg); }
+        .go.mod { border-style: dashed; }
+        .extag { margin-left: 10px; color: var(--muted); font-size: 10.5px; border: 1px solid var(--line); padding: 0 6px; border-radius: 9999px; }
+        .code .more-lines { display: block; width: 100%; padding: 4px; background: var(--surface-2); border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; color: var(--muted); cursor: pointer; }
+        .code .more-lines:hover { color: var(--fg); background: var(--accent-fill); }
+
+        @media (prefers-reduced-motion: reduce) { .ln.flash { animation: none; } }
+        @media (max-width: 900px) {
+            .app { height: auto; }
+            .panes { grid-template-columns: minmax(0, 1fr); }
+            .pane { border-right: 0; border-bottom: 1px solid var(--line); }
+            .pane.files-pane .files { max-height: 220px; }
+            .graphwrap { height: 60vh; flex: none; }
+            .code { max-height: 70vh; }
+            .stats { margin-left: 0; width: 100%; }
+        }
+    </style>
+</head>
+
+<body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
+
+    <!-- Inline SVG icon sprite (Material Design icon paths, Apache-2.0). -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+        <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
+        <symbol id="i-help-outline" viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></symbol>
+        <symbol id="i-analytics" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></symbol>
+        <symbol id="i-description" viewBox="0 0 24 24"><path d="M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></symbol>
+        <symbol id="i-auto-awesome" viewBox="0 0 24 24"><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></symbol>
+        <symbol id="i-account-tree" viewBox="0 0 24 24"><path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z"/></symbol>
+    </svg>
+
+    <header class="bg-white font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
+        <div class="flex items-center gap-6">
+            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
+            <nav class="hidden md:flex items-center gap-0 h-14">
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/">SEARCH</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
+                <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/graph.html">GRAPH</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
+                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/docs.html">DOCS</a>
+            </nav>
+        </div>
+        <a href="/docs.html" class="text-outline hover:text-black transition-colors flex items-center" title="Documentation" aria-label="Documentation"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-help-outline"/></svg></a>
+    </header>
+
+    <div class="app">
+        <div class="bar">
+            <h1>Dependency explorer</h1>
+            <div class="tabs" role="tablist" aria-label="Graph view">
+                <button role="tab" data-mode="hood" aria-selected="true">Neighbourhood</button>
+                <button role="tab" data-mode="impact" aria-selected="false">Impact</button>
+                <button role="tab" data-mode="path" aria-selected="false">Path</button>
+                <button role="tab" data-mode="map" aria-selected="false">Module map</button>
+            </div>
+            <label class="toggle" for="modToggle" title="Rust `mod foo;` declares a child module. It is structure rather than a dependency, and would put every parent and child module in a cycle."><input type="checkbox" id="modToggle"> Show <code>mod</code> declarations</label>
+            <div class="stats" id="stats"></div>
+        </div>
+        <div class="sub" id="sub"></div>
+        <div class="panes">
+            <section class="pane files-pane" aria-label="Files">
+                <div class="pane-h"><span class="t">Files</span><span style="margin-left:auto">in · out</span></div>
+                <input class="filter" id="filter" type="search" placeholder="Filter files…" aria-label="Filter files">
+                <div class="files" id="files"></div>
+            </section>
+            <section class="pane" aria-label="Import graph">
+                <div class="pane-h"><span class="t" id="graphTitle">Import graph</span></div>
+                <div class="graphwrap" id="graphwrap"></div>
+                <div class="legend" id="legend"></div>
+            </section>
+            <section class="pane" aria-label="Source">
+                <div class="srchead" id="srchead"></div>
+                <div class="code" id="code"></div>
+            </section>
+        </div>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+    <datalist id="allfiles"></datalist>
+
+    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-search"/></svg><span>Search</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-auto-awesome"/></svg><span>Semantic</span></a>
+        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/graph.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-account-tree"/></svg><span>Graph</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-analytics"/></svg><span>Index</span></a>
+        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-description"/></svg><span>Docs</span></a>
+    </nav>
+
+    <script src="/highlight.min.js"></script>
+    <script src="/common.js"></script>
+    <script src="/lib/keyword-helpers.js"></script>
+    <script src="/lib/graph-helpers.js"></script>
+    <script src="/graph.js"></script>
+</body>
+</html>

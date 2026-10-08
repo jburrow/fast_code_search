@@ -1,6 +1,7 @@
 //! Web UI and REST API module for Fast Code Search
 
 mod api;
+mod graph;
 pub mod metrics;
 
 pub use api::{results_to_json, ErrorResponse, SearchResponse, SearchResultJson};
@@ -50,6 +51,8 @@ pub struct WebState {
     /// Last file count observed by `/api/ready`, used while the engine's
     /// write lock is briefly held.
     pub last_known_files: Arc<std::sync::atomic::AtomicUsize>,
+    /// Import cycles and the folder map, cached per engine state.
+    pub graph_cache: Arc<std::sync::Mutex<graph::GraphCache>>,
 }
 
 /// Knobs for [`create_router_with_options`].
@@ -147,6 +150,7 @@ pub fn create_router_with_options(
         indexer_config: opts.indexer_config.clone().map(Arc::new),
         diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
         last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        graph_cache: Arc::default(),
     };
 
     let router = Router::new()
@@ -160,6 +164,12 @@ pub fn create_router_with_options(
         .route("/api/diagnostics", get(api::diagnostics_handler))
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
+        .route("/api/graph/neighborhood", get(graph::neighborhood_handler))
+        .route("/api/graph/impact", get(graph::impact_handler))
+        .route("/api/graph/path", get(graph::path_handler))
+        .route("/api/graph/modules", get(graph::modules_handler))
+        .route("/api/graph/imports", get(graph::imports_handler))
+        .route("/api/graph/files", get(graph::files_handler))
         .route("/api/file", get(api::file_handler))
         .route("/api/context", get(api::context_handler))
         // WebSocket for progress streaming
@@ -432,6 +442,7 @@ mod tests {
             indexer_config: None,
             diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
             last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            graph_cache: Arc::default(),
         };
         let router = Router::new()
             .route(

@@ -91,6 +91,19 @@ function hljsLangForPath(filePath) {
 }
 
 /**
+ * Does the dependency explorer have an import graph for this file? Imports
+ * are resolved for Rust, Python and JavaScript/TypeScript only.
+ */
+function hasImportGraph(filePath) {
+    return /\.(rs|py|pyi|pyw|js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i.test(String(filePath || ''));
+}
+
+/** The dependency explorer centred on `filePath`. */
+function graphExplorerUrl(filePath) {
+    return '/graph.html?file=' + encodeURIComponent(filePath);
+}
+
+/**
  * Parse a CSS color string to an RGB object for contrast calculations.
  * Supports #rgb, #rrggbb, rgb() and rgba(); null for anything else.
  */
@@ -192,18 +205,30 @@ function isYesToken(v) {
  * Split on whitespace, keeping "quoted phrases" together (quotes removed).
  * Each token records where its first quote stood (`quoteAt`), which decides
  * whether a leading `-` negates and whether an operator prefix counts.
+ * A `"` opens a phrase only at the start of a token, after a negating `-`
+ * or right after an operator's colon, and the phrase ends at the next `"`
+ * when whitespace or the end follows it; any other quote is an ordinary
+ * character (`{ "success": True` keeps its quotes).
  * @returns {Array<{text: string, quoteAt: number|null}>}
  */
 function tokenizeQuery(raw) {
+    const chars = Array.from(String(raw || ''));
     const out = [];
     let cur = '';
     let quoteAt = null;
-    let inQuotes = false;
-    for (const c of String(raw || '')) {
-        if (c === '"') {
-            inQuotes = !inQuotes;
-            if (quoteAt === null) quoteAt = cur.length;
-        } else if (!inQuotes && /\s/.test(c)) {
+    for (let i = 0; i < chars.length; i++) {
+        const c = chars[i];
+        if (c === '"' && phraseCanOpen(cur)) {
+            const end = chars.indexOf('"', i + 1);
+            const closes = end > i + 1 && (end + 1 === chars.length || /\s/.test(chars[end + 1]));
+            if (closes) {
+                if (quoteAt === null) quoteAt = cur.length;
+                cur += chars.slice(i + 1, end).join('');
+                i = end;
+                continue;
+            }
+        }
+        if (/\s/.test(c)) {
             if (cur) {
                 out.push({ text: cur, quoteAt });
                 cur = '';
@@ -215,6 +240,12 @@ function tokenizeQuery(raw) {
     }
     if (cur) out.push({ text: cur, quoteAt });
     return out;
+}
+
+/** Can a phrase start after `cur`, the token text read so far? */
+function phraseCanOpen(cur) {
+    const op = cur.startsWith('-') ? cur.slice(1) : cur;
+    return op === '' || ['file:', 'lang:', 'case:', 'word:'].includes(op);
 }
 
 /**
@@ -526,6 +557,8 @@ if (typeof module !== 'undefined' && module.exports) {
         parseBoolParam,
         iconSvg,
         hljsLangForPath,
+        hasImportGraph,
+        graphExplorerUrl,
         parseColorToRgb,
         relativeLuminance,
         contrastRatio,

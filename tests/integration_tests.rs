@@ -3775,3 +3775,209 @@ fn test_watcher_skips_excluded_directories_and_follows_new_ones() -> Result<()> 
     assert!(seen.iter().any(|c| touches(c, "b.rs")), "{seen:?}");
     Ok(())
 }
+
+// =============================================================================
+// Import graph (/api/graph/*)
+// =============================================================================
+
+/// A small Python package: api -> service <-> util (a cycle), and tests
+/// importing api and util.
+async fn setup_graph_server() -> Result<(String, TempDir)> {
+    let temp_dir = TempDir::new()?;
+    let files = [
+        ("pkg/__init__.py", ""),
+        ("pkg/util.py", "import pkg.service\n"),
+        ("pkg/service.py", "import os\nimport pkg.util\n"),
+        ("pkg/api.py", "import pkg.service\n"),
+        ("tests/test_api.py", "import pytest\nimport pkg.api\n"),
+        ("tests/test_util.py", "import pkg.util\n"),
+    ];
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut eng = engine.write().unwrap();
+        for (rel, content) in files {
+            let path = temp_dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(&path, content)?;
+            eng.index_file(path)?;
+        }
+        eng.resolve_imports();
+    }
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let router = create_router(engine, progress, create_progress_broadcaster(), None);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    Ok((format!("http://{}", addr), temp_dir))
+}
+
+async fn get_graph(
+    base: &str,
+    endpoint: &str,
+    query: &[(&str, &str)],
+) -> Result<serde_json::Value> {
+    let response = reqwest::Client::new()
+        .get(format!("{base}/api/graph/{endpoint}"))
+        .query(query)
+        .send()
+        .await?;
+    assert!(
+        response.status().is_success(),
+        "{endpoint}: {}",
+        response.status()
+    );
+    Ok(response.json().await?)
+}
+
+fn node_depths(body: &serde_json::Value) -> Vec<(String, i64)> {
+    let mut out: Vec<(String, i64)> = body["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            let path = n["path"].as_str().unwrap();
+            // Paths are absolute here (no indexed root registered).
+            let start = path.rfind("/pkg/").or(path.rfind("/tests/")).unwrap();
+            let short = &path[start + 1..];
+            (short.to_string(), n["depth"].as_i64().unwrap())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn test_graph_neighborhood_places_imports_left_and_importers_right() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let body = get_graph(
+        &base,
+        "neighborhood",
+        &[("file", "pkg/service.py"), ("depth", "2")],
+    )
+    .await?;
+    assert_eq!(
+        node_depths(&body),
+        vec![
+            ("pkg/api.py".to_string(), 1),
+            ("pkg/service.py".to_string(), 0),
+            ("pkg/util.py".to_string(), -1),
+            ("tests/test_api.py".to_string(), 2),
+            ("tests/test_util.py".to_string(), 2),
+        ]
+    );
+    let util = body["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"].as_str().unwrap().ends_with("pkg/util.py"))
+        .unwrap();
+    assert_eq!(util["cycle"], true);
+    assert!(body["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["cycle"] == true));
+
+    // A limit of one folds the rest of a level into `hidden`.
+    let body = get_graph(
+        &base,
+        "neighborhood",
+        &[("file", "pkg/service.py"), ("depth", "2"), ("limit", "1")],
+    )
+    .await?;
+    assert_eq!(body["hidden"][0]["depth"], 2);
+    assert_eq!(body["hidden"][0]["count"], 1);
+    assert!(body["hidden"][0]["folder"]
+        .as_str()
+        .unwrap()
+        .ends_with("tests"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_graph_impact_lists_affected_tests() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let body = get_graph(&base, "impact", &[("file", "pkg/util.py")]).await?;
+    assert_eq!(body["affected"], 4, "service, api and both tests: {body}");
+    assert_eq!(body["tests_total"], 2);
+    // Nearest first: test_util imports util directly.
+    assert!(body["tests"][0]
+        .as_str()
+        .unwrap()
+        .ends_with("tests/test_util.py"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_graph_path_and_imports() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let body = get_graph(
+        &base,
+        "path",
+        &[("from", "tests/test_api.py"), ("to", "pkg/util.py")],
+    )
+    .await?;
+    assert_eq!(body["found"], true);
+    assert_eq!(body["reversed"], false);
+    assert_eq!(body["files"].as_array().unwrap().len(), 4);
+
+    // Asked the other way round, the chain is found reversed.
+    let body = get_graph(
+        &base,
+        "path",
+        &[("from", "pkg/util.py"), ("to", "tests/test_api.py")],
+    )
+    .await?;
+    assert_eq!(body["reversed"], true);
+
+    let body = get_graph(&base, "imports", &[("file", "pkg/service.py")]).await?;
+    let imports = body["imports"].as_array().unwrap();
+    assert_eq!(imports.len(), 2);
+    assert_eq!(imports[0]["line"], 1);
+    assert!(imports[0]["target"].is_null(), "os is external");
+    assert_eq!(imports[1]["line"], 2);
+    assert!(imports[1]["target"]
+        .as_str()
+        .unwrap()
+        .ends_with("pkg/util.py"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_graph_modules_and_files() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let body = get_graph(&base, "modules", &[]).await?;
+    let edges = body["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 1, "tests -> pkg: {body}");
+    assert!(edges[0]["from"].as_str().unwrap().ends_with("tests"));
+    assert_eq!(edges[0]["count"], 2);
+
+    let body = get_graph(&base, "files", &[("q", "PKG/"), ("limit", "2")]).await?;
+    assert_eq!(body["total"], 4);
+    let files = body["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(
+        files[0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("pkg/service.py"),
+        "most connected first"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_graph_unknown_file_is_404() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/api/graph/neighborhood"))
+        .query(&[("file", "no/such/file.py")])
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    Ok(())
+}

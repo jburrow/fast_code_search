@@ -793,7 +793,7 @@ pub struct DependencyResponse {
 
 /// `file=` must name something: an empty or blank value used to fall
 /// through to the suffix lookup and return an arbitrary indexed file.
-fn require_file_param(file: &str) -> Result<(), ApiError> {
+pub(super) fn require_file_param(file: &str) -> Result<(), ApiError> {
     if file.trim().is_empty() {
         return Err(ApiError::from((
             StatusCode::BAD_REQUEST,
@@ -1085,7 +1085,7 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
 /// `Retry-After`. A *poisoned* lock is recovered rather than turned into a
 /// permanent 500: every indexing path is wrapped in `catch_unwind`, so poison
 /// only means some other thread panicked, not that the index is unusable.
-fn try_read_engine(
+pub(super) fn try_read_engine(
     engine: &std::sync::RwLock<SearchEngine>,
 ) -> Result<std::sync::RwLockReadGuard<'_, SearchEngine>, (StatusCode, String)> {
     match engine.try_read() {
