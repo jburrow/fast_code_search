@@ -53,7 +53,9 @@ impl ParsedQuery {
 
 /// Parse `raw` into terms, filters and options.
 ///
-/// Tokens are whitespace-separated; `"quoted phrases"` are one token.
+/// Tokens are whitespace-separated; `"quoted phrases"` are one token. A
+/// quote that does not wrap a whole token (`"success":`, `a"b`) is an
+/// ordinary character and stays in the term.
 /// - `file:PAT`   include paths matching PAT (a bare word means `*PAT*` in
 ///   any directory; a pattern with `/` or a glob char is used as written)
 /// - `-file:PAT`  exclude paths matching PAT
@@ -153,28 +155,42 @@ impl Token {
 }
 
 /// Split on whitespace, keeping double-quoted phrases together (quotes removed).
+///
+/// A `"` opens a phrase only where a phrase can start: at the start of a
+/// token, after a negating `-`, or right after an operator's colon
+/// (`file:"my dir"`). The phrase ends at the next `"`, which must be
+/// followed by whitespace or the end of the query. Any other `"` is an
+/// ordinary character, so code such as `{ "success": True` or
+/// `"key":"value"` is searched for with its quotes intact (it used to lose
+/// them and become `success:`, which matches nothing).
 fn tokenize(raw: &str) -> Vec<Token> {
+    let chars: Vec<char> = raw.chars().collect();
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut quote_at = None;
-    let mut in_quotes = false;
-    for c in raw.chars() {
-        match c {
-            '"' => {
-                in_quotes = !in_quotes;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' && phrase_can_open(&cur) {
+            if let Some(end) = phrase_end(&chars, i) {
                 quote_at.get_or_insert(cur.len());
+                cur.extend(&chars[i + 1..end]);
+                i = end + 1;
+                continue;
             }
-            c if c.is_whitespace() && !in_quotes => {
-                if !cur.is_empty() {
-                    out.push(Token {
-                        text: std::mem::take(&mut cur),
-                        quote_at,
-                    });
-                }
-                quote_at = None;
-            }
-            c => cur.push(c),
         }
+        if c.is_whitespace() {
+            if !cur.is_empty() {
+                out.push(Token {
+                    text: std::mem::take(&mut cur),
+                    quote_at,
+                });
+            }
+            quote_at = None;
+        } else {
+            cur.push(c);
+        }
+        i += 1;
     }
     if !cur.is_empty() {
         out.push(Token {
@@ -183,6 +199,21 @@ fn tokenize(raw: &str) -> Vec<Token> {
         });
     }
     out
+}
+
+/// Can a phrase start after `cur`, the token text read so far?
+fn phrase_can_open(cur: &str) -> bool {
+    let op = cur.strip_prefix('-').unwrap_or(cur);
+    op.is_empty() || ["file:", "lang:", "case:", "word:"].contains(&op)
+}
+
+/// Index of the `"` closing the phrase opened at `open`: the next quote,
+/// when whitespace or the end of the query follows it and the phrase is not
+/// empty. `None` means the opening quote is an ordinary character.
+fn phrase_end(chars: &[char], open: usize) -> Option<usize> {
+    let end = open + 1 + chars[open + 1..].iter().position(|&c| c == '"')?;
+    let closes = chars.get(end + 1).is_none_or(|c| c.is_whitespace());
+    (closes && end > open + 1).then_some(end)
 }
 
 /// `file:` argument to a glob understood by `PathFilter`.
@@ -327,5 +358,30 @@ mod tests {
         assert_eq!(parse("lang:??? x").terms, vec!["lang:???", "x"]);
         let q = parse("file: lang: case: word:");
         assert!(q.include_globs.is_empty() && q.options == SearchOptions::default());
+    }
+
+    /// Bug report: `{ "success": True` found nothing because the quotes
+    /// were stripped, leaving the term `success:`. Quotes that do not wrap
+    /// a whole token are part of the text being searched for.
+    #[test]
+    fn quotes_inside_a_token_are_literal() {
+        assert_eq!(
+            parse("{ \"success\": True").terms,
+            vec!["{", "\"success\":", "True"]
+        );
+        assert_eq!(parse("{\"success\":").terms, vec!["{\"success\":"]);
+        assert_eq!(parse("\"key\":\"value\"").terms, vec!["\"key\":\"value\""]);
+        assert_eq!(parse("say(\"hi\")").terms, vec!["say(\"hi\")"]);
+        assert_eq!(parse("a\"b c").terms, vec!["a\"b", "c"]);
+        // An unclosed quote, or an empty pair, is literal too.
+        assert_eq!(parse("\"open x").terms, vec!["\"open", "x"]);
+        assert_eq!(parse("x = \"\"").terms, vec!["x", "=", "\"\""]);
+        // Whole-token phrases are unchanged.
+        assert_eq!(parse("\"a b\" c").terms, vec!["a b", "c"]);
+        assert_eq!(parse("x -\"a b\"").exclude_terms, vec!["a b"]);
+        assert_eq!(
+            parse("x file:\"my dir\"").include_globs,
+            vec!["**/*my dir*"]
+        );
     }
 }

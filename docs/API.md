@@ -84,7 +84,7 @@ Plain-text queries (not `regex=true`):
 | Syntax | Meaning |
 |--------|---------|
 | `fn main` | Several terms: a file must contain every term. Lines holding the phrase rank first, then lines holding every term, then the rest. |
-| `"exact phrase"` | One term containing spaces. |
+| `"exact phrase"` | One term containing spaces. Quotes that do not wrap a whole word are part of the term: `{ "success": True` searches for `"success":` with its quotes. |
 | `-term` | Drop files that contain `term` (only before a letter, `_` or a quote, so `->` and `-1` are ordinary terms). |
 | `file:PATTERN` / `-file:PATTERN` | Only / never paths matching the glob; a bare word matches anywhere in the path, `src/` means everything under `src`. |
 | `lang:rust` / `-lang:py` | Only / never files of that language. |
