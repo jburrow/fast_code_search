@@ -10,6 +10,65 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Server start time (set once at startup)
 static SERVER_START_TIME: AtomicU64 = AtomicU64::new(0);
 
+/// What started and what went wrong at startup, for `/api/diagnostics`.
+static SERVICE_STATUS: std::sync::RwLock<ServiceStatus> =
+    std::sync::RwLock::new(ServiceStatus::new());
+
+/// Which parts of the server are running, and problems a user should know
+/// about. Startup problems (a busy port, a held index lock, config warnings)
+/// are recorded as they happen; storage problems are re-checked on each
+/// diagnostics request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceStatus {
+    /// "grpc://host:port", "disabled", or "NOT running (reason)"
+    pub grpc: String,
+    /// "http://host:port", "disabled", or "NOT running (reason)"
+    pub web_ui: String,
+    /// Where the index is saved, or why it is not
+    pub persistence: String,
+    /// Problems worth fixing; empty when all is well
+    pub problems: Vec<String>,
+}
+
+impl ServiceStatus {
+    const fn new() -> Self {
+        Self {
+            grpc: String::new(),
+            web_ui: String::new(),
+            persistence: String::new(),
+            problems: Vec::new(),
+        }
+    }
+}
+
+/// Record what the server is running, once startup has decided.
+pub fn set_service_endpoints(grpc: &str, web_ui: &str, persistence: &str) {
+    let mut s = SERVICE_STATUS.write().unwrap_or_else(|p| p.into_inner());
+    s.grpc = grpc.to_string();
+    s.web_ui = web_ui.to_string();
+    s.persistence = persistence.to_string();
+}
+
+/// Record a startup problem to show on the diagnostics page.
+pub fn record_problem(problem: impl Into<String>) {
+    let mut s = SERVICE_STATUS.write().unwrap_or_else(|p| p.into_inner());
+    s.problems.push(problem.into());
+}
+
+/// Startup status plus a fresh storage check for `indexer`.
+pub fn service_status(indexer: Option<&crate::config::IndexerConfig>) -> ServiceStatus {
+    let mut status = SERVICE_STATUS
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if let Some(indexer) = indexer {
+        status
+            .problems
+            .extend(crate::storage::storage_problems(indexer));
+    }
+    status
+}
+
 /// Initialize server start time. Call this once at server startup.
 pub fn init_server_start_time() {
     let now = SystemTime::now()
@@ -17,6 +76,27 @@ pub fn init_server_start_time() {
         .unwrap_or_default()
         .as_secs();
     SERVER_START_TIME.store(now, Ordering::SeqCst);
+}
+
+/// Advice to append to a failed-bind message.
+pub fn port_hint(err: &std::io::Error, addr: &str, config_key: &str, flag: &str) -> String {
+    let port = addr.rsplit(':').next().unwrap_or(addr);
+    let setting = if flag.is_empty() {
+        config_key.to_string()
+    } else {
+        format!("{config_key} / {flag}")
+    };
+    match err.kind() {
+        std::io::ErrorKind::AddrInUse => format!(
+            "Another process is using port {port}, often an earlier fast_code_search \
+             server that is still running; find it with `ss -ltnp | grep :{port}`. \
+             Stop it, or pick a free port with {setting}."
+        ),
+        std::io::ErrorKind::PermissionDenied => {
+            format!("Ports below 1024 need extra privileges; pick a higher port with {setting}.")
+        }
+        _ => format!("Check {setting}."),
+    }
 }
 
 /// Get server uptime in seconds
@@ -188,6 +268,9 @@ pub struct KeywordDiagnosticsResponse {
     pub generated_at: String,
     /// Configuration summary
     pub config: ConfigSummary,
+    /// Running APIs, persistence, and problems found at startup or now
+    #[serde(default)]
+    pub service: ServiceStatus,
     /// Index statistics
     pub index: KeywordIndexDiagnostics,
     /// Self-test results
@@ -380,5 +463,24 @@ mod tests {
         assert_eq!(HealthStatus::Healthy.as_str(), "healthy");
         assert_eq!(HealthStatus::Degraded.as_str(), "degraded");
         assert_eq!(HealthStatus::Unhealthy.as_str(), "unhealthy");
+    }
+
+    #[test]
+    fn port_hint_names_the_port_and_setting() {
+        let busy = std::io::Error::from(std::io::ErrorKind::AddrInUse);
+        let hint = port_hint(&busy, "127.0.0.1:50051", "server.address", "--address");
+        assert!(hint.contains("ss -ltnp | grep :50051"), "{hint}");
+        assert!(hint.contains("server.address / --address"), "{hint}");
+        let no_flag = port_hint(&busy, "127.0.0.1:8081", "server.web_address", "");
+        assert!(no_flag.ends_with("server.web_address."), "{no_flag}");
+    }
+
+    #[test]
+    fn recorded_problems_appear_in_service_status() {
+        record_problem("test: port 1 busy");
+        set_service_endpoints("disabled", "http://127.0.0.1:1", "OFF");
+        let status = service_status(None);
+        assert!(status.problems.iter().any(|p| p == "test: port 1 busy"));
+        assert_eq!(status.grpc, "disabled");
     }
 }

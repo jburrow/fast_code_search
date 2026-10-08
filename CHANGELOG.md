@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and when a filesystem holding indexed source is out of inodes. A failed
   save with "No space left on device" says whether bytes or inodes ran out,
   since an inode-exhausted disk still shows free space.
+- One server per index: the server holds a lock on `<index_path>.lock` with
+  its PID and addresses. A second server given the same `index_path` logs
+  which process owns it, loads the index read-only and never saves, so the
+  two can no longer overwrite each other's index.
+- The diagnostics page has a Service card: web UI and gRPC status, where
+  the index is saved (or that it is memory only / read-only), and startup
+  and storage problems, which also mark the status as degraded.
+  `/api/health` reports the problem count, and the search page shows
+  "Server started with N problems" linking to it.
 
 ### Changed
 - A busy or forbidden port no longer stops the server. If the gRPC or web
@@ -44,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_concurrent_searches`, `request_timeout_secs`, `respect_gitignore`,
   `include_extensions`, `exclude_files` and `batch_size` are no longer
   missing or commented out. A test keeps the template complete.
+- `fast_code_search_semantic` logs where its config came from, and a busy
+  gRPC or web port is a clear error that disables only that API, instead of
+  a panic inside a background task that left the process running with
+  nothing listening.
 
 ## [0.13.0] - 2026-09-08
 

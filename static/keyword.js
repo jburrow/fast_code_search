@@ -338,12 +338,14 @@ async function checkBackendHealth() {
     // whether the server_type field is present (older binaries omit it).
     let currentServerType = null;
     let healthOk = false;
+    let serverProblems = 0;
     try {
         const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
         if (resp.ok) {
             healthOk = true;
             const data = await resp.json();
             currentServerType = data.server_type ?? null;
+            serverProblems = Number(data.problems) || 0;
         }
     } catch (e) { /* offline */ }
 
@@ -370,7 +372,7 @@ async function checkBackendHealth() {
         } catch (e) { /* offline */ }
     }
 
-    renderBackendStatus(keywordAvailable, semanticUp);
+    renderBackendStatus(keywordAvailable, semanticUp, serverProblems);
 }
 
 /**
@@ -388,7 +390,7 @@ function semanticEnabled() {
     return !!document.querySelector('a[href="/semantic.html"]');
 }
 
-function renderBackendStatus(keywordUp, semanticUp) {
+function renderBackendStatus(keywordUp, semanticUp, serverProblems = 0) {
     const banner = document.getElementById('backend-banner');
     if (!banner) return;
 
@@ -397,12 +399,28 @@ function renderBackendStatus(keywordUp, semanticUp) {
     if (semanticBadge) semanticBadge.style.display = semanticEnabled() ? '' : 'none';
     updateBackendBadge('semantic-status-badge', semanticUp, 'SEMANTIC');
 
+    const msgEl = document.getElementById('backend-banner-msg');
+    if (keywordUp && serverProblems > 0) {
+        // The server is up but something at startup went wrong (a busy port,
+        // an index owned by another server, a config warning): point at it.
+        banner.style.background = '#f6f1c4';
+        banner.style.color = '#4b4900';
+        banner.style.display = 'flex';
+        if (msgEl) {
+            msgEl.textContent = `Server started with ${serverProblems} problem${serverProblems === 1 ? '' : 's'}. `;
+            const link = document.createElement('a');
+            link.href = '/diagnostics.html';
+            link.textContent = 'See diagnostics';
+            link.style.textDecoration = 'underline';
+            msgEl.appendChild(link);
+        }
+        return;
+    }
     if (keywordUp) {
         banner.style.display = 'none';
         return;
     }
 
-    const msgEl = document.getElementById('backend-banner-msg');
     banner.style.background = '#ffdad6';
     banner.style.color = '#93000a';
     banner.style.display = 'flex';

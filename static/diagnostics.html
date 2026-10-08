@@ -417,6 +417,32 @@
             }
         }
 
+        // Running APIs, where the index is saved, and problems to fix (a busy
+        // port, an index owned by another server, low disk space or inodes).
+        function renderService(service) {
+            if (!service || !service.persistence) return '';
+            const problems = service.problems || [];
+            const row = (label, value) => `
+                <div class="sample-file"><strong>${label}:</strong> ${escapeHtml(value || 'unknown')}</div>`;
+            return `
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <h3>🛠️ Service</h3>
+                    <div class="sample-files">
+                        ${row('Web UI / REST', service.web_ui)}
+                        ${row('gRPC', service.grpc)}
+                        ${row('Index persistence', service.persistence)}
+                    </div>
+                    ${problems.length > 0 ? `
+                        <div class="sample-files" style="margin-top: 0.75rem;">
+                            <div class="sample-file"><strong>⚠️ Problems (${problems.length}):</strong></div>
+                            ${problems.map(p => `
+                                <div class="sample-file" style="white-space: normal; color: var(--warning);">${escapeHtml(p)}</div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>`;
+        }
+
         function renderDiagnostics(data) {
             // Every string below comes from the server and, through it, from
             // file names in arbitrary indexed repositories: escape all of them.
@@ -441,6 +467,8 @@
                         🔄 Refresh
                     </button>
                 </div>
+
+                ${renderService(data.service)}
 
                 <div class="cards-grid">
                     <div class="card">

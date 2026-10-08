@@ -1088,6 +1088,13 @@ fn save_index_if_needed(
     let Some(ref index_path_str) = indexer_config.index_path else {
         return;
     };
+    if indexer_config.index_read_only {
+        info!(
+            path = %index_path_str,
+            "Not saving the index: another server holds its lock (see the error at startup)"
+        );
+        return;
+    }
 
     // Only save if the index actually changed since it was loaded.
     // `removed_files_count` covers the case where files were deleted from disk
