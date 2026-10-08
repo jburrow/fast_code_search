@@ -90,7 +90,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Syntax-check the web UI scripts
-        run: node --check static/keyword.js && node --check static/common.js && node --check static/semantic.js && node --check static/lib/keyword-helpers.js
+        run: node --check static/keyword.js && node --check static/common.js && node --check static/semantic.js && node --check static/lib/keyword-helpers.js && node --check static/lib/graph-helpers.js && node --check static/graph.js
 
       - name: Generated reference pages are up to date
         run: |

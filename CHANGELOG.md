@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dependency explorer (GRAPH in the web UI, `/graph.html`): a file's import
+  neighbourhood, the impact of changing it (with the affected tests), the
+  shortest import chain between two files, and a folder-level module map
+  with import cycles marked, beside the file's source with its import lines
+  linked. Search results, the deps popover and the file viewer link into it,
+  and it links back to keyword search limited to the files on screen.
+- `/api/graph/neighborhood`, `/impact`, `/path`, `/modules`, `/imports` and
+  `/files` over the import graph (see `docs/API.md`).
 - Distribution: `cargo binstall` metadata pointing at the release archives;
   a container image (`ghcr.io/jburrow/fast_code_search`) built per release
   with a documented `docker run` line; release archives signed keylessly
@@ -38,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages accepted across encryption-level boundaries).
 
 ### Changed
+- Rust imports through the crate's own name (`use my_crate::search::X` in
+  `main.rs`, `src/bin/` and `tests/`) now resolve to the library's files, so
+  those files have import edges and the library modules they use get the
+  dependency ranking boost. Existing indexes pick this up on rebuild.
 - A busy or forbidden port no longer stops the server. If the gRPC or web
   port cannot be bound, the server logs an error naming the port and how to
   find what holds it, and keeps indexing and serving on the other API. It

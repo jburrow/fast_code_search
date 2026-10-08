@@ -4,6 +4,8 @@
 //! ranking of search results. Files that are imported by many other files
 //! receive a ranking boost.
 
+pub mod graph;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,10 @@ pub struct DependencyIndex {
     /// Reverse of `path_to_id`, so removal and re-registration are O(1)
     /// instead of a full scan (and so `filename_to_paths` can be pruned).
     id_to_path: FxHashMap<u32, PathBuf>,
+    /// Rust crate directory (the one holding `Cargo.toml`) -> the name the
+    /// crate's own binaries and tests `use` it by, or `None` when the
+    /// manifest names no package. Read once per crate.
+    rust_crate_names: std::sync::RwLock<FxHashMap<PathBuf, Option<String>>>,
 }
 
 /// Resolve `.` and `..` components without touching the file system.
@@ -100,6 +106,14 @@ impl DependencyIndex {
                 .push(stored_path.clone());
         }
 
+        if stored_path.file_name().is_some_and(|n| n == "Cargo.toml") {
+            if let Some(root) = stored_path.parent() {
+                self.rust_crate_names
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(root);
+            }
+        }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
     }
@@ -251,6 +265,42 @@ impl DependencyIndex {
         file.parent().map(Path::to_path_buf).unwrap_or_default()
     }
 
+    /// The name a crate's binaries, tests and examples import its library
+    /// by: `[lib] name`, else `[package] name` with `-` mapped to `_`.
+    ///
+    /// The crate root is found through the *indexed* `Cargo.toml` (no
+    /// file-system walk: this runs for every external `use serde::…`), and
+    /// each manifest is read once.
+    fn rust_library_name(&self, file: &Path) -> Option<String> {
+        let root = file
+            .ancestors()
+            .skip(1)
+            .find(|d| self.path_to_id.contains_key(&d.join("Cargo.toml")))?;
+        if let Some(cached) = self
+            .rust_crate_names
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(root)
+        {
+            return cached.clone();
+        }
+        let name = std::fs::read_to_string(root.join("Cargo.toml"))
+            .ok()
+            .and_then(|manifest| toml::from_str::<toml::Value>(&manifest).ok())
+            .and_then(|value| {
+                let name = value
+                    .get("lib")
+                    .and_then(|l| l.get("name"))
+                    .or_else(|| value.get("package").and_then(|p| p.get("name")))?;
+                Some(name.as_str()?.replace('-', "_"))
+            });
+        self.rust_crate_names
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(root.to_path_buf(), name.clone());
+        name
+    }
+
     fn resolve_rust(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
         // `use a::b::{c, d};` / `use a::*;` -> drop the group / glob tail.
         let cleaned = import_path
@@ -290,10 +340,31 @@ impl DependencyIndex {
                 }
                 dir
             }
-            // `mod foo;` or `use foo::bar` naming a sibling module — or an
-            // external crate, which simply fails to resolve below.
-            _ => Self::rust_module_dir(from_file)?,
+            // `mod foo;` or `use foo::bar` naming a sibling module, the
+            // crate's own library by name (`use my_crate::x` from `main.rs`,
+            // a bin or `tests/`), or an external crate, which resolves to
+            // nothing.
+            _ => {
+                let dir = Self::rust_module_dir(from_file)?;
+                if let Some(found) = self.resolve_rust_segments(&dir, &segments) {
+                    return Some(found);
+                }
+                if self.rust_library_name(from_file).as_deref() != Some(segments[0]) {
+                    return None;
+                }
+                segments.remove(0);
+                let src = Self::rust_crate_src(from_file);
+                if segments.is_empty() {
+                    return self.indexed(&src.join("lib.rs"));
+                }
+                src
+            }
         };
+        self.resolve_rust_segments(&base, &segments)
+    }
+
+    /// Module path `segments` under the module directory `base`.
+    fn resolve_rust_segments(&self, base: &Path, segments: &[&str]) -> Option<PathBuf> {
         if segments.is_empty() {
             // `use crate;` / `use super::*;` etc. — the module file itself.
             let candidates = [base.join("mod.rs"), base.with_extension("rs")];
@@ -302,7 +373,7 @@ impl DependencyIndex {
         // Try the longest module prefix first: `crate::a::b::Item` is the
         // file `a/b.rs` (or `a/b/mod.rs`); `Item` is a symbol, not a file.
         for k in (1..=segments.len()).rev() {
-            let mut dir = base.clone();
+            let mut dir = base.to_path_buf();
             for seg in &segments[..k - 1] {
                 dir.push(seg);
             }
@@ -546,6 +617,53 @@ impl DependencyIndex {
         self.path_to_id.clear();
         self.filename_to_paths.clear();
         self.id_to_path.clear();
+        self.rust_crate_names
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
+    /// Canonical path a file id is registered under.
+    pub fn path_of(&self, file_id: u32) -> Option<&Path> {
+        self.id_to_path.get(&file_id).map(PathBuf::as_path)
+    }
+
+    /// Ids of every registered file.
+    pub fn file_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.id_to_path.keys().copied()
+    }
+
+    /// Is the edge `from -> to` a Rust parent module reaching one of its own
+    /// child modules (`mod foo;`, `use self::foo`)? That is containment, not
+    /// a dependency between peers, and it would put every parent and child
+    /// in an import cycle, so graph views treat it separately.
+    pub fn is_containment(&self, from: u32, to: u32) -> bool {
+        let (Some(from), Some(to)) = (self.path_of(from), self.path_of(to)) else {
+            return false;
+        };
+        let is_rs = |p: &Path| p.extension().is_some_and(|e| e == "rs");
+        if !is_rs(from) || !is_rs(to) {
+            return false;
+        }
+        // A binary's `main.rs` next to a `lib.rs` reaches those files
+        // through `use my_crate::…`: they are the library's modules, not its
+        // children.
+        if from.file_name().is_some_and(|n| n == "main.rs")
+            && from
+                .parent()
+                .is_some_and(|d| self.path_to_id.contains_key(&d.join("lib.rs")))
+        {
+            return false;
+        }
+        let Some(dir) = Self::rust_module_dir(from) else {
+            return false;
+        };
+        let child_parent = if to.file_name().is_some_and(|n| n == "mod.rs") {
+            to.parent().and_then(Path::parent)
+        } else {
+            to.parent()
+        };
+        child_parent == Some(dir.as_path())
     }
 }
 
@@ -624,6 +742,40 @@ mod tests {
             r("src/main.rs", "util"),
             id_of(&temp, &idx, "other/util.rs")
         );
+    }
+
+    /// `use my_crate::…` from the crate's own `main.rs`, bins and `tests/`
+    /// resolves into the library; a sibling module of the same name still
+    /// wins, and a crate whose manifest is not indexed resolves nothing.
+    #[test]
+    fn test_resolve_rust_crate_name_imports() {
+        let (temp, idx) = setup(&[
+            ("Cargo.toml", "[package]\nname = \"my-crate\"\n"),
+            ("src/lib.rs", "pub mod net;\n"),
+            ("src/net/mod.rs", "pub mod tcp;\n"),
+            ("src/net/tcp.rs", ""),
+            ("src/main.rs", "use my_crate::net::tcp::Conn;\n"),
+            ("src/bin/tool.rs", "use my_crate::{net, Config};\n"),
+            ("tests/it.rs", "use my_crate;\n"),
+        ]);
+        let f = |rel: &str| temp.path().join(rel);
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&f(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("src/main.rs", "my_crate::net::tcp::Conn"),
+            id_of(&temp, &idx, "src/net/tcp.rs")
+        );
+        assert_eq!(
+            r("src/bin/tool.rs", "my_crate::{net, Config}"),
+            id_of(&temp, &idx, "src/lib.rs")
+        );
+        assert_eq!(
+            r("tests/it.rs", "my_crate"),
+            id_of(&temp, &idx, "src/lib.rs")
+        );
+        assert_eq!(r("tests/it.rs", "other_crate::x"), None);
     }
 
     /// Roadmap 2.5: Python relative imports walk parent packages, dotted
