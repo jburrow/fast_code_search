@@ -295,3 +295,14 @@ test('colour helpers: parsing and WCAG contrast', () => {
     assert.equal(Math.round(H.contrastRatio(white, black)), 21);
     assert.equal(H.contrastRatio(white, white), 1);
 });
+
+// ---------- dependency explorer links ----------
+
+test('hasImportGraph: only languages whose imports are resolved', () => {
+    for (const p of ['r/src/a.rs', 'r/pkg/x.py', 'r/web/a.tsx', 'r/web/b.MJS']) assert.ok(H.hasImportGraph(p), p);
+    for (const p of ['r/README.md', 'r/Cargo.toml', 'r/main.go', '']) assert.ok(!H.hasImportGraph(p), p);
+});
+
+test('graphExplorerUrl encodes the path', () => {
+    assert.equal(H.graphExplorerUrl('r/a b/#x.rs'), '/graph.html?file=r%2Fa%20b%2F%23x.rs');
+});

@@ -26,9 +26,36 @@ the binary.
 - Hover a hit to preview the surrounding lines; click **View file** for the
   whole file with the line highlighted (large files open in a window with
   "Show more").
-- The **deps** chip on a file opens its importers and imports.
+- The **deps** chip on a file opens its importers and imports. The tree
+  icon on a result (and **Explore imports** in the file viewer) opens the
+  file in the dependency explorer.
 - `j`/`k` move the keyboard selection, Enter opens it, Escape closes any
   dialog; the copy button puts the path on the clipboard.
+
+## Dependency explorer
+
+**Graph** (`/graph.html`) shows the import graph around one file, next to
+its source. Pick a file on the left (most connected first) and switch view:
+
+- **Neighbourhood**: what the file imports on the left, what imports it on
+  the right, up to four hops each way. Busy levels fold into "+N more";
+  click to list them.
+- **Impact**: every file a change could reach, level by level, and the test
+  files among them.
+- **Path**: the shortest chain of imports between two files.
+- **Module map**: folders laid out so each only imports folders to its
+  left; red marks import cycles.
+
+Click a box to read the file and a line to open the import statement it
+stands for; double-click (or Enter) to centre the graph on it. Import lines
+in the source are highlighted and link to their target; imports of
+packages and the standard library are marked *external*. **Search these
+files** runs a keyword search limited to the files on screen.
+
+Rust `mod foo;` declarations (and `pub use foo::X` re-exports of a child
+module) are hidden by default since they are structure rather than
+dependencies; **Show mod declarations** brings them back. Imports are
+resolved for Rust, Python and JavaScript/TypeScript.
 
 ## Other pages
 

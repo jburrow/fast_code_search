@@ -1530,6 +1530,11 @@ function renderGroupHtml(group) {
                 <div class="flex items-center gap-2 flex-shrink-0">
                     ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
                     ${depBadge}
+                    ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link hover:text-primary transition-colors"
+                        style="color:#5f5d48;display:flex"
+                        href="${escapeHtml(graphExplorerUrl(group.filePath))}"
+                        aria-label="Explore this file's imports"
+                        title="Explore imports in the dependency explorer">${iconSvg('account_tree', 16)}</a>` : ''}
                     <button type="button" class="copy-path-btn hover:text-primary transition-colors"
                         style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
                         data-file-path="${escapeHtml(group.filePath)}"
@@ -1955,7 +1960,8 @@ async function showDepsTooltip(badgeEl, filePath) {
         popover.innerHTML =
             `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
             dependentsSection +
-            importsSection;
+            importsSection +
+            `<a class="deps-popover-explore" href="${escapeHtml(graphExplorerUrl(filePath))}">Open in dependency explorer →</a>`;
 
         // Wire popover links/“more” via delegation using dataset values.
         popover.querySelectorAll('.deps-popover-link').forEach(link => {
@@ -2094,6 +2100,7 @@ function showDependencyModal(title, filePath, files, description, opts = {}) {
             <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
             <p style="color:#494831;font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
             <ul style="list-style:none;padding:0;">${fileList}</ul>
+            <a class="deps-popover-explore" style="padding-left:0" href="${escapeHtml(graphExplorerUrl(filePath))}">Open in dependency explorer →</a>
         </div>
     `;
 
@@ -2157,6 +2164,14 @@ async function showFileModal(filePath, highlightLine) {
     closeBtn.addEventListener('click', closeFileModal);
 
     header.appendChild(pathSpan);
+    if (hasImportGraph(filePath)) {
+        const explore = document.createElement('a');
+        explore.className = 'file-modal-explore';
+        explore.href = graphExplorerUrl(filePath);
+        explore.textContent = 'Explore imports';
+        explore.title = 'Open this file in the dependency explorer';
+        header.appendChild(explore);
+    }
     header.appendChild(closeBtn);
 
     const body = document.createElement('div');

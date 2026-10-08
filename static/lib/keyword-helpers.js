@@ -91,6 +91,19 @@ function hljsLangForPath(filePath) {
 }
 
 /**
+ * Does the dependency explorer have an import graph for this file? Imports
+ * are resolved for Rust, Python and JavaScript/TypeScript only.
+ */
+function hasImportGraph(filePath) {
+    return /\.(rs|py|pyi|pyw|js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i.test(String(filePath || ''));
+}
+
+/** The dependency explorer centred on `filePath`. */
+function graphExplorerUrl(filePath) {
+    return '/graph.html?file=' + encodeURIComponent(filePath);
+}
+
+/**
  * Parse a CSS color string to an RGB object for contrast calculations.
  * Supports #rgb, #rrggbb, rgb() and rgba(); null for anything else.
  */
@@ -422,6 +435,8 @@ if (typeof module !== 'undefined' && module.exports) {
         parseBoolParam,
         iconSvg,
         hljsLangForPath,
+        hasImportGraph,
+        graphExplorerUrl,
         parseColorToRgb,
         relativeLuminance,
         contrastRatio,
