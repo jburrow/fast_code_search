@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f52e775e.js";
+            window.path_to_searchindex_js = "../searchindex-f5a48072.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -220,6 +220,13 @@ the index is saved (or that it is memory only / read-only), and startup
 and storage problems, which also mark the status as degraded.
 <code>/api/health</code> reports the problem count, and the search page shows
 “Server started with N problems” linking to it.</li>
+<li>Regex search help in the web UI: a <code>?</code> cheat-sheet next to the REGEX
+toggle with runnable examples and the rules that catch people out; when a
+search finds nothing, close variants that do find something (flexible
+spacing, ignore case, the same text without regex, or regex for a plain
+query that looks like one) are offered as one-click suggestions; an
+invalid regex shows where it is wrong and offers to search the text
+literally or escaped. The regex docs gained examples and pitfalls.</li>
 </ul>
 <h3 id="security"><a class="header" href="#security">Security</a></h3>
 <ul>
@@ -228,6 +235,9 @@ messages accepted across encryption-level boundaries).</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>An invalid regex’s error now carries the parser’s explanation and points
+at the problem in the pattern as typed (it used to repeat only the
+pattern).</li>
 <li>Rust imports through the crate’s own name (<code>use my_crate::search::X</code> in
 <code>main.rs</code>, <code>src/bin/</code> and <code>tests/</code>) now resolve to the library’s files, so
 those files have import edges and the library modules they use get the
