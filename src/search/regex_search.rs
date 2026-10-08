@@ -48,30 +48,70 @@ pub struct RegexAnalysis {
 /// `s` (dot-matches-newline) flag, e.g. `(?s)start.*end`. Matches are then
 /// reported on the line where they start.
 pub fn needs_multiline(pattern: &str) -> bool {
-    if pattern.contains("\\n") || pattern.contains("\\r") || pattern.contains('\n') {
-        return true;
-    }
-    let lower = pattern.to_ascii_lowercase();
-    if lower.contains("\\x0a") || lower.contains("\\x0d") {
-        return true;
-    }
-    // Flag groups: `(?s)`, `(?is)`, `(?s:...)`, but not `(?-s)`.
     let bytes = pattern.as_bytes();
     let mut i = 0;
-    while let Some(off) = pattern[i..].find("(?") {
-        let start = i + off + 2;
-        let mut j = start;
-        let mut negated = false;
-        while j < bytes.len() {
-            match bytes[j] {
-                b'-' => negated = true,
-                b's' if !negated => return true,
-                b'a'..=b'z' | b'A'..=b'Z' => {}
-                _ => break,
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' | b'\r' => return true,
+            b'\\' => {
+                // An escape: `\n`, `\r` and hex escapes of 0x0A / 0x0D name
+                // a line break; anything else (including an escaped
+                // backslash, so `\\n` is a backslash then `n`) is skipped
+                // whole.
+                let Some(&e) = bytes.get(i + 1) else { break };
+                match e {
+                    b'n' | b'r' => return true,
+                    b'x' | b'u' | b'U' => {
+                        let rest = &pattern[i + 2..];
+                        let (digits, used) = match rest.strip_prefix('{') {
+                            Some(r) => match r.find('}') {
+                                Some(end) => (&r[..end], end + 2),
+                                None => ("", 0),
+                            },
+                            None => {
+                                let width = match e {
+                                    b'x' => 2,
+                                    b'u' => 4,
+                                    _ => 8,
+                                };
+                                let n = rest
+                                    .bytes()
+                                    .take(width)
+                                    .take_while(u8::is_ascii_hexdigit)
+                                    .count();
+                                (&rest[..n], n)
+                            }
+                        };
+                        if matches!(u32::from_str_radix(digits, 16), Ok(0x0a | 0x0d)) {
+                            return true;
+                        }
+                        i += 2 + used;
+                        continue;
+                    }
+                    _ => {}
+                }
+                i += 2;
+                continue;
             }
-            j += 1;
+            // Flag groups: `(?s)`, `(?is)`, `(?s:...)`, but not `(?-s)`.
+            b'(' if bytes.get(i + 1) == Some(&b'?') => {
+                let mut j = i + 2;
+                let mut negated = false;
+                while j < bytes.len() {
+                    match bytes[j] {
+                        b'-' => negated = true,
+                        b's' if !negated => return true,
+                        b'a'..=b'z' | b'A'..=b'Z' => {}
+                        _ => break,
+                    }
+                    j += 1;
+                }
+                i += 2;
+                continue;
+            }
+            _ => {}
         }
-        i = start;
+        i += 1;
     }
     false
 }
@@ -92,15 +132,14 @@ impl RegexAnalysis {
         let hir = regex_syntax::parse(pattern)
             .map_err(|e| anyhow::anyhow!("Invalid regex pattern: {e}"))?;
         let multiline = needs_multiline(pattern);
-        // Line-mode patterns are run over whole file contents in one pass
-        // (see `search_in_document_regex`), so `^` and `$` are given their
+        // Patterns are run over whole file contents in one pass (see
+        // `search_in_document_regex`), so `^` and `$` are given their
         // per-line meaning here (`m`), with `\r\n` as a line terminator (`R`)
-        // so a `foo$` still matches a CRLF line.
-        let effective = if multiline {
-            pattern.to_string()
-        } else {
-            format!("(?mR){pattern}")
-        };
+        // so a `foo$` still matches a CRLF line. That holds for multiline
+        // patterns too, as in ripgrep's multiline mode: `^struct \w+ \{\n`
+        // matched only at the very start of a file before; `\A` and `\z`
+        // anchor to the file.
+        let effective = format!("(?mR){pattern}");
         let regex = regex::RegexBuilder::new(&effective)
             .size_limit(REGEX_SIZE_LIMIT)
             .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
@@ -382,6 +421,22 @@ mod tests {
         );
         assert!(err.contains("\n    { \"success\": True\n    ^\n"), "{err}");
         assert!(!err.contains("(?mR)"), "{err}");
+    }
+
+    /// An escaped backslash is not a newline escape; hex escapes of a
+    /// line break are.
+    #[test]
+    fn multiline_detection_reads_escapes() {
+        for p in [
+            r"a\n", r"[^\n]", r"\r", r"\x0A", r"\x{a}", r"\u000d", "(?s)a.b", "(?is:x)",
+        ] {
+            assert!(needs_multiline(p), "{p}");
+        }
+        for p in [
+            r"a\\n", r"\\r", r"\x41", r"\d+", "(?-s)a.b", "(?i)x", r"\(?s",
+        ] {
+            assert!(!needs_multiline(p), "{p}");
+        }
     }
 
     fn constraints(pattern: &str) -> Vec<Vec<String>> {
