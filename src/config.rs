@@ -97,6 +97,11 @@ pub struct ServerConfig {
     #[serde(default = "default_address")]
     pub address: String,
 
+    /// Start the gRPC API. When false, `address` is ignored and only the web
+    /// UI / REST API is served.
+    #[serde(default = "default_true")]
+    pub enable_grpc: bool,
+
     /// Address to bind the HTTP/Web UI server to
     #[serde(default = "default_web_address")]
     pub web_address: String,
@@ -271,6 +276,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             address: default_address(),
+            enable_grpc: true,
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
             cors_origins: Vec::new(),
@@ -447,127 +453,26 @@ impl Config {
 
     /// Generate a template configuration file
     pub fn generate_template() -> String {
-        r#"# Fast Code Search Configuration
-# Generated template - customize as needed
+        Self::generate_template_with_index_path("~/.local/share/fast_code_search/index.fcsidx")
+    }
 
-[server]
-# Address to bind the gRPC server to.
-# Loopback by default: the server has no authentication and serves full file
-# contents. Use "0.0.0.0:50051" only on a trusted network.
-address = "127.0.0.1:50051"
-
-# Address to bind the HTTP/Web UI server to (same caveat as above)
-web_address = "127.0.0.1:8080"
-
-# Enable the web UI and REST API (default: true)
-enable_web_ui = true
-
-# Origins allowed to call the REST API from another site (CORS).
-# Empty (default) = same-origin only, which is all the embedded UI needs.
-# cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
-
-# Searches executing at once on the REST API; extra requests get 503 + Retry-After
-# max_concurrent_searches = 64
-
-# Per-request timeout (seconds) for both servers
-# request_timeout_secs = 30
-
-# Serve static UI files from a directory on disk instead of embedded assets.
-# When set, the web server reads HTML/CSS/JS files from this path on every
-# request so that UI edits are visible without recompiling the server.
-# Useful during development; leave commented out for production.
-# static_dir = "static"
-
-[indexer]
-# Paths to index on startup
-# Add your project directories here
-paths = [
-    # "C:/code/my-project",
-    # "C:/code/another-project",
-    # "/home/user/projects/my-app",
-]
-
-# Honour .gitignore / .ignore files under the indexed paths (default: true)
-# respect_gitignore = true
-
-# File extensions to include (empty = all text files)
-# Uncomment and customize to limit indexed file types
-# include_extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
-
-# Patterns to exclude from indexing
-exclude_patterns = [
-    "**/node_modules/**",
-    "**/target/**",
-    "**/.git/**",
-    "**/build/**",
-    "**/dist/**",
-    "**/__pycache__/**",
-    "**/venv/**",
-    "**/.venv/**",
-]
-
-# Exact file paths to permanently exclude from indexing.
-# Useful for files that cause crashes or are too large/noisy to be useful.
-# After a crash, check fcs_last_processed.txt to identify the offending file.
-# exclude_files = ["/repo/src/generated/huge_file.rs"]
-
-# Maximum file size to index in bytes (default: 10MB)
-max_file_size = 10485760
-
-# Enable encoding detection for non-UTF-8 text files (default: true)
-# When enabled, files in Latin-1, Shift-JIS, UTF-16 etc. are transcoded to UTF-8.
-# Disable for UTF-8-only codebases for slightly faster indexing.
-transcode_non_utf8 = true
-
-# Path to persistent index storage (optional)
-# If set, the index will be saved to disk and loaded on restart for faster startup
-# The index file stores trigrams, file metadata, and config fingerprint for reconciliation
-# index_path = "/var/lib/fast_code_search/index.bin"
-
-# Save index after initial build completes (default: true)
-# Only effective when index_path is set
-save_after_build = true
-
-# Save index after N file updates via watcher (default: 0 = disabled)
-# When enabled, the index is periodically saved after this many watcher-triggered updates.
-# Useful for long-running servers to persist incremental changes.
-save_after_updates = 0
-
-# Checkpoint every N files during the initial index build (default: 0 = disabled)
-# If the process is killed mid-build, the next run resumes from the checkpoint.
-# Recommended for very large repos: 20000. Has no effect if index_path is not set.
-checkpoint_interval_files = 0
-
-# Enable file watcher for incremental indexing (default: false)
-# When enabled, changes to indexed files are detected and re-indexed automatically
-watch = false
-
-# Enable tree-sitter symbol extraction (default: true)
-# When enabled, function/class/struct definitions are parsed from source files
-# and used to boost search relevance for symbol matches.
-# Disable to reduce memory usage and indexing time at the cost of reduced relevance.
-enable_symbols = true
-
-[telemetry]
-# Enable OpenTelemetry trace export (default: false)
-# Set to true to enable OTLP export (console logging is always active)
-# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=true
-enabled = false
-
-# OTLP gRPC exporter endpoint (default: http://localhost:4317)
-# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
-otlp_endpoint = "http://localhost:4317"
-
-# Service name reported to the collector
-# Env override: OTEL_SERVICE_NAME
-service_name = "fast_code_search"
-"#
-        .to_string()
+    /// The template with `index_path` set to `index_path`.
+    pub fn generate_template_with_index_path(index_path: &str) -> String {
+        CONFIG_TEMPLATE.replace("__INDEX_PATH__", index_path)
     }
 
     /// Write template config to the specified path
     pub fn write_template(path: &Path) -> Result<()> {
-        let template = Self::generate_template();
+        // Name the index after the config file so two configs generated
+        // side by side do not share (and overwrite) one index.
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("index");
+        let template = Self::generate_template_with_index_path(&format!(
+            "~/.local/share/fast_code_search/{stem}.fcsidx"
+        ));
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
@@ -608,18 +513,26 @@ service_name = "fast_code_search"
 
     /// Check the configuration before anything binds or indexes.
     ///
-    /// Hard errors (unparseable addresses, zero limits, an index_path whose
-    /// directory does not exist) are returned; soft problems (an index path
-    /// that does not exist yet, no paths at all) come back as warnings so
-    /// the caller can log them and continue.
+    /// Hard errors (unparseable addresses, zero limits) are returned; soft
+    /// problems (no paths at all, an index directory that
+    /// does not exist yet) come back as warnings so the caller can log them
+    /// and continue.
     pub fn validate(&self) -> Result<Vec<String>> {
         use std::net::SocketAddr;
         let mut warnings = Vec::new();
 
-        self.server
-            .address
-            .parse::<SocketAddr>()
-            .with_context(|| format!("server.address is not host:port: {}", self.server.address))?;
+        if self.server.enable_grpc {
+            self.server.address.parse::<SocketAddr>().with_context(|| {
+                format!("server.address is not host:port: {}", self.server.address)
+            })?;
+        }
+        if !self.server.enable_grpc && !self.server.enable_web_ui {
+            warnings.push(
+                "server.enable_grpc and server.enable_web_ui are both false: \
+                 the index is built but nothing can search it"
+                    .to_string(),
+            );
+        }
         if self.server.enable_web_ui {
             self.server
                 .web_address
@@ -630,7 +543,7 @@ service_name = "fast_code_search"
                         self.server.web_address
                     )
                 })?;
-            if self.server.web_address == self.server.address {
+            if self.server.enable_grpc && self.server.web_address == self.server.address {
                 anyhow::bail!(
                     "server.address and server.web_address are both {}",
                     self.server.address
@@ -650,10 +563,11 @@ service_name = "fast_code_search"
             let p = Path::new(index_path);
             if let Some(parent) = p.parent() {
                 if !parent.as_os_str().is_empty() && !parent.is_dir() {
-                    anyhow::bail!(
-                        "indexer.index_path directory does not exist: {}",
+                    warnings.push(format!(
+                        "indexer.index_path directory does not exist yet and will be \
+                         created on first save: {}",
                         parent.display()
-                    );
+                    ));
                 }
             }
         }
@@ -673,6 +587,140 @@ service_name = "fast_code_search"
         Ok(warnings)
     }
 }
+
+/// What `--init` writes: every key with its default and an explanation.
+/// `__INDEX_PATH__` is filled in by [`Config::generate_template_with_index_path`].
+const CONFIG_TEMPLATE: &str = r#"# Fast Code Search Configuration
+# Generated template - customize as needed
+
+[server]
+# Address to bind the gRPC server to.
+# Loopback by default: the server has no authentication and serves full file
+# contents. Use "0.0.0.0:50051" only on a trusted network.
+address = "127.0.0.1:50051"
+
+# Start the gRPC API (default: true). Set false if you only use the web UI,
+# REST API and fcs CLI. If the gRPC port is busy at startup the server logs
+# an error and keeps running without gRPC rather than exiting.
+enable_grpc = true
+
+# Address to bind the HTTP/Web UI server to (same caveat as above)
+web_address = "127.0.0.1:8080"
+
+# Enable the web UI and REST API (default: true)
+enable_web_ui = true
+
+# Origins allowed to call the REST API from another site (CORS).
+# Empty (default) = same-origin only, which is all the embedded UI needs.
+# Example: ["http://localhost:3000"], or ["*"] to allow any origin
+cors_origins = []
+
+# Searches executing at once on the REST API; extra requests get 503 + Retry-After
+max_concurrent_searches = 64
+
+# Per-request timeout (seconds) for both servers
+request_timeout_secs = 30
+
+# Serve static UI files from a directory on disk instead of embedded assets.
+# When set, the web server reads HTML/CSS/JS files from this path on every
+# request so that UI edits are visible without recompiling the server.
+# Useful during development. Unset (the default) = the assets embedded in the
+# binary; TOML has no "unset" value, so this one key stays commented out.
+# static_dir = "static"
+
+[indexer]
+# Paths to index on startup
+# Add your project directories here
+paths = [
+    # "C:/code/my-project",
+    # "C:/code/another-project",
+    # "/home/user/projects/my-app",
+]
+
+# Honour .gitignore / .ignore files under the indexed paths (default: true)
+respect_gitignore = true
+
+# File extensions to include (empty = all text files)
+# Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+include_extensions = []
+
+# Patterns to exclude from indexing
+exclude_patterns = [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "**/.venv/**",
+]
+
+# Exact file paths to permanently exclude from indexing.
+# Useful for files that cause crashes or are too large/noisy to be useful.
+# After a crash, check fcs_last_processed.txt to identify the offending file.
+# Example: ["/repo/src/generated/huge_file.rs"]
+exclude_files = []
+
+# Maximum file size to index in bytes (default: 10MB)
+max_file_size = 10485760
+
+# Enable encoding detection for non-UTF-8 text files (default: true)
+# When enabled, files in Latin-1, Shift-JIS, UTF-16 etc. are transcoded to UTF-8.
+# Disable for UTF-8-only codebases for slightly faster indexing.
+transcode_non_utf8 = true
+
+# Path to persistent index storage.
+# The index is saved here and loaded on restart, so a restart takes seconds
+# and only changed files are re-read. Remove the line to keep the index in
+# memory only: it is then rebuilt from scratch on every start, and the server
+# logs a warning saying so. Use one file per config. The directory is created
+# on first save; `~` is expanded and relative paths resolve against this file.
+index_path = "__INDEX_PATH__"
+
+# Save index after initial build completes (default: true)
+# Only effective when index_path is set
+save_after_build = true
+
+# Save index after N file updates via watcher (default: 0 = disabled)
+# When enabled, the index is periodically saved after this many watcher-triggered updates.
+# Useful for long-running servers to persist incremental changes.
+save_after_updates = 0
+
+# Checkpoint every N files during the initial index build (default: 0 = disabled)
+# If the process is killed mid-build, the next run resumes from the checkpoint.
+# Recommended for very large repos: 20000. Has no effect if index_path is not set.
+checkpoint_interval_files = 0
+
+# Enable file watcher for incremental indexing (default: false)
+# When enabled, changes to indexed files are detected and re-indexed automatically
+watch = false
+
+# Enable tree-sitter symbol extraction (default: true)
+# When enabled, function/class/struct definitions are parsed from source files
+# and used to boost search relevance for symbol matches.
+# Disable to reduce memory usage and indexing time at the cost of reduced relevance.
+enable_symbols = true
+
+# Files read and indexed per batch during the initial build (default: 500).
+# Peak RAM scales with batch_size x average file size x ~4: lower it on small
+# machines, raise it on large ones to reduce lock contention.
+batch_size = 500
+
+[telemetry]
+# Enable OpenTelemetry trace export (default: false)
+# Set to true to enable OTLP export (console logging is always active)
+# Env overrides: OTEL_SDK_DISABLED=true, FCS_TRACING_ENABLED=true
+enabled = false
+
+# OTLP gRPC exporter endpoint (default: http://localhost:4317)
+# Env override: OTEL_EXPORTER_OTLP_ENDPOINT
+otlp_endpoint = "http://localhost:4317"
+
+# Service name reported to the collector
+# Env override: OTEL_SERVICE_NAME
+service_name = "fast_code_search"
+"#;
 
 /// Version tag of the symbol/reference extraction (tags queries, reference
 /// kinds), appended to the configuration fingerprint. A persisted index
@@ -746,11 +794,25 @@ mod tests {
         assert!(cfg.validate().is_err());
         cfg.indexer.batch_size = 10;
         cfg.indexer.index_path = Some("/definitely/not/here/index.bin".to_string());
-        assert!(cfg.validate().is_err());
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings.iter().any(|w| w.contains("created on first save")));
         cfg.indexer.index_path = None;
         cfg.indexer.paths = vec!["/no/such/dir".to_string()];
         let warnings = cfg.validate().unwrap();
         assert!(warnings.iter().any(|w| w.contains("does not exist")));
+    }
+
+    #[test]
+    fn test_validate_grpc_disabled() {
+        let mut cfg = Config::default();
+        cfg.server.enable_grpc = false;
+        cfg.server.address = "not-an-address".to_string();
+        assert!(cfg.validate().is_ok(), "address is ignored without gRPC");
+        cfg.server.address = cfg.server.web_address.clone();
+        assert!(cfg.validate().is_ok(), "no port clash without gRPC");
+        cfg.server.enable_web_ui = false;
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings.iter().any(|w| w.contains("nothing can search it")));
     }
 
     #[test]
@@ -792,6 +854,47 @@ paths = ["/code/project"]
         assert!(template.contains("[server]"));
         assert!(template.contains("[indexer]"));
         assert!(template.contains("paths"));
+    }
+
+    /// `--init` must scaffold every key, so a new option cannot be added to
+    /// the structs without also being documented in the template.
+    #[test]
+    fn test_template_lists_every_key() {
+        let template = Config::generate_template();
+        let mut full = Config::default();
+        full.indexer.index_path = Some(String::new());
+        full.server.static_dir = Some(String::new());
+        let value = toml::Value::try_from(&full).unwrap();
+        for (section, table) in value.as_table().unwrap() {
+            assert!(template.contains(&format!("[{section}]")), "[{section}]");
+            for key in table.as_table().unwrap().keys() {
+                // static_dir has no TOML "unset" value, so it is the one key
+                // that is documented commented out.
+                let line = if key == "static_dir" {
+                    format!("\n# {key} = ")
+                } else {
+                    format!("\n{key} = ")
+                };
+                assert!(
+                    template.contains(&line),
+                    "template is missing {section}.{key}"
+                );
+            }
+        }
+        let parsed: Config = toml::from_str(&template).unwrap();
+        assert_eq!(
+            parsed.indexer.index_path.as_deref(),
+            Some("~/.local/share/fast_code_search/index.fcsidx")
+        );
+    }
+
+    #[test]
+    fn test_write_template_names_index_after_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("work.toml");
+        Config::write_template(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("index_path = \"~/.local/share/fast_code_search/work.fcsidx\""));
     }
 }
 

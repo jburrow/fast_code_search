@@ -11,8 +11,9 @@
 | `fn main` returns lines without `main` | Older version | Since 0.12 lines with the phrase rank first; upgrade |
 | A regex is slow | No required literal, so every file is scanned | Anchor it with a literal (`fn\s+main` rather than `\w+\s+\w+`) |
 | `references` finds nothing for a name | Language without call-site capture, or the index predates extraction changes | Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction |
-| Port already in use | Another instance (perhaps started by hand) | Stop it, or change `address` / `web_address` |
-| Index rebuilt on every start | `index_path` unset or unwritable | Set it to a writable location; the log names the path it tried |
+| `gRPC API NOT started` / `Web UI ... NOT started` at startup | Port already in use by another instance (perhaps started by hand) | The server keeps running on the other API; `ss -ltnp \| grep :PORT` finds the holder. Stop it, change `address` / `web_address`, or set `enable_grpc = false` |
+| Nothing indexed, `paths_count=0` | No config file found: without `--config` only `$FCS_CONFIG`, `./fast_code_search.toml` and `~/.config/fast_code_search/config.toml` are read | Pass `--config FILE`; the `Configuration source` log line says which file was used. Add `--verbose` (or `RUST_LOG=debug`) to see each path and ignore file |
+| Index rebuilt on every start | `index_path` unset (startup warns) or unwritable | Set it to a writable location; the log names the path it tried |
 | Windows: `C:\Users\NAME~1\…` paths | Short-name spelling of a root | Harmless; roots are compared in canonical form |
 | 504 from the API | Request timeout | The search also stopped; narrow the query or pass `timeout_ms` for a partial answer |
 | macOS: binary "cannot be opened" | Quarantine flag on a download | `xattr -d com.apple.quarantine fast_code_search_server` |

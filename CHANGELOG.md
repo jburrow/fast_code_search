@@ -16,6 +16,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the archives' checksums) that run when their tokens are configured.
 - Diagrams in the documentation: the indexing pipeline, how a score is
   composed, and the parts of a deployment.
+- `server.enable_grpc` (default `true`) and `--no-grpc` to run without the
+  gRPC API.
+- Storage health checks. At startup and before each save the server warns
+  when the filesystem holding the index is out of inodes or short of space,
+  and when a filesystem holding indexed source is out of inodes. A failed
+  save with "No space left on device" says whether bytes or inodes ran out,
+  since an inode-exhausted disk still shows free space.
+
+### Changed
+- A busy or forbidden port no longer stops the server. If the gRPC or web
+  port cannot be bound, the server logs an error naming the port and how to
+  find what holds it, and keeps indexing and serving on the other API. It
+  exits only when no API could start. Previously a busy gRPC port shut the
+  server down at once, interrupting indexing at 0 files while the web UI
+  stayed up, and the cause appeared only after Ctrl+C.
+- Startup logs where the config came from (or that none was found and
+  defaults are used) and the config warnings; both were previously
+  discarded because they were emitted before logging was set up.
+- An unset `indexer.index_path` is now a warning when indexing starts ("Index
+  persistence OFF ... lost when the server stops"), and the ready line shows
+  `index=memory only, not saved`. A missing `index_path` directory is a
+  warning rather than an error, since the first save creates it.
+- `--init` writes every config key with its default. `index_path` is now set
+  in the generated file, named after it (`--init work.toml` gives
+  `~/.local/share/fast_code_search/work.fcsidx`); `cors_origins`,
+  `max_concurrent_searches`, `request_timeout_secs`, `respect_gitignore`,
+  `include_extensions`, `exclude_files` and `batch_size` are no longer
+  missing or commented out. A test keeps the template complete.
 
 ## [0.13.0] - 2026-09-08
 

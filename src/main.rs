@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
@@ -40,6 +40,10 @@ struct Args {
     #[arg(long)]
     no_auto_index: bool,
 
+    /// Do not start the gRPC API (same as `enable_grpc = false` in the config)
+    #[arg(long)]
+    no_grpc: bool,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -80,8 +84,10 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Load configuration
-    let config = load_config(&args)?;
+    // Load configuration. Logging is not set up yet (it needs the config's
+    // telemetry section), so where the config came from and any warnings are
+    // returned and logged below instead of being lost.
+    let (config, config_source, config_warnings) = load_config(&args)?;
 
     // Initialize tracing subscriber (must come after config load so TOML telemetry values are available)
     let log_level = if args.verbose {
@@ -100,11 +106,16 @@ async fn main() -> Result<()> {
     // Initialize diagnostics server start time
     diagnostics::init_server_start_time();
 
+    info!(source = %config_source, "Configuration source");
+    for w in &config_warnings {
+        tracing::warn!("Config: {w}");
+    }
     info!(
         server_address = %config.server.address,
         paths_count = config.indexer.paths.len(),
         "Configuration loaded"
     );
+    log_storage_health(&config.indexer);
 
     if args.verbose {
         info!(paths = ?config.indexer.paths, "Paths to index");
@@ -120,8 +131,6 @@ async fn main() -> Result<()> {
         eprintln!("Press Ctrl+C to abort or wait 3 seconds to continue...");
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
-
-    let addr = config.server.address.parse()?;
 
     // Build the global rayon pool up front with 8 MB stacks. tree-sitter
     // recursion runs on this pool during indexing; if a search (par_iter) got
@@ -171,21 +180,20 @@ async fn main() -> Result<()> {
     let mut indexer_handle: Option<std::thread::JoinHandle<()>> = None;
     let mut watcher_handle: Option<std::thread::JoinHandle<()>> = None;
 
+    // CLI flag takes precedence over config file value
+    let static_dir = args.static_dir.clone().or_else(|| {
+        config
+            .server
+            .static_dir
+            .as_ref()
+            .map(std::path::PathBuf::from)
+    });
+
     // Start web server first if enabled (so UI is available during indexing)
+    let mut web_listener: Option<tokio::net::TcpListener> = None;
+    let mut web_status = "disabled".to_string();
     if config.server.enable_web_ui {
         let web_addr = config.server.web_address.clone();
-        let web_engine = shared_engine.clone();
-        let web_progress = shared_progress.clone();
-        let web_progress_tx = progress_tx.clone();
-
-        // CLI flag takes precedence over config file value
-        let static_dir = args.static_dir.clone().or_else(|| {
-            config
-                .server
-                .static_dir
-                .as_ref()
-                .map(std::path::PathBuf::from)
-        });
 
         if let Some(ref dir) = static_dir {
             info!(dir = %dir.display(), "Serving static UI files from disk (development mode)");
@@ -195,12 +203,29 @@ async fn main() -> Result<()> {
 
         info!(web_address = %web_addr, "Starting Web UI server");
 
-        // Bind here (not inside the task) so a port conflict is fatal instead
-        // of leaving a half-alive server with no REST API.
-        let listener = tokio::net::TcpListener::bind(&web_addr)
-            .await
-            .with_context(|| format!("Failed to bind Web UI server to {web_addr}"))?;
-        info!(address = %web_addr, "Web UI available at http://{}", web_addr);
+        // Bind here (not inside the task) so a port conflict is reported up
+        // front. It is not fatal on its own: indexing and the gRPC API still
+        // run, and startup only fails if no API could be started at all.
+        match tokio::net::TcpListener::bind(&web_addr).await {
+            Ok(listener) => {
+                info!(address = %web_addr, "Web UI available at http://{}", web_addr);
+                web_status = format!("http://{web_addr}");
+                web_listener = Some(listener);
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Web UI / REST API NOT started: cannot listen on {web_addr}: {e}. {}",
+                    port_hint(&e, &web_addr, "server.web_address", "--web-address")
+                );
+                web_status = format!("NOT running ({web_addr}: {e})");
+            }
+        }
+    }
+    if let Some(listener) = web_listener {
+        let web_addr = config.server.web_address.clone();
+        let web_engine = shared_engine.clone();
+        let web_progress = shared_progress.clone();
+        let web_progress_tx = progress_tx.clone();
         let web_shutdown_rx = shutdown_rx.clone();
         let mut router_options = web::RouterOptions::from(&config.server);
         router_options.indexer_config = Some(config.indexer.clone());
@@ -217,9 +242,44 @@ async fn main() -> Result<()> {
                 .with_graceful_shutdown(wait_for_shutdown(web_shutdown_rx))
                 .await
             {
-                tracing::error!(error = %e, "Web UI server stopped unexpectedly");
+                tracing::error!(error = %e, address = %web_addr, "Web UI server stopped unexpectedly");
             }
         }));
+    }
+
+    // Bind the gRPC port before indexing starts, for the same reason: a busy
+    // port is reported now, and only disables gRPC rather than shutting the
+    // whole server down (which used to interrupt indexing at 0 files).
+    let mut grpc_listener: Option<tokio::net::TcpListener> = None;
+    let grpc_status = if !config.server.enable_grpc {
+        info!("gRPC API disabled (enable_grpc = false or --no-grpc)");
+        "disabled".to_string()
+    } else {
+        let grpc_addr = &config.server.address;
+        match tokio::net::TcpListener::bind(grpc_addr).await {
+            Ok(listener) => {
+                grpc_listener = Some(listener);
+                format!("grpc://{grpc_addr}")
+            }
+            Err(e) => {
+                tracing::error!(
+                    "gRPC API NOT started: cannot listen on {grpc_addr}: {e}. \
+                     The rest of the server keeps running without it. {}",
+                    port_hint(&e, grpc_addr, "server.address", "--address")
+                );
+                format!("NOT running ({grpc_addr}: {e})")
+            }
+        }
+    };
+
+    if grpc_listener.is_none() && web_handle.is_none() {
+        if config.server.enable_grpc || config.server.enable_web_ui {
+            anyhow::bail!(
+                "No API could be started (gRPC: {grpc_status}; web UI: {web_status}), \
+                 so nothing could search the index. See the errors above."
+            );
+        }
+        tracing::warn!("Both the gRPC API and the web UI are disabled; only indexing will run");
     }
 
     // Start background indexing if enabled
@@ -370,9 +430,17 @@ async fn main() -> Result<()> {
         request_timeout,
     );
 
-    info!(version = env!("CARGO_PKG_VERSION"), address = %addr, "Fast Code Search Server starting");
-    info!(grpc_endpoint = %format!("grpc://{}", addr), "gRPC endpoint");
-    info!("Ready to accept connections");
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        web_ui = %web_status,
+        grpc = %grpc_status,
+        index = %config
+            .indexer
+            .index_path
+            .as_deref()
+            .unwrap_or("memory only, not saved (index_path not set)"),
+        "Fast Code Search Server ready"
+    );
 
     // Standard gRPC health service (grpc.health.v1) so load balancers and
     // grpcurl can probe liveness the usual way.
@@ -383,14 +451,27 @@ async fn main() -> Result<()> {
         >>()
         .await;
 
-    let serve_result = Server::builder()
-        .timeout(request_timeout)
-        .concurrency_limit_per_connection(config.server.max_concurrent_searches.max(1))
-        .trace_fn(|req| tracing::info_span!("grpc", path = %req.uri().path()))
-        .add_service(health_service)
-        .add_service(search_service)
-        .serve_with_shutdown(addr, wait_for_shutdown(shutdown_rx.clone()))
-        .await;
+    let serve_result = match grpc_listener {
+        Some(listener) => Server::builder()
+            .timeout(request_timeout)
+            .concurrency_limit_per_connection(config.server.max_concurrent_searches.max(1))
+            .trace_fn(|req| tracing::info_span!("grpc", path = %req.uri().path()))
+            .add_service(health_service)
+            .add_service(search_service)
+            .serve_with_incoming_shutdown(
+                tonic::transport::server::TcpIncoming::from(listener),
+                wait_for_shutdown(shutdown_rx.clone()),
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "gRPC server stopped unexpectedly");
+                e
+            }),
+        None => {
+            wait_for_shutdown(shutdown_rx.clone()).await;
+            Ok(())
+        }
+    };
 
     // Whether we got here via a signal or a server error, make sure every
     // background thread sees the flag, then wait for them so the final index
@@ -499,7 +580,10 @@ async fn wait_for_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
 /// window groups *different* files touched by one operation.
 const WATCH_BATCH_WINDOW_MS: u64 = 200;
 
-fn load_config(args: &Args) -> Result<Config> {
+/// Load the config and apply CLI overrides. Returns the config, a
+/// description of where it came from, and validation warnings, for the
+/// caller to log once tracing is initialised.
+fn load_config(args: &Args) -> Result<(Config, String, Vec<String>)> {
     let base_config = if let Some(ref config_path) = args.config {
         // Explicit config file specified
         if !config_path.exists() {
@@ -509,31 +593,64 @@ fn load_config(args: &Args) -> Result<Config> {
                 config_path.display()
             );
         }
-        info!(path = %config_path.display(), "Loading config from file");
-        Config::from_file(config_path)?
+        let source = format!("{} (--config)", config_path.display());
+        (Config::from_file(config_path)?, source)
     } else {
         // Try default locations
         match Config::from_default_locations()? {
-            Some((config, path)) => {
-                info!(path = %path.display(), "Loading config from default location");
-                config
-            }
-            None => {
-                info!("No config file found, using defaults");
-                Config::default()
-            }
+            Some((config, path)) => (config, format!("{} (default location)", path.display())),
+            None => (
+                Config::default(),
+                "none: no --config given and no file at $FCS_CONFIG, ./fast_code_search.toml \
+                 or ~/.config/fast_code_search/config.toml, so built-in defaults are used"
+                    .to_string(),
+            ),
         }
     };
+    let (base_config, source) = base_config;
 
     // Apply CLI overrides
-    let config = base_config.with_overrides(
+    let mut config = base_config.with_overrides(
         args.address.clone(),
         args.web_address.clone(),
         args.index_paths.clone(),
     );
-    let warnings = config.validate()?;
-    for w in warnings {
-        tracing::warn!("Config: {w}");
+    if args.no_grpc {
+        config.server.enable_grpc = false;
     }
-    Ok(config)
+    let warnings = config.validate()?;
+    Ok((config, source, warnings))
+}
+
+/// Warn about filesystems that are out of inodes or nearly full: the one the
+/// index is saved to, and the ones holding the indexed source.
+fn log_storage_health(indexer: &fast_code_search::config::IndexerConfig) {
+    use fast_code_search::storage;
+    if let Some(index_path) = &indexer.index_path {
+        let path = std::path::Path::new(index_path);
+        // Saving writes a new file beside the old one before replacing it.
+        let need = std::fs::metadata(path).map(|m| m.len() * 2).unwrap_or(0);
+        for problem in storage::check_index_storage(path, need) {
+            tracing::warn!("Storage: {problem}");
+        }
+    }
+    for problem in storage::check_source_roots(&indexer.paths) {
+        tracing::warn!("Storage: {problem}");
+    }
+}
+
+/// Advice to append to a failed-bind message.
+fn port_hint(err: &std::io::Error, addr: &str, config_key: &str, flag: &str) -> String {
+    let port = addr.rsplit(':').next().unwrap_or(addr);
+    match err.kind() {
+        std::io::ErrorKind::AddrInUse => format!(
+            "Another process is using port {port}, often an earlier fast_code_search \
+             server that is still running; find it with `ss -ltnp | grep :{port}`. \
+             Stop it, or pick a free port with {config_key} / {flag}."
+        ),
+        std::io::ErrorKind::PermissionDenied => format!(
+            "Ports below 1024 need extra privileges; pick a higher port with {config_key} / {flag}."
+        ),
+        _ => format!("Check {config_key} / {flag}."),
+    }
 }
