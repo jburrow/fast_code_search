@@ -2,8 +2,10 @@
 //!
 //! Two servers given the same `index_path` would each save over the other's
 //! index. The server holds an exclusive lock on `<index_path>.lock` for its
-//! whole run and writes its PID and addresses into it, so a second server
-//! can say exactly which process already owns the index.
+//! whole run and writes its PID and addresses to `<index_path>.lock.owner`,
+//! so a second server can say exactly which process already owns the index.
+//! The owner text lives in its own file because a Windows lock also blocks
+//! reading the locked file.
 //!
 //! The lock is an OS advisory lock (`flock` on Unix, `LockFileEx` on
 //! Windows): it is released when the process exits, even after a crash or
@@ -11,7 +13,6 @@
 
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Held for as long as this process owns the index.
@@ -25,7 +26,7 @@ pub struct IndexLock {
 #[derive(Debug)]
 pub enum LockError {
     /// Another process holds it. `owner` is what that process wrote into
-    /// the lock file (PID and addresses), if it could be read.
+    /// the owner file (PID and addresses), if it could be read.
     HeldByAnother {
         lock_path: PathBuf,
         owner: Option<String>,
@@ -58,8 +59,17 @@ impl std::error::Error for LockError {}
 
 /// `<index_path>.lock`
 pub fn lock_path_for(index_path: &Path) -> PathBuf {
-    let mut name = index_path.as_os_str().to_os_string();
-    name.push(".lock");
+    with_suffix(index_path, ".lock")
+}
+
+/// `<index_path>.lock.owner`: who holds the lock.
+pub fn owner_path_for(index_path: &Path) -> PathBuf {
+    with_suffix(index_path, ".lock.owner")
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
     PathBuf::from(name)
 }
 
@@ -75,9 +85,8 @@ impl IndexLock {
         if let Some(parent) = lock_path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent).map_err(io_err)?;
         }
-        // No truncate on open: the holder's details must survive until we
-        // know the lock is ours.
-        let mut file = OpenOptions::new()
+        let owner_path = owner_path_for(index_path);
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
@@ -88,11 +97,9 @@ impl IndexLock {
             if e.kind() == std::io::ErrorKind::WouldBlock
                 || e.raw_os_error() == fs2::lock_contended_error().raw_os_error()
             {
-                let mut owner = String::new();
-                let owner = file
-                    .read_to_string(&mut owner)
+                let owner = std::fs::read_to_string(&owner_path)
                     .ok()
-                    .map(|_| owner.trim().to_string())
+                    .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
                 return Err(LockError::HeldByAnother { lock_path, owner });
             }
@@ -100,11 +107,7 @@ impl IndexLock {
         }
         // Best effort: the lock is what matters, the text only helps a
         // second server explain itself.
-        let _ = file
-            .set_len(0)
-            .and_then(|_| file.seek(SeekFrom::Start(0)))
-            .and_then(|_| writeln!(file, "{owner_info}"))
-            .and_then(|_| file.flush());
+        let _ = std::fs::write(&owner_path, format!("{owner_info}\n"));
         Ok(Self {
             path: lock_path,
             _file: file,
@@ -146,8 +149,8 @@ mod tests {
             other => panic!("expected HeldByAnother, got {other:?}"),
         }
         drop(first);
-        let again = IndexLock::acquire(&index, "pid 3 (third)").unwrap();
-        let text = std::fs::read_to_string(again.path()).unwrap();
+        let _again = IndexLock::acquire(&index, "pid 3 (third)").unwrap();
+        let text = std::fs::read_to_string(owner_path_for(&index)).unwrap();
         assert_eq!(text.trim(), "pid 3 (third)");
     }
 
@@ -156,6 +159,10 @@ mod tests {
         assert_eq!(
             lock_path_for(Path::new("/x/work.fcsidx")),
             PathBuf::from("/x/work.fcsidx.lock")
+        );
+        assert_eq!(
+            owner_path_for(Path::new("/x/work.fcsidx")),
+            PathBuf::from("/x/work.fcsidx.lock.owner")
         );
     }
 }

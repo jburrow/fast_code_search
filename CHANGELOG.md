@@ -23,8 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and when a filesystem holding indexed source is out of inodes. A failed
   save with "No space left on device" says whether bytes or inodes ran out,
   since an inode-exhausted disk still shows free space.
-- One server per index: the server holds a lock on `<index_path>.lock` with
-  its PID and addresses. A second server given the same `index_path` logs
+- One server per index: the server holds a lock on `<index_path>.lock` and
+  writes its PID and addresses to `<index_path>.lock.owner`. A second server given the same `index_path` logs
   which process owns it, loads the index read-only and never saves, so the
   two can no longer overwrite each other's index.
 - The diagnostics page has a Service card: web UI and gRPC status, where
@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and storage problems, which also mark the status as degraded.
   `/api/health` reports the problem count, and the search page shows
   "Server started with N problems" linking to it.
+
+### Security
+- rustls 0.23.36 -> 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
+  messages accepted across encryption-level boundaries).
 
 ### Changed
 - A busy or forbidden port no longer stops the server. If the gRPC or web
