@@ -95,9 +95,23 @@ pub struct SearchLimits {
     pub match_budget: usize,
     /// Wall-clock deadline for the scan.
     pub deadline: Option<std::time::Instant>,
+    /// Most hits one document may contribute; `None` means the default
+    /// (see `doc_cap`).
+    pub per_doc_cap: Option<usize>,
 }
 
 impl SearchLimits {
+    /// Most hits one document may contribute: `per_doc_cap`, or by default
+    /// `MAX_MATCHES_PER_DOC`, raised to `offset + max_results` so a list of
+    /// that length can always be filled from one file. Fetching a longer
+    /// list from offset 0 (the web UI's LOAD MORE) then reaches every hit
+    /// of a file with hundreds of them, as offset paging does.
+    pub fn doc_cap(&self) -> usize {
+        self.per_doc_cap.unwrap_or_else(|| {
+            SearchEngine::MAX_MATCHES_PER_DOC.max(self.offset.saturating_add(self.max_results))
+        })
+    }
+
     /// Default budget multiplier: enough headroom above the requested page
     /// (plus offset) that ranking still sees a broad sample.
     const BUDGET_MULTIPLIER: usize = 8;
@@ -119,6 +133,7 @@ impl SearchLimits {
             offset: 0,
             match_budget: Self::derived_budget(0, max_results),
             deadline: None,
+            per_doc_cap: None,
         }
     }
 
@@ -150,6 +165,22 @@ impl SearchLimits {
         self
     }
 
+    /// Override the per-document hit cap (`usize::MAX` = every hit, for
+    /// tools that need the complete result set, such as the ripgrep
+    /// backtest).
+    pub fn with_per_doc_cap(mut self, cap: usize) -> Self {
+        self.per_doc_cap = Some(cap.max(1));
+        self
+    }
+
+    /// Every hit: no page size, budget or per-document cap. For
+    /// correctness tooling only; a broad query materializes everything.
+    pub fn exhaustive() -> Self {
+        Self::new(usize::MAX)
+            .with_match_budget(usize::MAX)
+            .with_per_doc_cap(usize::MAX)
+    }
+
     /// Stop scanning at `deadline`.
     pub fn with_deadline(mut self, deadline: std::time::Instant) -> Self {
         self.deadline = Some(deadline);
@@ -179,7 +210,7 @@ impl QueryRun {
             remaining: std::sync::atomic::AtomicUsize::new(limits.match_budget),
             deadline: limits.deadline,
             truncated: std::sync::atomic::AtomicBool::new(false),
-            per_doc_cap: SearchEngine::MAX_MATCHES_PER_DOC.saturating_add(limits.offset),
+            per_doc_cap: limits.doc_cap(),
         }
     }
 

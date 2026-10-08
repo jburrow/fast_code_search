@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A ripgrep backtest: `examples/rg_backtest.rs` runs every query in
+  `benches/rg_backtest.toml` (124 queries, including cases adapted from
+  ripgrep's and Zoekt's own regression tests) through fcs and through
+  `rg` over tokio 1.45.0, Django 5.2 and the edge-case files in
+  `tests/fixtures/backtest`, and fails on any line one finds and the other
+  does not. It also checks that a page of results is repeatable and that
+  LOAD MORE ends with every hit exactly once. Runs in CI on changes to the
+  engine.
 - MCP server for coding agents at `/mcp` on the web server (streamable
   HTTP), with six read-only tools: `search_code`, `read_file`,
   `file_dependencies`, `change_impact`, `import_path` and
@@ -104,6 +112,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`-file:search` dropped every file of a root named `fast_code_search`);
   a filename-only hit obeys `case:yes` and `word:yes`; `fcs search -e -i`
   against an index file now ignores case, as it does against a server.
+- A search that stopped at its match limit returned a different first
+  page on almost every run (threads raced for the budget), and LOAD MORE
+  repeated some results and skipped others. Documents are now taken in a
+  fixed order, and LOAD MORE fetches the whole list again at the bigger
+  size and redraws it (up to 1000 results; past that it pages as before),
+  so nothing repeats or goes missing. Results already shown can move.
+- Greek: a query or line with a word-final sigma (`ς`, or a capital `Σ`
+  that lowercases to it) missed matches written with the other sigma.
+- A regex that can match the empty string (`x*`, `^\s*$`) reported a hit
+  on a line past the end of a file that ends with a newline.
 - Plain-text search for code containing quotes (`{ "success": True`,
   `"key":"value"`) found nothing: the query parser stripped every `"`, so
   the term became `success:`. A quote now opens a phrase only when it

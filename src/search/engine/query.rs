@@ -13,6 +13,10 @@ impl SearchEngine {
             .unwrap_or_else(|| DEFAULT.get_or_init(FileMetadata::default))
     }
 
+    /// Most documents read per parallel step of a scan (see
+    /// `run_candidates_prioritised`).
+    const SCAN_CHUNK_MAX: usize = 4096;
+
     /// Threshold for using fast ranking mode in Auto mode
     pub(super) const FAST_RANKING_THRESHOLD: usize = 5000;
 
@@ -70,10 +74,34 @@ impl SearchEngine {
     /// bytes produce no trigrams; fall back to all documents so short terms
     /// like `_` or `__` still return results.
     pub(super) fn text_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
+        if query_lower.contains(['σ', 'ς']) {
+            return self.sigma_safe_candidates(query_lower);
+        }
         if query_lower.len() >= 3 {
             Cow::Owned(self.trigram_index.search(query_lower))
         } else {
             self.trigram_index.all_documents()
+        }
+    }
+
+    /// Candidates for lowercased text holding a Greek sigma. Lowercasing is
+    /// context-sensitive for it (`str::to_lowercase` turns a word-final `Σ`
+    /// into `ς`, any other into `σ`), so the indexed content and the query
+    /// may spell the same letter differently: the query `ΟΣ` lowercases to
+    /// `ος` while `ΟΣΑ` is indexed as `οσα`. Only the text between sigmas is
+    /// required; verification folds `ς` and `σ` together.
+    fn sigma_safe_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
+        let mut acc: Option<roaring::RoaringBitmap> = None;
+        for part in query_lower.split(['σ', 'ς']).filter(|p| p.len() >= 3) {
+            let docs = self.trigram_index.search(part);
+            acc = Some(match acc {
+                Some(a) => a & docs,
+                None => docs,
+            });
+        }
+        match acc {
+            Some(docs) => Cow::Owned(docs),
+            None => self.trigram_index.all_documents(),
         }
     }
 
@@ -103,6 +131,14 @@ impl SearchEngine {
     /// Phase-1 weight of a filename match in symbol search: far below any
     /// real symbol, so filename-only files never displace those.
     const FILENAME_ONLY_PREFILTER: f64 = 1e-3;
+}
+
+/// Does a regex match starting at `at` lie after the file's last line? The
+/// end of a file that ends in a newline (or is empty) starts no line, but an
+/// empty-matching pattern (`^$`, `x*`) still matches there; reporting it
+/// invented a blank line past the end of every such file.
+fn past_last_line(text: &str, at: usize) -> bool {
+    at == text.len() && (text.is_empty() || text.ends_with('\n'))
 }
 
 /// No identifier character immediately before `at` in `line`.
@@ -377,33 +413,77 @@ impl SearchEngine {
         };
         let candidates_searched = doc_ids.len();
 
-        // Priority documents are scanned in a pass of their own before the
-        // rest: in one parallel pass, threads working on later chunks can
-        // spend the match budget before the first chunk (where the priority
-        // documents sit) has been reached, and which files get skipped
-        // then depends on scheduling.
-        let head_len = priority
-            .filter(|p| !p.is_empty())
-            .map(|p| doc_ids.iter().take_while(|id| p.contains(**id)).count())
-            .unwrap_or(0);
-        let run = QueryRun::new(&limits);
-        let scan = |ids: &[u32]| -> Vec<SearchMatch> {
-            ids.par_iter()
-                .filter_map(|&doc_id| {
-                    if run.exhausted() {
+        // Deterministic scan: documents are read in parallel in chunks, but
+        // their hits are taken in candidate order, so the match budget always
+        // keeps the same prefix of documents. The old single parallel pass
+        // spent the budget on whichever files threads reached first, so a
+        // query that hit the budget returned a different first page on
+        // almost every run, and paging (each page re-runs the scan with a
+        // larger budget) repeated some hits and skipped others. Each step
+        // reads about as many documents as the remaining budget needs at the
+        // hit rate so far, so a broad query reads little past its budget, and
+        // steps double while hits are rare. Priority documents lead
+        // `doc_ids`, so they are always read before the rest.
+        let base_cap = limits.doc_cap();
+        let mut budget = limits.match_budget;
+        let mut budget_cut = false;
+        let mut doc_truncated = false;
+        let mut matches: Vec<SearchMatch> = Vec::new();
+        let threads = rayon::current_num_threads().max(1);
+        let (mut i, mut chunk) = (0usize, threads);
+        let (mut docs_read, mut hits_seen) = (0usize, 0usize);
+        'scan: while i < doc_ids.len() {
+            // No document in this chunk can usefully emit more than the
+            // budget left at its start (plus one, to learn that it had
+            // more); fixed per chunk, so it is deterministic.
+            let doc_run = QueryRun::new(
+                &limits
+                    .with_match_budget(usize::MAX)
+                    .with_per_doc_cap(base_cap.min(budget.saturating_add(1))),
+            );
+            if doc_run.exhausted() {
+                doc_truncated = true;
+                break; // deadline
+            }
+            let end = (i + chunk).min(doc_ids.len());
+            let per: Vec<Option<Vec<SearchMatch>>> = doc_ids[i..end]
+                .par_iter()
+                .map(|&doc_id| {
+                    if doc_run.exhausted() {
                         return None;
                     }
-                    per_doc(doc_id, &run)
+                    per_doc(doc_id, &doc_run)
                 })
-                .flatten()
-                .collect()
-        };
-        let mut matches: Vec<SearchMatch> = scan(&doc_ids[..head_len]);
-        matches.extend(scan(&doc_ids[head_len..]));
+                .collect();
+            doc_truncated |= doc_run.was_truncated();
+            docs_read += end - i;
+            for hits in per.into_iter().flatten() {
+                if hits.len() > budget {
+                    matches.extend(hits.into_iter().take(budget));
+                    budget_cut = true;
+                    break 'scan;
+                }
+                budget -= hits.len();
+                hits_seen += hits.len();
+                matches.extend(hits);
+            }
+            i = end;
+            // Size the next step to what should fill the remaining budget at
+            // the hit rate so far (hits past the budget are work thrown
+            // away), at most double the last step (an early low hit rate
+            // must not read thousands of files the budget never needed),
+            // at least one document per thread.
+            let grow = chunk.saturating_mul(2);
+            let wanted = budget
+                .saturating_mul(docs_read)
+                .checked_div(hits_seen)
+                .map_or(grow, |n| (n + 1).min(grow));
+            chunk = wanted.clamp(threads, Self::SCAN_CHUNK_MAX);
+        }
         let found = matches.len();
         Self::sort_and_page(&mut matches, &limits);
 
-        let truncated = run.was_truncated();
+        let truncated = budget_cut || doc_truncated;
         (
             matches,
             SearchRankingInfo {
@@ -627,7 +707,7 @@ impl SearchEngine {
             let mut group_docs = roaring::RoaringBitmap::new();
             for literal in group {
                 // Trigram index stores lowercased content.
-                group_docs |= self.trigram_index.search(&literal.to_lowercase());
+                group_docs |= &*self.text_candidates(&literal.to_lowercase());
             }
             result = Some(match result {
                 Some(acc) => acc & group_docs,
@@ -1219,6 +1299,9 @@ impl SearchEngine {
                 let mut scan_pos = 0usize;
                 let mut last_line: Option<usize> = None;
                 for m in regex.find_iter(text) {
+                    if past_last_line(text, m.start()) {
+                        break;
+                    }
                     line_num += text[scan_pos..m.start()]
                         .bytes()
                         .filter(|&b| b == b'\n')
@@ -1257,6 +1340,9 @@ impl SearchEngine {
                     let Some(m) = regex.find_at(text, pos) else {
                         break;
                     };
+                    if past_last_line(text, m.start()) {
+                        break;
+                    }
                     line_num += text[pos..m.start()].bytes().filter(|&b| b == b'\n').count();
                     let line_start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
                     let mut line_end = text[m.start()..]
@@ -1277,7 +1363,16 @@ impl SearchEngine {
                             .find('\n')
                             .map_or(text.len(), |i| i + m.end());
                         let mut ln = line_num;
-                        for raw in text[line_start..span_end].split('\n') {
+                        // When the span runs to the end of a file that ends
+                        // in a newline, `split` yields an empty piece after
+                        // it that is no line of the file.
+                        let span = &text[line_start..span_end];
+                        let span = if span_end == text.len() {
+                            span.strip_suffix('\n').unwrap_or(span)
+                        } else {
+                            span
+                        };
+                        for raw in span.split('\n') {
                             let line = raw.strip_suffix('\r').unwrap_or(raw);
                             if let Some(lm) = regex.find(line) {
                                 if !emit(ln, line, lm.start(), lm.end()) {

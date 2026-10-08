@@ -1,0 +1,5 @@
+line one
+end here
+needle at end
+  indented needle
+last line no newline

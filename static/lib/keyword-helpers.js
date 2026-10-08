@@ -409,12 +409,33 @@ function resultsCountLabel(data, n) {
     if (data.truncated_by_budget) {
         return {
             text: `${num(n)}+ RESULTS`,
-            title: 'The search stopped at its match limit or time limit, so the total is unknown. LOAD MORE continues from where it stopped.',
+            title: 'The search stopped at its match limit or time limit, so the total is unknown. LOAD MORE runs it again with a higher limit.',
         };
     }
     return data.has_more
         ? { text: `${num(n)}+ RESULTS`, title: 'More results are available' }
         : { text: plural(n), title: '' };
+}
+
+/**
+ * The request LOAD MORE sends after `loaded` hits, `pageSize` at a time.
+ *
+ * Offset paging is not stable when a search stops at its match budget: the
+ * budget grows with `offset + max`, so a later page scans more files and
+ * ranks a different set, and page 2 can repeat or skip hits from page 1.
+ * Below the server's cap the whole list is fetched again at the bigger size
+ * (`offset` 0) and replaces what is shown, so nothing repeats or goes
+ * missing; hits already shown may move. Past the cap only offset paging is
+ * possible.
+ * @param {number} loaded hits on screen
+ * @param {number} pageSize the search's page size (`max`)
+ * @returns {{offset: number, max: number, redraw: boolean}}
+ */
+function loadMoreRequest(loaded, pageSize) {
+    if (loaded < MAX_RESULTS_LIMIT) {
+        return { offset: 0, max: Math.min(MAX_RESULTS_LIMIT, loaded + pageSize), redraw: true };
+    }
+    return { offset: loaded, max: pageSize, redraw: false };
 }
 
 /** "36 ms", or one decimal under 10 ms ("4.2 ms"). */
@@ -636,6 +657,7 @@ if (typeof module !== 'undefined' && module.exports) {
         matcherRanges,
         splitHighlightedHtml,
         resultsCountLabel,
+        loadMoreRequest,
         formatDurationMs,
         searchMetaLabel,
         escapeRegex,

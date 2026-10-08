@@ -75,6 +75,28 @@ cargo run --release --example ranking_quality -- bench-corpus/tokio bench-corpus
 cargo run --release --example ranking_quality -- … --explain 'struct Runtime'   # why a query ranks as it does
 ```
 
+## Correctness against ripgrep
+
+Fast and well ranked is worthless if a match is missing.
+`benches/rg_backtest.toml` holds 124 queries — literals, quotes, short
+terms, case and whole-word options, Unicode (including Greek sigma), path
+operators, several terms and regex — plus edge-case files in
+`tests/fixtures/backtest` (CRLF line endings, no final newline, a file with
+250 hits on its lines, a very long line). Many are adapted from ripgrep's
+and Zoekt's own regression tests. `examples/rg_backtest.rs` runs each query
+through the engine with no limits and through `rg` with the equivalent
+flags, and compares the hits line by line, with ripgrep as the oracle. A
+difference fails the run unless the query is marked `known` with the
+reason. It also runs the first page three times (it must not change) and,
+with `--check-paging`, loads each query the way LOAD MORE does and requires
+every hit exactly once. CI runs it on every change to the engine.
+
+```bash
+cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --check-paging
+cargo run --release --example rg_backtest -- tests/fixtures/backtest --only needle   # queries containing "needle"
+```
+
 ## Comparison with scan tools
 
 `scripts/bench/compare.sh <dir>` times the same queries through ripgrep,

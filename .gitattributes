@@ -24,3 +24,7 @@
 
 # Persisted-index golden fixtures are binary
 *.fcsidx binary
+
+# The ripgrep backtest corpus spells out edge cases byte for byte (CRLF
+# line endings included); never normalise it.
+tests/fixtures/backtest/** -text

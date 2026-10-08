@@ -195,7 +195,10 @@ pub(super) fn find_char_boundary_ceil(s: &str, pos: usize) -> usize {
 /// rejected so the returned offsets always fall on char boundaries. Only used on
 /// the rare non-ASCII path, so its O(n·m) cost is acceptable.
 pub(super) fn unicode_ci_find(haystack: &str, needle_lower: &str) -> Option<(usize, usize)> {
-    let needle: Vec<char> = needle_lower.chars().collect();
+    // The final sigma `ς` is the same letter as `σ` (lowercasing picks one by
+    // position in the word), so the two compare equal.
+    let fold = |c: char| if c == 'ς' { 'σ' } else { c };
+    let needle: Vec<char> = needle_lower.chars().map(fold).collect();
     if needle.is_empty() {
         return Some((0, 0));
     }
@@ -213,7 +216,7 @@ pub(super) fn unicode_ci_find(haystack: &str, needle_lower: &str) -> Option<(usi
                     ok = false;
                     break;
                 }
-                if lc != needle[ni] {
+                if fold(lc) != needle[ni] {
                     ok = false;
                     break;
                 }

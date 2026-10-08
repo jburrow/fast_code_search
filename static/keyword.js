@@ -1031,8 +1031,8 @@ let _selectedGroupIndex = -1;
 
 /**
  * The search whose results are on screen: its request parameters (without
- * `offset`), the hits loaded so far across pages, and the last response.
- * "Load more" appends the next page to `results` and re-renders.
+ * `offset`), the hits loaded so far, and the last response. "Load more"
+ * fetches a longer list (see loadMoreRequest) and re-renders.
  */
 let _currentSearch = null;
 
@@ -1310,7 +1310,11 @@ document.querySelectorAll('#regex-help [data-example]').forEach(btn => {
     btn.addEventListener('click', () => applySuggestion({ query: btn.dataset.example, regex: true }));
 });
 
-/** Fetch the next page (`offset` = hits loaded so far) and append it. */
+/**
+ * Fetch more results: below the server's cap the whole list again at the
+ * bigger size, replacing what is shown (offset pages can repeat or skip hits
+ * when the search stops at its match budget); past the cap, the next page.
+ */
 async function loadMoreResults() {
     const search = _currentSearch;
     if (!search || search.loading || !search.last?.has_more) return;
@@ -1327,8 +1331,10 @@ async function loadMoreResults() {
     const signal = _searchAbort.signal;
 
     try {
+        const next = loadMoreRequest(search.results.length, search.maxResults);
         const params = new URLSearchParams(search.params);
-        params.set('offset', String(search.results.length));
+        params.set('max', String(next.max));
+        if (next.offset > 0) params.set('offset', String(next.offset));
         const data = await fetchSearchPage(params, signal, (attempt, max) => {
             const b = document.getElementById('load-more-btn');
             if (b) b.textContent = `INDEX UPDATING, RETRYING… (${attempt}/${max})`;
@@ -1338,7 +1344,7 @@ async function loadMoreResults() {
         // Keep everything that was on screen (plus the first new chunk) in the
         // re-render, so the page does not shrink under the reader.
         const renderedBefore = getResultGroups().length;
-        search.results = search.results.concat(data.results);
+        search.results = next.redraw ? data.results : search.results.concat(data.results);
         search.last = data;
         renderSearch(search, data.elapsed_ms, {
             preserveSelection: true,
@@ -1360,6 +1366,14 @@ async function loadMoreResults() {
     } finally {
         search.loading = false;
     }
+}
+
+/** Tooltip for the LOAD MORE button. */
+function loadMoreTitle(search) {
+    const next = loadMoreRequest(search.results.length, search.maxResults);
+    return next.redraw
+        ? `Search again for the first ${next.max} results`
+        : `Fetch the next ${next.max} results (offset ${next.offset})`;
 }
 
 /** Render the current search (all pages loaded so far) into the results area. */
@@ -1399,13 +1413,13 @@ function renderSearch(search, durationMs, opts = {}) {
     // role gives aria-selected on each group meaning.
     resultsContainer.setAttribute('role', 'listbox');
     resultsContainer.setAttribute('aria-label', `Search results for ${query}`);
-    // Paging: the next page starts at offset = hits loaded so far.
+    // Paging: LOAD MORE asks for a longer list (loadMoreRequest).
     resultsContainer.innerHTML =
         `<div class="render-sentinel" aria-hidden="true"></div>` +
         (data.has_more
             ? `<div id="load-more-row" class="load-more-row">
                 <button id="load-more-btn" type="button" class="load-more-btn"
-                    title="Fetch the next ${search.maxResults} results (offset ${search.results.length})">LOAD MORE</button>
+                    title="${loadMoreTitle(search)}">LOAD MORE</button>
                </div>`
             : '');
 
