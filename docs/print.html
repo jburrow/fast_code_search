@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f5a48072.js";
+            window.path_to_searchindex_js = "searchindex-187dfbea.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -3024,6 +3024,10 @@ messages accepted across encryption-level boundaries).</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
+instead of “1234 RESULTS FOUND · LATENCY: 42.3ms · FULL (5,678 files)”.
+The ranking mode and file count moved to tooltips; the header still says
+when fast ranking searched only some of the files.</li>
 <li>An invalid regex’s error now carries the parser’s explanation and points
 at the problem in the pattern as typed (it used to repeat only the
 pattern).</li>
