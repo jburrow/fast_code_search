@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-861700ba.js";
+            window.path_to_searchindex_js = "searchindex-3a05f256.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -2940,8 +2940,8 @@ when the filesystem holding the index is out of inodes or short of space,
 and when a filesystem holding indexed source is out of inodes. A failed
 save with “No space left on device” says whether bytes or inodes ran out,
 since an inode-exhausted disk still shows free space.</li>
-<li>One server per index: the server holds a lock on <code>&lt;index_path&gt;.lock</code> with
-its PID and addresses. A second server given the same <code>index_path</code> logs
+<li>One server per index: the server holds a lock on <code>&lt;index_path&gt;.lock</code> and
+writes its PID and addresses to <code>&lt;index_path&gt;.lock.owner</code>. A second server given the same <code>index_path</code> logs
 which process owns it, loads the index read-only and never saves, so the
 two can no longer overwrite each other’s index.</li>
 <li>The diagnostics page has a Service card: web UI and gRPC status, where
@@ -2949,6 +2949,11 @@ the index is saved (or that it is memory only / read-only), and startup
 and storage problems, which also mark the status as degraded.
 <code>/api/health</code> reports the problem count, and the search page shows
 “Server started with N problems” linking to it.</li>
+</ul>
+<h3 id="security"><a class="header" href="#security">Security</a></h3>
+<ul>
+<li>rustls 0.23.36 -&gt; 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
+messages accepted across encryption-level boundaries).</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
