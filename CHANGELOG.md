@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages accepted across encryption-level boundaries).
 
 ### Changed
+- The keyword search results header is shorter: "1,234 RESULTS · 42 ms"
+  instead of "1234 RESULTS FOUND · LATENCY: 42.3ms · FULL (5,678 files)".
+  The ranking mode and file count moved to tooltips; the header still says
+  when fast ranking searched only some of the files.
 - An invalid regex's error now carries the parser's explanation and points
   at the problem in the pattern as typed (it used to repeat only the
   pattern).

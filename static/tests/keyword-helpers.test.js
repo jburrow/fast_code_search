@@ -372,3 +372,42 @@ test('hasImportGraph: only languages whose imports are resolved', () => {
 test('graphExplorerUrl encodes the path', () => {
     assert.equal(H.graphExplorerUrl('r/a b/#x.rs'), '/graph.html?file=r%2Fa%20b%2F%23x.rs');
 });
+
+// ---------- results header ----------
+
+test('resultsCountLabel: complete scan shows the plain total', () => {
+    assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 1234).text, '1,234 RESULTS');
+    assert.equal(H.resultsCountLabel({ total_matches: 1 }, 1).text, '1 RESULT');
+    assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 100).text, '100 OF 1,234 RESULTS');
+});
+
+test('resultsCountLabel: unknown total shows N+', () => {
+    const budget = H.resultsCountLabel({ truncated_by_budget: true, has_more: true }, 1000);
+    assert.equal(budget.text, '1,000+ RESULTS');
+    assert.match(budget.title, /total is unknown/);
+    assert.equal(H.resultsCountLabel({ has_more: true }, 50).text, '50+ RESULTS');
+    assert.equal(H.resultsCountLabel({ has_more: false }, 3).text, '3 RESULTS');
+});
+
+test('formatDurationMs: one decimal only under 10 ms', () => {
+    assert.equal(H.formatDurationMs(42.34), '42 ms');
+    assert.equal(H.formatDurationMs(4.25), '4.3 ms');
+    assert.equal(H.formatDurationMs(undefined), '0.0 ms');
+    assert.equal(H.formatDurationMs(1234.5), '1,235 ms');
+});
+
+test('searchMetaLabel: normally just the time, file count in the tooltip', () => {
+    const full = H.searchMetaLabel({ rank_mode: 'full', total_candidates: 5678, candidates_searched: 5678 }, 42.3);
+    assert.deepEqual(full, { text: '42 ms', title: '5,678 files could contain the query' });
+    assert.equal(H.searchMetaLabel({ total_candidates: 1, candidates_searched: 1 }, 2).title, '1 file could contain the query');
+});
+
+test('searchMetaLabel: fast ranking that skipped files says so', () => {
+    const fast = H.searchMetaLabel({ rank_mode: 'fast', total_candidates: 12000, candidates_searched: 2000 }, 80);
+    assert.equal(fast.text, 'Searched 2,000 of 12,000 files · 80 ms');
+    assert.match(fast.title, /Full/);
+});
+
+test('searchMetaLabel: no ranking info shows only the time', () => {
+    assert.deepEqual(H.searchMetaLabel({}, 12), { text: '12 ms', title: '' });
+});
