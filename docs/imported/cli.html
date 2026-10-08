@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-187dfbea.js";
+            window.path_to_searchindex_js = "../searchindex-71bdfb67.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -193,6 +193,7 @@ fcs symbols parse_query          # definitions only
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold
+fcs mcp                          # MCP over stdio, for coding agents
 </code></pre>
 <h2 id="design"><a class="header" href="#design">Design</a></h2>
 <p><strong>Client first.</strong> The server holds the index in memory, watches the tree and
@@ -276,6 +277,17 @@ or <code>set grepprg=fcs\ --format\ vimgrep grepformat=%f:%l:%c:%m</code> and us
 is clickable. With <code>--absolute</code> the links work from any working directory.</li>
 <li><strong>fzf</strong>: <code>fcs -l QUERY | fzf | xargs $EDITOR</code>.</li>
 </ul>
+<h2 id="mcp-for-coding-agents"><a class="header" href="#mcp-for-coding-agents">MCP for coding agents</a></h2>
+<p><code>fcs mcp</code> serves the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+over stdio by relaying each message to the server’s <code>/mcp</code> endpoint, for
+agents that launch a command rather than connect to a URL:</p>
+<pre><code class="language-json">{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+</code></pre>
+<p>It finds the server like any <code>fcs</code> command (<code>--server</code>, <code>$FCS_SERVER</code>, the
+configuration). Stdout carries only protocol messages; when the server is
+down each request is answered with an error saying so. Clients that speak
+HTTP can use <code>http://127.0.0.1:8080/mcp</code> directly. The tools are listed in
+<a href="api.html#mcp-coding-agents">API.md</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <div class="table-wrapper">
 <table>

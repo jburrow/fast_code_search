@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-187dfbea.js";
+            window.path_to_searchindex_js = "../searchindex-71bdfb67.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -188,6 +188,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.13.0...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>MCP server for coding agents at <code>/mcp</code> on the web server (streamable
+HTTP), with six read-only tools: <code>search_code</code>, <code>read_file</code>,
+<code>file_dependencies</code>, <code>change_impact</code>, <code>import_path</code> and
+<code>dependency_overview</code>. <code>fcs mcp</code> relays it over stdio for clients that
+launch a command. Browser requests from foreign origins are refused.</li>
 <li>Dependency explorer (GRAPH in the web UI, <code>/graph.html</code>): a file’s import
 neighbourhood, the impact of changing it (with the affected tests), the
 shortest import chain between two files, and a folder-level module map

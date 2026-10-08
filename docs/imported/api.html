@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-187dfbea.js";
+            window.path_to_searchindex_js = "../searchindex-71bdfb67.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -202,6 +202,7 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/file?file=…</code></td><td>Full content of an indexed file</td></tr>
 <tr><td><code>GET /api/context?file=…&amp;line=N&amp;context=K</code></td><td>Lines around a match (K ≤ 200)</td></tr>
 <tr><td><code>GET /api/dependents?file=…</code> / <code>GET /api/dependencies?file=…</code></td><td>Files that import this file / files it imports</td></tr>
+<tr><td><code>POST /mcp</code></td><td>Model Context Protocol for coding agents. See <a href="#mcp-coding-agents">MCP</a></td></tr>
 <tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
 <tr><td><code>GET /api/status</code></td><td>Indexing progress</td></tr>
@@ -331,6 +332,46 @@ edge, so it is left out too.</p>
 </div>
 <p>Imports are resolved for Rust (<code>crate::</code>, <code>self::</code>, <code>super::</code>, sibling
 modules and the crate’s own name), Python and JavaScript/TypeScript.</p>
+<h2 id="mcp-coding-agents"><a class="header" href="#mcp-coding-agents">MCP (coding agents)</a></h2>
+<p>The web server also speaks the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+at <code>/mcp</code>, so a coding agent can use the index instead of grepping: search,
+read files with line numbers, and walk the import graph. Point the agent at
+the URL:</p>
+<pre><code class="language-bash">claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp
+</code></pre>
+<p>For clients that only launch local commands, <code>fcs mcp</code> relays MCP over stdio
+to the same endpoint (it finds the server like every <code>fcs</code> command:
+<code>--server</code>, <code>$FCS_SERVER</code>, the configuration, then <code>http://127.0.0.1:8080</code>):</p>
+<pre><code class="language-json">{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tool</th><th>Arguments</th><th>What it returns</th></tr>
+</thead>
+<tbody>
+<tr><td><code>search_code</code></td><td><code>query</code> (the <a href="#query-syntax">query syntax</a>), <code>mode</code> (<code>text</code>, <code>regex</code>, <code>symbols</code>, <code>references</code>), <code>include</code> / <code>exclude</code> globs, <code>limit</code> (default 20, max 100), <code>context</code> (0–5)</td><td><code>path:line:column: line</code> per hit, with the match count and whether more exist</td></tr>
+<tr><td><code>read_file</code></td><td><code>path</code>, <code>start_line</code>, <code>end_line</code></td><td>Numbered lines, 200 by default and at most 1,000, with how to continue</td></tr>
+<tr><td><code>file_dependencies</code></td><td><code>path</code>, <code>direction</code> (<code>in</code>, <code>out</code>, <code>both</code>), <code>depth</code> (1–4), <code>limit</code></td><td>Files it imports and files importing it, by distance, with the line of each direct import</td></tr>
+<tr><td><code>change_impact</code></td><td><code>paths</code> (one or more), <code>limit</code></td><td>Every file that transitively imports any of them, nearest first, split into tests and other code</td></tr>
+<tr><td><code>import_path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest chain of imports between two files, either way round</td></tr>
+<tr><td><code>dependency_overview</code></td><td><code>directory</code> (optional), <code>limit</code></td><td>The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every tool is read-only and answers from the same handlers as the REST API,
+so it shares their search permits, deadlines and caps. Results use the
+root-relative paths search results print, and lists are capped with a note
+saying what was left out. The graph tools say which languages have import
+edges (Rust, Python, JavaScript/TypeScript), so an empty answer for another
+language is not mistaken for “unused”.</p>
+<p>Transport details: each JSON-RPC message is a <code>POST /mcp</code> answered with
+<code>application/json</code> (notifications get <code>202</code>); there is no event stream
+(<code>GET /mcp</code> is <code>405</code>) and no session. Requests carrying a browser <code>Origin</code>
+are refused with <code>403</code> unless it is a loopback address, the server’s own
+address, or listed in <code>cors_origins</code>, so a web page cannot drive a local
+server through the visitor’s browser. Like the REST API, <code>/mcp</code> has no
+authentication: anyone who can reach the web port can read the index.</p>
 <h2 id="grpc"><a class="header" href="#grpc">gRPC</a></h2>
 <p>The schema is <a href="https://github.com/jburrow/fast_code_search/blob/main/proto/search.proto"><code>proto/search.proto</code></a>: <code>Search</code>
 streams <code>SearchResult</code> messages with the same fields and modes as REST
