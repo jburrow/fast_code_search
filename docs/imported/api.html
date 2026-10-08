@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-3a05f256.js";
+            window.path_to_searchindex_js = "../searchindex-f52e775e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -202,6 +202,7 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/file?file=…</code></td><td>Full content of an indexed file</td></tr>
 <tr><td><code>GET /api/context?file=…&amp;line=N&amp;context=K</code></td><td>Lines around a match (K ≤ 200)</td></tr>
 <tr><td><code>GET /api/dependents?file=…</code> / <code>GET /api/dependencies?file=…</code></td><td>Files that import this file / files it imports</td></tr>
+<tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
 <tr><td><code>GET /api/status</code></td><td>Indexing progress</td></tr>
 <tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…}</code>)</td></tr>
@@ -272,7 +273,7 @@ the search ran to completion; otherwise <code>truncated_by_budget</code> is true
 </thead>
 <tbody>
 <tr><td><code>fn main</code></td><td>Several terms: a file must contain every term. Lines holding the phrase rank first, then lines holding every term, then the rest.</td></tr>
-<tr><td><code>"exact phrase"</code></td><td>One term containing spaces.</td></tr>
+<tr><td><code>"exact phrase"</code></td><td>One term containing spaces. Quotes that do not wrap a whole word are part of the term: <code>{ "success": True</code> searches for <code>"success":</code> with its quotes.</td></tr>
 <tr><td><code>-term</code></td><td>Drop files that contain <code>term</code> (only before a letter, <code>_</code> or a quote, so <code>-&gt;</code> and <code>-1</code> are ordinary terms).</td></tr>
 <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td><td>Only / never paths matching the glob; a bare word matches anywhere in the path, <code>src/</code> means everything under <code>src</code>.</td></tr>
 <tr><td><code>lang:rust</code> / <code>-lang:py</code></td><td>Only / never files of that language.</td></tr>
@@ -303,6 +304,33 @@ the search ran to completion; otherwise <code>truncated_by_budget</code> is true
 </div>
 <p>Within a tier, hits are interleaved by file (every file’s best hit first)
 so one file cannot fill a page.</p>
+<h3 id="import-graph"><a class="header" href="#import-graph">Import graph</a></h3>
+<p>The dependency explorer (<code>/graph.html</code>) is built on these. Every endpoint
+answers from memory under the engine read lock. <code>file</code> accepts a display
+path (<code>project/src/main.rs</code>) or any path <code>/api/file</code> accepts. Unknown files
+are 404.</p>
+<p>Rust <code>mod foo;</code> declarations are edges from a parent module to its own
+child. They describe structure, not dependencies, and would put every parent
+and child in a cycle, so they are left out unless <code>containment=true</code> (also
+accepted by every endpoint below). A <code>pub use child::X</code> re-export is the same
+edge, so it is left out too.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Parameters</th><th>Returns</th></tr>
+</thead>
+<tbody>
+<tr><td><code>GET /api/graph/neighborhood</code></td><td><code>file</code>, <code>depth</code> (1–4, default 2), <code>limit</code> (files per level, default 12, max 500), <code>expand</code> (comma-separated levels to list up to 500 files, e.g. <code>-2,1</code>)</td><td><code>nodes</code> (<code>path</code>, signed <code>depth</code>: negative for files it imports, positive for files importing it; <code>imports</code>, <code>imported_by</code>, <code>test</code>, <code>cycle</code>), <code>edges</code> among them (<code>from</code>, <code>to</code>, <code>cycle</code>, <code>containment</code>), <code>hidden</code> (per level: <code>count</code> and the shared <code>folder</code> or number of <code>folders</code>), and <code>upstream</code> / <code>downstream</code> totals</td></tr>
+<tr><td><code>GET /api/graph/impact</code></td><td><code>file</code>, <code>limit</code>, <code>expand</code></td><td>Every file that transitively imports <code>file</code>, by distance: <code>affected</code>, <code>levels</code>, <code>tests_total</code>, <code>tests</code> (up to 200, nearest first), plus <code>nodes</code> / <code>edges</code> / <code>hidden</code> as above</td></tr>
+<tr><td><code>GET /api/graph/path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest import chain as <code>files</code> (each imports the next). When there is none from <code>from</code> to <code>to</code>, the reverse chain with <code>reversed: true</code>; <code>found: false</code> when neither exists</td></tr>
+<tr><td><code>GET /api/graph/modules</code></td><td>—</td><td>The graph collapsed to folders: <code>folders</code> (<code>files</code>, <code>imports</code>, <code>imported_by</code>, <code>cycle</code>) and <code>edges</code> (<code>from</code>, <code>to</code>, <code>count</code> of file imports, <code>cycle</code>). Cached until the index changes</td></tr>
+<tr><td><code>GET /api/graph/imports</code></td><td><code>file</code></td><td>The file’s import statements: <code>line</code> (1-based), <code>spec</code> as written, the indexed <code>target</code> it resolves to (<code>null</code> for packages, the standard library and files outside the index), <code>containment</code></td></tr>
+<tr><td><code>GET /api/graph/files</code></td><td><code>q</code> (case-insensitive substring), <code>limit</code> (default 100, max 1000)</td><td><code>files</code> most connected first, with <code>imports</code> / <code>imported_by</code>, and the <code>total</code> that matched</td></tr>
+</tbody>
+</table>
+</div>
+<p>Imports are resolved for Rust (<code>crate::</code>, <code>self::</code>, <code>super::</code>, sibling
+modules and the crate’s own name), Python and JavaScript/TypeScript.</p>
 <h2 id="grpc"><a class="header" href="#grpc">gRPC</a></h2>
 <p>The schema is <a href="https://github.com/jburrow/fast_code_search/blob/main/proto/search.proto"><code>proto/search.proto</code></a>: <code>Search</code>
 streams <code>SearchResult</code> messages with the same fields and modes as REST

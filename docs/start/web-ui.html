@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-3a05f256.js";
+            window.path_to_searchindex_js = "../searchindex-f52e775e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-4e79abd4.js"></script>
@@ -206,10 +206,34 @@ returns to the previous one.</li>
 <li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
 whole file with the line highlighted (large files open in a window with
 “Show more”).</li>
-<li>The <strong>deps</strong> chip on a file opens its importers and imports.</li>
+<li>The <strong>deps</strong> chip on a file opens its importers and imports. The tree
+icon on a result (and <strong>Explore imports</strong> in the file viewer) opens the
+file in the dependency explorer.</li>
 <li><code>j</code>/<code>k</code> move the keyboard selection, Enter opens it, Escape closes any
 dialog; the copy button puts the path on the clipboard.</li>
 </ul>
+<h2 id="dependency-explorer"><a class="header" href="#dependency-explorer">Dependency explorer</a></h2>
+<p><strong>Graph</strong> (<code>/graph.html</code>) shows the import graph around one file, next to
+its source. Pick a file on the left (most connected first) and switch view:</p>
+<ul>
+<li><strong>Neighbourhood</strong>: what the file imports on the left, what imports it on
+the right, up to four hops each way. Busy levels fold into “+N more”;
+click to list them.</li>
+<li><strong>Impact</strong>: every file a change could reach, level by level, and the test
+files among them.</li>
+<li><strong>Path</strong>: the shortest chain of imports between two files.</li>
+<li><strong>Module map</strong>: folders laid out so each only imports folders to its
+left; red marks import cycles.</li>
+</ul>
+<p>Click a box to read the file and a line to open the import statement it
+stands for; double-click (or Enter) to centre the graph on it. Import lines
+in the source are highlighted and link to their target; imports of
+packages and the standard library are marked <em>external</em>. <strong>Search these
+files</strong> runs a keyword search limited to the files on screen.</p>
+<p>Rust <code>mod foo;</code> declarations (and <code>pub use foo::X</code> re-exports of a child
+module) are hidden by default since they are structure rather than
+dependencies; <strong>Show mod declarations</strong> brings them back. Imports are
+resolved for Rust, Python and JavaScript/TypeScript.</p>
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the
