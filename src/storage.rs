@@ -94,7 +94,7 @@ pub fn existing_ancestor(path: &Path) -> Option<PathBuf> {
 }
 
 /// Problems with the filesystem the index is saved to: too few free inodes,
-/// or less free space than `need_bytes` (at least [`MIN_FREE_BYTES`]).
+/// or less free space than `need_bytes` (at least 256 MB).
 /// Empty when everything looks fine or nothing can be measured.
 pub fn check_index_storage(index_path: &Path, need_bytes: u64) -> Vec<String> {
     let Some(dir) = existing_ancestor(index_path) else {
