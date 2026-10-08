@@ -2,6 +2,7 @@
 
 mod api;
 mod graph;
+mod mcp;
 pub mod metrics;
 
 pub use api::{results_to_json, ErrorResponse, SearchResponse, SearchResultJson};
@@ -53,6 +54,9 @@ pub struct WebState {
     pub last_known_files: Arc<std::sync::atomic::AtomicUsize>,
     /// Import cycles and the folder map, cached per engine state.
     pub graph_cache: Arc<std::sync::Mutex<graph::GraphCache>>,
+    /// Cross-origin callers allowed by configuration; `/mcp` also accepts
+    /// these as browser origins.
+    pub cors_origins: Arc<Vec<String>>,
 }
 
 /// Knobs for [`create_router_with_options`].
@@ -151,6 +155,7 @@ pub fn create_router_with_options(
         diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
         last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         graph_cache: Arc::default(),
+        cors_origins: Arc::new(opts.cors_origins.clone()),
     };
 
     let router = Router::new()
@@ -172,6 +177,8 @@ pub fn create_router_with_options(
         .route("/api/graph/files", get(graph::files_handler))
         .route("/api/file", get(api::file_handler))
         .route("/api/context", get(api::context_handler))
+        // Model Context Protocol (streamable HTTP) for coding agents
+        .route("/mcp", get(mcp::mcp_get).post(mcp::mcp_post))
         // WebSocket for progress streaming
         .route("/ws/progress", get(api::ws_progress_handler))
         // Static files
@@ -443,6 +450,7 @@ mod tests {
             diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
             last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             graph_cache: Arc::default(),
+            cors_origins: Arc::default(),
         };
         let router = Router::new()
             .route(

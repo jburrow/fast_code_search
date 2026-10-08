@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- MCP server for coding agents at `/mcp` on the web server (streamable
+  HTTP), with six read-only tools: `search_code`, `read_file`,
+  `file_dependencies`, `change_impact`, `import_path` and
+  `dependency_overview`. `fcs mcp` relays it over stdio for clients that
+  launch a command. Browser requests from foreign origins are refused.
 - Dependency explorer (GRAPH in the web UI, `/graph.html`): a file's import
   neighbourhood, the impact of changing it (with the affected tests), the
   shortest import chain between two files, and a folder-level module map

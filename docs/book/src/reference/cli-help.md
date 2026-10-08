@@ -21,6 +21,7 @@ Commands:
   refs     Find references (call sites, type mentions) of an identifier
   symbols  Search symbol definitions (functions, types, classes, ...) only
   status   Show whether the server is reachable and what it has indexed
+  mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -79,6 +80,7 @@ Examples:
   fcs -l TODO | xargs $EDITOR   files containing TODO
   vim -q <(fcs --format vimgrep TODO)
   fcs status                    is the server up, what does it hold
+  fcs mcp                       MCP over stdio, for coding agents
 ```
 
 ## `fcs search --help`
@@ -110,36 +112,42 @@ Options:
           
           [default: 50]
 
-      --server <URL>
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
-      --config <FILE>
-          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
       --offset <N>
           Skip the first N hits (paging; ordering is deterministic)
           
           [default: 0]
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
   -C, --context <N>
           Lines of context before and after each hit (0-10)
           
           [default: 0]
 
-      --offline
-          Search the on-disk index directly instead of asking the server
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
 
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --index-path <FILE>
           Index file for offline searches (default: the config's index_path)
+
+      --rank <RANK>
+          Ranking: auto, fast (metadata only, big candidate sets), full
+          
+          [default: auto]
+          [possible values: auto, fast, full]
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -149,19 +157,13 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --rank <RANK>
-          Ranking: auto, fast (metadata only, big candidate sets), full
-          
-          [default: auto]
-          [possible values: auto, fast, full]
-
-      --json
-          Shorthand for --format json
-
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -211,36 +213,42 @@ Options:
           
           [default: 50]
 
-      --server <URL>
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
-      --config <FILE>
-          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
       --offset <N>
           Skip the first N hits (paging; ordering is deterministic)
           
           [default: 0]
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
   -C, --context <N>
           Lines of context before and after each hit (0-10)
           
           [default: 0]
 
-      --offline
-          Search the on-disk index directly instead of asking the server
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
 
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --index-path <FILE>
           Index file for offline searches (default: the config's index_path)
+
+      --rank <RANK>
+          Ranking: auto, fast (metadata only, big candidate sets), full
+          
+          [default: auto]
+          [possible values: auto, fast, full]
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -250,19 +258,13 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --rank <RANK>
-          Ranking: auto, fast (metadata only, big candidate sets), full
-          
-          [default: auto]
-          [possible values: auto, fast, full]
-
-      --json
-          Shorthand for --format json
-
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -312,36 +314,42 @@ Options:
           
           [default: 50]
 
-      --server <URL>
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
-      --config <FILE>
-          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
       --offset <N>
           Skip the first N hits (paging; ordering is deterministic)
           
           [default: 0]
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
   -C, --context <N>
           Lines of context before and after each hit (0-10)
           
           [default: 0]
 
-      --offline
-          Search the on-disk index directly instead of asking the server
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
 
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --index-path <FILE>
           Index file for offline searches (default: the config's index_path)
+
+      --rank <RANK>
+          Ranking: auto, fast (metadata only, big candidate sets), full
+          
+          [default: auto]
+          [possible values: auto, fast, full]
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -351,19 +359,13 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --rank <RANK>
-          Ranking: auto, fast (metadata only, big candidate sets), full
-          
-          [default: auto]
-          [possible values: auto, fast, full]
-
-      --json
-          Shorthand for --format json
-
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -390,6 +392,59 @@ Options:
 Show whether the server is reachable and what it has indexed
 
 Usage: fcs status [OPTIONS]
+
+Options:
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --format <FORMAT>
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
+
+      --json
+          Shorthand for --format json
+
+  -l, --files-with-matches
+          Print only the files that match, one per line
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color <COLOR>
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `fcs mcp --help`
+
+```text
+Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
+
+Usage: fcs mcp [OPTIONS]
 
 Options:
       --server <URL>

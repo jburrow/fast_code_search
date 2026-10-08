@@ -3981,3 +3981,188 @@ async fn test_graph_unknown_file_is_404() -> Result<()> {
     assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
     Ok(())
 }
+
+// =============================================================================
+// MCP (/mcp)
+// =============================================================================
+
+async fn mcp_call(base: &str, body: serde_json::Value) -> Result<(u16, serde_json::Value)> {
+    let response = reqwest::Client::new()
+        .post(format!("{base}/mcp"))
+        .header("accept", "application/json, text/event-stream")
+        .json(&body)
+        .send()
+        .await?;
+    let status = response.status().as_u16();
+    let text = response.text().await?;
+    let value = if text.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(&text)?
+    };
+    Ok((status, value))
+}
+
+async fn mcp_tool(base: &str, name: &str, arguments: serde_json::Value) -> Result<(bool, String)> {
+    let (status, body) = mcp_call(
+        base,
+        serde_json::json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}}),
+    )
+    .await?;
+    assert_eq!(status, 200, "{body}");
+    let result = &body["result"];
+    Ok((
+        result["isError"].as_bool().unwrap(),
+        result["content"][0]["text"].as_str().unwrap().to_string(),
+    ))
+}
+
+#[tokio::test]
+async fn test_mcp_handshake_and_tool_list() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let (status, body) = mcp_call(
+        &base,
+        serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-03-26", "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0"}}}),
+    )
+    .await?;
+    assert_eq!(status, 200);
+    assert_eq!(body["id"], 1);
+    assert_eq!(body["result"]["protocolVersion"], "2025-03-26");
+    assert_eq!(body["result"]["serverInfo"]["name"], "fast_code_search");
+    assert!(body["result"]["capabilities"]["tools"].is_object());
+
+    // Notifications are accepted with no body.
+    let (status, body) = mcp_call(
+        &base,
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )
+    .await?;
+    assert_eq!(status, 202);
+    assert!(body.is_null());
+
+    let (_, body) = mcp_call(
+        &base,
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    )
+    .await?;
+    let names: Vec<&str> = body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "search_code",
+            "read_file",
+            "file_dependencies",
+            "change_impact",
+            "import_path",
+            "dependency_overview"
+        ]
+    );
+    for tool in body["result"]["tools"].as_array().unwrap() {
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        assert_eq!(tool["inputSchema"]["type"], "object");
+    }
+
+    let (_, body) = mcp_call(
+        &base,
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "no/such/method"}),
+    )
+    .await?;
+    assert_eq!(body["error"]["code"], -32601);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_mcp_tools_answer_from_the_index() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+
+    let (err, text) = mcp_tool(
+        &base,
+        "search_code",
+        serde_json::json!({"query": "pkg.util"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.contains("pkg/service.py:2:"), "{text}");
+
+    let (err, text) = mcp_tool(
+        &base,
+        "read_file",
+        serde_json::json!({"path": "pkg/service.py", "start_line": 2}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.contains("(lines 2-2 of 2)"), "{text}");
+    assert!(text.contains("     2  import pkg.util"), "{text}");
+
+    let (err, text) = mcp_tool(
+        &base,
+        "file_dependencies",
+        serde_json::json!({"path": "pkg/service.py", "direction": "out"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.contains("pkg/util.py  (imported at "), "{text}");
+    assert!(text.contains("service.py:2)"), "{text}");
+    assert!(!text.contains("Imported by"), "{text}");
+
+    let (err, text) = mcp_tool(
+        &base,
+        "change_impact",
+        serde_json::json!({"paths": ["pkg/util.py"]}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(
+        text.contains("can affect 4 other files (2 tests, 2 other code)"),
+        "{text}"
+    );
+
+    let (err, text) = mcp_tool(
+        &base,
+        "import_path",
+        serde_json::json!({"from": "tests/test_api.py", "to": "pkg/util.py"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.starts_with("3 imports from"), "{text}");
+
+    let (err, text) = mcp_tool(&base, "dependency_overview", serde_json::json!({})).await?;
+    assert!(!err, "{text}");
+    assert!(
+        text.contains("6 files in the import graph, in 2 folders"),
+        "{text}"
+    );
+    assert!(text.contains("tests/ → "), "{text}");
+    assert!(text.contains("pkg/: 2"), "{text}");
+
+    // A bad path is a tool error the model can read, not a protocol error.
+    let (err, text) = mcp_tool(&base, "read_file", serde_json::json!({"path": "nope.py"})).await?;
+    assert!(err);
+    assert!(text.contains("not found"), "{text}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_mcp_rejects_foreign_browser_origins() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let post = |origin: &'static str| {
+        reqwest::Client::new()
+            .post(format!("{base}/mcp"))
+            .header("origin", origin)
+            .json(&serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}))
+            .send()
+    };
+    assert_eq!(post("https://evil.example").await?.status(), 403);
+    assert_eq!(post("http://localhost:5173").await?.status(), 200);
+    let get = reqwest::get(format!("{base}/mcp")).await?;
+    assert_eq!(get.status(), 405);
+    Ok(())
+}

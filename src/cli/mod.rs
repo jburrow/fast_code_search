@@ -19,6 +19,7 @@
 //!   tools. Exit code 0 = matches, 1 = none, 2 = error.
 
 pub mod format;
+pub mod mcp;
 
 use crate::config::Config;
 use crate::web::{ErrorResponse, SearchResponse};
@@ -35,7 +36,7 @@ pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 
 /// Subcommands `fcs` understands; anything else on the command line is a
 /// search query (see [`normalize_args`]).
-pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "help"];
+pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "mcp", "help"];
 
 #[derive(Parser, Debug)]
 #[command(
@@ -55,7 +56,8 @@ pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "help"
                   fcs symbols parse_query       definitions only\n  \
                   fcs -l TODO | xargs $EDITOR   files containing TODO\n  \
                   vim -q <(fcs --format vimgrep TODO)\n  \
-                  fcs status                    is the server up, what does it hold"
+                  fcs status                    is the server up, what does it hold\n  \
+                  fcs mcp                       MCP over stdio, for coding agents"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -76,6 +78,9 @@ pub enum Command {
     Symbols(SearchArgs),
     /// Show whether the server is reachable and what it has indexed
     Status,
+    /// Serve MCP over stdio by relaying to the server's /mcp endpoint (for
+    /// agents that launch a command rather than connect to a URL)
+    Mcp,
 }
 
 /// How to reach the index.
@@ -712,6 +717,10 @@ fn run(cli: Cli) -> Result<i32> {
     let (args, mode) = match cli.command {
         Command::Status => {
             print!("{}", session.status()?);
+            return Ok(0);
+        }
+        Command::Mcp => {
+            mcp::run(&session.server)?;
             return Ok(0);
         }
         Command::Search(a) => (a, Mode::Text),
