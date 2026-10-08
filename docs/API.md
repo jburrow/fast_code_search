@@ -19,6 +19,7 @@ when the request timeout is hit.
 | `GET /api/file?file=…` | Full content of an indexed file |
 | `GET /api/context?file=…&line=N&context=K` | Lines around a match (K ≤ 200) |
 | `GET /api/dependents?file=…` / `GET /api/dependencies?file=…` | Files that import this file / files it imports |
+| `POST /mcp` | Model Context Protocol for coding agents. See [MCP](#mcp-coding-agents) |
 | `GET /api/graph/…` | The import graph: neighbourhoods, impact, import chains, the folder map. See [Import graph](#import-graph) |
 | `GET /api/stats` | Index statistics (files, trigrams, dependency edges, content bytes) |
 | `GET /api/status` | Indexing progress |
@@ -135,6 +136,49 @@ edge, so it is left out too.
 
 Imports are resolved for Rust (`crate::`, `self::`, `super::`, sibling
 modules and the crate's own name), Python and JavaScript/TypeScript.
+
+## MCP (coding agents)
+
+The web server also speaks the [Model Context Protocol](https://modelcontextprotocol.io)
+at `/mcp`, so a coding agent can use the index instead of grepping: search,
+read files with line numbers, and walk the import graph. Point the agent at
+the URL:
+
+```bash
+claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp
+```
+
+For clients that only launch local commands, `fcs mcp` relays MCP over stdio
+to the same endpoint (it finds the server like every `fcs` command:
+`--server`, `$FCS_SERVER`, the configuration, then `http://127.0.0.1:8080`):
+
+```json
+{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+```
+
+| Tool | Arguments | What it returns |
+|------|-----------|-----------------|
+| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 20, max 100), `context` (0–5) | `path:line:column: line` per hit, with the match count and whether more exist |
+| `read_file` | `path`, `start_line`, `end_line` | Numbered lines, 200 by default and at most 1,000, with how to continue |
+| `file_dependencies` | `path`, `direction` (`in`, `out`, `both`), `depth` (1–4), `limit` | Files it imports and files importing it, by distance, with the line of each direct import |
+| `change_impact` | `paths` (one or more), `limit` | Every file that transitively imports any of them, nearest first, split into tests and other code |
+| `import_path` | `from`, `to` | The shortest chain of imports between two files, either way round |
+| `dependency_overview` | `directory` (optional), `limit` | The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files |
+
+Every tool is read-only and answers from the same handlers as the REST API,
+so it shares their search permits, deadlines and caps. Results use the
+root-relative paths search results print, and lists are capped with a note
+saying what was left out. The graph tools say which languages have import
+edges (Rust, Python, JavaScript/TypeScript), so an empty answer for another
+language is not mistaken for "unused".
+
+Transport details: each JSON-RPC message is a `POST /mcp` answered with
+`application/json` (notifications get `202`); there is no event stream
+(`GET /mcp` is `405`) and no session. Requests carrying a browser `Origin`
+are refused with `403` unless it is a loopback address, the server's own
+address, or listed in `cors_origins`, so a web page cannot drive a local
+server through the visitor's browser. Like the REST API, `/mcp` has no
+authentication: anyone who can reach the web port can read the index.
 
 ## gRPC
 

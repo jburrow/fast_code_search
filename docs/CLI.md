@@ -13,6 +13,7 @@ fcs symbols parse_query          # definitions only
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q <(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold
+fcs mcp                          # MCP over stdio, for coding agents
 ```
 
 ## Design
@@ -105,6 +106,22 @@ result carries `line_number`, `match_column`, `line_match_start` /
 - **VS Code**: run `fcs` in the integrated terminal; `path:line:col` output
   is clickable. With `--absolute` the links work from any working directory.
 - **fzf**: `fcs -l QUERY | fzf | xargs $EDITOR`.
+
+## MCP for coding agents
+
+`fcs mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io)
+over stdio by relaying each message to the server's `/mcp` endpoint, for
+agents that launch a command rather than connect to a URL:
+
+```json
+{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+```
+
+It finds the server like any `fcs` command (`--server`, `$FCS_SERVER`, the
+configuration). Stdout carries only protocol messages; when the server is
+down each request is answered with an error saying so. Clients that speak
+HTTP can use `http://127.0.0.1:8080/mcp` directly. The tools are listed in
+[API.md](API.md#mcp-coding-agents).
 
 ## Exit status
 

@@ -558,6 +558,29 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
             </table>
             <p>Separate multiple patterns with semicolons: <code>src/**;lib/**</code></p>
 
+            <h2 id="mcp">MCP for coding agents</h2>
+            <p>This server speaks the Model Context Protocol at <code>/mcp</code>, so a coding agent
+                can search, read files with line numbers and walk the import graph through it
+                instead of grepping. Add it to Claude Code with
+                <code>claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp</code>
+                (use this server's address), or run <code>fcs mcp</code> as a stdio server for
+                clients that only launch commands.</p>
+            <table>
+                <tr>
+                    <th>Tool</th>
+                    <th>What it does</th>
+                </tr>
+                <tr><td><code>search_code</code></td><td>Search with the query syntax; modes text, regex, symbols, references</td></tr>
+                <tr><td><code>read_file</code></td><td>Numbered lines of a file, so answers can cite <code>path:line</code></td></tr>
+                <tr><td><code>file_dependencies</code></td><td>What a file imports and what imports it, with import lines</td></tr>
+                <tr><td><code>change_impact</code></td><td>Every file a change to some files can reach, tests listed separately</td></tr>
+                <tr><td><code>import_path</code></td><td>The shortest chain of imports between two files</td></tr>
+                <tr><td><code>dependency_overview</code></td><td>Most connected folders, folder cycles and hub files</td></tr>
+            </table>
+            <p>All tools are read-only. Requests from a browser page on another origin are refused;
+                like the REST API, there is no authentication, so anyone who can reach this port can
+                read the index.</p>
+
             <h2>Other Endpoints</h2>
             <table>
                 <tr>
