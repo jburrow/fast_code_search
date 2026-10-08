@@ -525,11 +525,7 @@ pub async fn search_handler(
             // Regex is case-sensitive by default (like `(?-i)`); an explicit
             // `case=false` asks for case-insensitive matching, which for a
             // regex is the `(?i)` flag. `case=true` needs nothing.
-            let pattern = if case_override == Some(false) {
-                format!("(?i){query}")
-            } else {
-                query.clone()
-            };
+            let pattern = crate::search::regex_pattern_with_case(&query, case_override);
             engine
                 .search_regex_with_limits(
                     &pattern,

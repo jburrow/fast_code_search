@@ -116,6 +116,21 @@ pub fn needs_multiline(pattern: &str) -> bool {
     false
 }
 
+/// The pattern to run for a regex search given an explicit case switch.
+///
+/// Regex is case-sensitive by default (like `(?-i)`); `case = Some(false)`
+/// asks for case-insensitive matching, which for a regex is the `(?i)`
+/// flag. `None` and `Some(true)` leave the pattern as written. Shared by
+/// `/api/search` and the CLI's offline search so `fcs search -e -i` means
+/// the same against an index file as against a server.
+pub fn pattern_with_case(pattern: &str, case: Option<bool>) -> std::borrow::Cow<'_, str> {
+    if case == Some(false) {
+        std::borrow::Cow::Owned(format!("(?i){pattern}"))
+    } else {
+        std::borrow::Cow::Borrowed(pattern)
+    }
+}
+
 impl RegexAnalysis {
     /// Analyze a regex pattern and extract literals for trigram pre-filtering.
     ///
@@ -437,6 +452,13 @@ mod tests {
         ] {
             assert!(!needs_multiline(p), "{p}");
         }
+    }
+
+    #[test]
+    fn case_switch_adds_the_ignore_case_flag() {
+        assert_eq!(pattern_with_case("Foo", Some(false)), "(?i)Foo");
+        assert_eq!(pattern_with_case("Foo", Some(true)), "Foo");
+        assert_eq!(pattern_with_case("Foo", None), "Foo");
     }
 
     fn constraints(pattern: &str) -> Vec<Vec<String>> {

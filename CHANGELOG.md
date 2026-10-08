@@ -102,7 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files whose only match is their name again and honours `-term`; `file:`
   and `-file:` words no longer match the indexed root folder's own name
   (`-file:search` dropped every file of a root named `fast_code_search`);
-  a filename-only hit obeys `case:yes` and `word:yes`.
+  a filename-only hit obeys `case:yes` and `word:yes`; `fcs search -e -i`
+  against an index file now ignores case, as it does against a server.
 - Plain-text search for code containing quotes (`{ "success": True`,
   `"key":"value"`) found nothing: the query parser stripped every `"`, so
   the term became `success:`. A quote now opens a phrase only when it
