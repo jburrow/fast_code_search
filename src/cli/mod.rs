@@ -588,7 +588,7 @@ impl Session {
                 engine.search_symbols_parsed(&parsed, &req.include, &req.exclude, limits)?
             }
             Mode::Text if req.regex => engine.search_regex_with_limits(
-                &req.query,
+                &crate::search::regex_pattern_with_case(&req.query, req.case),
                 &req.include,
                 &req.exclude,
                 limits,

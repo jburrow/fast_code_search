@@ -168,6 +168,9 @@ pub struct QueryRun {
     remaining: std::sync::atomic::AtomicUsize,
     deadline: Option<std::time::Instant>,
     truncated: std::sync::atomic::AtomicBool,
+    /// Most hits one document may contribute. Grows with the page offset so
+    /// "load more" can reach a busy file's later lines.
+    per_doc_cap: usize,
 }
 
 impl QueryRun {
@@ -176,7 +179,21 @@ impl QueryRun {
             remaining: std::sync::atomic::AtomicUsize::new(limits.match_budget),
             deadline: limits.deadline,
             truncated: std::sync::atomic::AtomicBool::new(false),
+            per_doc_cap: SearchEngine::MAX_MATCHES_PER_DOC.saturating_add(limits.offset),
         }
+    }
+
+    /// Reserve one unit of budget for a document that already holds
+    /// `held` hits. A document at its cap marks the run truncated: the
+    /// total is then unknown, rather than reported as an exact count that
+    /// silently leaves out the file's remaining lines.
+    pub fn take_doc_match(&self, held: usize) -> bool {
+        if held >= self.per_doc_cap {
+            self.truncated
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            return false;
+        }
+        self.take_match()
     }
 
     /// True once the budget is spent or the deadline passed; callers must

@@ -632,6 +632,47 @@ impl TermSet {
     }
 }
 
+impl TermSet {
+    /// Does `content` hold any excluded term?
+    pub(super) fn excludes_content(&self, content: &str) -> bool {
+        self.exclude
+            .iter()
+            .any(|(o, l)| !line_hits(content, o, l, self.opts).is_empty())
+    }
+
+    /// [`Self::excludes_content`] for an indexed document (reads it only
+    /// when there is something to exclude).
+    pub(super) fn excludes_doc(&self, engine: &SearchEngine, doc_id: u32) -> bool {
+        if self.exclude.is_empty() {
+            return false;
+        }
+        engine
+            .file_store
+            .get(doc_id)
+            .and_then(|f| f.as_str().ok().map(|c| self.excludes_content(&c)))
+            .unwrap_or(false)
+    }
+
+    /// Does the file name `name` match the primary term under the query's
+    /// options? A synthetic filename hit must obey `case:` and `word:` like
+    /// a content hit does.
+    pub(super) fn matches_file_name(&self, name: &str) -> bool {
+        let Some((original, lower)) = self.terms.first() else {
+            return false;
+        };
+        let hit = if self.opts.case_sensitive {
+            name.find(original.as_str())
+                .map(|s| (s, s + original.len()))
+        } else {
+            find_match_position_case_insensitive(name, lower)
+        };
+        match hit {
+            Some((s, e)) => !self.opts.whole_word || is_whole_word(name, s, e),
+            None => false,
+        }
+    }
+}
+
 /// Drop leading item modifiers (`pub`, `pub(crate)`, `export`, `public`,
 /// `static`, `async`, `unsafe`, `const`, `default`, `extern "C"`) so the
 /// start-of-line test sees the keyword a reader reads first.

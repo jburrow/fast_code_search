@@ -2702,3 +2702,187 @@ fn test_plain_search_keeps_quotes_inside_terms() {
     assert_eq!(hits.len(), 1);
     assert!(hits[0].file_path.ends_with("resp.json"));
 }
+
+// ---- Search correctness review (each test failed before its fix) ----
+
+/// Index `files` under `dir`, registered as a root so display paths are
+/// `<dir name>/<file>` as in a real workspace.
+fn review_engine(dir: &Path, files: &[(&str, &str)]) -> SearchEngine {
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(dir);
+    for (name, content) in files {
+        let p = dir.join(name);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, content).unwrap();
+        engine.index_file(&p).unwrap();
+    }
+    engine.finalize();
+    engine
+}
+
+fn review_text(
+    engine: &SearchEngine,
+    q: &str,
+    limits: SearchLimits,
+) -> (Vec<SearchMatch>, SearchRankingInfo) {
+    engine
+        .search_parsed(
+            &crate::search::query_syntax::parse(q),
+            "",
+            "",
+            limits,
+            RankMode::Full,
+        )
+        .unwrap()
+}
+
+/// A file with more hits than the per-document cap used to report an exact
+/// total of 100 with nothing more to load; its later lines were unreachable.
+#[test]
+fn test_per_document_cap_reports_unknown_total_and_pages_on() {
+    let t = TempDir::new().unwrap();
+    let content: String = (0..150).map(|i| format!("needle {i}\n")).collect();
+    let e = review_engine(t.path(), &[("a.txt", &content)]);
+    let (page1, info) = review_text(&e, "needle", SearchLimits::new(200));
+    assert_eq!(page1.len(), SearchEngine::MAX_MATCHES_PER_DOC);
+    assert_eq!(info.total_matches, None, "the total is not known");
+    assert!(info.truncated_by_budget);
+    let (page2, _) = review_text(&e, "needle", SearchLimits::new(100).with_offset(100));
+    let lines: Vec<usize> = page2.iter().map(|m| m.line_number).collect();
+    assert_eq!(lines, (101..=150).collect::<Vec<_>>());
+    // Under the cap the total stays exact.
+    let small: String = (0..10).map(|i| format!("needle {i}\n")).collect();
+    let e = review_engine(t.path(), &[("a.txt", &small)]);
+    let (_, info) = review_text(&e, "needle", SearchLimits::new(200));
+    assert_eq!(info.total_matches, Some(10));
+}
+
+/// A regex mentioning `\n` runs over the whole file; `^` and `$` used to
+/// lose their per-line meaning there and match only at the file's ends.
+/// An escaped backslash (`\\n`, as in a C string) is not a newline at all.
+#[test]
+fn test_multiline_regex_keeps_line_anchors() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[
+            ("a.txt", "alpha\nbeta\ngamma\n"),
+            ("b.c", "int x;\nprintf(\"hi\\n\");\n"),
+        ],
+    );
+    let lines = |p: &str| -> Vec<(String, usize)> {
+        e.search_regex_with_limits(p, "", "", SearchLimits::new(10), RankMode::Full)
+            .unwrap()
+            .0
+            .iter()
+            .map(|m| {
+                (
+                    m.file_path.rsplit('/').next().unwrap().to_string(),
+                    m.line_number,
+                )
+            })
+            .collect()
+    };
+    assert_eq!(lines(r"^beta\n"), vec![("a.txt".to_string(), 2)]);
+    assert_eq!(lines(r"beta$\ngamma"), vec![("a.txt".to_string(), 2)]);
+    assert_eq!(lines(r#"^printf.*\\n"#), vec![("b.c".to_string(), 2)]);
+    // `\A` still anchors to the start of the file.
+    assert!(lines(r"\Abeta\n").is_empty());
+}
+
+/// Symbol mode used to drop files whose only match is their name.
+#[test]
+fn test_symbol_search_reports_filename_only_matches() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[
+            ("widget_factory.rs", "fn other() {}\n"),
+            ("defs.rs", "fn widget() {}\n"),
+        ],
+    );
+    let (m, _) = e
+        .search_symbols_parsed(
+            &crate::search::query_syntax::parse("widget"),
+            "",
+            "",
+            SearchLimits::new(10),
+        )
+        .unwrap();
+    let names: Vec<(&str, usize)> = m
+        .iter()
+        .map(|m| (m.file_path.rsplit('/').next().unwrap(), m.line_number))
+        .collect();
+    assert!(names.contains(&("widget_factory.rs", 0)), "{names:?}");
+    assert_eq!(names[0], ("defs.rs", 1), "a real definition ranks first");
+}
+
+/// Symbol mode ignored `-term`.
+#[test]
+fn test_symbol_search_honours_excluded_terms() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[
+            ("a.rs", "fn widget() {}\n// legacy\n"),
+            ("b.rs", "fn widget() {}\n"),
+        ],
+    );
+    let (m, _) = e
+        .search_symbols_parsed(
+            &crate::search::query_syntax::parse("widget -legacy"),
+            "",
+            "",
+            SearchLimits::new(10),
+        )
+        .unwrap();
+    let files: Vec<&str> = m
+        .iter()
+        .map(|m| m.file_path.rsplit('/').next().unwrap())
+        .collect();
+    assert_eq!(files, vec!["b.rs"]);
+}
+
+/// `file:` / `-file:` words used to match the root folder's own name, so
+/// `-file:search` dropped every file of a root named `search_proj`.
+#[test]
+fn test_file_operator_ignores_the_root_folder_name() {
+    let t = TempDir::new().unwrap();
+    let root = t.path().join("search_proj");
+    fs::create_dir_all(&root).unwrap();
+    let e = review_engine(
+        &root,
+        &[("src/a.rs", "needle\n"), ("src/search/b.rs", "needle\n")],
+    );
+    let files = |q: &str| -> Vec<String> {
+        let mut v: Vec<String> = review_text(&e, q, SearchLimits::new(10))
+            .0
+            .into_iter()
+            .map(|m| m.file_path)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(files("needle -file:search"), vec!["search_proj/src/a.rs"]);
+    assert_eq!(
+        files("needle file:search"),
+        vec!["search_proj/src/search/b.rs"]
+    );
+    assert_eq!(files("needle file:*.rs").len(), 2);
+    assert_eq!(files("needle -file:*proj*").len(), 2);
+    // Naming the root with a slash still selects it.
+    assert_eq!(files("needle file:search_proj/").len(), 2);
+}
+
+/// The filename fallback ignored `case:yes` and `word:yes`.
+#[test]
+fn test_filename_hit_obeys_case_and_word() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(t.path(), &[("widget.rs", "nothing here\n")]);
+    let n = |q: &str| review_text(&e, q, SearchLimits::new(10)).0.len();
+    assert_eq!(n("widget"), 1);
+    assert_eq!(n("case:yes widget"), 1);
+    assert_eq!(n("case:yes WIDGET"), 0);
+    assert_eq!(n("word:yes widg"), 0);
+    assert_eq!(n("word:yes widget"), 1);
+}

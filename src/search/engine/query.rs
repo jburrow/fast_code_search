@@ -19,9 +19,11 @@ impl SearchEngine {
     /// Maximum files to read in fast ranking mode
     pub(super) const FAST_RANKING_TOP_N: usize = 2000;
 
-    /// Maximum matches to collect per document during a search.
+    /// Maximum matches to collect per document during a search (plus the
+    /// page offset, so later pages can reach further into a busy file).
     /// Prevents OOM on large indexes when a common keyword appears on
-    /// thousands of lines in the same file.
+    /// thousands of lines in the same file. Hitting it marks the run
+    /// truncated, so the total is reported as unknown, not as exact.
     pub(super) const MAX_MATCHES_PER_DOC: usize = 100;
 
     /// Search with configurable ranking mode.
@@ -98,6 +100,9 @@ impl SearchEngine {
     const SYMBOL_PREFILTER_MIN_FILES: usize = 200;
     /// Phase-2 budget per selected file (the per-document cap is 100).
     const SYMBOL_MATCHES_PER_FILE_BUDGET: usize = 20;
+    /// Phase-1 weight of a filename match in symbol search: far below any
+    /// real symbol, so filename-only files never displace those.
+    const FILENAME_ONLY_PREFILTER: f64 = 1e-3;
 }
 
 /// No identifier character immediately before `at` in `line`.
@@ -202,6 +207,7 @@ impl SearchEngine {
         let query_lower = query.to_lowercase();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         let opts = parsed.options;
+        let terms = TermSet::from_parsed(parsed);
 
         // Phase 1, no I/O: score every matching symbol from the cache alone
         // (name match quality, kind, file metadata) and keep the files
@@ -227,7 +233,7 @@ impl SearchEngine {
                 let meta = self.get_file_metadata(id);
                 let best = symbols
                     .iter()
-                    .filter(|s| s.symbol_type != SymbolType::FileName && name_matches(&s.name))
+                    .filter(|s| name_matches(&s.name))
                     .map(|s| {
                         let lower = s.name.to_lowercase();
                         let name_factor = if lower == query_lower {
@@ -239,6 +245,11 @@ impl SearchEngine {
                         };
                         let kind = match s.symbol_type {
                             SymbolType::Variable | SymbolType::Constant => w.symbol_value_kind,
+                            // A file whose only match is its name is still a
+                            // result (phase 2 reports it as a filename hit),
+                            // but it is opened after files defining a
+                            // matching symbol.
+                            SymbolType::FileName => Self::FILENAME_ONLY_PREFILTER,
                             _ => 1.0,
                         };
                         (name_factor * kind) as f32 * meta.base_score.max(0.1)
@@ -276,6 +287,10 @@ impl SearchEngine {
             phase2,
             |_, meta| meta.base_score,
             |doc_id, run| {
+                // `-term` drops a file here as it does in text search.
+                if terms.excludes_doc(self, doc_id) {
+                    return None;
+                }
                 self.search_symbols_in_document_opts(doc_id, query, &query_lower, opts, run)
             },
         );
@@ -1138,7 +1153,7 @@ impl SearchEngine {
                 // Cap per-document results (a broad regex matching thousands
                 // of lines must not grow memory unboundedly) and honour the
                 // query's match budget.
-                if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
+                if !run.take_doc_match(matches.len()) {
                     return false;
                 }
                 // Lazy initialize path info only when we have at least one match
@@ -1340,11 +1355,7 @@ impl SearchEngine {
         let content = file.as_str().ok()?;
 
         // File-level NOT check before any per-line work.
-        if terms
-            .exclude
-            .iter()
-            .any(|(o, l)| !line_hits(&content, o, l, opts).is_empty())
-        {
+        if terms.excludes_content(&content) {
             return None;
         }
 
@@ -1434,7 +1445,7 @@ impl SearchEngine {
                         match_end: usize,
                         term_hits: usize|
          -> bool {
-            if matches.len() >= Self::MAX_MATCHES_PER_DOC || !run.take_match() {
+            if !run.take_doc_match(matches.len()) {
                 return false;
             }
             let path_ref = display_path.get_or_insert_with(|| {
@@ -1516,10 +1527,9 @@ impl SearchEngine {
         // but it doesn't appear in the file content. Synthesize a result so the user
         // sees the file in search results.
         if matches.is_empty() {
-            let has_filename_match = symbols.iter().any(|s| {
-                s.symbol_type == SymbolType::FileName
-                    && contains_case_insensitive(&s.name, query_lower)
-            });
+            let has_filename_match = symbols
+                .iter()
+                .any(|s| s.symbol_type == SymbolType::FileName && terms.matches_file_name(&s.name));
             if has_filename_match {
                 let path_ref =
                     display_path.get_or_insert_with(|| self.display_path_for(doc_id, &file.path));

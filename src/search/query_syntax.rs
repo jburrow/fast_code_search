@@ -221,6 +221,14 @@ fn phrase_end(chars: &[char], open: usize) -> Option<usize> {
 /// A trailing `/` means "everything under this directory": `src/` becomes
 /// `**/src/**` (a glob ending in `/` would only match paths that end in
 /// `src/`, i.e. nothing). A pattern that is only slashes selects everything.
+///
+/// Display paths start with the indexed root's own name
+/// (`fast_code_search/src/main.rs`), so a pattern without a `/` must not be
+/// matched against that first component: `file:search` would select every
+/// file of a root named `fast_code_search`, and `-file:test` would drop
+/// every file of a root named `test-harness`. Such patterns get a leading
+/// `*/`, which consumes the root name (`*` crosses `/` in these globs, so
+/// what follows still matches any directory or file name below it).
 fn file_glob(pat: &str) -> String {
     let dir = pat.ends_with('/');
     let pat = pat.trim_end_matches('/');
@@ -235,9 +243,9 @@ fn file_glob(pat: &str) -> String {
             format!("**/{pat}")
         }
     } else if has_glob {
-        format!("**/{pat}")
+        format!("*/**/{pat}")
     } else {
-        format!("**/*{pat}*")
+        format!("*/**/*{pat}*")
     };
     if dir {
         format!("{base}/**")
@@ -296,10 +304,10 @@ mod tests {
         assert_eq!(q.include_globs, vec!["**/*.rs", "**/src/**"]);
         assert_eq!(
             q.exclude_globs,
-            vec!["**/*test*", "**/*.py", "**/*.pyi", "**/*.pyw"]
+            vec!["*/**/*test*", "**/*.py", "**/*.pyi", "**/*.pyw"]
         );
         assert!(q.options.case_sensitive && q.options.whole_word);
-        assert_eq!(parse("file:*.toml").include_globs, vec!["**/*.toml"]);
+        assert_eq!(parse("file:*.toml").include_globs, vec!["*/**/*.toml"]);
         assert_eq!(parse("lang:xyz").include_globs, vec!["**/*.xyz"]);
         // A negative number is a term, not an exclusion.
         assert_eq!(parse("-1 x").terms, vec!["-1", "x"]);
@@ -347,7 +355,10 @@ mod tests {
         assert_eq!(parse("\"file:\"").terms, vec!["file:"]);
         assert_eq!(parse("\"-foo\"").terms, vec!["-foo"]);
         assert_eq!(parse("x -\"dog here\"").exclude_terms, vec!["dog here"]);
-        assert_eq!(parse("file:\"my dir\"").include_globs, vec!["**/*my dir*"]);
+        assert_eq!(
+            parse("file:\"my dir\"").include_globs,
+            vec!["*/**/*my dir*"]
+        );
         assert_eq!(parse("-\"file:x\"").exclude_terms, vec!["file:x"]);
         // An operator without an argument, or with an unknown language, is a term.
         assert_eq!(
@@ -381,7 +392,7 @@ mod tests {
         assert_eq!(parse("x -\"a b\"").exclude_terms, vec!["a b"]);
         assert_eq!(
             parse("x file:\"my dir\"").include_globs,
-            vec!["**/*my dir*"]
+            vec!["*/**/*my dir*"]
         );
     }
 }
