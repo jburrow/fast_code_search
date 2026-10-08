@@ -4,7 +4,7 @@
 //! scanning all files. It extracts literal strings from regex patterns and uses
 //! them for trigram-based candidate filtering.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use regex::Regex;
 
 /// Compiled-program size cap for user regexes (bytes). Patterns such as
@@ -85,6 +85,12 @@ impl RegexAnalysis {
     /// # Returns
     /// A `RegexAnalysis` containing the compiled regex and extracted literals.
     pub fn analyze(pattern: &str) -> Result<Self> {
+        // Parse the pattern as the user wrote it first: a syntax error then
+        // quotes their pattern with a caret under the problem ("repetition
+        // operator missing expression" …), which the UI shows as written.
+        // Parsing the effective pattern below would point into `(?mR)`.
+        let hir = regex_syntax::parse(pattern)
+            .map_err(|e| anyhow::anyhow!("Invalid regex pattern: {e}"))?;
         let multiline = needs_multiline(pattern);
         // Line-mode patterns are run over whole file contents in one pass
         // (see `search_in_document_regex`), so `^` and `$` are given their
@@ -99,12 +105,9 @@ impl RegexAnalysis {
             .size_limit(REGEX_SIZE_LIMIT)
             .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
             .build()
-            .with_context(|| format!("Invalid regex pattern: {}", pattern))?;
+            .map_err(|e| anyhow::anyhow!("Invalid regex pattern: {e}"))?;
 
-        let constraints = match regex_syntax::parse(pattern) {
-            Ok(hir) => extract_constraints(&hir),
-            Err(_) => vec![],
-        };
+        let constraints = extract_constraints(&hir);
 
         // Accelerated only when we have at least one SOUND constraint (a literal
         // that must appear, or an alternation where every branch contributes one).
@@ -360,6 +363,26 @@ fn literal_to_string(lit: &Literal) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The UI shows this message as written, so it must say what is wrong
+    /// and where (the `regex` crate's caret), not just echo the pattern.
+    #[test]
+    fn invalid_pattern_error_explains_the_problem() {
+        let err = RegexAnalysis::analyze("foo(bar").unwrap_err().to_string();
+        assert!(err.starts_with("Invalid regex pattern: "), "{err}");
+        assert!(err.contains("unclosed group"), "{err}");
+        assert!(err.contains('^'), "{err}");
+        // The caret line quotes the user's pattern, not the internal `(?mR)` prefix.
+        let err = RegexAnalysis::analyze("{ \"success\": True")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("repetition operator missing expression"),
+            "{err}"
+        );
+        assert!(err.contains("\n    { \"success\": True\n    ^\n"), "{err}");
+        assert!(!err.contains("(?mR)"), "{err}");
+    }
 
     fn constraints(pattern: &str) -> Vec<Vec<String>> {
         RegexAnalysis::analyze(pattern).unwrap().constraints
