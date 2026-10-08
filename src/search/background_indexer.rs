@@ -201,6 +201,12 @@ pub fn run(config: BackgroundIndexerConfig) {
             checkpoint_interval_files = indexer_config.checkpoint_interval_files,
             "Index persistence enabled"
         );
+    } else {
+        tracing::warn!(
+            "Index persistence OFF: indexer.index_path is not set, so this index is kept \
+             in memory only. It will be lost when the server stops and rebuilt from \
+             scratch on the next start. Set index_path under [indexer] to keep it."
+        );
     }
 
     // Initialize progress
@@ -1102,14 +1108,21 @@ fn save_index_if_needed(
 
     let index_path = Path::new(index_path_str);
     info!(path = %index_path.display(), "Saving index to disk...");
+    let need = std::fs::metadata(index_path)
+        .map(|m| m.len() * 2)
+        .unwrap_or(0);
+    for problem in crate::storage::check_index_storage(index_path, need) {
+        tracing::warn!("Storage: {problem}");
+    }
 
     match index_engine.read() {
         Ok(engine) => {
             if let Err(e) = engine.save_index(index_path, indexer_config) {
+                let hint = crate::storage::explain_no_space(&e, index_path).unwrap_or_default();
                 tracing::error!(
-                    error = %e,
+                    error = %format!("{e:#}"),
                     path = %index_path.display(),
-                    "Failed to save index"
+                    "Failed to save index. {hint}"
                 );
             } else {
                 info!(

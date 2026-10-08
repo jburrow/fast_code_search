@@ -29,10 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Startup logs where the config came from (or that none was found and
   defaults are used) and the config warnings; both were previously
   discarded because they were emitted before logging was set up.
-- An unset `indexer.index_path` is now a startup warning explaining that the
-  index is rebuilt on every start and how to persist it. A missing
-  `index_path` directory is a warning rather than an error, since the first
-  save creates it.
+- An unset `indexer.index_path` is now a warning when indexing starts ("Index
+  persistence OFF ... lost when the server stops"), and the ready line shows
+  `index=memory only, not saved`. A missing `index_path` directory is a
+  warning rather than an error, since the first save creates it.
+- `--init` writes every config key with its default. `index_path` is now set
+  in the generated file, named after it (`--init work.toml` gives
+  `~/.local/share/fast_code_search/work.fcsidx`); `cors_origins`,
+  `max_concurrent_searches`, `request_timeout_secs`, `respect_gitignore`,
+  `include_extensions`, `exclude_files` and `batch_size` are no longer
+  missing or commented out. A test keeps the template complete.
+
+### Added (storage)
+- Storage health checks. At startup and before each save the server warns
+  when the filesystem holding the index is out of inodes or short of space,
+  and when a filesystem holding indexed source is out of inodes. A failed
+  save with "No space left on device" says whether bytes or inodes ran out,
+  since an inode-exhausted disk still shows free space.
 
 ## [0.13.0] - 2026-09-08
 

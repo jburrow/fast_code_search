@@ -115,6 +115,7 @@ async fn main() -> Result<()> {
         paths_count = config.indexer.paths.len(),
         "Configuration loaded"
     );
+    log_storage_health(&config.indexer);
 
     if args.verbose {
         info!(paths = ?config.indexer.paths, "Paths to index");
@@ -433,6 +434,11 @@ async fn main() -> Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         web_ui = %web_status,
         grpc = %grpc_status,
+        index = %config
+            .indexer
+            .index_path
+            .as_deref()
+            .unwrap_or("memory only, not saved (index_path not set)"),
         "Fast Code Search Server ready"
     );
 
@@ -614,6 +620,23 @@ fn load_config(args: &Args) -> Result<(Config, String, Vec<String>)> {
     }
     let warnings = config.validate()?;
     Ok((config, source, warnings))
+}
+
+/// Warn about filesystems that are out of inodes or nearly full: the one the
+/// index is saved to, and the ones holding the indexed source.
+fn log_storage_health(indexer: &fast_code_search::config::IndexerConfig) {
+    use fast_code_search::storage;
+    if let Some(index_path) = &indexer.index_path {
+        let path = std::path::Path::new(index_path);
+        // Saving writes a new file beside the old one before replacing it.
+        let need = std::fs::metadata(path).map(|m| m.len() * 2).unwrap_or(0);
+        for problem in storage::check_index_storage(path, need) {
+            tracing::warn!("Storage: {problem}");
+        }
+    }
+    for problem in storage::check_source_roots(&indexer.paths) {
+        tracing::warn!("Storage: {problem}");
+    }
 }
 
 /// Advice to append to a failed-bind message.

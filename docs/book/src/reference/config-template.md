@@ -28,18 +28,20 @@ enable_web_ui = true
 
 # Origins allowed to call the REST API from another site (CORS).
 # Empty (default) = same-origin only, which is all the embedded UI needs.
-# cors_origins = ["http://localhost:3000"]   # or ["*"] to allow any origin
+# Example: ["http://localhost:3000"], or ["*"] to allow any origin
+cors_origins = []
 
 # Searches executing at once on the REST API; extra requests get 503 + Retry-After
-# max_concurrent_searches = 64
+max_concurrent_searches = 64
 
 # Per-request timeout (seconds) for both servers
-# request_timeout_secs = 30
+request_timeout_secs = 30
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
 # request so that UI edits are visible without recompiling the server.
-# Useful during development; leave commented out for production.
+# Useful during development. Unset (the default) = the assets embedded in the
+# binary; TOML has no "unset" value, so this one key stays commented out.
 # static_dir = "static"
 
 [indexer]
@@ -52,11 +54,11 @@ paths = [
 ]
 
 # Honour .gitignore / .ignore files under the indexed paths (default: true)
-# respect_gitignore = true
+respect_gitignore = true
 
 # File extensions to include (empty = all text files)
-# Uncomment and customize to limit indexed file types
-# include_extensions = ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+# Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
+include_extensions = []
 
 # Patterns to exclude from indexing
 exclude_patterns = [
@@ -73,7 +75,8 @@ exclude_patterns = [
 # Exact file paths to permanently exclude from indexing.
 # Useful for files that cause crashes or are too large/noisy to be useful.
 # After a crash, check fcs_last_processed.txt to identify the offending file.
-# exclude_files = ["/repo/src/generated/huge_file.rs"]
+# Example: ["/repo/src/generated/huge_file.rs"]
+exclude_files = []
 
 # Maximum file size to index in bytes (default: 10MB)
 max_file_size = 10485760
@@ -83,13 +86,13 @@ max_file_size = 10485760
 # Disable for UTF-8-only codebases for slightly faster indexing.
 transcode_non_utf8 = true
 
-# Path to persistent index storage (optional, no default)
-# If set, the index is saved to disk and loaded on restart, so a restart takes
-# seconds and only changed files are re-read. If unset, the index lives in
-# memory only and is rebuilt from scratch on every start (the server logs a
-# warning saying so). Use one file per config; the directory is created on
-# first save. `~` is expanded; relative paths resolve against this file.
-# index_path = "~/.local/share/fast_code_search/index.fcsidx"
+# Path to persistent index storage.
+# The index is saved here and loaded on restart, so a restart takes seconds
+# and only changed files are re-read. Remove the line to keep the index in
+# memory only: it is then rebuilt from scratch on every start, and the server
+# logs a warning saying so. Use one file per config. The directory is created
+# on first save; `~` is expanded and relative paths resolve against this file.
+index_path = "~/.local/share/fast_code_search/config.fcsidx"
 
 # Save index after initial build completes (default: true)
 # Only effective when index_path is set
@@ -114,6 +117,11 @@ watch = false
 # and used to boost search relevance for symbol matches.
 # Disable to reduce memory usage and indexing time at the cost of reduced relevance.
 enable_symbols = true
+
+# Files read and indexed per batch during the initial build (default: 500).
+# Peak RAM scales with batch_size x average file size x ~4: lower it on small
+# machines, raise it on large ones to reduce lock contention.
+batch_size = 500
 
 [telemetry]
 # Enable OpenTelemetry trace export (default: false)

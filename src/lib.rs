@@ -11,6 +11,7 @@ pub mod semantic_server;
 #[cfg(feature = "semantic")]
 pub mod semantic_web;
 pub mod server;
+pub mod storage;
 pub mod symbols;
 pub mod telemetry;
 pub mod utils;

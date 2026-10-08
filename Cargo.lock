@@ -845,6 +845,7 @@ dependencies = [
  "hnsw_rs",
  "ignore",
  "indicatif",
+ "libc",
  "memchr",
  "memmap2",
  "mime_guess",
