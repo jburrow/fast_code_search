@@ -61,7 +61,7 @@ fn not_found(file: &str) -> (StatusCode, String) {
 }
 
 /// Resolve a `file=` parameter to an id the graph knows.
-fn lookup(engine: &SearchEngine, file: &str) -> Result<u32, (StatusCode, String)> {
+pub(super) fn lookup(engine: &SearchEngine, file: &str) -> Result<u32, (StatusCode, String)> {
     engine
         .find_file_id(file)
         .filter(|&id| engine.dependency_index.path_of(id).is_some())

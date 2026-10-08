@@ -105,6 +105,12 @@ server running on a developer machine, start it at login:
   interleaved by file so one file cannot fill a page.
 - **`fcs`** ([docs/CLI.md](docs/CLI.md)): grep-style output and exit codes, `--json`,
   and an offline fallback that searches the saved index when the server is down.
+- **Dependency explorer** in the web UI: a file's imports and importers, the
+  impact of changing it, import chains and a folder map, beside its source.
+- **MCP for coding agents** at `/mcp`: search, read files and walk the import
+  graph from Claude Code or any MCP client
+  (`claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp`,
+  or `fcs mcp` over stdio). See [docs/API.md](docs/API.md#mcp-coding-agents).
 - **Semantic search** (optional, experimental, behind the `semantic` feature):
   natural-language queries over TF-IDF or embedding vectors on its own ports; see
   [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
