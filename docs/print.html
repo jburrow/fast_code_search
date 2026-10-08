@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-71bdfb67.js";
+            window.path_to_searchindex_js = "searchindex-38dc6b85.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4e79abd4.js"></script>
@@ -3171,6 +3171,16 @@ nothing listening.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Search correctness review: a file with more than 100 hits now reports
+the total as unknown and LOAD MORE reaches its later lines (it claimed an
+exact count of 100); a regex mentioning <code>\n</code> keeps <code>^</code> and <code>$</code> per line
+(they matched only at the file’s ends), and an escaped backslash such as
+<code>\\n</code> no longer switches to whole-file matching; symbol search returns
+files whose only match is their name again and honours <code>-term</code>; <code>file:</code>
+and <code>-file:</code> words no longer match the indexed root folder’s own name
+(<code>-file:search</code> dropped every file of a root named <code>fast_code_search</code>);
+a filename-only hit obeys <code>case:yes</code> and <code>word:yes</code>; <code>fcs search -e -i</code>
+against an index file now ignores case, as it does against a server.</li>
 <li>Plain-text search for code containing quotes (<code>{ "success": True</code>,
 <code>"key":"value"</code>) found nothing: the query parser stripped every <code>"</code>, so
 the term became <code>success:</code>. A quote now opens a phrase only when it
