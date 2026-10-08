@@ -246,6 +246,9 @@ pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
     pub server_type: &'static str,
+    /// Startup problems recorded for `/api/diagnostics` (busy port, index
+    /// owned by another server, config warnings), so the UI can point at them.
+    pub problems: usize,
 }
 
 /// Indexing status response
@@ -694,6 +697,7 @@ pub async fn health_handler() -> Json<HealthResponse> {
         status: "healthy",
         version: env!("CARGO_PKG_VERSION"),
         server_type: "keyword",
+        problems: diagnostics::service_status(None).problems.len(),
     })
 }
 
@@ -1585,7 +1589,8 @@ pub async fn diagnostics_handler(
 
         // Calculate overall health status
         let test_summary = TestSummary::from_results(&self_tests);
-        let status = if test_summary.failed == 0 {
+        let service = diagnostics::service_status(indexer_config.as_deref());
+        let status = if test_summary.failed == 0 && service.problems.is_empty() {
             HealthStatus::Healthy
         } else if test_summary.failed <= test_summary.total / 2 {
             HealthStatus::Degraded
@@ -1600,6 +1605,7 @@ pub async fn diagnostics_handler(
             uptime_human: diagnostics::format_uptime(diagnostics::get_uptime_secs()),
             generated_at: diagnostics::get_timestamp(),
             config,
+            service,
             index: KeywordIndexDiagnostics {
                 num_files: stats.num_files,
                 total_size_bytes: stats.total_size,

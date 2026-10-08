@@ -81,8 +81,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Load configuration
-    let config = load_config(&args)?;
+    // Load configuration. Logging starts after this (it needs the config's
+    // telemetry section), so where the config came from is logged below.
+    let (config, config_source) = load_config(&args)?;
 
     // Initialize tracing (must come after config load)
     let log_level = if args.verbose {
@@ -101,6 +102,7 @@ async fn main() -> Result<()> {
     // Initialize diagnostics server start time
     diagnostics::init_server_start_time();
 
+    info!(source = %config_source, "Configuration source");
     info!(
         server_address = %config.server.web_address,
         "Semantic Search Configuration loaded"
@@ -289,32 +291,65 @@ async fn main() -> Result<()> {
         info!("No paths configured for indexing");
     }
 
-    // Start gRPC server
+    // Bind both ports up front. A port that cannot be bound is reported
+    // clearly and only disables that API; startup fails only if neither API
+    // could start. (Binding inside the spawned tasks used to panic there,
+    // leaving a running process with no API and no clear message.)
     let grpc_addr = config.server.address.clone();
-    let grpc_engine = Arc::clone(&shared_engine);
+    let (grpc_listener, grpc_status) = match tokio::net::TcpListener::bind(&grpc_addr).await {
+        Ok(l) => (Some(l), format!("grpc://{grpc_addr}")),
+        Err(e) => {
+            tracing::error!(
+                "Semantic gRPC API NOT started: cannot listen on {grpc_addr}: {e}. \
+                 The rest of the server keeps running without it. {}",
+                diagnostics::port_hint(&e, &grpc_addr, "server.address", "--address")
+            );
+            (None, format!("NOT running ({grpc_addr}: {e})"))
+        }
+    };
+    let web_addr = config.server.web_address.clone();
+    let (web_listener, web_status) = if !config.server.enable_web_ui {
+        (None, "disabled".to_string())
+    } else {
+        match tokio::net::TcpListener::bind(&web_addr).await {
+            Ok(l) => (Some(l), format!("http://{web_addr}")),
+            Err(e) => {
+                tracing::error!(
+                    "Semantic Web UI NOT started: cannot listen on {web_addr}: {e}. {}",
+                    diagnostics::port_hint(&e, &web_addr, "server.web_address", "")
+                );
+                (None, format!("NOT running ({web_addr}: {e})"))
+            }
+        }
+    };
+    if grpc_listener.is_none() && web_listener.is_none() {
+        anyhow::bail!(
+            "No API could be started (gRPC: {grpc_status}; web UI: {web_status}), \
+             so nothing could search the index. See the errors above."
+        );
+    }
 
-    info!(grpc_address = %grpc_addr, "Starting gRPC server");
+    if let Some(listener) = grpc_listener {
+        let grpc_engine = Arc::clone(&shared_engine);
+        tokio::spawn(async move {
+            use fast_code_search::semantic_server::{
+                SemanticCodeSearchServer, SemanticSearchService,
+            };
+            use tonic::transport::Server;
 
-    tokio::spawn(async move {
-        use fast_code_search::semantic_server::{SemanticCodeSearchServer, SemanticSearchService};
-        use tonic::transport::Server;
+            let service = SemanticSearchService::new(grpc_engine);
+            if let Err(e) = Server::builder()
+                .trace_fn(|_| tracing::info_span!("semantic_grpc"))
+                .add_service(SemanticCodeSearchServer::new(service))
+                .serve_with_incoming(tonic::transport::server::TcpIncoming::from(listener))
+                .await
+            {
+                tracing::error!(error = %e, "Semantic gRPC server stopped unexpectedly");
+            }
+        });
+    }
 
-        let service = SemanticSearchService::new(grpc_engine);
-        let addr = grpc_addr.parse().expect("Invalid gRPC server address");
-
-        info!(address = %grpc_addr, "Semantic gRPC server listening on {}", grpc_addr);
-
-        Server::builder()
-            .trace_fn(|_| tracing::info_span!("semantic_grpc"))
-            .add_service(SemanticCodeSearchServer::new(service))
-            .serve(addr)
-            .await
-            .expect("gRPC server failed");
-    });
-
-    // Start web server
-    if config.server.enable_web_ui {
-        let web_addr = config.server.web_address.clone();
+    if let Some(listener) = web_listener {
         let web_engine = Arc::clone(&shared_engine);
         let web_progress = Arc::clone(&shared_progress);
         let web_progress_tx = progress_tx.clone();
@@ -334,8 +369,6 @@ async fn main() -> Result<()> {
             info!("Serving static UI files from compiled binary");
         }
 
-        info!(web_address = %web_addr, "Starting Web UI server");
-
         tokio::spawn(async move {
             let state = WebState {
                 engine: web_engine,
@@ -344,19 +377,13 @@ async fn main() -> Result<()> {
                 static_dir,
             };
             let router = semantic_web::create_router(state);
-            let listener = tokio::net::TcpListener::bind(&web_addr)
-                .await
-                .expect("Failed to bind Web UI");
-
-            info!(address = %web_addr, "Semantic Web UI available at http://{}", web_addr);
-
-            axum::serve(listener, router)
-                .await
-                .expect("Web UI server failed");
+            if let Err(e) = axum::serve(listener, router).await {
+                tracing::error!(error = %e, "Semantic Web UI server stopped unexpectedly");
+            }
         });
     }
 
-    info!("Semantic Search Server ready");
+    info!(web_ui = %web_status, grpc = %grpc_status, "Semantic Search Server ready");
     info!("Press Ctrl+C to stop");
 
     // Keep the main thread alive
@@ -369,7 +396,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_config(args: &Args) -> Result<SemanticConfig> {
+/// Load the config and apply CLI overrides. Returns it with a description of
+/// where it came from, which the caller logs once tracing is initialised.
+fn load_config(args: &Args) -> Result<(SemanticConfig, String)> {
     let base_config = if let Some(ref config_path) = args.config {
         if !config_path.exists() {
             anyhow::bail!(
@@ -378,20 +407,23 @@ fn load_config(args: &Args) -> Result<SemanticConfig> {
                 config_path.display()
             );
         }
-        info!(path = %config_path.display(), "Loading config");
-        SemanticConfig::from_file(config_path)?
+        let source = format!("{} (--config)", config_path.display());
+        (SemanticConfig::from_file(config_path)?, source)
     } else {
         match SemanticConfig::from_default_locations()? {
-            Some((config, path)) => {
-                info!(path = %path.display(), "Loading config from default location");
-                config
-            }
-            None => {
-                info!("No config file found, using defaults");
-                SemanticConfig::default()
-            }
+            Some((config, path)) => (config, format!("{} (default location)", path.display())),
+            None => (
+                SemanticConfig::default(),
+                "none: no --config given and no file at a default location, so built-in \
+                 defaults are used"
+                    .to_string(),
+            ),
         }
     };
+    let (base_config, source) = base_config;
 
-    Ok(base_config.with_overrides(args.address.clone(), args.index_paths.clone()))
+    Ok((
+        base_config.with_overrides(args.address.clone(), args.index_paths.clone()),
+        source,
+    ))
 }

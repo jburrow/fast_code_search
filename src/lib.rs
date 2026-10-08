@@ -3,6 +3,7 @@ pub mod config;
 pub mod dependencies;
 pub mod diagnostics;
 pub mod index;
+pub mod index_lock;
 pub mod search;
 #[cfg(feature = "semantic")]
 pub mod semantic;

@@ -94,7 +94,7 @@ pub fn existing_ancestor(path: &Path) -> Option<PathBuf> {
 }
 
 /// Problems with the filesystem the index is saved to: too few free inodes,
-/// or less free space than `need_bytes` (at least [`MIN_FREE_BYTES`]).
+/// or less free space than `need_bytes` (at least 256 MB).
 /// Empty when everything looks fine or nothing can be measured.
 pub fn check_index_storage(index_path: &Path, need_bytes: u64) -> Vec<String> {
     let Some(dir) = existing_ancestor(index_path) else {
@@ -168,6 +168,21 @@ fn filesystem_id(path: &Path) -> Option<u64> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
     Some(h.finish())
+}
+
+/// Every storage problem for this indexer config: the index filesystem
+/// (out of inodes or space for another save) and the source filesystems
+/// (out of inodes).
+pub fn storage_problems(indexer: &crate::config::IndexerConfig) -> Vec<String> {
+    let mut problems = Vec::new();
+    if let Some(index_path) = &indexer.index_path {
+        let path = Path::new(index_path);
+        // Saving writes a new file beside the old one before replacing it.
+        let need = std::fs::metadata(path).map(|m| m.len() * 2).unwrap_or(0);
+        problems.extend(check_index_storage(path, need));
+    }
+    problems.extend(check_source_roots(&indexer.paths));
+    problems
 }
 
 /// If `err` is a "no space left on device" error, explain whether bytes or

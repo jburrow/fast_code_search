@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     // Load configuration. Logging is not set up yet (it needs the config's
     // telemetry section), so where the config came from and any warnings are
     // returned and logged below instead of being lost.
-    let (config, config_source, config_warnings) = load_config(&args)?;
+    let (mut config, config_source, config_warnings) = load_config(&args)?;
 
     // Initialize tracing subscriber (must come after config load so TOML telemetry values are available)
     let log_level = if args.verbose {
@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
     info!(source = %config_source, "Configuration source");
     for w in &config_warnings {
         tracing::warn!("Config: {w}");
+        diagnostics::record_problem(format!("Config: {w}"));
     }
     info!(
         server_address = %config.server.address,
@@ -116,6 +117,7 @@ async fn main() -> Result<()> {
         "Configuration loaded"
     );
     log_storage_health(&config.indexer);
+    let _index_lock = lock_index(&mut config);
 
     if args.verbose {
         info!(paths = ?config.indexer.paths, "Paths to index");
@@ -213,10 +215,12 @@ async fn main() -> Result<()> {
                 web_listener = Some(listener);
             }
             Err(e) => {
-                tracing::error!(
+                let msg = format!(
                     "Web UI / REST API NOT started: cannot listen on {web_addr}: {e}. {}",
-                    port_hint(&e, &web_addr, "server.web_address", "--web-address")
+                    diagnostics::port_hint(&e, &web_addr, "server.web_address", "--web-address")
                 );
+                tracing::error!("{msg}");
+                diagnostics::record_problem(msg);
                 web_status = format!("NOT running ({web_addr}: {e})");
             }
         }
@@ -262,11 +266,13 @@ async fn main() -> Result<()> {
                 format!("grpc://{grpc_addr}")
             }
             Err(e) => {
-                tracing::error!(
+                let msg = format!(
                     "gRPC API NOT started: cannot listen on {grpc_addr}: {e}. \
                      The rest of the server keeps running without it. {}",
-                    port_hint(&e, grpc_addr, "server.address", "--address")
+                    diagnostics::port_hint(&e, grpc_addr, "server.address", "--address")
                 );
+                tracing::error!("{msg}");
+                diagnostics::record_problem(msg);
                 format!("NOT running ({grpc_addr}: {e})")
             }
         }
@@ -430,15 +436,19 @@ async fn main() -> Result<()> {
         request_timeout,
     );
 
+    let persistence = match config.indexer.index_path.as_deref() {
+        Some(p) if config.indexer.index_read_only => {
+            format!("{p} (read-only: another server holds its lock)")
+        }
+        Some(p) => p.to_string(),
+        None => "OFF: memory only, rebuilt on every start (index_path not set)".to_string(),
+    };
+    diagnostics::set_service_endpoints(&grpc_status, &web_status, &persistence);
     info!(
         version = env!("CARGO_PKG_VERSION"),
         web_ui = %web_status,
         grpc = %grpc_status,
-        index = %config
-            .indexer
-            .index_path
-            .as_deref()
-            .unwrap_or("memory only, not saved (index_path not set)"),
+        index = %persistence,
         "Fast Code Search Server ready"
     );
 
@@ -622,35 +632,56 @@ fn load_config(args: &Args) -> Result<(Config, String, Vec<String>)> {
     Ok((config, source, warnings))
 }
 
-/// Warn about filesystems that are out of inodes or nearly full: the one the
-/// index is saved to, and the ones holding the indexed source.
-fn log_storage_health(indexer: &fast_code_search::config::IndexerConfig) {
-    use fast_code_search::storage;
-    if let Some(index_path) = &indexer.index_path {
-        let path = std::path::Path::new(index_path);
-        // Saving writes a new file beside the old one before replacing it.
-        let need = std::fs::metadata(path).map(|m| m.len() * 2).unwrap_or(0);
-        for problem in storage::check_index_storage(path, need) {
-            tracing::warn!("Storage: {problem}");
+/// Take the lock on `index_path` for the life of the process. If another
+/// server holds it, say which one and continue read-only: this server loads
+/// the index but never saves over the other's.
+fn lock_index(
+    config: &mut fast_code_search::config::Config,
+) -> Option<fast_code_search::index_lock::IndexLock> {
+    use fast_code_search::index_lock::{describe_owner, IndexLock, LockError};
+    let index_path = config.indexer.index_path.clone()?;
+    let enabled = |on: bool, addr: &str| {
+        if on {
+            addr.to_string()
+        } else {
+            "off".to_string()
         }
-    }
-    for problem in storage::check_source_roots(&indexer.paths) {
-        tracing::warn!("Storage: {problem}");
+    };
+    let owner = describe_owner(
+        &enabled(config.server.enable_grpc, &config.server.address),
+        &enabled(config.server.enable_web_ui, &config.server.web_address),
+    );
+    match IndexLock::acquire(std::path::Path::new(&index_path), &owner) {
+        Ok(lock) => {
+            tracing::debug!(lock = %lock.path().display(), "Index lock acquired");
+            Some(lock)
+        }
+        Err(e @ LockError::HeldByAnother { .. }) => {
+            let msg = format!(
+                "Index NOT writable: {e}. This server will load the index but never save \
+                 it, so the two cannot overwrite each other. Stop the other server \
+                 (often an earlier one still running), or give this config its own \
+                 index_path."
+            );
+            tracing::error!("{msg}");
+            diagnostics::record_problem(msg);
+            config.indexer.index_read_only = true;
+            None
+        }
+        Err(e) => {
+            let msg = format!("Index lock unavailable, continuing without it: {e}");
+            tracing::warn!("{msg}");
+            diagnostics::record_problem(msg);
+            None
+        }
     }
 }
 
-/// Advice to append to a failed-bind message.
-fn port_hint(err: &std::io::Error, addr: &str, config_key: &str, flag: &str) -> String {
-    let port = addr.rsplit(':').next().unwrap_or(addr);
-    match err.kind() {
-        std::io::ErrorKind::AddrInUse => format!(
-            "Another process is using port {port}, often an earlier fast_code_search \
-             server that is still running; find it with `ss -ltnp | grep :{port}`. \
-             Stop it, or pick a free port with {config_key} / {flag}."
-        ),
-        std::io::ErrorKind::PermissionDenied => format!(
-            "Ports below 1024 need extra privileges; pick a higher port with {config_key} / {flag}."
-        ),
-        _ => format!("Check {config_key} / {flag}."),
+/// Warn about filesystems that are out of inodes or nearly full: the one the
+/// index is saved to, and the ones holding the indexed source.
+fn log_storage_health(indexer: &fast_code_search::config::IndexerConfig) {
+    // Not recorded for diagnostics: the page re-checks storage on each load.
+    for problem in fast_code_search::storage::storage_problems(indexer) {
+        tracing::warn!("Storage: {problem}");
     }
 }

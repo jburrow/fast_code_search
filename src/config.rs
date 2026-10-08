@@ -222,6 +222,12 @@ pub struct IndexerConfig {
     /// reduced search relevance for symbol-based queries.
     #[serde(default = "default_true")]
     pub enable_symbols: bool,
+
+    /// Load `index_path` but never write it. Not a config key: the server
+    /// sets it when another server holds the index lock, so the two cannot
+    /// overwrite each other's index.
+    #[serde(skip)]
+    pub index_read_only: bool,
 }
 
 // Both servers bind to loopback by default: there is no authentication, the
@@ -304,6 +310,7 @@ impl Default for IndexerConfig {
             transcode_non_utf8: true,
             batch_size: default_batch_size(),
             enable_symbols: true,
+            index_read_only: false,
         }
     }
 }
