@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composed, and the parts of a deployment.
 - `server.enable_grpc` (default `true`) and `--no-grpc` to run without the
   gRPC API.
+- Storage health checks. At startup and before each save the server warns
+  when the filesystem holding the index is out of inodes or short of space,
+  and when a filesystem holding indexed source is out of inodes. A failed
+  save with "No space left on device" says whether bytes or inodes ran out,
+  since an inode-exhausted disk still shows free space.
 
 ### Changed
 - A busy or forbidden port no longer stops the server. If the gRPC or web
@@ -39,13 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_concurrent_searches`, `request_timeout_secs`, `respect_gitignore`,
   `include_extensions`, `exclude_files` and `batch_size` are no longer
   missing or commented out. A test keeps the template complete.
-
-### Added (storage)
-- Storage health checks. At startup and before each save the server warns
-  when the filesystem holding the index is out of inodes or short of space,
-  and when a filesystem holding indexed source is out of inodes. A failed
-  save with "No space left on device" says whether bytes or inodes ran out,
-  since an inode-exhausted disk still shows free space.
 
 ## [0.13.0] - 2026-09-08
 
