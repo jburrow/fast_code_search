@@ -37,12 +37,12 @@ by this repository's release workflow for this tag, and not merely
 uploaded by someone holding the account.
 
 ```bash
-sha256sum -c fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c fast_code_search-v0.14.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 cosign verify-blob \
-  --bundle fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --bundle fast_code_search-v0.14.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  fast_code_search-v0.13.0-x86_64-unknown-linux-gnu.tar.gz
+  fast_code_search-v0.14.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 [`cosign`](https://docs.sigstore.dev/cosign/installation/) is a single
@@ -72,7 +72,7 @@ container image.
 ## Container image
 
 Every release from v0.13.0 is also published as
-`ghcr.io/jburrow/fast_code_search` (tags `latest`, `0.13`, `0.13.0`). The
+`ghcr.io/jburrow/fast_code_search` (tags `latest`, `0.14`, `0.14.0`). The
 image indexes whatever is mounted at `/src`, watches it for changes, and
 serves the web UI and REST API on port 8080 and gRPC on 50051:
 

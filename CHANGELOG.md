@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-08
+
 ### Added
 - A ripgrep backtest: `examples/rg_backtest.rs` runs every query in
   `benches/rg_backtest.toml` (124 queries, including cases adapted from
@@ -1096,7 +1098,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/jburrow/fast_code_search/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/jburrow/fast_code_search/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/jburrow/fast_code_search/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/jburrow/fast_code_search/compare/v0.11.0...v0.12.0
