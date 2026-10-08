@@ -488,7 +488,8 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
             <table>
                 <tr><th>Syntax</th><th>Meaning</th></tr>
                 <tr><td><code>"exact phrase"</code></td><td>One term containing spaces, matched literally
-                    (<code>"fn main"</code> finds <code>fn main</code>, not <code>fn range</code>)</td></tr>
+                    (<code>"fn main"</code> finds <code>fn main</code>, not <code>fn range</code>). Quotes that
+                    do not wrap a whole word are searched for as written: <code>{ "success": True</code></td></tr>
                 <tr><td><code>-term</code></td><td>Drop files that contain <code>term</code></td></tr>
                 <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td>
                     <td>Only / never paths matching PATTERN (a bare word matches anywhere in the path; globs and <code>/</code> are used as written)</td></tr>

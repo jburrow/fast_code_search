@@ -2666,3 +2666,39 @@ fn test_rust_items_inside_cfg_macros_are_symbols() {
         .unwrap();
     assert_eq!(hits.first().map(|h| h.line_number), Some(8), "{hits:?}");
 }
+
+/// Bug report: a plain-text search for `{ "success": True` returned nothing
+/// (the parser dropped the quotes and searched for `success:`). The line
+/// holding the whole query now comes back first.
+#[test]
+fn test_plain_search_keeps_quotes_inside_terms() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    let hit = temp_dir.path().join("api.py");
+    fs::write(
+        &hit,
+        "def ok():\n    return { \"success\": True, \"data\": 1 }\n",
+    )
+    .unwrap();
+    let json = temp_dir.path().join("resp.json");
+    fs::write(&json, "{\"success\":false}\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&hit).unwrap();
+    engine.index_file(&json).unwrap();
+    engine.finalize();
+
+    let search = |q: &str| {
+        engine
+            .search_parsed(&parse(q), "", "", SearchLimits::new(20), RankMode::Full)
+            .unwrap()
+            .0
+    };
+    let hits = search("{ \"success\": True");
+    assert!(!hits.is_empty(), "the known hit must be found");
+    assert!(hits[0].file_path.ends_with("api.py"));
+    assert_eq!(hits[0].line_number, 2);
+
+    let hits = search("{\"success\":false}");
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].file_path.ends_with("resp.json"));
+}

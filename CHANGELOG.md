@@ -62,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a panic inside a background task that left the process running with
   nothing listening.
 
+### Fixed
+- Plain-text search for code containing quotes (`{ "success": True`,
+  `"key":"value"`) found nothing: the query parser stripped every `"`, so
+  the term became `success:`. A quote now opens a phrase only when it
+  wraps a whole token; any other quote is searched for as written.
+
 ## [0.13.0] - 2026-09-08
 
 ### Added
