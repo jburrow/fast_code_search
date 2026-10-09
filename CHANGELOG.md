@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `show_root_name` indexer option (default `true`). Set it to `false` to show
+  result paths without the indexed folder's name (`src/main.rs` instead of
+  `myapp/src/main.rs`) in the web UI, REST API, `fcs` and MCP. Only applies
+  when a single path is indexed; `file:` filters are unaffected.
+
 ## [0.14.0] - 2026-10-08
 
 ### Added

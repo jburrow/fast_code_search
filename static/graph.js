@@ -331,10 +331,10 @@ function drawMap(full) {
         if (!byCol.has(k)) byCol.set(k, []);
         byCol.get(k).push(f);
     });
-    // Every display path starts with its indexed root's name; when there is
-    // only one root, leave it off the labels.
+    // Display paths start with their indexed root's name (unless the server
+    // hides it); when there is only one root, leave it off the labels.
     const roots = new Set(full.folders.map(f => f.folder.split('/')[0]));
-    const strip = roots.size === 1 ? [...roots][0] : null;
+    const strip = full.root_name_shown !== false && roots.size === 1 ? [...roots][0] : null;
     const name = (d) => {
         if (d === '' || d === strip) return '(root)';
         return (strip && d.startsWith(strip + '/') ? d.slice(strip.length + 1) : d) + '/';

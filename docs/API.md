@@ -240,6 +240,7 @@ exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**"]
 include_extensions = []           # empty = every text file; ["rs", "py"] to restrict
 max_file_size = 10485760          # bytes; 0 = default
 respect_gitignore = true
+show_root_name = true             # false: src/main.rs instead of myapp/src/main.rs (one path only)
 
 index_path = "~/.local/share/fast_code_search/index.fcsidx"   # persist across restarts
 save_after_build = true

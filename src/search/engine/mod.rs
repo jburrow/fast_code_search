@@ -572,16 +572,20 @@ pub struct FileMetadata {
     pub base_score: f32,
     /// Lowercase filename stem for efficient query matching (avoids per-query allocation)
     pub lowercase_stem: String,
-    /// Root-relative display path, precomputed so path filters and result
-    /// construction never allocate per candidate.
+    /// Root-qualified path (`<root name>/<relative>`), precomputed so path
+    /// filters and result construction never allocate per candidate. Path
+    /// filters always match this form.
     pub display_path: String,
+    /// Byte offset in `display_path` where the path shown in results starts:
+    /// 0, or past `<root name>/` when the root folder's name is hidden.
+    pub display_start: u32,
 }
 
 impl FileMetadata {
     /// Compute metadata for a file at index time
     fn compute(
         path: &Path,
-        display_path: String,
+        (display_path, display_start): (String, usize),
         symbol_count: usize,
         dependency_count: u32,
     ) -> Self {
@@ -645,6 +649,7 @@ impl FileMetadata {
             base_score,
             lowercase_stem,
             display_path,
+            display_start: display_start as u32,
         }
     }
 
@@ -704,6 +709,10 @@ pub struct SearchEngine {
     pub max_file_size: u64,
     /// Canonical root paths used to produce root-relative display paths
     root_paths: Vec<PathBuf>,
+    /// Whether displayed paths start with the indexed root folder's own name
+    /// (default: true). Only honoured with a single root; see
+    /// [`Self::make_display_path`].
+    pub show_root_name: bool,
 }
 
 impl SearchEngine {
@@ -728,6 +737,7 @@ impl SearchEngine {
             transcode_non_utf8: true,
             max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
             root_paths: Vec::new(),
+            show_root_name: true,
         }
     }
 
@@ -747,42 +757,71 @@ impl SearchEngine {
         }
     }
 
-    /// Convert a (canonical) stored file path into a workspace-relative display
-    /// string using forward slashes.
-    ///
-    /// The display path always includes the root folder's own name as the first
-    /// component — mirroring the VSCode workspace experience where opening
-    /// `/workspace/project` shows files as `project/src/main.rs`.  This makes
-    /// results unambiguous when multiple root paths share the same internal
-    /// layout (e.g. two repos both containing a `src/main.rs`).
-    ///
-    /// If `path` is under one of the registered root paths the absolute prefix
-    /// *above* the root folder is stripped, preserving the root folder name.
-    /// E.g. root `/workspace/project`, file `/workspace/project/src/main.rs`
-    /// → `project/src/main.rs`.  When no root matches, the full path is
-    /// returned with backslashes normalised to forward slashes so that the
-    /// output is always OS-agnostic.
-    pub fn make_display_path(&self, path: &Path) -> String {
+    /// Whether displayed paths leave off the root folder's name: only when
+    /// `show_root_name` is off and exactly one root is indexed, since with
+    /// several roots two `src/main.rs` would be indistinguishable.
+    pub fn hides_root_name(&self) -> bool {
+        !self.show_root_name && self.root_paths.len() == 1
+    }
+
+    /// The root-qualified path of `path` and the byte offset where its
+    /// displayed form starts (see [`Self::make_display_path`]).
+    fn qualified_display_path(&self, path: &Path) -> (String, usize) {
         for root in &self.root_paths {
             if let Ok(relative) = path.strip_prefix(root) {
-                // Include the root folder name so the display path is
+                let relative_str = relative.to_string_lossy().replace('\\', "/");
+                // Include the root folder name so the path is
                 // workspace-relative (e.g. `project/src/main.rs`).
                 if let Some(root_name) = root.file_name() {
                     let root_name_str = root_name.to_string_lossy();
-                    let relative_str = relative.to_string_lossy().replace('\\', "/");
                     if relative_str.is_empty() {
-                        // Path IS the root directory itself
-                        return root_name_str.to_string();
+                        // Path IS the root directory (or a single-file root)
+                        return (root_name_str.to_string(), 0);
                     }
-                    return format!("{}/{}", root_name_str, relative_str);
+                    let start = if self.hides_root_name() {
+                        root_name_str.len() + 1
+                    } else {
+                        0
+                    };
+                    return (format!("{}/{}", root_name_str, relative_str), start);
                 }
                 // Root has no file_name (e.g. filesystem root "/") — fall back
                 // to the bare relative path.
-                return relative.to_string_lossy().replace('\\', "/");
+                return (relative_str, 0);
             }
         }
         // Fallback: return the full path with forward slashes
-        path.to_string_lossy().replace('\\', "/")
+        (path.to_string_lossy().replace('\\', "/"), 0)
+    }
+
+    /// Root-qualified path of a (canonical) stored file path, always starting
+    /// with the root folder's own name (`project/src/main.rs`) whatever
+    /// `show_root_name` says. This is what path filters match against, so
+    /// `file:` / `-file:` behave the same whether or not the name is shown.
+    pub fn root_qualified_path(&self, path: &Path) -> String {
+        self.qualified_display_path(path).0
+    }
+
+    /// Convert a (canonical) stored file path into a workspace-relative display
+    /// string using forward slashes.
+    ///
+    /// By default the display path includes the root folder's own name as the
+    /// first component — mirroring the VSCode workspace experience where
+    /// opening `/workspace/project` shows files as `project/src/main.rs`. This
+    /// makes results unambiguous when multiple root paths share the same
+    /// internal layout (e.g. two repos both containing a `src/main.rs`). With
+    /// `show_root_name` off and a single root, the name is left off
+    /// (`src/main.rs`).
+    ///
+    /// If `path` is under one of the registered root paths the absolute prefix
+    /// *above* the root folder is stripped. E.g. root `/workspace/project`,
+    /// file `/workspace/project/src/main.rs` → `project/src/main.rs`. When no
+    /// root matches, the full path is returned with backslashes normalised to
+    /// forward slashes so that the output is always OS-agnostic.
+    pub fn make_display_path(&self, path: &Path) -> String {
+        let (mut qualified, start) = self.qualified_display_path(path);
+        qualified.drain(..start);
+        qualified
     }
 
     /// Index a file.
@@ -1199,7 +1238,7 @@ impl SearchEngine {
         let file = self.file_store.get(file_id)?;
         Some(match self.file_metadata.get(file_id as usize) {
             Some(m) if !m.display_path.is_empty() => {
-                std::borrow::Cow::Borrowed(m.display_path.as_str())
+                std::borrow::Cow::Borrowed(&m.display_path[m.display_start as usize..])
             }
             _ => std::borrow::Cow::Owned(self.make_display_path(&file.path)),
         })
@@ -1234,9 +1273,15 @@ impl SearchEngine {
     }
 
     /// Reverse [`Self::make_display_path`]: `project/src/main.rs` ->
-    /// `<root ending in project>/src/main.rs`, looked up exactly.
+    /// `<root ending in project>/src/main.rs`, looked up exactly. With the
+    /// root name hidden, `src/main.rs` is first tried under the single root.
     fn find_by_display_path(&self, display: &str) -> Option<u32> {
         let display = display.replace('\\', "/");
+        if self.hides_root_name() {
+            if let Some(id) = self.find_file_id_exact(&self.root_paths[0].join(&display)) {
+                return Some(id);
+            }
+        }
         for root in &self.root_paths {
             let Some(root_name) = root.file_name().and_then(|n| n.to_str()) else {
                 continue;
@@ -1687,7 +1732,7 @@ impl SearchEngine {
             Some(file) => {
                 let symbol_count = self.symbol_cache.get(idx).map(|s| s.len()).unwrap_or(0);
                 let dep_count = self.dependency_index.get_import_count(id);
-                let display = self.make_display_path(&file.path);
+                let display = self.qualified_display_path(&file.path);
                 FileMetadata::compute(&file.path, display, symbol_count, dep_count)
             }
             None => FileMetadata::default(),
@@ -1713,7 +1758,7 @@ impl SearchEngine {
                     .map(|s| s.len())
                     .unwrap_or(0);
                 let dep_count = self.dependency_index.get_import_count(file_id);
-                let display = self.make_display_path(&file.path);
+                let display = self.qualified_display_path(&file.path);
                 FileMetadata::compute(&file.path, display, symbol_count, dep_count)
             } else {
                 FileMetadata::default()

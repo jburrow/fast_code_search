@@ -187,6 +187,7 @@ pub fn run(config: BackgroundIndexerConfig) {
         engine.enable_symbols = indexer_config.enable_symbols;
         engine.transcode_non_utf8 = indexer_config.transcode_non_utf8;
         engine.max_file_size = indexer_config.max_file_size;
+        engine.show_root_name = indexer_config.show_root_name;
         for path in &indexer_config.paths {
             engine.add_root_path(path);
         }

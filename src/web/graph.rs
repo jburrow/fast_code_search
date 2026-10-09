@@ -504,6 +504,9 @@ pub struct ModuleEdge {
 pub struct ModulesResponse {
     pub folders: Vec<ModuleFolder>,
     pub edges: Vec<ModuleEdge>,
+    /// Whether paths start with the indexed root folder's name (false when
+    /// `show_root_name` hides it), so the UI knows whether to strip it.
+    pub root_name_shown: bool,
 }
 
 fn build_modules(engine: &SearchEngine, containment: bool) -> ModulesResponse {
@@ -569,7 +572,11 @@ fn build_modules(engine: &SearchEngine, containment: bool) -> ModulesResponse {
         .collect();
     edges.sort_by(|x, y| x.from.cmp(&y.from).then_with(|| x.to.cmp(&y.to)));
     folders.sort_by(|x, y| x.folder.cmp(&y.folder));
-    ModulesResponse { folders, edges }
+    ModulesResponse {
+        folders,
+        edges,
+        root_name_shown: !engine.hides_root_name(),
+    }
 }
 
 /// `GET /api/graph/modules`: the graph collapsed to folders, with the

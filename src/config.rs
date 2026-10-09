@@ -223,6 +223,14 @@ pub struct IndexerConfig {
     #[serde(default = "default_true")]
     pub enable_symbols: bool,
 
+    /// Start result paths with the indexed folder's own name (default: true).
+    /// Indexing `/code/myapp` shows `myapp/src/main.rs`; set this to false to
+    /// show `src/main.rs`. Only takes effect when a single path is indexed:
+    /// with several, the folder name is what tells their files apart.
+    /// Display only: `file:` filters and the saved index are unaffected.
+    #[serde(default = "default_true")]
+    pub show_root_name: bool,
+
     /// Load `index_path` but never write it. Not a config key: the server
     /// sets it when another server holds the index lock, so the two cannot
     /// overwrite each other's index.
@@ -310,6 +318,7 @@ impl Default for IndexerConfig {
             transcode_non_utf8: true,
             batch_size: default_batch_size(),
             enable_symbols: true,
+            show_root_name: true,
             index_read_only: false,
         }
     }
@@ -709,6 +718,12 @@ watch = false
 # Disable to reduce memory usage and indexing time at the cost of reduced relevance.
 enable_symbols = true
 
+# Start result paths with the indexed folder's name (default: true).
+# Indexing /code/myapp shows myapp/src/main.rs; false shows src/main.rs.
+# Only applies when a single path is indexed. Display only: file: filters
+# and the saved index are unaffected.
+show_root_name = true
+
 # Files read and indexed per batch during the initial build (default: 500).
 # Peak RAM scales with batch_size x average file size x ~4: lower it on small
 # machines, raise it on large ones to reduce lock contention.
@@ -781,6 +796,14 @@ mod tests {
         let template = Config::generate_template();
         let cfg: Config = toml::from_str(&template).expect("template must parse");
         assert_eq!(cfg.server.address, "127.0.0.1:50051");
+    }
+
+    #[test]
+    fn test_show_root_name_defaults_on() {
+        let cfg: Config = toml::from_str("[indexer]\n").unwrap();
+        assert!(cfg.indexer.show_root_name);
+        let cfg: Config = toml::from_str("[indexer]\nshow_root_name = false\n").unwrap();
+        assert!(!cfg.indexer.show_root_name);
     }
 
     #[test]
