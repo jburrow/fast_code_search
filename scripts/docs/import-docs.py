@@ -13,6 +13,9 @@ import re, shutil, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs/book/src/imported"
 REPO = "https://github.com/jburrow/fast_code_search/blob/main/"
+# Images are served raw so they render; a blob/ URL is an HTML page.
+RAW = "https://raw.githubusercontent.com/jburrow/fast_code_search/main/"
+IMAGE = re.compile(r"\.(png|gif|jpe?g|svg|webp)$", re.IGNORECASE)
 
 # source path (from repo root) -> book file name
 IMPORTS = {
@@ -47,6 +50,8 @@ def rewrite(src: pathlib.Path, text: str) -> str:
         if rel in IMPORTS:
             return f"]({IMPORTS[rel]}{anchor})"
         if resolved.exists():
+            if IMAGE.search(rel):
+                return f"]({RAW}{rel})"
             return f"]({REPO}{rel}{anchor})"
         return m.group(0)
     return re.sub(r"\]\(([^)#\s]+)(#[^)]*)?\)", repl, text)

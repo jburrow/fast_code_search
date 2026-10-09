@@ -4,7 +4,7 @@ The server embeds a single-page UI at its web address (default
 <http://127.0.0.1:8080>). Nothing to install or build; it is served from
 the binary.
 
-<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/web-ui.png" alt="The web UI searching for 'trigram'" style="max-width:100%">
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/search.gif" alt="Typing TrigramIndex: the struct definitions rank first, the file viewer opens at the match, then a quoted phrase search for fn main" style="max-width:100%">
 
 ## Searching
 
@@ -21,6 +21,11 @@ the binary.
 - The URL carries the query and modes, so a link reproduces a search; Back
   returns to the previous one.
 
+**SYMBOLS** keeps only the lines that define the name; **REFERENCES**
+lists every place it is used:
+
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/references.gif" alt="SearchEngine as a text search, then with SYMBOLS, then with REFERENCES" style="max-width:100%">
+
 ## Regex help
 
 - The **?** next to **REGEX** opens a cheat-sheet: common patterns you can
@@ -33,6 +38,8 @@ the binary.
   something.
 - An invalid regex shows where the pattern is wrong and offers to search
   the text literally or with its special characters escaped.
+
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with suggested fixes, and a regex that finds nothing with an Ignore case suggestion" style="max-width:100%">
 
 ## Reading results
 
@@ -69,6 +76,8 @@ Rust `mod foo;` declarations (and `pub use foo::X` re-exports of a child
 module) are hidden by default since they are structure rather than
 dependencies; **Show mod declarations** brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.
+
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 
 ## Other pages
 
