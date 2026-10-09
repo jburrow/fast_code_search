@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-294f0d3b.js";
+            window.path_to_searchindex_js = "../searchindex-9cf3638f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -296,6 +296,12 @@ watch = false
 # and used to boost search relevance for symbol matches.
 # Disable to reduce memory usage and indexing time at the cost of reduced relevance.
 enable_symbols = true
+
+# Start result paths with the indexed folder's name (default: true).
+# Indexing /code/myapp shows myapp/src/main.rs; false shows src/main.rs.
+# Only applies when a single path is indexed. Display only: file: filters
+# and the saved index are unaffected.
+show_root_name = true
 
 # Files read and indexed per batch during the initial build (default: 500).
 # Peak RAM scales with batch_size x average file size x ~4: lower it on small
