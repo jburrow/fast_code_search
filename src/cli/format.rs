@@ -226,6 +226,7 @@ pub fn response_from(query: &str, results: Vec<SearchResultJson>) -> SearchRespo
     let n = results.len();
     SearchResponse {
         results,
+        index: None,
         query: query.to_string(),
         total_results: n,
         has_more: false,

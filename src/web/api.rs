@@ -5,7 +5,9 @@ use crate::diagnostics::{
     self, ConfigSummary, DiagnosticsQuery, ExtensionBreakdown, HealthStatus,
     KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
 };
-use crate::search::{IndexingStatus, RankMode, SearchEngine, SearchLimits};
+use crate::search::{
+    IndexFreshness, IndexingStatus, PathFreshness, RankMode, SearchEngine, SearchLimits,
+};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -202,6 +204,10 @@ pub struct SearchResultJson {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
+    /// How current the index is, so clients can warn that recent writes
+    /// may be missing when no file watcher is running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<IndexFreshness>,
     pub query: String,
     pub total_results: usize,
     /// True when more results exist beyond this page: either `total_matches`
@@ -273,6 +279,42 @@ pub struct StatusResponse {
     pub dependency_edges: usize,
     /// Total bytes of text content indexed
     pub total_content_bytes: u64,
+    /// How current the index is (absent while the engine is busy).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<IndexFreshness>,
+    /// Per-path comparison with the disk, for the `paths` that were asked about.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<PathStatus>,
+}
+
+/// `/api/status` query: `paths=a.rs;src/b.rs` also reports, for each path,
+/// whether the index still matches the file on disk.
+#[derive(Debug, Default, Deserialize)]
+pub struct StatusQuery {
+    #[serde(default)]
+    pub paths: Option<String>,
+}
+
+/// Whether one path's indexed content matches the disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathStatus {
+    pub path: String,
+    pub state: PathFreshness,
+}
+
+/// Most paths one status request checks (each costs a stat).
+pub const MAX_STATUS_PATHS: usize = 100;
+
+/// Compare each of `paths` with the disk (one stat each).
+pub fn path_statuses(engine: &SearchEngine, paths: &[String]) -> Vec<PathStatus> {
+    paths
+        .iter()
+        .take(MAX_STATUS_PATHS)
+        .map(|p| PathStatus {
+            path: p.clone(),
+            state: engine.path_freshness(p),
+        })
+        .collect()
 }
 
 /// Cached, per-generation part of the diagnostics response.
@@ -389,6 +431,7 @@ pub async fn search_handler(
     if query.is_empty() {
         return Ok(Json(SearchResponse {
             results: vec![],
+            index: None,
             query: String::new(),
             total_results: 0,
             has_more: false,
@@ -567,6 +610,7 @@ pub async fn search_handler(
 
         Ok(Json(SearchResponse {
             results,
+            index: Some(engine.freshness()),
             query,
             total_results,
             has_more,
@@ -700,7 +744,36 @@ pub async fn health_handler() -> Json<HealthResponse> {
 /// Handle indexing status requests
 pub async fn status_handler(
     State(state): State<WebState>,
+    ApiQuery(params): ApiQuery<StatusQuery>,
 ) -> Result<Json<StatusResponse>, ApiError> {
+    let wanted: Vec<String> = params
+        .paths
+        .as_deref()
+        .unwrap_or("")
+        .split(';')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .collect();
+    // Stats come from a try_read below; the per-path stats touch the disk,
+    // so they run on the blocking pool first.
+    let paths = if wanted.is_empty() {
+        Vec::new()
+    } else {
+        let engine = state.engine.clone();
+        tokio::task::spawn_blocking(move || -> Result<_, (StatusCode, String)> {
+            let engine = try_read_engine(&engine)?;
+            Ok(path_statuses(&engine, &wanted))
+        })
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Task join error: {}", e),
+            )
+        })??
+    };
+
     // Use try_read so we never block a tokio worker thread on a std::sync::RwLock.
     // The progress lock is written by the background indexer; if it is momentarily
     // held we return 503 rather than stalling the async executor.
@@ -735,7 +808,7 @@ pub async fn status_handler(
     );
 
     // Get stats from the engine if available (try_read to avoid blocking during indexing)
-    let (num_files, total_size, num_trigrams, dependency_edges, total_content_bytes) = {
+    let (num_files, total_size, num_trigrams, dependency_edges, total_content_bytes, index) = {
         match state.engine.try_read() {
             Ok(engine) => {
                 let stats = engine.get_stats();
@@ -745,9 +818,10 @@ pub async fn status_handler(
                     stats.num_trigrams,
                     stats.dependency_edges,
                     stats.total_content_bytes,
+                    Some(engine.freshness()),
                 )
             }
-            Err(_) => (0, 0, 0, 0, 0),
+            Err(_) => (0, 0, 0, 0, 0, None),
         }
     };
 
@@ -769,6 +843,8 @@ pub async fn status_handler(
         num_trigrams,
         dependency_edges,
         total_content_bytes,
+        index,
+        paths,
     }))
 }
 
@@ -1069,6 +1145,7 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
                 num_trigrams: stats.num_trigrams,
                 dependency_edges: stats.dependency_edges,
                 total_content_bytes: stats.total_content_bytes,
+                index: Some(e.freshness()),
             }
         })
         .unwrap_or_default()
@@ -1180,6 +1257,7 @@ pub struct ProgressStats {
     pub num_trigrams: usize,
     pub dependency_edges: usize,
     pub total_content_bytes: u64,
+    pub index: Option<IndexFreshness>,
 }
 
 /// Convert IndexingProgress to StatusResponse with stats
@@ -1225,6 +1303,8 @@ fn progress_to_status(
         num_trigrams: stats.num_trigrams,
         dependency_edges: stats.dependency_edges,
         total_content_bytes: stats.total_content_bytes,
+        index: stats.index,
+        paths: Vec::new(),
     }
 }
 

@@ -14,11 +14,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
+mod freshness;
 mod persist;
 mod progress;
 mod query;
 mod text;
 
+pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness};
 pub use progress::*;
 use text::*;
 
@@ -713,6 +715,15 @@ pub struct SearchEngine {
     /// (default: true). Only honoured with a single root; see
     /// [`Self::make_display_path`].
     pub show_root_name: bool,
+    /// When the last full scan of the indexed folders started (Unix
+    /// millis): every change made on disk before then is in the index.
+    /// `None` until the first build or reconcile completes.
+    pub synced_at_ms: Option<u64>,
+    /// When an incremental update (the file watcher) last changed the
+    /// index (Unix millis).
+    pub updated_at_ms: Option<u64>,
+    /// Whether a file watcher is keeping the index in step with disk.
+    pub watching: bool,
 }
 
 impl SearchEngine {
@@ -738,6 +749,9 @@ impl SearchEngine {
             max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
             root_paths: Vec::new(),
             show_root_name: true,
+            synced_at_ms: None,
+            updated_at_ms: None,
+            watching: false,
         }
     }
 

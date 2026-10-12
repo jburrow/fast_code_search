@@ -22,7 +22,7 @@ when the request timeout is hit.
 | `POST /mcp` | Model Context Protocol for coding agents. See [MCP](#mcp-coding-agents) |
 | `GET /api/graph/…` | The import graph: neighbourhoods, impact, import chains, the folder map. See [Import graph](#import-graph) |
 | `GET /api/stats` | Index statistics (files, trigrams, dependency edges, content bytes) |
-| `GET /api/status` | Indexing progress |
+| `GET /api/status` | Indexing progress, and how current the index is (see [Index freshness](#index-freshness)) |
 | `GET /api/health` | Liveness (`{"status":"healthy","version":…,"problems":N}`); `problems` counts startup and storage problems |
 | `GET /api/ready` | Readiness: 200 once there is an index to search, 503 otherwise |
 | `GET /api/diagnostics` | Index health, extension breakdown, self-tests, and `service`: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status `degraded`) |
@@ -66,7 +66,8 @@ Response:
   "total_results": 1, "offset": 0, "total_matches": 3,
   "has_more": true, "truncated_by_budget": false,
   "elapsed_ms": 0.7, "rank_mode": "full",
-  "total_candidates": 12, "candidates_searched": 12
+  "total_candidates": 12, "candidates_searched": 12,
+  "index": { "watching": false, "synced_at_ms": 1791789240000 }
 }
 ```
 
@@ -77,7 +78,42 @@ truncated window of a long line, see `content_truncated`);
 `line_number` is 0 for a filename match. `match_type` is `TEXT`,
 `SYMBOL_DEFINITION` or `SYMBOL_REFERENCE`. `total_matches` is present when
 the search ran to completion; otherwise `truncated_by_budget` is true and
-`has_more` means more may exist.
+`has_more` means more may exist. `index` says how current the index is; see
+[Index freshness](#index-freshness).
+
+### Index freshness
+
+With `watch = false` (the default), the server indexes the tree when it
+starts and does not see files written afterwards. Search then misses text
+written after that scan, while `/api/file` and MCP `read_file` read the disk
+and already show it. Every search response, `/api/status` and the
+`/ws/progress` frames carry `index` so clients can say so:
+
+| Field | Meaning |
+|-------|---------|
+| `watching` | A file watcher applies edits, renames and deletes as they happen. |
+| `synced_at_ms` | When the last full scan of the indexed folders started (Unix ms). Every change made before then is in the index. Absent until the first build or reconcile finishes. |
+| `updated_at_ms` | When the watcher last changed the index (Unix ms). |
+
+`GET /api/status?paths=src/a.rs;src/new.rs` also compares each path (at most
+100, separated by `;`, as results print them, relative to an indexed folder,
+or absolute) with the disk and returns `"paths": [{"path": …, "state": …}]`.
+`state` is one of the following:
+
+| State | Meaning |
+|-------|---------|
+| `current` | The file's modification time and size match what was indexed. |
+| `stale` | The file changed after it was indexed. |
+| `deleted` | Still in the index but gone from disk. |
+| `not_indexed` | On disk but not in the index: written after the last sync, or excluded by the configuration. |
+| `not_found` | Neither in the index nor under an indexed folder. |
+| `unknown` | Indexed, but its indexed version was not recorded. |
+
+When `watching` is false, the web UI shows "Index synced 6 min ago · watching
+off" beside the search time, `fcs` prints the same warning on stderr, and MCP
+`search_code` ends with it. Updating the index on request (for example right
+after an agent writes a file) is tracked in
+[#140](https://github.com/jburrow/fast_code_search/issues/140).
 
 ### Query syntax
 
@@ -164,6 +200,7 @@ to the same endpoint (it finds the server like every `fcs` command:
 | `change_impact` | `paths` (one or more), `limit` | Every file that transitively imports any of them, nearest first, split into tests and other code |
 | `import_path` | `from`, `to` | The shortest chain of imports between two files, either way round |
 | `dependency_overview` | `directory` (optional), `limit` | The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files |
+| `index_status` | `paths` (optional, at most 100) | When the index last synced with disk and whether file watching is on, plus, for each path, whether it is current, stale, not indexed yet or deleted. See [Index freshness](#index-freshness) |
 
 Every tool is read-only and answers from the same handlers as the REST API,
 so it shares their search permits, deadlines and caps. Results use the

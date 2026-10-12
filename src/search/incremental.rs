@@ -124,6 +124,9 @@ pub fn apply_changes(
         }
     }
     outcome.removed += engine.prune_vanished_in(&dirs);
+    if outcome.changed() {
+        engine.updated_at_ms = Some(crate::search::unix_now_ms());
+    }
     outcome
 }
 

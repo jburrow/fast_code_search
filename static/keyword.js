@@ -1388,6 +1388,13 @@ function renderSearch(search, durationMs, opts = {}) {
     const meta = searchMetaLabel(data, durationMs);
     searchMetaEl.textContent = meta.text;
     searchMetaEl.title = meta.title;
+    const freshnessEl = document.getElementById('index-freshness');
+    const freshness = indexFreshnessLabel(data.index, Date.now());
+    if (freshnessEl) {
+        freshnessEl.style.display = freshness ? '' : 'none';
+        freshnessEl.textContent = freshness ? freshness.text : '';
+        freshnessEl.title = freshness ? freshness.title : '';
+    }
 
     if (search.results.length === 0) {
         resetRenderState();

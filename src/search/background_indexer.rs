@@ -177,6 +177,9 @@ pub fn run(config: BackgroundIndexerConfig) {
     } = config;
 
     let total_start = Instant::now();
+    // Everything on disk before this moment is in the index once the run
+    // completes; later writes need the watcher (see `IndexFreshness`).
+    let scan_started_ms = crate::search::unix_now_ms();
     info!("Background indexing {} path(s)", indexer_config.paths.len());
 
     // Propagate enable_symbols setting to the engine so that all code paths
@@ -331,6 +334,9 @@ pub fn run(config: BackgroundIndexerConfig) {
         0.0
     };
 
+    if let Ok(mut engine) = index_engine.write() {
+        engine.synced_at_ms = Some(scan_started_ms);
+    }
     broadcast_progress(&index_progress, &index_progress_tx, |p| {
         p.status = IndexingStatus::Completed;
         p.files_indexed = actual_file_count;

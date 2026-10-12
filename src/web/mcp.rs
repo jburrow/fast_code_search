@@ -47,7 +47,9 @@ const INSTRUCTIONS: &str = "fast_code_search keeps a trigram index and a file-le
      of the codebase in memory, so these tools answer in milliseconds. Prefer search_code over \
      grep, read_file to read source with line numbers, file_dependencies and change_impact \
      before changing a file other code relies on, import_path to see how two files are \
-     connected, and dependency_overview to get oriented in an unfamiliar repository. Paths are \
+     connected, and dependency_overview to get oriented in an unfamiliar repository. When file \
+     watching is off, search_code says how old the index is; index_status tells whether files \
+     you just wrote are indexed yet. Paths are \
      root-relative (`<root>/src/main.rs`, or `src/main.rs` when the server hides the root \
      folder's name), as every tool returns them. All tools are read-only.";
 
@@ -347,6 +349,22 @@ fn tool_definitions() -> Value {
                 }
             }),
         ),
+        tool(
+            "index_status",
+            "Index status",
+            "How current the index is: when it last synced with the files on disk and \
+             whether file watching keeps it current. With watching off, search_code cannot \
+             find text written after the last sync (read_file always reads the disk). Pass \
+             `paths`, such as files you just wrote, to learn whether each is current, stale, \
+             not indexed yet, or deleted."
+                .to_string(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "array", "items": {"type": "string"}, "maxItems": api::MAX_STATUS_PATHS, "description": "Paths as search results print them, relative to an indexed folder, or absolute."}
+                }
+            }),
+        ),
     ])
 }
 
@@ -358,6 +376,7 @@ async fn call_tool(state: &WebState, name: &str, args: Value) -> ToolResult {
         "change_impact" => change_impact(state, parse(args)?).await,
         "import_path" => import_path(state, parse(args)?).await,
         "dependency_overview" => dependency_overview(state, parse(args)?).await,
+        "index_status" => index_status(state, parse(args)?).await,
         _ => Err(ToolError::Unknown),
     }
 }
@@ -424,6 +443,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
     let mut out = String::new();
     if resp.results.is_empty() {
         let _ = writeln!(out, "No matches for {:?} ({mode} search).", resp.query);
+        push_freshness_note(&mut out, resp.index.as_ref());
         return Ok(out);
     }
     let total = match resp.total_matches {
@@ -477,6 +497,69 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
                 );
             }
         }
+    }
+    push_freshness_note(&mut out, resp.index.as_ref());
+    Ok(out)
+}
+
+/// When no watcher keeps the index current, say how old it is, so an agent
+/// that just wrote a file knows a miss may only mean "not indexed yet".
+fn push_freshness_note(out: &mut String, index: Option<&crate::search::IndexFreshness>) {
+    if let Some(note) = index.and_then(|f| f.note(crate::search::unix_now_ms())) {
+        let _ = writeln!(
+            out,
+            "\n{note} read_file always shows the file as it is on disk now; index_status \
+             with `paths` says whether specific files are indexed."
+        );
+    }
+}
+
+// ------------------------------------------------------------ index_status
+
+#[derive(serde::Deserialize)]
+struct StatusArgs {
+    #[serde(default)]
+    paths: Vec<String>,
+}
+
+async fn index_status(state: &WebState, a: StatusArgs) -> ToolResult {
+    if a.paths.len() > api::MAX_STATUS_PATHS {
+        return Err(format!("At most {} paths per call.", api::MAX_STATUS_PATHS).into());
+    }
+    let q = query(json!({ "paths": a.paths.join(";") }))?;
+    let Json(st) = api::status_handler(State(state.clone()), q).await?;
+    let now = crate::search::unix_now_ms();
+    let mut out = String::new();
+    let _ = writeln!(out, "{} files indexed.", st.num_files);
+    if st.is_indexing {
+        let _ = writeln!(
+            out,
+            "Indexing in progress ({}, {}%): results may be incomplete.",
+            st.status, st.progress_percent
+        );
+    }
+    match &st.index {
+        Some(f) => {
+            let summary = f.summary(now);
+            let _ = writeln!(out, "{}{}.", summary[..1].to_uppercase(), &summary[1..]);
+            if !f.watching {
+                let _ = writeln!(
+                    out,
+                    "Files written after the last sync are not searchable until the server \
+                     rescans (on restart) or runs with file watching on; read_file always \
+                     reads the disk."
+                );
+            }
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "The index is busy; freshness is unknown, try again shortly."
+            );
+        }
+    }
+    for p in &st.paths {
+        let _ = writeln!(out, "{}: {}", p.path, p.state.describe());
     }
     Ok(out)
 }

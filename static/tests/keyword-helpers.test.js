@@ -419,6 +419,22 @@ test('searchMetaLabel: fast ranking that skipped files says so', () => {
     assert.match(fast.title, /Full/);
 });
 
+test('indexFreshnessLabel: silent while watching or before the first sync', () => {
+    assert.equal(H.indexFreshnessLabel(undefined, 0), null);
+    assert.equal(H.indexFreshnessLabel({ watching: true, synced_at_ms: 0 }, 1e9), null);
+    assert.equal(H.indexFreshnessLabel({ watching: false }, 1e9), null);
+});
+
+test('indexFreshnessLabel: says how old the index is when watching is off', () => {
+    const at = 1_760_000_000_000;
+    const label = H.indexFreshnessLabel({ watching: false, synced_at_ms: at }, at + 6 * 60_000);
+    assert.equal(label.text, 'Index synced 6 min ago · watching off');
+    assert.match(label.title, /watch = true/);
+    assert.equal(H.formatAge(30_000), 'just now');
+    assert.equal(H.formatAge(2 * 3600_000 + 5 * 60_000), '2 h 5 min ago');
+    assert.equal(H.formatAge(3 * 86400_000), '3 days ago');
+});
+
 test('searchMetaLabel: no ranking info shows only the time', () => {
     assert.deepEqual(H.searchMetaLabel({}, 12), { text: '12 ms', title: '' });
 });

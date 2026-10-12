@@ -13,9 +13,10 @@ pub use background_indexer::{
     BackgroundIndexerConfig,
 };
 pub use engine::{
-    create_progress_broadcaster, IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase,
-    PartialIndexedFile, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine,
-    SearchLimits, SearchMatch, SearchRankingInfo, SearchStats, SharedIndexingProgress,
+    create_progress_broadcaster, unix_now_ms, IndexFreshness, IndexingProgress, IndexingStatus,
+    LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PreIndexedFile,
+    ProgressBroadcaster, QueryRun, RankMode, SearchEngine, SearchLimits, SearchMatch,
+    SearchRankingInfo, SearchStats, SharedIndexingProgress,
 };
 pub use file_discovery::{
     discover_files, EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator,

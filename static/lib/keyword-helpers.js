@@ -471,6 +471,34 @@ function searchMetaLabel(data, durationMs) {
     };
 }
 
+/** "just now", "6 min ago", "2 h 5 min ago", "3 days ago". */
+function formatAge(ms) {
+    const secs = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    if (secs < 60) return 'just now';
+    if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)} h ${Math.floor((secs % 3600) / 60)} min ago`;
+    return `${Math.floor(secs / 86400)} days ago`;
+}
+
+/**
+ * The freshness note beside the timing, or null when there is nothing to
+ * warn about: a file watcher keeps the index current, or no scan has
+ * finished yet (the progress panel covers the first build).
+ * @param {{watching?: boolean, synced_at_ms?: number}|undefined} index `index` of a search response
+ * @param {number} nowMs
+ * @returns {{text: string, title: string}|null}
+ */
+function indexFreshnessLabel(index, nowMs) {
+    if (!index || index.watching || typeof index.synced_at_ms !== 'number') return null;
+    const when = new Date(index.synced_at_ms).toLocaleString();
+    return {
+        text: `Index synced ${formatAge(nowMs - index.synced_at_ms)} · watching off`,
+        title: `Files written after ${when} may be missing from results or out of date, because file `
+            + 'watching is off. Restart the server to rescan, or set watch = true under [indexer] '
+            + 'to keep the index current.',
+    };
+}
+
 // ---------- highlight.js output ----------
 
 /**
@@ -660,6 +688,8 @@ if (typeof module !== 'undefined' && module.exports) {
         loadMoreRequest,
         formatDurationMs,
         searchMetaLabel,
+        formatAge,
+        indexFreshnessLabel,
         escapeRegex,
         regexToLiteral,
         relaxRegexSpacing,

@@ -96,6 +96,30 @@ async fn search_against_server_uses_grep_exit_codes_and_vimgrep_output() -> Resu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn warns_when_the_server_is_not_watching_for_changes() -> Result<()> {
+    let (_temp, mut engine) = corpus()?;
+    engine.synced_at_ms = Some(fast_code_search::search::unix_now_ms() - 2 * 3_600_000);
+    let url = serve(engine).await?;
+
+    let (code, _, err) = run(fcs().args(["--server", &url, "helper_target"]));
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(err.contains("synced with disk 2 h 0 min ago"), "{err}");
+    assert!(err.contains("file watching is off"), "{err}");
+
+    let (_, _, err) = run(fcs().args(["--server", &url, "-q", "helper_target"]));
+    assert!(!err.contains("watching"), "{err}");
+
+    let (code, out, _) = run(fcs().args(["--server", &url, "status"]));
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("index last synced with disk 2 h 0 min ago"),
+        "{out}"
+    );
+    assert!(out.contains("file watching off"), "{out}");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn modes_flags_and_formats() -> Result<()> {
     let (_temp, engine) = corpus()?;
     let url = serve(engine).await?;

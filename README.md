@@ -117,6 +117,7 @@ What an agent can then answer, and the tool it uses:
 | check what a change could break, and which tests cover it, before editing | `change_impact` |
 | understand how two files are connected | `import_path` |
 | get oriented in an unfamiliar repository: main folders, hubs, cycles | `dependency_overview` |
+| check whether files it just wrote are indexed yet (when file watching is off) | `index_status` |
 
 For example, asked to change the ranking weights, an agent can first call
 `change_impact` on `src/search/ranking.rs` and get back, from this repository:

@@ -14,7 +14,7 @@ fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q <(fcs --format vimgrep TODO)   # results as a quickfix list
-fcs status                       # is the server up, what does it hold
+fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
 ```
 
@@ -124,6 +124,16 @@ configuration). Stdout carries only protocol messages; when the server is
 down each request is answered with an error saying so. Clients that speak
 HTTP can use `http://127.0.0.1:8080/mcp` directly. The tools are listed in
 [API.md](API.md#mcp-coding-agents).
+
+## When the index is behind
+
+A server running with `watch = false` (the default) only knows the files as
+they were at its last scan. `fcs` then ends a search with a note on stderr,
+such as `fcs: Index last synced with disk 2 h 0 min ago (…); file watching is
+off, so files written since then may be missing or out of date.` `-q` hides
+it, and `fcs status` always reports when the index last synced and whether
+watching is on. Restart the server to rescan, or set `watch = true` under
+`[indexer]`. See [API.md](API.md#index-freshness).
 
 ## Exit status
 
