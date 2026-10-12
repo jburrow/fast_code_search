@@ -39,6 +39,14 @@
             font-style: inherit;
             font-weight: bold;
         }
+        /* The matched line is the same yellow as a hit: outline hits there so
+           the exact match still stands out. */
+        .match-line mark.highlight, .file-line-highlight mark.highlight {
+            box-shadow: inset 0 0 0 1px #000;
+        }
+        /* Show code exactly as typed: JetBrains Mono would draw != as ≠ and
+           => as an arrow, which misleads when searching for operators. */
+        .result-code, .file-code, .ctx-tooltip { font-variant-ligatures: none; }
         /* Result code block — neutralise hljs background */
         .result-code, .result-code.hljs {
             background: #fff !important;

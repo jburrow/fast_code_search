@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `myapp/src/main.rs`) in the web UI, REST API, `fcs` and MCP. Only applies
   when a single path is indexed; `file:` filters are unaffected.
 
+### Fixed
+- Web UI: search result context and hover previews are syntax-highlighted in
+  one pass, so doc comments and other multi-line comments are shown as
+  comments instead of having their words coloured as code (also when the
+  snippet starts partway into a comment).
+- Web UI: the exact hit is outlined on the matched line, where it used to
+  blend into the line's yellow background.
+- Web UI: code is shown without font ligatures, so `!=`, `=>` and `===`
+  appear as typed rather than as `≠` and arrows.
+
 ## [0.14.0] - 2026-10-08
 
 ### Added

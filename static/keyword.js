@@ -588,18 +588,6 @@ function getLangBadgeStyle(langClass) {
     return style;
 }
 
-/**
- * Highlight a `<pre>` element using highlight.js.
- * @param {HTMLElement} el - the <pre> element
- * @param {string} filePath - used to pick the language
- */
-function applyHljs(el, filePath) {
-    if (typeof hljs === 'undefined') return;
-    const lang = hljsLangForPath(filePath);
-    el.className = `language-${lang}`;
-    hljs.highlightElement(el);
-}
-
 // ============================================
 // MATCH HIGHLIGHTING
 //
@@ -667,18 +655,6 @@ function highlightTermsIn(el, matcher, extraRanges = []) {
     markRanges(el, ranges);
 }
 
-/** Highlight `el`'s text with highlight.js for `lang`, keeping it plain on failure. */
-function applyHljsToInline(el, lang) {
-    if (typeof hljs === 'undefined') return;
-    const code = document.createElement('code');
-    code.className = `language-${lang || 'plaintext'}`;
-    code.textContent = el.textContent;
-    try {
-        hljs.highlightElement(code);
-        el.innerHTML = code.innerHTML;
-    } catch (_) { /* leave plain */ }
-}
-
 /** The matcher for the query currently shown in the results (null = none). */
 let _currentMatcher = null;
 
@@ -721,6 +697,19 @@ function highlightLines(text, lang) {
     } catch (_) {
         return plain();
     }
+}
+
+/**
+ * Highlight a snippet cut from the middle of a file (search result context,
+ * hover preview) in one pass, so constructs spanning lines keep their
+ * colours, starting inside a block comment when the snippet does.
+ * @param {string[]} lines
+ * @returns {string[]} escaped HTML per line
+ */
+function highlightSnippetLines(lines, lang) {
+    const prefix = snippetHighlightPrefix(lines, lang);
+    const out = highlightLines(prefix + lines.join('\n'), lang);
+    return prefix ? out.slice(1) : out;
 }
 
 /** One rendered file line; `html` is already escaped/highlighted. */
@@ -904,7 +893,7 @@ const CTX_TOOLTIP_CONTEXT = 12;
  */
 function renderContextBody(data, highlightLine, lang) {
     const start = data.start_line || 1;
-    const lines = highlightLines((data.lines || []).join('\n'), lang);
+    const lines = highlightSnippetLines(data.lines || [], lang);
     const rows = lines.map((html, i) => {
         const ln = start + i;
         const isMatch = ln === highlightLine;
@@ -1666,9 +1655,14 @@ function wireResultGroups(root) {
         const hasContext = pre.dataset.hasContext === 'true';
         const lang = pre.dataset.lang || 'plaintext';
         if (hasContext) {
-            pre.querySelectorAll('.ctx-line-content').forEach(span => {
-                const text = span.textContent;
-                applyHljsToInline(span, lang);
+            // One pass over the whole window: per-line highlighting coloured
+            // the prose of multi-line comments and strings as code.
+            const spans = [...pre.querySelectorAll('.ctx-line-content')];
+            const texts = spans.map(span => span.textContent);
+            const htmlLines = highlightSnippetLines(texts, lang);
+            spans.forEach((span, i) => {
+                const text = texts[i];
+                span.innerHTML = htmlLines[i];
                 const extra = span.dataset.lms !== undefined
                     ? [byteRangeToCharRange(text, Number(span.dataset.lms), Number(span.dataset.lme))]
                     : [];

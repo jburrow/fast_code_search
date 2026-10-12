@@ -509,6 +509,37 @@ function splitHighlightedHtml(html) {
     return lines;
 }
 
+// Languages whose block comments are `/* ... */`.
+const C_BLOCK_COMMENT_LANGS = new Set([
+    'rust', 'javascript', 'typescript', 'java', 'c', 'cpp', 'csharp', 'go',
+    'kotlin', 'swift', 'php', 'css', 'scss', 'less', 'objectivec',
+]);
+
+/**
+ * A snippet cut from the middle of a file can start inside a block comment
+ * (a doc comment whose opening is above the window). Highlighted on its own,
+ * its prose is then coloured as code. Returns the text to put in front of
+ * the snippet so the highlighter starts in the right state ('' if none):
+ * the snippet is inside a C-style block comment when the first comment
+ * delimiter in it closes one, or its first non-blank line is a ` * `
+ * continuation line.
+ * @param {string[]} lines - the snippet's lines
+ * @param {string} lang - highlight.js language name
+ */
+function snippetHighlightPrefix(lines, lang) {
+    if (!C_BLOCK_COMMENT_LANGS.has(lang)) return '';
+    let firstText = null;
+    for (const line of lines) {
+        const open = line.indexOf('/*');
+        const close = line.indexOf('*/');
+        if (close !== -1 && (open === -1 || close < open)) return '/*\n';
+        if (open !== -1) break;
+        if (firstText === null && line.trim() !== '') firstText = line.trim();
+    }
+    // ` * text` or a bare `*`, but not `*ptr = ...` or `**kwargs`.
+    return firstText === '*' || (firstText || '').startsWith('* ') ? '/*\n' : '';
+}
+
 // ---------- Regex search help ----------
 
 /** Characters the server's regex engine treats as syntax. */
@@ -656,6 +687,7 @@ if (typeof module !== 'undefined' && module.exports) {
         buildQueryMatcher,
         matcherRanges,
         splitHighlightedHtml,
+        snippetHighlightPrefix,
         resultsCountLabel,
         loadMoreRequest,
         formatDurationMs,

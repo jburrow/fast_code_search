@@ -422,3 +422,24 @@ test('searchMetaLabel: fast ranking that skipped files says so', () => {
 test('searchMetaLabel: no ranking info shows only the time', () => {
     assert.deepEqual(H.searchMetaLabel({}, 12), { text: '12 ms', title: '' });
 });
+
+// ---------- snippet highlighting ----------
+
+test('snippetHighlightPrefix: a window starting inside a doc comment', () => {
+    const lines = [' * survive (and nest inside) spans.', ' * @param {Element} el', ' */', 'function f() {'];
+    assert.equal(H.snippetHighlightPrefix(lines, 'javascript'), '/*\n');
+    // A closing delimiter before any opening one, even without ` * ` lines.
+    assert.equal(H.snippetHighlightPrefix(['    still prose', '*/', 'fn f() {}'], 'rust'), '/*\n');
+    assert.equal(H.snippetHighlightPrefix(['', ' *', 'x'], 'c'), '/*\n');
+});
+
+test('snippetHighlightPrefix: ordinary code needs no prefix', () => {
+    assert.equal(H.snippetHighlightPrefix(['const a = 1;', '/** doc */', 'f();'], 'javascript'), '');
+    assert.equal(H.snippetHighlightPrefix(['/*', ' * doc', ' */'], 'java'), '');
+    assert.equal(H.snippetHighlightPrefix(['*ptr = 0;', '*/'], 'c'), '/*\n');
+    assert.equal(H.snippetHighlightPrefix(['*ptr = 0;'], 'c'), '');
+    assert.equal(H.snippetHighlightPrefix(['**kwargs'], 'c'), '');
+    // Languages without /* */ comments are left alone.
+    assert.equal(H.snippetHighlightPrefix([' * not a comment', '*/'], 'python'), '');
+    assert.equal(H.snippetHighlightPrefix([], 'rust'), '');
+});
