@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-72b04555.js";
+            window.path_to_searchindex_js = "../searchindex-ff19b205.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -193,7 +193,7 @@ fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
-fcs status                       # is the server up, what does it hold
+fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
 </code></pre>
 <h2 id="design"><a class="header" href="#design">Design</a></h2>
@@ -289,6 +289,13 @@ configuration). Stdout carries only protocol messages; when the server is
 down each request is answered with an error saying so. Clients that speak
 HTTP can use <code>http://127.0.0.1:8080/mcp</code> directly. The tools are listed in
 <a href="api.html#mcp-coding-agents">API.md</a>.</p>
+<h2 id="when-the-index-is-behind"><a class="header" href="#when-the-index-is-behind">When the index is behind</a></h2>
+<p>A server running with <code>watch = false</code> (the default) only knows the files as
+they were at its last scan. <code>fcs</code> then ends a search with a note on stderr,
+such as <code>fcs: Index last synced with disk 2 h 0 min ago (…); file watching is off, so files written since then may be missing or out of date.</code> <code>-q</code> hides
+it, and <code>fcs status</code> always reports when the index last synced and whether
+watching is on. Restart the server to rescan, or set <code>watch = true</code> under
+<code>[indexer]</code>. See <a href="api.html#index-freshness">API.md</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <div class="table-wrapper">
 <table>

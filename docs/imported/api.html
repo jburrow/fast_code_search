@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-72b04555.js";
+            window.path_to_searchindex_js = "../searchindex-ff19b205.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -205,7 +205,7 @@ when the request timeout is hit.</p>
 <tr><td><code>POST /mcp</code></td><td>Model Context Protocol for coding agents. See <a href="#mcp-coding-agents">MCP</a></td></tr>
 <tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
-<tr><td><code>GET /api/status</code></td><td>Indexing progress</td></tr>
+<tr><td><code>GET /api/status</code></td><td>Indexing progress, and how current the index is (see <a href="#index-freshness">Index freshness</a>)</td></tr>
 <tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…,"problems":N}</code>); <code>problems</code> counts startup and storage problems</td></tr>
 <tr><td><code>GET /api/ready</code></td><td>Readiness: 200 once there is an index to search, 503 otherwise</td></tr>
 <tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests, and <code>service</code>: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status <code>degraded</code>)</td></tr>
@@ -254,7 +254,8 @@ when the request timeout is hit.</p>
   "total_results": 1, "offset": 0, "total_matches": 3,
   "has_more": true, "truncated_by_budget": false,
   "elapsed_ms": 0.7, "rank_mode": "full",
-  "total_candidates": 12, "candidates_searched": 12
+  "total_candidates": 12, "candidates_searched": 12,
+  "index": { "watching": false, "synced_at_ms": 1791789240000 }
 }
 </code></pre>
 <p><code>match_start</code>/<code>match_end</code> are byte offsets into <code>content</code> (which may be a
@@ -264,7 +265,50 @@ truncated window of a long line, see <code>content_truncated</code>);
 <code>line_number</code> is 0 for a filename match. <code>match_type</code> is <code>TEXT</code>,
 <code>SYMBOL_DEFINITION</code> or <code>SYMBOL_REFERENCE</code>. <code>total_matches</code> is present when
 the search ran to completion; otherwise <code>truncated_by_budget</code> is true and
-<code>has_more</code> means more may exist.</p>
+<code>has_more</code> means more may exist. <code>index</code> says how current the index is; see
+<a href="#index-freshness">Index freshness</a>.</p>
+<h3 id="index-freshness"><a class="header" href="#index-freshness">Index freshness</a></h3>
+<p>With <code>watch = false</code> (the default), the server indexes the tree when it
+starts and does not see files written afterwards. Search then misses text
+written after that scan, while <code>/api/file</code> and MCP <code>read_file</code> read the disk
+and already show it. Every search response, <code>/api/status</code> and the
+<code>/ws/progress</code> frames carry <code>index</code> so clients can say so:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>watching</code></td><td>A file watcher applies edits, renames and deletes as they happen.</td></tr>
+<tr><td><code>synced_at_ms</code></td><td>When the last full scan of the indexed folders started (Unix ms). Every change made before then is in the index. Absent until the first build or reconcile finishes.</td></tr>
+<tr><td><code>updated_at_ms</code></td><td>When the watcher last changed the index (Unix ms).</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>GET /api/status?paths=src/a.rs;src/new.rs</code> also compares each path (at most
+100, separated by <code>;</code>, as results print them, relative to an indexed folder,
+or absolute) with the disk and returns <code>"paths": [{"path": …, "state": …}]</code>.
+<code>state</code> is one of the following:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>State</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>current</code></td><td>The file’s modification time and size match what was indexed.</td></tr>
+<tr><td><code>stale</code></td><td>The file changed after it was indexed.</td></tr>
+<tr><td><code>deleted</code></td><td>Still in the index but gone from disk.</td></tr>
+<tr><td><code>not_indexed</code></td><td>On disk but not in the index: written after the last sync, or excluded by the configuration.</td></tr>
+<tr><td><code>not_found</code></td><td>Neither in the index nor under an indexed folder.</td></tr>
+<tr><td><code>unknown</code></td><td>Indexed, but its indexed version was not recorded.</td></tr>
+</tbody>
+</table>
+</div>
+<p>When <code>watching</code> is false, the web UI shows “Index synced 6 min ago · watching
+off” beside the search time, <code>fcs</code> prints the same warning on stderr, and MCP
+<code>search_code</code> ends with it. Updating the index on request (for example right
+after an agent writes a file) is tracked in
+<a href="https://github.com/jburrow/fast_code_search/issues/140">#140</a>.</p>
 <h3 id="query-syntax"><a class="header" href="#query-syntax">Query syntax</a></h3>
 <p>Plain-text queries (not <code>regex=true</code>):</p>
 <div class="table-wrapper">
@@ -356,6 +400,7 @@ to the same endpoint (it finds the server like every <code>fcs</code> command:
 <tr><td><code>change_impact</code></td><td><code>paths</code> (one or more), <code>limit</code></td><td>Every file that transitively imports any of them, nearest first, split into tests and other code</td></tr>
 <tr><td><code>import_path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest chain of imports between two files, either way round</td></tr>
 <tr><td><code>dependency_overview</code></td><td><code>directory</code> (optional), <code>limit</code></td><td>The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files</td></tr>
+<tr><td><code>index_status</code></td><td><code>paths</code> (optional, at most 100)</td><td>When the index last synced with disk and whether file watching is on, plus, for each path, whether it is current, stale, not indexed yet or deleted. See <a href="#index-freshness">Index freshness</a></td></tr>
 </tbody>
 </table>
 </div>
