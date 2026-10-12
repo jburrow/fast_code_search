@@ -74,20 +74,108 @@ function iconSvg(name, size) {
  * Falls back to 'plaintext' when unknown.
  */
 function hljsLangForPath(filePath) {
-    const ext = (String(filePath || '').split('.').pop() || '').toLowerCase();
+    const name = (String(filePath || '').split('/').pop() || '').toLowerCase();
+    // Files known by name rather than extension (Dockerfile, Dockerfile.dev).
+    if (name === 'dockerfile' || name.startsWith('dockerfile.') || name.endsWith('.dockerfile')) return 'dockerfile';
+    if (name === 'makefile' || name === 'gnumakefile' || name.endsWith('.mk')) return 'makefile';
+    const ext = name.includes('.') ? name.split('.').pop() : '';
     const MAP = {
-        rs: 'rust', py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-        ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+        rs: 'rust', py: 'python', pyi: 'python', pyw: 'python',
+        js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+        ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
         go: 'go', rb: 'ruby', java: 'java', cs: 'csharp', cpp: 'cpp', cc: 'cpp',
-        cxx: 'cpp', c: 'c', h: 'c', hpp: 'cpp', php: 'php', sh: 'bash',
+        cxx: 'cpp', c: 'c', h: 'c', hpp: 'cpp', hh: 'cpp', hxx: 'cpp',
+        m: 'objectivec', mm: 'objectivec', php: 'php', sh: 'bash',
         bash: 'bash', zsh: 'bash', toml: 'toml', yaml: 'yaml', yml: 'yaml',
-        json: 'json', xml: 'xml', html: 'xml', css: 'css', scss: 'scss',
-        md: 'markdown', sql: 'sql', kt: 'kotlin', swift: 'swift', r: 'r',
+        json: 'json', jsonc: 'json', xml: 'xml', html: 'xml', htm: 'xml',
+        svg: 'xml', vue: 'xml', svelte: 'xml', css: 'css', scss: 'scss', less: 'less',
+        md: 'markdown', sql: 'sql', kt: 'kotlin', kts: 'kotlin', swift: 'swift', r: 'r',
         lua: 'lua', pl: 'perl', pm: 'perl', hs: 'haskell', ex: 'elixir',
-        exs: 'elixir', erl: 'erlang', scala: 'scala', dart: 'dart',
-        proto: 'protobuf', dockerfile: 'dockerfile', makefile: 'makefile',
+        exs: 'elixir', erl: 'erlang', hrl: 'erlang', scala: 'scala', sc: 'scala',
+        dart: 'dart', proto: 'protobuf', ini: 'ini', cfg: 'ini', conf: 'ini',
+        diff: 'diff', patch: 'diff', graphql: 'graphql', gql: 'graphql',
+        vb: 'vbnet', wat: 'wasm', wast: 'wasm',
     };
     return MAP[ext] || 'plaintext';
+}
+
+/**
+ * The URL fragment that reopens the file viewer on `filePath` at `line`:
+ * `#file=src%2Fmain.rs&line=42` (line 1 is left out).
+ */
+function fileViewHash(filePath, line) {
+    const params = new URLSearchParams();
+    params.set('file', filePath);
+    if (line > 1) params.set('line', String(line));
+    return '#' + params.toString();
+}
+
+/** Parse a fileViewHash fragment: `{ file, line }`, or null if it names no file. */
+function parseFileViewHash(hash) {
+    const params = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+    const file = params.get('file');
+    if (!file) return null;
+    const line = parseInt(params.get('line'), 10);
+    return { file, line: line > 0 ? line : 1 };
+}
+
+// ---------- Go to definition ----------
+
+const IDENT_CHAR = /[\p{L}\p{N}_$]/u;
+
+/**
+ * The identifier around `offset` in `text` (a caret position: the character
+ * at `offset`, or the one before it when the caret sits at a word's end).
+ * @returns {{start: number, end: number, word: string} | null}
+ */
+function identifierAt(text, offset) {
+    const chars = Array.from(text);
+    // Work in code points so a surrogate pair is one character, then map back.
+    let cp = Array.from(text.slice(0, Math.max(0, offset))).length;
+    if (!(cp < chars.length && IDENT_CHAR.test(chars[cp]))) {
+        if (cp > 0 && IDENT_CHAR.test(chars[cp - 1])) cp -= 1;
+        else return null;
+    }
+    let a = cp;
+    let b = cp + 1;
+    while (a > 0 && IDENT_CHAR.test(chars[a - 1])) a--;
+    while (b < chars.length && IDENT_CHAR.test(chars[b])) b++;
+    const word = chars.slice(a, b).join('');
+    if (/^\p{N}/u.test(word)) return null; // a number, not a name
+    const start = chars.slice(0, a).join('').length;
+    return { start, end: start + word.length, word };
+}
+
+/** The query that finds where `name` is defined (with `symbols=true`). */
+function definitionQuery(name) {
+    return `word:yes case:yes ${name}`;
+}
+
+/**
+ * Turn symbol-search results into definition targets for `name`: only hits
+ * whose matched text is exactly `name`, one per file and line, those in
+ * `fromFile` first (the usual case for a local helper), then by score.
+ * @returns {Array<{file: string, line: number, content: string}>}
+ */
+function rankDefinitions(results, name, fromFile) {
+    const seen = new Set();
+    const defs = [];
+    for (const r of results || []) {
+        if (!r || !(r.line_number > 0)) continue;
+        const content = String(r.content || '');
+        const [a, b] = byteRangeToCharRange(content, Number(r.match_start) || 0, Number(r.match_end) || 0);
+        if (content.slice(a, b) !== name) continue;
+        // A whole name: `SearchEngine` is not defined by `SemanticSearchEngine`.
+        const before = Array.from(content.slice(0, a)).pop() || '';
+        const after = Array.from(content.slice(b))[0] || '';
+        if (IDENT_CHAR.test(before) || IDENT_CHAR.test(after)) continue;
+        const key = `${r.file_path}:${r.line_number}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        defs.push({ file: r.file_path, line: r.line_number, content: content.trim(), score: Number(r.score) || 0 });
+    }
+    defs.sort((x, y) => (y.file === fromFile) - (x.file === fromFile) || y.score - x.score);
+    return defs.map(({ file, line, content }) => ({ file, line, content }));
 }
 
 /**
@@ -509,6 +597,37 @@ function splitHighlightedHtml(html) {
     return lines;
 }
 
+// Languages whose block comments are `/* ... */`.
+const C_BLOCK_COMMENT_LANGS = new Set([
+    'rust', 'javascript', 'typescript', 'java', 'c', 'cpp', 'csharp', 'go',
+    'kotlin', 'swift', 'php', 'css', 'scss', 'less', 'objectivec',
+]);
+
+/**
+ * A snippet cut from the middle of a file can start inside a block comment
+ * (a doc comment whose opening is above the window). Highlighted on its own,
+ * its prose is then coloured as code. Returns the text to put in front of
+ * the snippet so the highlighter starts in the right state ('' if none):
+ * the snippet is inside a C-style block comment when the first comment
+ * delimiter in it closes one, or its first non-blank line is a ` * `
+ * continuation line.
+ * @param {string[]} lines - the snippet's lines
+ * @param {string} lang - highlight.js language name
+ */
+function snippetHighlightPrefix(lines, lang) {
+    if (!C_BLOCK_COMMENT_LANGS.has(lang)) return '';
+    let firstText = null;
+    for (const line of lines) {
+        const open = line.indexOf('/*');
+        const close = line.indexOf('*/');
+        if (close !== -1 && (open === -1 || close < open)) return '/*\n';
+        if (open !== -1) break;
+        if (firstText === null && line.trim() !== '') firstText = line.trim();
+    }
+    // ` * text` or a bare `*`, but not `*ptr = ...` or `**kwargs`.
+    return firstText === '*' || (firstText || '').startsWith('* ') ? '/*\n' : '';
+}
+
 // ---------- Regex search help ----------
 
 /** Characters the server's regex engine treats as syntax. */
@@ -656,6 +775,12 @@ if (typeof module !== 'undefined' && module.exports) {
         buildQueryMatcher,
         matcherRanges,
         splitHighlightedHtml,
+        snippetHighlightPrefix,
+        fileViewHash,
+        identifierAt,
+        definitionQuery,
+        rankDefinitions,
+        parseFileViewHash,
         resultsCountLabel,
         loadMoreRequest,
         formatDurationMs,

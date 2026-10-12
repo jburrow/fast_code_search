@@ -45,7 +45,14 @@ lists every place it is used:
 
 - Hover a hit to preview the surrounding lines; click **View file** for the
   whole file with the line highlighted (large files open in a window with
-  "Show more").
+  "Show more"). Click a line number to select that line; **Copy link**
+  copies a URL that reopens the search with the file at that line.
+- Ctrl+click (⌘+click on a Mac) a name in the file viewer or a result to
+  open its definition; holding the key underlines what you can click. One
+  definition opens directly, several open a list, and a name with no
+  definition is searched for as text. Each jump in the viewer leaves a
+  **Back** step (also Alt+←). Double-click a name for a menu with
+  **Definition**, **References** and **Search**.
 - The **deps** chip on a file opens its importers and imports. The tree
   icon on a result (and **Explore imports** in the file viewer) opens the
   file in the dependency explorer.
