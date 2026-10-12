@@ -5,6 +5,8 @@ terminal, with grep-style output and exit codes, so it slots into editors,
 shell pipelines and scripts. When no server is running it can search the
 on-disk index directly.
 
+![fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing](images/demos/cli.gif)
+
 ```bash
 fcs 'fn main'                    # lines holding both words; the phrase ranks first
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only

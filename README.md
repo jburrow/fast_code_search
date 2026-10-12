@@ -20,7 +20,7 @@ Served from an in-memory trigram index in milliseconds, with a CLI, a web UI, an
 [How it works](https://jburrow.github.io/fast_code_search/docs/how-it-works/indexing.html) ·
 [Benchmarks](https://jburrow.github.io/fast_code_search/docs/benchmarks/methodology.html)
 
-<img src="docs/images/web-ui.png" alt="The web UI: a search for 'trigram' with definitions ranked first" width="820"/>
+<img src="docs/images/demos/search.gif" alt="Typing TrigramIndex in the web UI: the two struct definitions rank first; the file viewer opens at the match; then a quoted phrase search for fn main" width="820"/>
 
 </div>
 
@@ -77,7 +77,7 @@ fast_code_search_server                                                  # build
 fcs 'fn main'                                                            # from another terminal
 ```
 
-<img src="docs/images/cli.png" alt="fcs in a terminal: a search, a references query and a files-only listing" width="820"/>
+<img src="docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing" width="820"/>
 
 ```bash
 fcs -e 'fn\s+\w+\(' -g '*.rs' -C 2    # regex, Rust files only, two lines of context
@@ -115,8 +115,6 @@ server running on a developer machine, start it at login:
   interleaved by file so one file cannot fill a page.
 - **`fcs`** ([docs/CLI.md](docs/CLI.md)): grep-style output and exit codes, `--json`,
   and an offline fallback that searches the saved index when the server is down.
-- **Dependency explorer** in the web UI: a file's imports and importers, the
-  impact of changing it, import chains and a folder map, beside its source.
 - **MCP for coding agents** at `/mcp`: search, read files and walk the import
   graph from Claude Code or any MCP client
   (`claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp`,
@@ -124,6 +122,27 @@ server running on a developer machine, start it at login:
 - **Semantic search** (optional, experimental, behind the `semantic` feature):
   natural-language queries over TF-IDF or embedding vectors on its own ports; see
   [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).
+
+## A quick tour
+
+Recorded against a server indexing this repository; `scripts/docs/record-demos.sh`
+re-records them.
+
+**Definitions, then references.** SYMBOLS keeps only the lines that define a
+name; REFERENCES lists every place it is used.
+
+<img src="docs/images/demos/references.gif" alt="SearchEngine as a text search, then with SYMBOLS (the struct and its impl blocks), then with REFERENCES (every use)" width="820"/>
+
+**Regex help.** A cheat-sheet of patterns you can run with one click; a broken
+pattern says where it is wrong and offers fixes; a pattern that finds nothing
+offers the close variants that do.
+
+<img src="docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with its suggested fixes, and a case-sensitive regex that finds nothing with an 'Ignore case' suggestion that does" width="820"/>
+
+**Dependency explorer.** What a file imports and what imports it, the source of
+any neighbour, and everything a change could reach, tests included.
+
+<img src="docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" width="820"/>
 
 ## Benchmarks
 
@@ -228,6 +247,7 @@ is organised the way questions arrive:
   [First index, first search](https://jburrow.github.io/fast_code_search/docs/start/first-search.html) ·
   [Web UI](https://jburrow.github.io/fast_code_search/docs/start/web-ui.html) · [Editors](https://jburrow.github.io/fast_code_search/docs/start/editors.html) ·
   [Command-line client](https://jburrow.github.io/fast_code_search/docs/imported/cli.html) ·
+  [Coding agents (MCP)](https://jburrow.github.io/fast_code_search/docs/start/editors.html#coding-agents-mcp) ·
   [Run at startup](https://jburrow.github.io/fast_code_search/docs/imported/run-at-startup.html)
 - **Guides** — [Configuration cookbook](https://jburrow.github.io/fast_code_search/docs/guides/configuration.html) ·
   [Performance and memory](https://jburrow.github.io/fast_code_search/docs/guides/performance.html) ·
@@ -235,6 +255,7 @@ is organised the way questions arrive:
   [Upgrading](https://jburrow.github.io/fast_code_search/docs/guides/upgrading.html) · [Deployment](https://jburrow.github.io/fast_code_search/docs/imported/deployment.html)
 - **Reference** — [API and configuration](https://jburrow.github.io/fast_code_search/docs/imported/api.html) ·
   [Query syntax](https://jburrow.github.io/fast_code_search/docs/reference/query-syntax.html) ·
+  [Matching compared with grep and ripgrep](https://jburrow.github.io/fast_code_search/docs/reference/matching.html) ·
   [`fcs` command line](https://jburrow.github.io/fast_code_search/docs/reference/cli-help.html) ·
   [Server command line](https://jburrow.github.io/fast_code_search/docs/reference/server-help.html) ·
   [Configuration template](https://jburrow.github.io/fast_code_search/docs/reference/config-template.html) ·
@@ -249,6 +270,7 @@ is organised the way questions arrive:
   [Latest results](https://jburrow.github.io/fast_code_search/docs/benchmarks/latest.html) ·
   [Against ripgrep and ugrep](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html) ·
   [Ranking quality](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html) ·
+  [Correctness against ripgrep](https://jburrow.github.io/fast_code_search/docs/benchmarks/correctness.html) ·
   [Trends per commit](https://jburrow.github.io/fast_code_search/dev/bench/)
 - **Project** — [Changelog](CHANGELOG.md) · [Roadmap](https://jburrow.github.io/fast_code_search/docs/project/roadmap.html) ·
   [Contributing](CONTRIBUTING.md) · [Development](docs/DEVELOPMENT.md) ·

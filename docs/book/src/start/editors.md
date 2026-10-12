@@ -31,6 +31,26 @@ that talks to the server directly.
 `M-x grep` with `fcs --format vimgrep --absolute QUERY` produces a
 compilation buffer whose entries jump to the file and line.
 
+## Coding agents (MCP)
+
+The server speaks the [Model Context Protocol](https://modelcontextprotocol.io)
+at `/mcp`, so Claude Code or any other MCP client can search the index, read
+files with line numbers and walk the import graph instead of grepping:
+
+```bash
+claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp
+```
+
+Clients that only launch local commands can use `fcs mcp`, which relays MCP
+over stdio to the same endpoint:
+
+```json
+{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+```
+
+The tools and their arguments are listed under
+[MCP](../imported/api.md#mcp-coding-agents) in the API reference.
+
 ## Shell
 
 ```bash

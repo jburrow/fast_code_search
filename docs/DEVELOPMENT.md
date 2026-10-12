@@ -295,6 +295,22 @@ cargo build
 - [ ] Test with large codebases (10GB+)
 - [ ] Measure memory usage under load
 
+### Re-recording the demos
+
+The animated demos in the README and the documentation
+(`docs/images/demos/*.gif`) and the `docs/images/web-ui.png` screenshot are
+recorded from a server indexing a clean export of this repository, so they
+only ever show this project's own code. After a UI change, re-record them:
+
+```bash
+NODE_PATH=$(npm root -g) scripts/docs/record-demos.sh          # all of them
+NODE_PATH=$(npm root -g) scripts/docs/record-demos.sh graph    # one: search, references, regex, graph, cli or stills
+```
+
+It needs `ffmpeg`, Node with the `playwright` package and a Chromium it can
+launch. Each demo is a short scripted session in
+`scripts/docs/record-demos.mjs`; keep the GIFs under about 3 MB each.
+
 ## Debugging
 
 ### Debug Build
