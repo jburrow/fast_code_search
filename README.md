@@ -5,7 +5,7 @@
 **Code search that ranks like code.**
 
 Definitions above usages. The files your codebase depends on above the ones it doesn't.
-Served from an in-memory trigram index in milliseconds, with a CLI, a web UI, and REST and gRPC APIs.
+Served from an in-memory trigram index in milliseconds, with a CLI, a web UI, REST and gRPC APIs, and MCP for coding agents.
 
 [![CI](https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml/badge.svg)](https://github.com/jburrow/fast_code_search/actions/workflows/ci.yml)
 [![Benchmarks](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml/badge.svg)](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml)
@@ -92,6 +92,47 @@ The web UI is at http://127.0.0.1:8080, the JSON API under `/api/`
 server running on a developer machine, start it at login:
 [docs/RUN-AT-STARTUP.md](docs/RUN-AT-STARTUP.md) (systemd, launchd, Task Scheduler).
 
+## For coding agents (MCP)
+
+A coding agent that greps re-reads the tree on every question and gets lines in
+file order. Point it at the server instead and it gets ranked answers from the
+in-memory index in milliseconds, plus the import graph, which grep cannot give
+it at all. The server speaks the [Model Context Protocol](https://modelcontextprotocol.io)
+at `/mcp`:
+
+```bash
+claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp
+```
+
+Clients that only launch commands can use `fcs mcp`, which relays over stdio:
+`{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }`.
+
+What an agent can then answer, and the tool it uses:
+
+| The agent wants to… | Tool |
+|---------------------|------|
+| find where something is defined, used or mentioned (text, regex, symbols, references) | `search_code` |
+| read source with line numbers it can cite | `read_file` |
+| know what a file depends on, and what depends on it | `file_dependencies` |
+| check what a change could break, and which tests cover it, before editing | `change_impact` |
+| understand how two files are connected | `import_path` |
+| get oriented in an unfamiliar repository: main folders, hubs, cycles | `dependency_overview` |
+
+For example, asked to change the ranking weights, an agent can first call
+`change_impact` on `src/search/ranking.rs` and get back, from this repository:
+
+```text
+Changing src/search/ranking.rs can affect 10 other files (2 tests, 8 other code), up to 2 imports away.
+
+Tests (hops away, path):
+  2  src/search/engine/tests.rs
+  2  tests/integration_tests.rs
+```
+
+Every tool is read-only and shares the REST API's deadlines and caps. The
+arguments are in [docs/API.md](docs/API.md#mcp-coding-agents). Import edges
+cover Rust, Python and JavaScript/TypeScript; search covers every language.
+
 ## What you get
 
 - **Dependency explorer** (GRAPH in the web UI): a file's imports and
@@ -116,9 +157,8 @@ server running on a developer machine, start it at login:
 - **`fcs`** ([docs/CLI.md](docs/CLI.md)): grep-style output and exit codes, `--json`,
   and an offline fallback that searches the saved index when the server is down.
 - **MCP for coding agents** at `/mcp`: search, read files and walk the import
-  graph from Claude Code or any MCP client
-  (`claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp`,
-  or `fcs mcp` over stdio). See [docs/API.md](docs/API.md#mcp-coding-agents).
+  graph from Claude Code or any MCP client; see
+  [For coding agents](#for-coding-agents-mcp).
 - **Semantic search** (optional, experimental, behind the `semantic` feature):
   natural-language queries over TF-IDF or embedding vectors on its own ports; see
   [docs/semantic/SEMANTIC_SEARCH_README.md](docs/semantic/SEMANTIC_SEARCH_README.md).

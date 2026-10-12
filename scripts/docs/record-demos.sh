@@ -42,10 +42,6 @@ for _ in $(seq 1 60); do
   if curl -sf "http://127.0.0.1:$PORT/api/status" | grep -q '"status":"completed"'; then break; fi
   sleep 1
 done
-if [ -f "$WORK/raw/web-ui.png" ]; then
-  cp "$WORK/raw/web-ui.png" "$ROOT/docs/images/web-ui.png"
-  echo "$ROOT/docs/images/web-ui.png"
-fi
 sleep 2
 
 FCS_URL="http://127.0.0.1:$PORT" node "$ROOT/scripts/docs/record-demos.mjs" "$WORK/raw" $ONLY
