@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Web UI: go to definition. Ctrl+click (⌘+click on a Mac) a name in the
+  file viewer or a result snippet to open where it is defined (a list when
+  there are several, a text search when there are none), with **Back**
+  (Alt+←) in the viewer. Double-click a name for Definition, References and
+  Search. Uses the existing symbol and reference search.
 - Web UI: the file viewer has a shareable link. Click a line number to
   select a line; **Copy link** copies a URL whose fragment
   (`#file=…&line=…`) reopens the search with that file at that line.

@@ -225,6 +225,50 @@
         }
         .file-modal-explore:hover { background: #fff900; }
         .file-modal-explore + .file-modal-explore { margin-left: 0; }
+        .file-modal-back { margin-left: 0; margin-right: 0.75rem; }
+        .file-meta-hint { float: right; color: #7a785f; }
+        /* Go to definition: the name under the pointer while Ctrl/Cmd is held */
+        ::highlight(fcs-defn) { color: #0b57d0; text-decoration: underline; text-decoration-thickness: 2px; }
+        body.defn-hover .file-line-content,
+        body.defn-hover .ctx-line-content,
+        body.defn-hover pre.result-code { cursor: pointer; }
+        body.defn-busy, body.defn-busy * { cursor: progress !important; }
+        .code-menu {
+            position: fixed;
+            z-index: 3000;
+            min-width: 180px;
+            max-width: min(640px, calc(100vw - 16px));
+            max-height: 60vh;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid #000;
+            box-shadow: 2px 2px 0 #000;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+        }
+        .code-menu-title {
+            padding: 0.3rem 0.6rem;
+            background: #dedac6;
+            border-bottom: 1px solid #000;
+            font-weight: 700;
+            color: #1d1c0f;
+        }
+        .code-menu button {
+            display: flex;
+            gap: 1rem;
+            justify-content: space-between;
+            width: 100%;
+            padding: 0.35rem 0.6rem;
+            background: none;
+            border: none;
+            text-align: left;
+            cursor: pointer;
+            color: #1d1c0f;
+            font: inherit;
+        }
+        .code-menu button + button { border-top: 1px solid #e3dec8; }
+        .code-menu button:hover, .code-menu button:focus-visible { background: #fff900; outline: none; }
+        .code-menu button code { color: #5f5d48; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
         .file-modal-body .file-line-num { cursor: pointer; }
         .file-modal-body .file-line-num:hover { color: #1d1c0f; text-decoration: underline; }
         .file-modal-close {

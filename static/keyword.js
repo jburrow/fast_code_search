@@ -747,7 +747,8 @@ async function populateFileView(container, filePath, highlightLine, matcher, sig
     let to = Math.min(total, target + FILE_VIEW_WINDOW);
 
     container.innerHTML =
-        `<div class="file-meta">${Number(data.line_count || total).toLocaleString()} lines · ${formatBytes(data.size_bytes || 0)}</div>` +
+        `<div class="file-meta">${Number(data.line_count || total).toLocaleString()} lines · ${formatBytes(data.size_bytes || 0)}` +
+            `<span class="file-meta-hint">${DEFN_KEY_LABEL}-click a name for its definition · double-click for more</span></div>` +
         `<div class="file-code" data-lang="${lang}">` +
             `<div class="file-more" data-side="above"></div>` +
             `<div class="file-lines"></div>` +
@@ -2228,9 +2229,18 @@ function closeModal() {
 // Stored so the overlay click listener can be removed on close
 let _fileModalOverlayListener = null;
 
-async function showFileModal(filePath, highlightLine) {
+/**
+ * Open the file viewer on `filePath` at `highlightLine`.
+ * @param {{keepHistory?: boolean}} [opts] - keepHistory: this is a step of
+ *   go-to-definition or Back inside the viewer, so keep the Back trail
+ *   (a fresh open starts a new one).
+ */
+async function showFileModal(filePath, highlightLine, opts = {}) {
     // Ensure hover preview is not left visible behind the modal.
     hideContextTooltipImmediately();
+    hideCodeMenu();
+    if (!opts.keepHistory) _fileViewBack = [];
+    _fileView = { file: filePath, line: highlightLine || 1 };
 
     // Clean up any existing file modal and its listeners
     if (document.getElementById('file-modal')) closeFileModal();
@@ -2271,6 +2281,16 @@ async function showFileModal(filePath, highlightLine) {
         setTimeout(() => { copyLink.textContent = 'Copy link'; }, 1500);
     });
 
+    if (_fileViewBack.length) {
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.className = 'file-modal-explore file-modal-back';
+        const prev = _fileViewBack[_fileViewBack.length - 1];
+        back.textContent = '← Back';
+        back.title = `Back to ${prev.file}:${prev.line} (Alt+←)`;
+        back.addEventListener('click', fileViewGoBack);
+        header.appendChild(back);
+    }
     header.appendChild(pathSpan);
     header.appendChild(copyLink);
     if (hasImportGraph(filePath)) {
@@ -2310,6 +2330,7 @@ async function showFileModal(filePath, highlightLine) {
         if (!(line > 0)) return;
         body.querySelectorAll('.file-line-highlight').forEach(el => el.classList.remove('file-line-highlight'));
         num.parentElement.classList.add('file-line-highlight');
+        _fileView = { file: filePath, line };
         setFileViewHash(filePath, line);
     });
 
@@ -2322,6 +2343,10 @@ async function showFileModal(filePath, highlightLine) {
 
 function handleFileModalEscape(e) {
     if (e.key === 'Escape') closeFileModal();
+    else if (e.key === 'ArrowLeft' && e.altKey && _fileViewBack.length) {
+        e.preventDefault();
+        fileViewGoBack();
+    }
 }
 
 function closeFileModal() {
@@ -2352,6 +2377,269 @@ function openFileViewFromHash() {
 }
 
 window.addEventListener('hashchange', openFileViewFromHash);
+
+// ============================================
+// GO TO DEFINITION
+//
+// In the file viewer and in result snippets, Ctrl+click (Cmd+click on a
+// Mac) on a name opens its definition; holding the key underlines the name
+// under the pointer. Double-clicking a name opens a small menu: Definition,
+// References, Search. Definitions come from the symbol search (exact name,
+// whole word, case-sensitive): one opens directly, several open a list, none
+// falls back to a text search. Inside the viewer each jump leaves a Back
+// step (button or Alt+←).
+// ============================================
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+const DEFN_KEY_LABEL = IS_MAC ? '⌘' : 'Ctrl';
+/** The file and line the viewer shows, and the trail Back walks. */
+let _fileView = null;
+let _fileViewBack = [];
+
+function isDefnModifier(e) {
+    return IS_MAC ? e.metaKey : e.ctrlKey;
+}
+
+/** The code line element (one line of text) that `el` sits in, or null. */
+function codeLineElement(el) {
+    if (!el || !el.closest) return null;
+    const line = el.closest('.file-modal-body .file-line-content, .ctx-line-content');
+    if (line) return line;
+    const pre = el.closest('pre.result-code');
+    return pre && pre.dataset.hasContext !== 'true' ? pre : null;
+}
+
+/** A DOM Range over the [start, end) text offsets of `el`. */
+function rangeForOffsets(el, start, end) {
+    const range = document.createRange();
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    let node;
+    let started = false;
+    while ((node = walker.nextNode())) {
+        const len = node.nodeValue.length;
+        if (!started && start <= pos + len) { range.setStart(node, start - pos); started = true; }
+        if (started && end <= pos + len) { range.setEnd(node, end - pos); return range; }
+        pos += len;
+    }
+    return null;
+}
+
+/** The name under the viewport point (x, y) in a code line, or null. */
+function identifierAtPoint(x, y) {
+    let node = null;
+    let offset = 0;
+    if (document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(x, y);
+        if (p) { node = p.offsetNode; offset = p.offset; }
+    } else if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(x, y);
+        if (r) { node = r.startContainer; offset = r.startOffset; }
+    }
+    if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+    const lineEl = codeLineElement(node.parentElement);
+    if (!lineEl) return null;
+
+    const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    let n;
+    while ((n = walker.nextNode()) && n !== node) pos += n.nodeValue.length;
+    const id = identifierAt(lineEl.textContent, pos + offset);
+    if (!id) return null;
+    const range = rangeForOffsets(lineEl, id.start, id.end);
+    // The caret snaps to the nearest character, so make sure the pointer is
+    // really over the name (not in the blank space after a short line).
+    const over = range && [...range.getClientRects()].some(r =>
+        x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1);
+    return over ? { ...id, range, lineEl } : null;
+}
+
+/** The file a code line belongs to: the viewer's file or the result's. */
+function fileOfCodeLine(lineEl) {
+    if (lineEl.closest('#file-modal')) return _fileView ? _fileView.file : null;
+    const group = lineEl.closest('.result-group');
+    return group ? group.dataset.filePath : null;
+}
+
+function setDefnHover(id) {
+    document.body.classList.toggle('defn-hover', !!id);
+    if (typeof CSS === 'undefined' || !CSS.highlights || typeof Highlight === 'undefined') return;
+    if (id) CSS.highlights.set('fcs-defn', new Highlight(id.range));
+    else CSS.highlights.delete('fcs-defn');
+}
+
+document.addEventListener('mousemove', (e) => {
+    setDefnHover(isDefnModifier(e) ? identifierAtPoint(e.clientX, e.clientY) : null);
+});
+document.addEventListener('keyup', (e) => {
+    if (e.key === 'Control' || e.key === 'Meta') setDefnHover(null);
+});
+window.addEventListener('blur', () => setDefnHover(null));
+
+// Capture phase, so the click never reaches the result row or line number.
+document.addEventListener('click', (e) => {
+    if (!isDefnModifier(e) || e.button !== 0) return;
+    const id = identifierAtPoint(e.clientX, e.clientY);
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDefnHover(null);
+    goToDefinition(id.word, fileOfCodeLine(id.lineEl), id.range.getBoundingClientRect());
+}, true);
+
+document.addEventListener('dblclick', (e) => {
+    const id = identifierAtPoint(e.clientX, e.clientY);
+    if (!id) return;
+    showCodeMenu(id.range.getBoundingClientRect(), menuForName(id.word, fileOfCodeLine(id.lineEl)));
+});
+
+let _codeMenu = null;
+
+/**
+ * Show a small floating menu under `rect`. `content` is {title?, items:
+ * [{label, detail?, action}]} where each action runs after the menu closes.
+ */
+function showCodeMenu(rect, content) {
+    hideCodeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'code-menu';
+    menu.setAttribute('role', 'menu');
+    if (content.title) {
+        const title = document.createElement('div');
+        title.className = 'code-menu-title';
+        title.textContent = content.title;
+        menu.appendChild(title);
+    }
+    content.items.forEach(item => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.setAttribute('role', 'menuitem');
+        const label = document.createElement('span');
+        label.textContent = item.label;
+        btn.appendChild(label);
+        if (item.detail) {
+            const detail = document.createElement('code');
+            detail.textContent = item.detail;
+            btn.appendChild(detail);
+        }
+        btn.addEventListener('click', () => { hideCodeMenu(); item.action(); });
+        menu.appendChild(btn);
+    });
+    document.body.appendChild(menu);
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - w - 8));
+    const below = rect.bottom + 4;
+    const top = below + h > window.innerHeight - 8 ? Math.max(8, rect.top - h - 4) : below;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    _codeMenu = menu;
+    menu.querySelector('button')?.focus({ preventScroll: true });
+}
+
+function hideCodeMenu() {
+    if (_codeMenu) { _codeMenu.remove(); _codeMenu = null; }
+}
+
+document.addEventListener('mousedown', (e) => {
+    if (_codeMenu && !_codeMenu.contains(e.target)) hideCodeMenu();
+}, true);
+// Capture phase: Escape closes the menu before it can close the viewer.
+document.addEventListener('keydown', (e) => {
+    if (!_codeMenu) return;
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        hideCodeMenu();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const items = [..._codeMenu.querySelectorAll('button')];
+        const i = items.indexOf(document.activeElement);
+        const next = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+        items[next].focus();
+    }
+}, true);
+window.addEventListener('resize', hideCodeMenu);
+document.addEventListener('scroll', hideCodeMenu, true);
+
+function menuForName(name, fromFile) {
+    return {
+        title: name,
+        items: [
+            { label: 'Definition', detail: `${DEFN_KEY_LABEL}+click`, action: () => goToDefinition(name, fromFile, null) },
+            { label: 'References', action: () => searchForName(name, 'references') },
+            { label: 'Search', action: () => searchForName(name, 'text') },
+        ],
+    };
+}
+
+/** Run a search for `name` in the main page: its references, or as text. */
+function searchForName(name, mode) {
+    closeFileModal();
+    queryInput.value = mode === 'text' ? definitionQuery(name).replace('case:yes ', '') : name;
+    modeCheckboxes().forEach(cb => { cb.checked = mode === 'references' && cb === referencesModeCheckbox; });
+    syncToggleVisuals();
+    submitSearch();
+}
+
+let _defnLookup = null;
+
+/**
+ * Find where `name` is defined and open it. `fromFile` ranks definitions in
+ * the same file first; `rect` (optional) is where to anchor the list when
+ * there are several.
+ */
+async function goToDefinition(name, fromFile, rect) {
+    if (_defnLookup) _defnLookup.abort();
+    const controller = new AbortController();
+    _defnLookup = controller;
+    document.body.classList.add('defn-busy');
+    try {
+        const params = new URLSearchParams({ q: definitionQuery(name), symbols: 'true', max: '50' });
+        const resp = await fetch(`${API_BASE}/api/search?${params}`, { signal: controller.signal });
+        if (!resp.ok) throw new Error(await readErrorBody(resp));
+        const data = await resp.json();
+        const defs = rankDefinitions(data.results, name, fromFile);
+        if (defs.length === 0) {
+            searchForName(name, 'text');
+        } else if (defs.length === 1) {
+            openDefinition(defs[0]);
+        } else {
+            const anchor = rect || (document.querySelector('#file-modal .file-modal-header') || document.body).getBoundingClientRect();
+            showCodeMenu(anchor, {
+                title: `${defs.length} definitions of ${name}`,
+                items: defs.slice(0, 20).map(d => ({
+                    label: `${d.file}:${d.line}`,
+                    detail: d.content.length > 80 ? d.content.slice(0, 79) + '…' : d.content,
+                    action: () => openDefinition(d),
+                })),
+            });
+        }
+    } catch (err) {
+        if (err.name !== 'AbortError') searchForName(name, 'text');
+    } finally {
+        if (_defnLookup === controller) {
+            _defnLookup = null;
+            document.body.classList.remove('defn-busy');
+        }
+    }
+}
+
+/** Open a definition: a Back step inside the viewer, or a fresh viewer. */
+function openDefinition(def) {
+    if (document.getElementById('file-modal') && _fileView) {
+        _fileViewBack.push(_fileView);
+        showFileModal(def.file, def.line, { keepHistory: true });
+    } else {
+        showFileModal(def.file, def.line);
+    }
+}
+
+function fileViewGoBack() {
+    const prev = _fileViewBack.pop();
+    if (prev) showFileModal(prev.file, prev.line, { keepHistory: true });
+}
 
 /**
  * Run a one-time startup search when a query was provided in the URL.

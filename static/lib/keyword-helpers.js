@@ -119,6 +119,65 @@ function parseFileViewHash(hash) {
     return { file, line: line > 0 ? line : 1 };
 }
 
+// ---------- Go to definition ----------
+
+const IDENT_CHAR = /[\p{L}\p{N}_$]/u;
+
+/**
+ * The identifier around `offset` in `text` (a caret position: the character
+ * at `offset`, or the one before it when the caret sits at a word's end).
+ * @returns {{start: number, end: number, word: string} | null}
+ */
+function identifierAt(text, offset) {
+    const chars = Array.from(text);
+    // Work in code points so a surrogate pair is one character, then map back.
+    let cp = Array.from(text.slice(0, Math.max(0, offset))).length;
+    if (!(cp < chars.length && IDENT_CHAR.test(chars[cp]))) {
+        if (cp > 0 && IDENT_CHAR.test(chars[cp - 1])) cp -= 1;
+        else return null;
+    }
+    let a = cp;
+    let b = cp + 1;
+    while (a > 0 && IDENT_CHAR.test(chars[a - 1])) a--;
+    while (b < chars.length && IDENT_CHAR.test(chars[b])) b++;
+    const word = chars.slice(a, b).join('');
+    if (/^\p{N}/u.test(word)) return null; // a number, not a name
+    const start = chars.slice(0, a).join('').length;
+    return { start, end: start + word.length, word };
+}
+
+/** The query that finds where `name` is defined (with `symbols=true`). */
+function definitionQuery(name) {
+    return `word:yes case:yes ${name}`;
+}
+
+/**
+ * Turn symbol-search results into definition targets for `name`: only hits
+ * whose matched text is exactly `name`, one per file and line, those in
+ * `fromFile` first (the usual case for a local helper), then by score.
+ * @returns {Array<{file: string, line: number, content: string}>}
+ */
+function rankDefinitions(results, name, fromFile) {
+    const seen = new Set();
+    const defs = [];
+    for (const r of results || []) {
+        if (!r || !(r.line_number > 0)) continue;
+        const content = String(r.content || '');
+        const [a, b] = byteRangeToCharRange(content, Number(r.match_start) || 0, Number(r.match_end) || 0);
+        if (content.slice(a, b) !== name) continue;
+        // A whole name: `SearchEngine` is not defined by `SemanticSearchEngine`.
+        const before = Array.from(content.slice(0, a)).pop() || '';
+        const after = Array.from(content.slice(b))[0] || '';
+        if (IDENT_CHAR.test(before) || IDENT_CHAR.test(after)) continue;
+        const key = `${r.file_path}:${r.line_number}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        defs.push({ file: r.file_path, line: r.line_number, content: content.trim(), score: Number(r.score) || 0 });
+    }
+    defs.sort((x, y) => (y.file === fromFile) - (x.file === fromFile) || y.score - x.score);
+    return defs.map(({ file, line, content }) => ({ file, line, content }));
+}
+
 /**
  * Does the dependency explorer have an import graph for this file? Imports
  * are resolved for Rust, Python and JavaScript/TypeScript only.
@@ -718,6 +777,9 @@ if (typeof module !== 'undefined' && module.exports) {
         splitHighlightedHtml,
         snippetHighlightPrefix,
         fileViewHash,
+        identifierAt,
+        definitionQuery,
+        rankDefinitions,
         parseFileViewHash,
         resultsCountLabel,
         loadMoreRequest,

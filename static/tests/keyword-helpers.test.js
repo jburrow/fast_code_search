@@ -486,3 +486,42 @@ test('fileViewHash / parseFileViewHash round-trip paths with special characters'
     assert.equal(H.parseFileViewHash(''), null);
     assert.equal(H.parseFileViewHash('#top'), null);
 });
+
+// ---------- go to definition ----------
+
+test('identifierAt: the name under or just before the caret', () => {
+    const t = 'let req = SearchRequest::from_args(&args);';
+    assert.deepEqual(H.identifierAt(t, 12), { start: 10, end: 23, word: 'SearchRequest' });
+    assert.deepEqual(H.identifierAt(t, 10), { start: 10, end: 23, word: 'SearchRequest' });
+    // caret right after the word (clicked on its last half-character)
+    assert.equal(H.identifierAt(t, 23).word, 'SearchRequest');
+    assert.equal(H.identifierAt(t, 26).word, 'from_args');
+    assert.equal(H.identifierAt('a = $el.x', 5).word, '$el');
+    assert.equal(H.identifierAt('a + b', 2), null); // on the operator
+    assert.equal(H.identifierAt('x = 42;', 5), null); // numbers are not names
+    assert.equal(H.identifierAt('', 0), null);
+    assert.equal(H.identifierAt('  ', 1), null);
+});
+
+test('identifierAt: non-ASCII names and offsets after astral characters', () => {
+    assert.equal(H.identifierAt('größe = 1', 2).word, 'größe');
+    const t = '"😀" + café';
+    const r = H.identifierAt(t, t.indexOf('café') + 1);
+    assert.deepEqual(r, { start: t.indexOf('café'), end: t.length, word: 'café' });
+});
+
+test('rankDefinitions: exact name only, same file first, deduplicated', () => {
+    const results = [
+        { file_path: 'b.rs', line_number: 3, content: 'pub struct SearchEngine {', match_start: 11, match_end: 23, score: 40 },
+        { file_path: 'c.rs', line_number: 9, content: 'pub struct SemanticSearchEngine {', match_start: 19, match_end: 31, score: 50 },
+        { file_path: 'a.rs', line_number: 7, content: 'impl SearchEngine {', match_start: 5, match_end: 17, score: 10 },
+        { file_path: 'b.rs', line_number: 3, content: 'pub struct SearchEngine {', match_start: 11, match_end: 23, score: 40 },
+        { file_path: 'd.rs', line_number: 0, content: 'SearchEngine', match_start: 0, match_end: 12, score: 99 },
+    ];
+    assert.deepEqual(H.rankDefinitions(results, 'SearchEngine', 'a.rs'), [
+        { file: 'a.rs', line: 7, content: 'impl SearchEngine {' },
+        { file: 'b.rs', line: 3, content: 'pub struct SearchEngine {' },
+    ]);
+    assert.deepEqual(H.rankDefinitions([], 'x', 'a.rs'), []);
+    assert.equal(H.definitionQuery('foo'), 'word:yes case:yes foo');
+});
