@@ -602,6 +602,7 @@ impl Session {
         let total_results = results.len();
         Ok(SearchResponse {
             results,
+            index: None,
             query: req.query.clone(),
             total_results,
             has_more: match info.total_matches {
@@ -657,6 +658,18 @@ impl Session {
                         v["dependency_edges"].as_u64().unwrap_or(0),
                         v["total_content_bytes"].as_u64().unwrap_or(0) / 1_000_000
                     ));
+                }
+                let freshness = client
+                    .get(format!("{}/api/status", self.server))
+                    .send()
+                    .ok()
+                    .and_then(|r| r.json::<serde_json::Value>().ok())
+                    .and_then(|v| {
+                        serde_json::from_value::<crate::search::IndexFreshness>(v["index"].clone())
+                            .ok()
+                    });
+                if let Some(f) = freshness {
+                    out.push_str(&format!("  {}\n", f.summary(crate::search::unix_now_ms())));
                 }
             }
             Ok(r) => out.push_str(&format!("  answered {}\n", r.status())),
@@ -753,6 +766,14 @@ fn run(cli: Cli) -> Result<i32> {
     }
     if session.format == Format::Grouped && !session.output.quiet {
         eprintln!("{}", format::summary(&resp));
+    }
+    // Without a file watcher the server misses writes after its last scan.
+    if let Some(note) = resp
+        .index
+        .as_ref()
+        .and_then(|f| f.note(crate::search::unix_now_ms()))
+    {
+        session.note(&note);
     }
     Ok(if resp.results.is_empty() { 1 } else { 0 })
 }

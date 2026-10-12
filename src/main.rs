@@ -340,10 +340,12 @@ async fn main() -> Result<()> {
             match FileWatcher::new(watcher_config) {
                 Ok(mut watcher) => {
                     info!("File watcher started");
+                    with_engine_write(&watch_engine, |engine| engine.watching = true);
                     let mut watcher_updates_total: usize = 0;
                     loop {
                         if watch_shutdown.load(std::sync::atomic::Ordering::Acquire) {
                             info!("File watcher stopping for shutdown");
+                            with_engine_write(&watch_engine, |engine| engine.watching = false);
                             save_after_watcher_shutdown(
                                 &watch_indexer_config,
                                 &watch_engine,

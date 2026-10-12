@@ -4062,7 +4062,8 @@ async fn test_mcp_handshake_and_tool_list() -> Result<()> {
             "file_dependencies",
             "change_impact",
             "import_path",
-            "dependency_overview"
+            "dependency_overview",
+            "index_status"
         ]
     );
     for tool in body["result"]["tools"].as_array().unwrap() {
@@ -4147,6 +4148,86 @@ async fn test_mcp_tools_answer_from_the_index() -> Result<()> {
     let (err, text) = mcp_tool(&base, "read_file", serde_json::json!({"path": "nope.py"})).await?;
     assert!(err);
     assert!(text.contains("not found"), "{text}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_mcp_reports_index_freshness_when_not_watching() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let root = temp_dir.path().canonicalize()?;
+    let old = root.join("old.rs");
+    std::fs::write(&old, "fn indexed_before() {}\n")?;
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut eng = engine.write().unwrap();
+        eng.add_root_path(&root);
+        eng.index_file(old.clone())?;
+        // As the background indexer leaves it: synced a while ago, no watcher.
+        eng.synced_at_ms = Some(fast_code_search::search::unix_now_ms() - 5 * 60_000);
+    }
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let router = create_router(
+        engine.clone(),
+        progress,
+        create_progress_broadcaster(),
+        None,
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let base = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    // An agent writes a new file and edits the indexed one.
+    std::fs::write(root.join("new.rs"), "fn written_after() {}\n")?;
+    std::fs::write(&old, "fn indexed_before() { edited(); }\n")?;
+
+    let (err, text) = mcp_tool(
+        &base,
+        "search_code",
+        serde_json::json!({"query": "written_after"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.starts_with("No matches"), "{text}");
+    assert!(text.contains("synced with disk 5 min ago"), "{text}");
+    assert!(text.contains("file watching is off"), "{text}");
+
+    let (err, text) = mcp_tool(
+        &base,
+        "index_status",
+        serde_json::json!({"paths": ["new.rs", "old.rs", "gone.rs"]}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.contains("1 files indexed."), "{text}");
+    assert!(text.contains("file watching off"), "{text}");
+    assert!(text.contains("new.rs: not indexed"), "{text}");
+    assert!(text.contains("old.rs: stale"), "{text}");
+    assert!(text.contains("gone.rs: not found"), "{text}");
+
+    // The same facts over REST, for the web UI and `fcs`.
+    let status: serde_json::Value = reqwest::get(format!("{base}/api/status?paths=new.rs;old.rs"))
+        .await?
+        .json()
+        .await?;
+    assert_eq!(status["index"]["watching"], false);
+    assert!(status["index"]["synced_at_ms"].is_u64());
+    assert_eq!(status["paths"][0]["state"], "not_indexed");
+    assert_eq!(status["paths"][1]["state"], "stale");
+    let search: serde_json::Value = reqwest::get(format!("{base}/api/search?q=indexed_before"))
+        .await?
+        .json()
+        .await?;
+    assert_eq!(search["index"]["watching"], false);
+
+    // With a watcher running there is nothing to warn about.
+    engine.write().unwrap().watching = true;
+    let (_, text) = mcp_tool(
+        &base,
+        "search_code",
+        serde_json::json!({"query": "written_after"}),
+    )
+    .await?;
+    assert!(!text.contains("watching is off"), "{text}");
     Ok(())
 }
 

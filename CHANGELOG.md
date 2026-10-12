@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result paths without the indexed folder's name (`src/main.rs` instead of
   `myapp/src/main.rs`) in the web UI, REST API, `fcs` and MCP. Only applies
   when a single path is indexed; `file:` filters are unaffected.
+- Index freshness. With file watching off, the server only sees files as
+  they were at its last scan. Search responses, `/api/status` and the progress
+  socket now carry `index` (`watching`, `synced_at_ms`, `updated_at_ms`), and
+  `/api/status?paths=…` says whether each path is current, stale, not indexed
+  yet or deleted. When watching is off, the web UI shows "Index synced 6 min
+  ago · watching off" beside the search time, `fcs` prints the same warning
+  on stderr (`-q` hides it), `fcs status` reports it, MCP `search_code`
+  results end with it, and a new MCP tool, `index_status`, lets an agent
+  check the files it just wrote.
 
 ### Fixed
 - Web UI: search result context and hover previews are syntax-highlighted in
