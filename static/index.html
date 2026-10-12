@@ -224,6 +224,9 @@
             white-space: nowrap;
         }
         .file-modal-explore:hover { background: #fff900; }
+        .file-modal-explore + .file-modal-explore { margin-left: 0; }
+        .file-modal-body .file-line-num { cursor: pointer; }
+        .file-modal-body .file-line-num:hover { color: #1d1c0f; text-decoration: underline; }
         .file-modal-close {
             background: none;
             border: 1px solid #000;
@@ -802,6 +805,7 @@
     </nav>
 
     <script src="/highlight.min.js"></script>
+    <script src="/highlight-languages.min.js"></script>
     <script src="/common.js"></script>
     <script src="/lib/keyword-helpers.js"></script>
     <script src="/keyword.js"></script>

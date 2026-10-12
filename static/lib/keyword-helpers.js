@@ -74,20 +74,49 @@ function iconSvg(name, size) {
  * Falls back to 'plaintext' when unknown.
  */
 function hljsLangForPath(filePath) {
-    const ext = (String(filePath || '').split('.').pop() || '').toLowerCase();
+    const name = (String(filePath || '').split('/').pop() || '').toLowerCase();
+    // Files known by name rather than extension (Dockerfile, Dockerfile.dev).
+    if (name === 'dockerfile' || name.startsWith('dockerfile.') || name.endsWith('.dockerfile')) return 'dockerfile';
+    if (name === 'makefile' || name === 'gnumakefile' || name.endsWith('.mk')) return 'makefile';
+    const ext = name.includes('.') ? name.split('.').pop() : '';
     const MAP = {
-        rs: 'rust', py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-        ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+        rs: 'rust', py: 'python', pyi: 'python', pyw: 'python',
+        js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+        ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
         go: 'go', rb: 'ruby', java: 'java', cs: 'csharp', cpp: 'cpp', cc: 'cpp',
-        cxx: 'cpp', c: 'c', h: 'c', hpp: 'cpp', php: 'php', sh: 'bash',
+        cxx: 'cpp', c: 'c', h: 'c', hpp: 'cpp', hh: 'cpp', hxx: 'cpp',
+        m: 'objectivec', mm: 'objectivec', php: 'php', sh: 'bash',
         bash: 'bash', zsh: 'bash', toml: 'toml', yaml: 'yaml', yml: 'yaml',
-        json: 'json', xml: 'xml', html: 'xml', css: 'css', scss: 'scss',
-        md: 'markdown', sql: 'sql', kt: 'kotlin', swift: 'swift', r: 'r',
+        json: 'json', jsonc: 'json', xml: 'xml', html: 'xml', htm: 'xml',
+        svg: 'xml', vue: 'xml', svelte: 'xml', css: 'css', scss: 'scss', less: 'less',
+        md: 'markdown', sql: 'sql', kt: 'kotlin', kts: 'kotlin', swift: 'swift', r: 'r',
         lua: 'lua', pl: 'perl', pm: 'perl', hs: 'haskell', ex: 'elixir',
-        exs: 'elixir', erl: 'erlang', scala: 'scala', dart: 'dart',
-        proto: 'protobuf', dockerfile: 'dockerfile', makefile: 'makefile',
+        exs: 'elixir', erl: 'erlang', hrl: 'erlang', scala: 'scala', sc: 'scala',
+        dart: 'dart', proto: 'protobuf', ini: 'ini', cfg: 'ini', conf: 'ini',
+        diff: 'diff', patch: 'diff', graphql: 'graphql', gql: 'graphql',
+        vb: 'vbnet', wat: 'wasm', wast: 'wasm',
     };
     return MAP[ext] || 'plaintext';
+}
+
+/**
+ * The URL fragment that reopens the file viewer on `filePath` at `line`:
+ * `#file=src%2Fmain.rs&line=42` (line 1 is left out).
+ */
+function fileViewHash(filePath, line) {
+    const params = new URLSearchParams();
+    params.set('file', filePath);
+    if (line > 1) params.set('line', String(line));
+    return '#' + params.toString();
+}
+
+/** Parse a fileViewHash fragment: `{ file, line }`, or null if it names no file. */
+function parseFileViewHash(hash) {
+    const params = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+    const file = params.get('file');
+    if (!file) return null;
+    const line = parseInt(params.get('line'), 10);
+    return { file, line: line > 0 ? line : 1 };
 }
 
 /**
@@ -688,6 +717,8 @@ if (typeof module !== 'undefined' && module.exports) {
         matcherRanges,
         splitHighlightedHtml,
         snippetHighlightPrefix,
+        fileViewHash,
+        parseFileViewHash,
         resultsCountLabel,
         loadMoreRequest,
         formatDurationMs,

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Web UI: the file viewer has a shareable link. Click a line number to
+  select a line; **Copy link** copies a URL whose fragment
+  (`#file=…&line=…`) reopens the search with that file at that line.
+- Web UI: syntax colouring for Dart, Dockerfile, Elixir, Erlang, Haskell,
+  Protobuf and Scala (`static/highlight-languages.min.js`, rebuilt by
+  `scripts/update-hljs-languages.sh`), and for more extensions of
+  languages already bundled (`.pyi`, `.mts`, `.kts`, `.vue`, `.ini`,
+  `.diff`, `.graphql`, ...).
 - `show_root_name` indexer option (default `true`). Set it to `false` to show
   result paths without the indexed folder's name (`src/main.rs` instead of
   `myapp/src/main.rs`) in the web UI, REST API, `fcs` and MCP. Only applies
@@ -20,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snippet starts partway into a comment).
 - Web UI: the exact hit is outlined on the matched line, where it used to
   blend into the line's yellow background.
+- Web UI: Dockerfiles and Makefiles in subfolders (`deploy/Dockerfile`)
+  are recognised by name and highlighted, instead of shown as plain text.
 - Web UI: code is shown without font ligatures, so `!=`, `=>` and `===`
   appear as typed rather than as `≠` and arrows.
 

@@ -2258,7 +2258,21 @@ async function showFileModal(filePath, highlightLine) {
     closeBtn.textContent = '×';
     closeBtn.addEventListener('click', closeFileModal);
 
+    // Copies the page URL, which carries the search and (in its fragment)
+    // this file and line, so the link reopens the viewer where it is now.
+    const copyLink = document.createElement('button');
+    copyLink.type = 'button';
+    copyLink.className = 'file-modal-explore';
+    copyLink.textContent = 'Copy link';
+    copyLink.title = 'Copy a link that opens this file at the selected line';
+    copyLink.addEventListener('click', async () => {
+        const ok = await copyTextToClipboard(location.href);
+        copyLink.textContent = ok ? 'Copied' : 'Copy failed';
+        setTimeout(() => { copyLink.textContent = 'Copy link'; }, 1500);
+    });
+
     header.appendChild(pathSpan);
+    header.appendChild(copyLink);
     if (hasImportGraph(filePath)) {
         const explore = document.createElement('a');
         explore.className = 'file-modal-explore';
@@ -2285,6 +2299,19 @@ async function showFileModal(filePath, highlightLine) {
     document.addEventListener('keydown', handleFileModalEscape);
     document.body.appendChild(modal);
     armDialog(modal, dialog, `File ${filePath}`, closeBtn);
+    setFileViewHash(filePath, highlightLine || 1);
+
+    // Clicking a line number selects that line, as on GitHub, and puts it in
+    // the URL so Copy link (or the address bar) shares it.
+    body.addEventListener('click', (e) => {
+        const num = e.target.closest('.file-line-num');
+        if (!num) return;
+        const line = parseInt(num.textContent, 10);
+        if (!(line > 0)) return;
+        body.querySelectorAll('.file-line-highlight').forEach(el => el.classList.remove('file-line-highlight'));
+        num.parentElement.classList.add('file-line-highlight');
+        setFileViewHash(filePath, line);
+    });
 
     try {
         await populateFileView(body, filePath, highlightLine, _currentMatcher || currentQueryMatcher());
@@ -2308,7 +2335,23 @@ function closeFileModal() {
         modal.remove();
     }
     document.removeEventListener('keydown', handleFileModalEscape);
+    if (parseFileViewHash(location.hash)) {
+        history.replaceState(history.state, '', location.pathname + location.search);
+    }
 }
+
+/** Record the open file and line in the URL fragment, without a history entry. */
+function setFileViewHash(filePath, line) {
+    history.replaceState(history.state, '', location.pathname + location.search + fileViewHash(filePath, line));
+}
+
+/** Open the file viewer named by the URL fragment (a shared link), if any. */
+function openFileViewFromHash() {
+    const view = parseFileViewHash(location.hash);
+    if (view) showFileModal(view.file, view.line);
+}
+
+window.addEventListener('hashchange', openFileViewFromHash);
 
 /**
  * Run a one-time startup search when a query was provided in the URL.
@@ -2404,4 +2447,5 @@ checkBackendHealth().then(() => {
     progressWS.start();
     fetchStats();
     runInitialSearchFromUrl();
+    openFileViewFromHash();
 });

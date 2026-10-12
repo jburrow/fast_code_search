@@ -272,7 +272,18 @@ test('hljsLangForPath maps extensions case-insensitively and defaults to plainte
     assert.equal(H.hljsLangForPath('src/main.rs'), 'rust');
     assert.equal(H.hljsLangForPath('a/b/C.PY'), 'python');
     assert.equal(H.hljsLangForPath('index.html'), 'xml');
-    assert.equal(H.hljsLangForPath('Makefile'), 'makefile'); // the whole name is the "extension"
+    assert.equal(H.hljsLangForPath('Makefile'), 'makefile');
+    assert.equal(H.hljsLangForPath('README'), 'plaintext');
+    assert.equal(H.hljsLangForPath('src/lib.dart'), 'dart');
+    assert.equal(H.hljsLangForPath('proto/search.proto'), 'protobuf');
+});
+
+test('hljsLangForPath: files known by name, in any directory', () => {
+    // Used to take "deploy/dockerfile" as the extension and fall back to plain text.
+    assert.equal(H.hljsLangForPath('deploy/Dockerfile'), 'dockerfile');
+    assert.equal(H.hljsLangForPath('Dockerfile.dev'), 'dockerfile');
+    assert.equal(H.hljsLangForPath('tools/Makefile'), 'makefile');
+    assert.equal(H.hljsLangForPath('v1.2/NOTES'), 'plaintext');
     assert.equal(H.hljsLangForPath('README'), 'plaintext');
     assert.equal(H.hljsLangForPath(''), 'plaintext');
 });
@@ -442,4 +453,36 @@ test('snippetHighlightPrefix: ordinary code needs no prefix', () => {
     // Languages without /* */ comments are left alone.
     assert.equal(H.snippetHighlightPrefix([' * not a comment', '*/'], 'python'), '');
     assert.equal(H.snippetHighlightPrefix([], 'rust'), '');
+});
+
+test('hljsLangForPath: every language it names is loaded in the browser', () => {
+    // The UI loads highlight.min.js then highlight-languages.min.js; a name
+    // missing from both renders as plain text.
+    const fs = require('node:fs');
+    const vm = require('node:vm');
+    const ctx = { window: {} };
+    vm.createContext(ctx);
+    for (const f of ['highlight.min.js', 'highlight-languages.min.js']) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), ctx);
+    }
+    vm.runInContext('globalThis.h = hljs;', ctx);
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'keyword-helpers.js'), 'utf8');
+    const body = src.slice(src.indexOf('function hljsLangForPath'), src.indexOf('function hasImportGraph'));
+    const names = new Set([...body.matchAll(/(?:return |: )'([a-z]+)'/g)].map(m => m[1]));
+    names.delete('plaintext');
+    assert.ok(names.size > 30);
+    for (const name of names) assert.ok(ctx.h.getLanguage(name), `no grammar for ${name}`);
+});
+
+test('fileViewHash / parseFileViewHash round-trip paths with special characters', () => {
+    assert.equal(H.fileViewHash('src/main.rs', 42), '#file=src%2Fmain.rs&line=42');
+    assert.equal(H.fileViewHash('README.md', 1), '#file=README.md');
+    for (const file of ['a b/c&d=e#f.rs', 'src/日本.py', '100%.txt']) {
+        assert.deepEqual(H.parseFileViewHash(H.fileViewHash(file, 7)), { file, line: 7 });
+    }
+    assert.deepEqual(H.parseFileViewHash('#file=x.rs'), { file: 'x.rs', line: 1 });
+    assert.deepEqual(H.parseFileViewHash('#file=x.rs&line=-3'), { file: 'x.rs', line: 1 });
+    assert.deepEqual(H.parseFileViewHash('file=x.rs&line=junk'), { file: 'x.rs', line: 1 });
+    assert.equal(H.parseFileViewHash(''), null);
+    assert.equal(H.parseFileViewHash('#top'), null);
 });

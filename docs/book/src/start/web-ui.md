@@ -45,7 +45,8 @@ lists every place it is used:
 
 - Hover a hit to preview the surrounding lines; click **View file** for the
   whole file with the line highlighted (large files open in a window with
-  "Show more").
+  "Show more"). Click a line number to select that line; **Copy link**
+  copies a URL that reopens the search with the file at that line.
 - The **deps** chip on a file opens its importers and imports. The tree
   icon on a result (and **Explore imports** in the file viewer) opens the
   file in the dependency explorer.
