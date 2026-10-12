@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9cf3638f.js";
+            window.path_to_searchindex_js = "searchindex-72b04555.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -193,6 +193,7 @@ the type’s definition, not its two hundred uses. <code>fcs refs Widget</code> 
 those uses. See <a href="#ranking-1">Ranking</a> for why.</p>
 </div>
 
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/search.gif" alt="Typing TrigramIndex in the web UI: the struct definitions rank first, then the file viewer and a phrase search" style="max-width:100%">
 <h2 id="where-to-go"><a class="header" href="#where-to-go">Where to go</a></h2>
 <div class="table-wrapper">
 <table>
@@ -202,9 +203,11 @@ those uses. See <a href="#ranking-1">Ranking</a> for why.</p>
 <tbody>
 <tr><td>install and run a first search</td><td><a href="#install">Install</a>, then <a href="#first-index-first-search">First index, first search</a></td></tr>
 <tr><td>use it from a terminal or an editor</td><td><a href="#fcs--the-command-line-client">Command-line client</a>, <a href="#editors">Editors</a></td></tr>
+<tr><td>give a coding agent the index</td><td><a href="#coding-agents-mcp">Coding agents (MCP)</a></td></tr>
 <tr><td>keep it running on your machine</td><td><a href="#running-the-server-at-login">Run at startup</a></td></tr>
 <tr><td>index many repositories or a monorepo</td><td><a href="#configuration-cookbook">Configuration cookbook</a></td></tr>
 <tr><td>know what a request or config key does</td><td><a href="#api-and-configuration-reference">API and configuration</a>, <a href="#query-syntax-1">Query syntax</a></td></tr>
+<tr><td>know where results differ from grep or ripgrep</td><td><a href="#how-matching-compares-with-grep-ripgrep-and-git-grep">Matching compared with grep and ripgrep</a></td></tr>
 <tr><td>understand the ranking or the index</td><td><a href="#indexing-pipeline">How it works</a></td></tr>
 <tr><td>check the numbers</td><td><a href="#benchmark-methodology">Benchmarks</a></td></tr>
 <tr><td>fix something</td><td><a href="#troubleshooting-1">Troubleshooting</a></td></tr>
@@ -217,9 +220,10 @@ those uses. See <a href="#ranking-1">Ranking</a> for why.</p>
         W[web UI&lt;br/&gt;embedded]
         F[fcs&lt;br/&gt;command line]
         E[editors, scripts]
+        G[coding agents]
     end
     subgraph server["fast_code_search_server"]
-        A[REST :8080] --&gt; X[(in-memory index&lt;br/&gt;trigrams · symbols · import graph)]
+        A[REST + MCP :8080] --&gt; X[(in-memory index&lt;br/&gt;trigrams · symbols · import graph)]
         R[gRPC :50051] --&gt; X
         V[watcher] --&gt; X
         X &lt;--&gt; P[/index file on disk/]
@@ -228,6 +232,7 @@ those uses. See <a href="#ranking-1">Ranking</a> for why.</p>
     F --&gt; A
     E --&gt; A
     E --&gt; R
+    G --&gt; A
     T[(your source trees)] --&gt; V
     F -. offline fallback .-&gt; P
 </code></pre>
@@ -241,7 +246,8 @@ when the server is down.</li>
 <li><strong>The web UI</strong> is embedded in the server: search-as-you-type, hover
 previews, references, regex help, a dependency explorer for the import
 graph, a diagnostics page.</li>
-<li><strong>REST and gRPC</strong> expose the same queries to editors and scripts.</li>
+<li><strong>REST and gRPC</strong> expose the same queries to editors and scripts, and
+<strong>MCP</strong> at <code>/mcp</code> exposes them to coding agents.</li>
 </ul>
 <p>Source, issues and releases: <a href="https://github.com/jburrow/fast_code_search">github.com/jburrow/fast_code_search</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -373,6 +379,7 @@ per-user service on Linux, macOS and Windows.</p>
 terminal, with grep-style output and exit codes, so it slots into editors,
 shell pipelines and scripts. When no server is running it can search the
 on-disk index directly.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"><span class="img-wrapper"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"></span></label></p>
 <pre><code class="language-bash">fcs 'fn main'                    # lines holding both words; the phrase ranks first
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
@@ -502,7 +509,7 @@ can map them through the configuration’s <code>paths</code>.</li>
 <p>The server embeds a single-page UI at its web address (default
 <a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a>). Nothing to install or build; it is served from
 the binary.</p>
-<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/web-ui.png" alt="The web UI searching for &#39;trigram&#39;" style="max-width:100%">
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/search.gif" alt="Typing TrigramIndex: the struct definitions rank first, the file viewer opens at the match, then a quoted phrase search for fn main" style="max-width:100%">
 <h2 id="searching"><a class="header" href="#searching">Searching</a></h2>
 <ul>
 <li>Type and press Enter (or wait: the page searches as you type after a short
@@ -518,6 +525,9 @@ scan was cut short by its budget.</li>
 <li>The URL carries the query and modes, so a link reproduces a search; Back
 returns to the previous one.</li>
 </ul>
+<p><strong>SYMBOLS</strong> keeps only the lines that define the name; <strong>REFERENCES</strong>
+lists every place it is used:</p>
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/references.gif" alt="SearchEngine as a text search, then with SYMBOLS, then with REFERENCES" style="max-width:100%">
 <h2 id="regex-help"><a class="header" href="#regex-help">Regex help</a></h2>
 <ul>
 <li>The <strong>?</strong> next to <strong>REGEX</strong> opens a cheat-sheet: common patterns you can
@@ -531,6 +541,7 @@ something.</li>
 <li>An invalid regex shows where the pattern is wrong and offers to search
 the text literally or with its special characters escaped.</li>
 </ul>
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with suggested fixes, and a regex that finds nothing with an Ignore case suggestion" style="max-width:100%">
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
 <li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
@@ -564,6 +575,7 @@ files</strong> runs a keyword search limited to the files on screen.</p>
 module) are hidden by default since they are structure rather than
 dependencies; <strong>Show mod declarations</strong> brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.</p>
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the
@@ -600,6 +612,18 @@ that talks to the server directly.</p>
 <h2 id="emacs"><a class="header" href="#emacs">Emacs</a></h2>
 <p><code>M-x grep</code> with <code>fcs --format vimgrep --absolute QUERY</code> produces a
 compilation buffer whose entries jump to the file and line.</p>
+<h2 id="coding-agents-mcp"><a class="header" href="#coding-agents-mcp">Coding agents (MCP)</a></h2>
+<p>The server speaks the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+at <code>/mcp</code>, so Claude Code or any other MCP client can search the index, read
+files with line numbers and walk the import graph instead of grepping:</p>
+<pre><code class="language-bash">claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp
+</code></pre>
+<p>Clients that only launch local commands can use <code>fcs mcp</code>, which relays MCP
+over stdio to the same endpoint:</p>
+<pre><code class="language-json">{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+</code></pre>
+<p>The tools and their arguments are listed under
+<a href="#mcp-coding-agents">MCP</a> in the API reference.</p>
 <h2 id="shell"><a class="header" href="#shell">Shell</a></h2>
 <pre><code class="language-bash">fcs -l TODO | xargs $EDITOR           # open every file containing TODO
 fcs -l 'fn main' | fzf | xargs $EDITOR
@@ -4918,6 +4942,17 @@ import-resolution rule in <code>src/dependencies/mod.rs</code> if the language h
 <li><input disabled="" type="checkbox"> Test with large codebases (10GB+)</li>
 <li><input disabled="" type="checkbox"> Measure memory usage under load</li>
 </ul>
+<h3 id="re-recording-the-demos"><a class="header" href="#re-recording-the-demos">Re-recording the demos</a></h3>
+<p>The animated demos in the README and the documentation
+(<code>docs/images/demos/*.gif</code>) and the <code>docs/images/web-ui.png</code> screenshot are
+recorded from a server indexing a clean export of this repository, so they
+only ever show this project’s own code. After a UI change, re-record them:</p>
+<pre><code class="language-bash">NODE_PATH=$(npm root -g) scripts/docs/record-demos.sh          # all of them
+NODE_PATH=$(npm root -g) scripts/docs/record-demos.sh graph    # one: search, references, regex, graph, cli or stills
+</code></pre>
+<p>It needs <code>ffmpeg</code>, Node with the <code>playwright</code> package and a Chromium it can
+launch. Each demo is a short scripted session in
+<code>scripts/docs/record-demos.mjs</code>; keep the GIFs under about 3 MB each.</p>
 <h2 id="debugging"><a class="header" href="#debugging">Debugging</a></h2>
 <h3 id="debug-build"><a class="header" href="#debug-build">Debug Build</a></h3>
 <pre><code class="language-bash"># Build with debug symbols

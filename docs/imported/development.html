@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9cf3638f.js";
+            window.path_to_searchindex_js = "../searchindex-72b04555.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -448,6 +448,17 @@ import-resolution rule in <code>src/dependencies/mod.rs</code> if the language h
 <li><input disabled="" type="checkbox"> Test with large codebases (10GB+)</li>
 <li><input disabled="" type="checkbox"> Measure memory usage under load</li>
 </ul>
+<h3 id="re-recording-the-demos"><a class="header" href="#re-recording-the-demos">Re-recording the demos</a></h3>
+<p>The animated demos in the README and the documentation
+(<code>docs/images/demos/*.gif</code>) and the <code>docs/images/web-ui.png</code> screenshot are
+recorded from a server indexing a clean export of this repository, so they
+only ever show this project’s own code. After a UI change, re-record them:</p>
+<pre><code class="language-bash">NODE_PATH=$(npm root -g) scripts/docs/record-demos.sh          # all of them
+NODE_PATH=$(npm root -g) scripts/docs/record-demos.sh graph    # one: search, references, regex, graph, cli or stills
+</code></pre>
+<p>It needs <code>ffmpeg</code>, Node with the <code>playwright</code> package and a Chromium it can
+launch. Each demo is a short scripted session in
+<code>scripts/docs/record-demos.mjs</code>; keep the GIFs under about 3 MB each.</p>
 <h2 id="debugging"><a class="header" href="#debugging">Debugging</a></h2>
 <h3 id="debug-build"><a class="header" href="#debug-build">Debug Build</a></h3>
 <pre><code class="language-bash"># Build with debug symbols

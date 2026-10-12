@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9cf3638f.js";
+            window.path_to_searchindex_js = "../searchindex-72b04555.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -186,6 +186,7 @@
 terminal, with grep-style output and exit codes, so it slots into editors,
 shell pipelines and scripts. When no server is running it can search the
 on-disk index directly.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"><span class="img-wrapper"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"></span></label></p>
 <pre><code class="language-bash">fcs 'fn main'                    # lines holding both words; the phrase ranks first
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier

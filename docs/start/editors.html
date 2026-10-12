@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9cf3638f.js";
+            window.path_to_searchindex_js = "../searchindex-72b04555.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -204,6 +204,18 @@ that talks to the server directly.</p>
 <h2 id="emacs"><a class="header" href="#emacs">Emacs</a></h2>
 <p><code>M-x grep</code> with <code>fcs --format vimgrep --absolute QUERY</code> produces a
 compilation buffer whose entries jump to the file and line.</p>
+<h2 id="coding-agents-mcp"><a class="header" href="#coding-agents-mcp">Coding agents (MCP)</a></h2>
+<p>The server speaks the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
+at <code>/mcp</code>, so Claude Code or any other MCP client can search the index, read
+files with line numbers and walk the import graph instead of grepping:</p>
+<pre><code class="language-bash">claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp
+</code></pre>
+<p>Clients that only launch local commands can use <code>fcs mcp</code>, which relays MCP
+over stdio to the same endpoint:</p>
+<pre><code class="language-json">{ "mcpServers": { "fast_code_search": { "command": "fcs", "args": ["mcp"] } } }
+</code></pre>
+<p>The tools and their arguments are listed under
+<a href="../imported/api.html#mcp-coding-agents">MCP</a> in the API reference.</p>
 <h2 id="shell"><a class="header" href="#shell">Shell</a></h2>
 <pre><code class="language-bash">fcs -l TODO | xargs $EDITOR           # open every file containing TODO
 fcs -l 'fn main' | fzf | xargs $EDITOR

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9cf3638f.js";
+            window.path_to_searchindex_js = "searchindex-72b04555.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -195,6 +195,7 @@ the type’s definition, not its two hundred uses. <code>fcs refs Widget</code> 
 those uses. See <a href="how-it-works/ranking.html">Ranking</a> for why.</p>
 </div>
 
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/search.gif" alt="Typing TrigramIndex in the web UI: the struct definitions rank first, then the file viewer and a phrase search" style="max-width:100%">
 <h2 id="where-to-go"><a class="header" href="#where-to-go">Where to go</a></h2>
 <div class="table-wrapper">
 <table>
@@ -204,9 +205,11 @@ those uses. See <a href="how-it-works/ranking.html">Ranking</a> for why.</p>
 <tbody>
 <tr><td>install and run a first search</td><td><a href="start/install.html">Install</a>, then <a href="start/first-search.html">First index, first search</a></td></tr>
 <tr><td>use it from a terminal or an editor</td><td><a href="imported/cli.html">Command-line client</a>, <a href="start/editors.html">Editors</a></td></tr>
+<tr><td>give a coding agent the index</td><td><a href="start/editors.html#coding-agents-mcp">Coding agents (MCP)</a></td></tr>
 <tr><td>keep it running on your machine</td><td><a href="imported/run-at-startup.html">Run at startup</a></td></tr>
 <tr><td>index many repositories or a monorepo</td><td><a href="guides/configuration.html">Configuration cookbook</a></td></tr>
 <tr><td>know what a request or config key does</td><td><a href="imported/api.html">API and configuration</a>, <a href="reference/query-syntax.html">Query syntax</a></td></tr>
+<tr><td>know where results differ from grep or ripgrep</td><td><a href="reference/matching.html">Matching compared with grep and ripgrep</a></td></tr>
 <tr><td>understand the ranking or the index</td><td><a href="how-it-works/indexing.html">How it works</a></td></tr>
 <tr><td>check the numbers</td><td><a href="benchmarks/methodology.html">Benchmarks</a></td></tr>
 <tr><td>fix something</td><td><a href="guides/troubleshooting.html">Troubleshooting</a></td></tr>
@@ -219,9 +222,10 @@ those uses. See <a href="how-it-works/ranking.html">Ranking</a> for why.</p>
         W[web UI&lt;br/&gt;embedded]
         F[fcs&lt;br/&gt;command line]
         E[editors, scripts]
+        G[coding agents]
     end
     subgraph server["fast_code_search_server"]
-        A[REST :8080] --&gt; X[(in-memory index&lt;br/&gt;trigrams · symbols · import graph)]
+        A[REST + MCP :8080] --&gt; X[(in-memory index&lt;br/&gt;trigrams · symbols · import graph)]
         R[gRPC :50051] --&gt; X
         V[watcher] --&gt; X
         X &lt;--&gt; P[/index file on disk/]
@@ -230,6 +234,7 @@ those uses. See <a href="how-it-works/ranking.html">Ranking</a> for why.</p>
     F --&gt; A
     E --&gt; A
     E --&gt; R
+    G --&gt; A
     T[(your source trees)] --&gt; V
     F -. offline fallback .-&gt; P
 </code></pre>
@@ -243,7 +248,8 @@ when the server is down.</li>
 <li><strong>The web UI</strong> is embedded in the server: search-as-you-type, hover
 previews, references, regex help, a dependency explorer for the import
 graph, a diagnostics page.</li>
-<li><strong>REST and gRPC</strong> expose the same queries to editors and scripts.</li>
+<li><strong>REST and gRPC</strong> expose the same queries to editors and scripts, and
+<strong>MCP</strong> at <code>/mcp</code> exposes them to coding agents.</li>
 </ul>
 <p>Source, issues and releases: <a href="https://github.com/jburrow/fast_code_search">github.com/jburrow/fast_code_search</a>.</p>
 

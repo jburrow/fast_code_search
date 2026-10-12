@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9cf3638f.js";
+            window.path_to_searchindex_js = "../searchindex-72b04555.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -185,7 +185,7 @@
 <p>The server embeds a single-page UI at its web address (default
 <a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a>). Nothing to install or build; it is served from
 the binary.</p>
-<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/web-ui.png" alt="The web UI searching for &#39;trigram&#39;" style="max-width:100%">
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/search.gif" alt="Typing TrigramIndex: the struct definitions rank first, the file viewer opens at the match, then a quoted phrase search for fn main" style="max-width:100%">
 <h2 id="searching"><a class="header" href="#searching">Searching</a></h2>
 <ul>
 <li>Type and press Enter (or wait: the page searches as you type after a short
@@ -201,6 +201,9 @@ scan was cut short by its budget.</li>
 <li>The URL carries the query and modes, so a link reproduces a search; Back
 returns to the previous one.</li>
 </ul>
+<p><strong>SYMBOLS</strong> keeps only the lines that define the name; <strong>REFERENCES</strong>
+lists every place it is used:</p>
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/references.gif" alt="SearchEngine as a text search, then with SYMBOLS, then with REFERENCES" style="max-width:100%">
 <h2 id="regex-help"><a class="header" href="#regex-help">Regex help</a></h2>
 <ul>
 <li>The <strong>?</strong> next to <strong>REGEX</strong> opens a cheat-sheet: common patterns you can
@@ -214,6 +217,7 @@ something.</li>
 <li>An invalid regex shows where the pattern is wrong and offers to search
 the text literally or with its special characters escaped.</li>
 </ul>
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with suggested fixes, and a regex that finds nothing with an Ignore case suggestion" style="max-width:100%">
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
 <li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
@@ -247,6 +251,7 @@ files</strong> runs a keyword search limited to the files on screen.</p>
 module) are hidden by default since they are structure rather than
 dependencies; <strong>Show mod declarations</strong> brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.</p>
+<img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the
