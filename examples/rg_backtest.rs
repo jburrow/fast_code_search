@@ -39,11 +39,23 @@
 //! is also loaded the way the web UI's LOAD MORE does (the whole list again,
 //! 50 longer each time, while `has_more` as `/api/search` computes it), and
 //! every hit must end up shown exactly once.
+//!
+//! With `--check-defaults`, each query is also walked the way a web UI user
+//! sees it with the server's default settings, once with auto ranking and
+//! once with fast ranking: the first page, SEARCH ALL FILES when fast
+//! ranking skipped files, then LOAD MORE until `has_more` is false (the
+//! whole list again up to 1000, offset pages past that). The walk must end
+//! with every hit exactly once, and an exact total on a search that opened
+//! every candidate file must be the real count. Everything else in the
+//! backtest runs without limits, which is how the defaults' own gaps (a
+//! file cap, an offset ceiling) went unnoticed.
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use fast_code_search::config::IndexerConfig;
-use fast_code_search::search::engine::{RankMode, SearchLimits, SearchMatch};
+use fast_code_search::search::engine::{
+    RankMode, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
+};
 use fast_code_search::search::regex_search::needs_multiline;
 use fast_code_search::search::{
     parse_query, FileDiscoveryConfig, FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile,
@@ -80,6 +92,16 @@ struct Args {
     /// longer each time) and fail when a hit is repeated or skipped.
     #[arg(long)]
     check_paging: bool,
+    /// Also walk each query as the web UI does under the server's default
+    /// settings (auto and fast ranking): SEARCH ALL FILES, then LOAD MORE to
+    /// the end. Fails when a hit is repeated, skipped or out of reach, or an
+    /// exact total is wrong.
+    #[arg(long)]
+    check_defaults: bool,
+    /// `--check-defaults` walks only queries with at most this many hits
+    /// (deep offset pages each re-run the search).
+    #[arg(long, default_value_t = 20_000)]
+    defaults_max_hits: usize,
     /// The ripgrep binary.
     #[arg(long, default_value = "rg")]
     rg: String,
@@ -214,12 +236,21 @@ fn run(
     q: &Query,
     limits: SearchLimits,
 ) -> Result<(Vec<SearchMatch>, Option<usize>)> {
-    let (m, info) = match q.mode.as_str() {
-        "text" => engine.search_parsed(&parse_query(&q.q), "", "", limits, RankMode::Full)?,
-        "regex" => engine.search_regex_with_limits(&q.q, "", "", limits, RankMode::Full)?,
-        other => bail!("unknown mode {other:?}"),
-    };
+    let (m, info) = run_ranked(engine, q, limits, RankMode::Full)?;
     Ok((m, info.total_matches))
+}
+
+fn run_ranked(
+    engine: &SearchEngine,
+    q: &Query,
+    limits: SearchLimits,
+    rank: RankMode,
+) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+    Ok(match q.mode.as_str() {
+        "text" => engine.search_parsed(&parse_query(&q.q), "", "", limits, rank)?,
+        "regex" => engine.search_regex_with_limits(&q.q, "", "", limits, rank)?,
+        other => bail!("unknown mode {other:?}"),
+    })
 }
 
 /// `None` when the first page is identical over three runs. A search that
@@ -287,6 +318,99 @@ fn paging_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>> {
             .map(|(f, l)| format!(" (first lost: {f}:{l})"))
             .unwrap_or_default()
     )))
+}
+
+/// `None` when a web UI user with the server's default settings can reach
+/// every hit exactly once, else what went wrong. Emulates keyword.js: the
+/// first page; SEARCH ALL FILES (`moreFilesRequest`) when fast ranking
+/// skipped candidate files; then LOAD MORE (`loadMoreRequest`) while
+/// `has_more`: below 1000 shown, the whole list again `PAGE` longer from
+/// offset 0, past it the next `PAGE` at `offset`. Also checks that an exact
+/// total from a search that opened every candidate is the real count.
+fn defaults_problem(
+    engine: &SearchEngine,
+    q: &Query,
+    rank: RankMode,
+    max_hits: usize,
+) -> Result<Option<String>> {
+    let key = |m: &SearchMatch| (m.file_path.clone(), m.line_number);
+    let settings = SearchSettings::default();
+    let (all, _) = run(engine, q, SearchLimits::exhaustive())?;
+    if all.len() > max_hits {
+        return Ok(None);
+    }
+    let want: BTreeSet<(String, usize)> = all.iter().map(key).collect();
+    let page = |offset: usize, max: usize, files: Option<usize>| {
+        let limits = settings.apply(SearchLimits::new(max).with_offset(offset), files);
+        run_ranked(engine, q, limits, rank)
+    };
+    let label = format!("{rank:?}").to_lowercase();
+    let mut problems = Vec::new();
+    let honest_total = |info: &SearchRankingInfo, problems: &mut Vec<String>| {
+        if let Some(t) = info.total_matches {
+            if info.candidates_searched >= info.total_candidates && t != want.len() {
+                problems.push(format!("total says {t}, there are {}", want.len()));
+            }
+        }
+    };
+
+    let (_, first) = page(0, PAGE, None)?;
+    honest_total(&first, &mut problems);
+    let files =
+        (first.candidates_searched < first.total_candidates).then_some(first.total_candidates);
+
+    let mut shown: Vec<(String, usize)> = Vec::new();
+    let mut stuck = None;
+    for _ in 0..=(want.len() / PAGE + 2) {
+        let (offset, max) = if shown.len() < PAGING_MAX_HITS {
+            (0, (shown.len() + PAGE).min(PAGING_MAX_HITS))
+        } else {
+            (shown.len(), PAGE)
+        };
+        if settings.check_offset(offset).is_err() {
+            stuck = Some(format!("offset {offset} is past server.max_page_offset"));
+            break;
+        }
+        let (list, info) = page(offset, max, files)?;
+        if offset == 0 && shown.is_empty() {
+            honest_total(&info, &mut problems);
+        }
+        let before = shown.len();
+        if offset == 0 {
+            shown = list.iter().map(key).collect();
+        } else {
+            shown.extend(list.iter().map(key));
+        }
+        let has_more = match info.total_matches {
+            Some(t) => offset + list.len() < t,
+            None => true,
+        };
+        if !has_more {
+            break;
+        }
+        if shown.len() <= before {
+            stuck = Some(format!("LOAD MORE stopped growing at {}", shown.len()));
+            break;
+        }
+    }
+    let distinct: BTreeSet<_> = shown.iter().cloned().collect();
+    let dups = shown.len() - distinct.len();
+    let invented = distinct.iter().filter(|k| !want.contains(*k)).count();
+    let lost: Vec<_> = want.iter().filter(|k| !distinct.contains(*k)).collect();
+    if dups > 0 || invented > 0 || !lost.is_empty() {
+        problems.push(format!(
+            "{} lost, {dups} repeated, {invented} not in the full result{}",
+            lost.len(),
+            lost.first()
+                .map(|(f, l)| format!(" (first lost: {f}:{l})"))
+                .unwrap_or_default()
+        ));
+    }
+    problems.extend(stuck);
+    if problems.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("defaults ({label}): {}", problems.join(", "))))
 }
 
 #[derive(Default, Clone, Copy)]
@@ -508,6 +632,20 @@ fn main() -> Result<()> {
             None if args.check_paging => paging_problem(&corpus.engine, q)?,
             None => None,
         };
+        let paging = match paging {
+            Some(p) => Some(p),
+            None if args.check_defaults => {
+                let mut found = None;
+                for rank in [RankMode::Auto, RankMode::Fast] {
+                    found = defaults_problem(&corpus.engine, q, rank, args.defaults_max_hits)?;
+                    if found.is_some() {
+                        break;
+                    }
+                }
+                found
+            }
+            None => None,
+        };
         let differs = !out.missing.is_empty() || !out.extra.is_empty() || paging.is_some();
         let status = match (differs, q.known.is_some()) {
             (false, false) => "pass",
@@ -583,6 +721,7 @@ fn main() -> Result<()> {
         r.missing_count + r.extra_count > 0
             || r.note.starts_with("paging:")
             || r.note.starts_with("repeat:")
+            || r.note.starts_with("defaults")
     }) {
         writeln!(md)?;
         writeln!(

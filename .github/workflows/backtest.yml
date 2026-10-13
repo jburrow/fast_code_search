@@ -4,7 +4,8 @@ name: ripgrep backtest
 # query in benches/rg_backtest.toml through the engine and through rg over the
 # pinned corpora and tests/fixtures/backtest, and fails on any difference not
 # marked `known`. It also checks that a page is repeatable and that LOAD MORE
-# ends with every hit exactly once.
+# ends with every hit exactly once, also under the default limits (fast
+# ranking's file cap, offset pages past 1000) the way a web UI user pages.
 
 on:
   push:
@@ -63,7 +64,7 @@ jobs:
           rg --version | head -1
           cargo run --release --example rg_backtest -- \
             bench-corpus/tokio bench-corpus/django tests/fixtures/backtest \
-            --check-paging --markdown backtest.md --json backtest.json
+            --check-paging --check-defaults --markdown backtest.md --json backtest.json
       - name: Report
         if: always()
         run: test -f backtest.md && cat backtest.md >> "$GITHUB_STEP_SUMMARY" || true

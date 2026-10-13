@@ -111,10 +111,17 @@ impl SearchLimits {
     /// `MAX_MATCHES_PER_DOC`, raised to `offset + max_results` so a list of
     /// that length can always be filled from one file. Fetching a longer
     /// list from offset 0 (the web UI's LOAD MORE) then reaches every hit
-    /// of a file with hundreds of them, as offset paging does.
+    /// of a file with hundreds of them, as offset paging does. From
+    /// [`Self::STABLE_PAGING_FROM`] on it is the page's budget, which is the
+    /// same for every such page.
     pub fn doc_cap(&self) -> usize {
         self.per_doc_cap.unwrap_or_else(|| {
-            SearchEngine::MAX_MATCHES_PER_DOC.max(self.offset.saturating_add(self.max_results))
+            let end = self.offset.saturating_add(self.max_results);
+            if end >= Self::STABLE_PAGING_FROM {
+                Self::derived_budget(self.offset, self.max_results)
+            } else {
+                SearchEngine::MAX_MATCHES_PER_DOC.max(end)
+            }
         })
     }
 
@@ -127,6 +134,14 @@ impl SearchLimits {
     /// A deeper page still gets enough budget to reach it; an explicit
     /// [`Self::with_match_budget`] may exceed it (benchmarks, tests).
     pub const MAX_DERIVED_BUDGET: usize = 100_000;
+    /// Pages ending here or deeper all get the same budget
+    /// ([`Self::MAX_DERIVED_BUDGET`]) and per-document cap, so they rank the
+    /// same sample of a broad query's hits and offset pages fit together.
+    /// A budget that grew with the offset ranked a different sample for
+    /// each page, so LOAD MORE past the API's 1000-result list repeated
+    /// some hits and skipped others. Shorter lists keep a smaller budget
+    /// (fast first pages); each is fetched whole, from offset 0.
+    pub const STABLE_PAGING_FROM: usize = 1000;
     /// Files fast ranking opens by default.
     pub const DEFAULT_MAX_FILES: usize = 2000;
 
@@ -144,15 +159,20 @@ impl SearchLimits {
     }
 
     /// Budget for a page of `max_results` starting at `offset`: eight times
-    /// the page end for ranking headroom, up to [`Self::MAX_DERIVED_BUDGET`],
-    /// and never less than the page end plus [`Self::MIN_BUDGET`], so a
-    /// deep page can always be reached. Servers bound how deep a client may
-    /// page with [`SearchSettings::max_offset`].
+    /// the page end for ranking headroom, or [`Self::MAX_DERIVED_BUDGET`]
+    /// once the page ends at [`Self::STABLE_PAGING_FROM`] or deeper, and
+    /// never less than the page end plus [`Self::MIN_BUDGET`], so a deep
+    /// page can always be reached. Servers bound how deep a client may page
+    /// with [`SearchSettings::max_offset`].
     fn derived_budget(offset: usize, max_results: usize) -> usize {
         let end = offset.saturating_add(max_results);
-        end.saturating_mul(Self::BUDGET_MULTIPLIER)
-            .clamp(Self::MIN_BUDGET, Self::MAX_DERIVED_BUDGET)
-            .max(end.saturating_add(Self::MIN_BUDGET))
+        let headroom = if end >= Self::STABLE_PAGING_FROM {
+            Self::MAX_DERIVED_BUDGET
+        } else {
+            end.saturating_mul(Self::BUDGET_MULTIPLIER)
+                .clamp(Self::MIN_BUDGET, Self::MAX_DERIVED_BUDGET)
+        };
+        headroom.max(end.saturating_add(Self::MIN_BUDGET))
     }
 
     /// Skip the first `offset` results; the budget grows to cover the page.

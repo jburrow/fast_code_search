@@ -70,7 +70,7 @@ leading dashes and regex.
 
 ## Beyond matching
 
-Two more checks run on every query:
+Three more checks run on every query:
 
 - **Repeatable.** The first page (50 results) is fetched three times and
   must be identical. A search that stops at its match budget must still
@@ -79,13 +79,23 @@ Two more checks run on every query:
   matches is loaded the way the web UI's LOAD MORE does it: the whole list
   again, 50 longer each time, while the server says more exist. Every match
   must end up shown exactly once.
+- **Default limits** (`--check-defaults`, on in CI). Everything above runs
+  without result limits, so it cannot see a problem the limits themselves
+  cause. This check walks each query with up to 20,000 matches
+  (`--defaults-max-hits`) the way a web UI user would with the server's
+  default settings, once with Auto ranking and once with Fast: the first
+  page, SEARCH ALL FILES if ranking skipped files, then LOAD MORE until
+  the server says there is no more (the whole list again up to 1000, then
+  50 at a time by `offset`). Every match must end up shown exactly once,
+  and a total given as an exact count must be the real one whenever every
+  candidate file was searched.
 
 ## Running it
 
 ```bash
 # what CI runs (the corpora are shallow clones; see .github/workflows/backtest.yml)
 cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
-    tests/fixtures/backtest --check-paging --markdown report.md --json report.json
+    tests/fixtures/backtest --check-paging --check-defaults --markdown report.md --json report.json
 
 # just the edge cases: no clones needed, a few seconds
 cargo run --release --example rg_backtest -- tests/fixtures/backtest
@@ -122,13 +132,25 @@ sigma were missed, that a regex able to match nothing reported a line past
 the end of a file, and that a byte order mark stopped `^` from matching
 line 1. All five are fixed (see the [changelog](../imported/changelog.md)).
 
+The default-limits check was added after fast ranking's 2,000-file cap and
+the old offset ceiling were found by hand, not by the backtest. On its first
+run it found that LOAD MORE past 1000 results repeated some matches and
+skipped others on broad queries (`self.assertEqual` over Django lost 1,213
+of 17,717), because each deeper page ranked a different sample. That is
+fixed too.
+
 ## What it does not cover
 
 - **Symbol and reference searches.** They have no grep equivalent.
 - **Ranking order.** That is the [ranking-quality
   suite](ranking-quality.md).
-- **API `offset` paging across a search that hit its budget.** It is not
-  stable (see [Matching compared with grep and
+- **API `offset` paging below 1000 results across a search that hit its
+  budget.** It is not stable (see [Matching compared with grep and
   ripgrep](../reference/matching.md#where-fcs-differs-from-all-of-them)).
-  Only the web UI's LOAD MORE is checked.
+  The web UI never pages that way; its LOAD MORE is checked.
+- **Queries with more than 20,000 matches** under the default limits. Each
+  deep page re-runs the search, so walking them all is slow; raise
+  `--defaults-max-hits` to include them.
+- **The search deadline.** The walk runs with no time limit. A search the
+  deadline stops is a sample of whatever was read in time.
 - **GNU grep's test suite.** It has not been mined yet.
