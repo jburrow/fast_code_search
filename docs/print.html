@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f59db20d.js";
+            window.path_to_searchindex_js = "searchindex-0650b713.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0ff2f94c.js"></script>
+        <script src="toc-ff6984d8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1811,6 +1811,35 @@ case folding, and <code>.gitignore</code> handling. The <a href="#correctness-ag
 backtest</a> checks this on every engine change.
 It runs a fixed set of searches through both tools and fails on any line one
 finds and the other does not.</p>
+<h2 id="every-search-as-ripgrep-would-run-it"><a class="header" href="#every-search-as-ripgrep-would-run-it">Every search, as ripgrep would run it</a></h2>
+<p>The contract in one table: for each kind of fcs search, the ripgrep run
+that finds the same lines. “Same lines” is what the backtest checks; fcs
+then ranks them and may cap how many it reads (see <em>Ranked, and capped</em>
+below, and <code>limits_hit</code> in every response).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>fcs search</th><th>Same lines as</th><th>Checked by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>foo bar</code> (plain text)</td><td><code>rg -F -i 'foo bar'</code></td><td>backtest, generated queries</td></tr>
+<tr><td><code>foo case:yes</code> (or MATCH CASE, <code>fcs -s</code>)</td><td><code>rg -F 'foo'</code></td><td>backtest, generated queries</td></tr>
+<tr><td><code>foo word:yes</code> (or <code>fcs -w</code>)</td><td><code>rg -F -i -w 'foo'</code></td><td>backtest, generated queries</td></tr>
+<tr><td><code>foo case:yes word:yes</code></td><td><code>rg -F -w 'foo'</code></td><td>backtest, generated queries</td></tr>
+<tr><td>Regex on the API or <code>fcs -e</code></td><td><code>rg 'PATTERN'</code> (<code>rg -U</code> when it mentions <code>\n</code>)</td><td>backtest</td></tr>
+<tr><td>Regex with <code>case=false</code>, <code>(?i)</code> or <code>fcs -e -i</code></td><td><code>rg -i 'PATTERN'</code></td><td>backtest</td></tr>
+<tr><td><code>lang:rust foo</code></td><td><code>rg -F -i -t rust 'foo'</code></td><td>backtest (with <code>globs</code>)</td></tr>
+<tr><td><code>file:*.py foo</code> / <code>-file:tests foo</code></td><td><code>rg -F -i -g '*.py' 'foo'</code> / <code>-g '!tests'</code>; a bare word such as <code>file:parser</code> matches anywhere in the path, which <code>-g</code> has no exact form for</td><td>backtest (with <code>globs</code>)</td></tr>
+<tr><td>A text search’s filename hits (no line number)</td><td>none; closest is <code>rg --files | rg -i 'foo'</code></td><td>not compared</td></tr>
+<tr><td>Path matches (<code>files=N</code>, the FILES box)</td><td>none; closest is <code>rg --files | rg -i</code> with every word required</td><td>unit tests</td></tr>
+<tr><td>Symbols (SYMBOLS, <code>fcs symbols</code>)</td><td>none: definitions come from tree-sitter, not from text</td><td>engine tests</td></tr>
+<tr><td>References (REFERENCES, <code>fcs refs</code>)</td><td>none: call sites come from tree-sitter, not from text</td><td>engine tests</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>fcs</code> on the command line, the web UI, the API, gRPC and MCP all run one
+shared request path, and a test runs the same searches through web, gRPC
+and offline <code>fcs</code> and requires identical hits (<code>tests/frontend_parity.rs</code>).</p>
 <h2 id="where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep"><a class="header" href="#where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep">Where fcs agrees with ripgrep and differs from grep and git grep</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1863,7 +1892,10 @@ lines the same way (<code>rg -c</code>).</li>
 order. To keep a broad search fast, a request reads a bounded number of
 matches: by default 100 from one file on the first page, and a budget of
 about eight times the requested page. When either limit is reached, the
-total is shown as “N+” rather than as a count. When a query could be in
+total is shown as “N+” rather than as a count, and the response names
+the limit (<code>limits_hit</code>: <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code> or
+<code>max_files</code>; <code>fcs</code> prints it, MCP adds a “Results capped” line, gRPC
+sends an <code>fcs-limits-hit</code> header). When a query could be in
 more than 5,000 files, Auto ranking opens only the 2,000 most likely
 (<code>fast_rank_files</code>); the header then says “Searched 2,000 of N files”
 and SEARCH ALL FILES opens the rest (up to <code>max_fast_rank_files</code>). LOAD MORE in the web UI
@@ -1891,6 +1923,118 @@ searched.</li>
 <p>None at the moment. A known difference would be listed here, and marked
 <code>known</code> with its reason in <code>benches/rg_backtest.toml</code>, so the backtest still
 reports it without failing.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="dependency-graph-support"><a class="header" href="#dependency-graph-support">Dependency graph support</a></h1>
+<p>What the import graph (the dependency explorer, “imported by N”, <code>/api/graph</code>,
+MCP’s graph tools) understands, per language. An import that is not listed
+here produces no edge. If fcs misses an edge listed as supported, that is a
+bug; if it misses one listed as not handled, that is a known gap. Python
+and TypeScript are checked against their own resolvers (see the end of the
+page).</p>
+<p>Edges exist for <strong>Rust, Python and JavaScript/TypeScript</strong> only. Go, Java,
+C and C++ <code>#include</code>, C#, Ruby and every other language are searched and
+have symbols, but get no import edges.</p>
+<h2 id="how-resolution-works-for-every-language"><a class="header" href="#how-resolution-works-for-every-language">How resolution works, for every language</a></h2>
+<ul>
+<li>An import resolves only to a file that is <strong>in the index</strong>. Packages
+outside the indexed folders (<code>std</code>, site-packages, <code>node_modules</code>, which
+is excluded by default) never produce an edge.</li>
+<li>A bare or external name resolves to nothing. There is no “a file with
+that name somewhere in the repo” guess, so a missing edge is never
+replaced by a wrong one.</li>
+<li>Imports that do not resolve are kept. They are retried when a matching
+file is indexed later, and <code>GET /api/graph/imports?path=…</code> lists every
+import of a file with its line, and <code>target: null</code> for the unresolved
+ones.</li>
+</ul>
+<h2 id="rust-rs"><a class="header" href="#rust-rs">Rust (<code>.rs</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Supported</th></tr>
+</thead>
+<tbody>
+<tr><td><code>use crate::a::b;</code></td><td>yes, from the nearest <code>Cargo.toml</code>’s <code>src/</code></td></tr>
+<tr><td><code>use self::a;</code>, <code>use super::super::a;</code></td><td>yes, relative to the module’s directory (<code>foo/</code> for <code>foo.rs</code>; the file’s directory for <code>mod.rs</code>, <code>lib.rs</code>, <code>main.rs</code>)</td></tr>
+<tr><td><code>use a::b;</code> where <code>a</code> is a sibling module</td><td>yes</td></tr>
+<tr><td><code>use my_crate::a;</code> inside <code>my_crate</code></td><td>yes (<code>[lib] name</code>, else <code>[package] name</code> with <code>-</code> as <code>_</code>)</td></tr>
+<tr><td><code>use a::{b, c};</code>, <code>use a::*;</code>, <code>use a as b;</code></td><td>yes, to the longest module path that exists (<code>a/b.rs</code>, then <code>a/b/mod.rs</code>)</td></tr>
+<tr><td><code>mod foo;</code></td><td>yes</td></tr>
+<tr><td><code>use other_workspace_crate::x;</code></td><td><strong>no</strong>: only the importing crate’s own name is recognised</td></tr>
+<tr><td><code>use crate::{a, b};</code></td><td><strong>no</strong>: reduces to <code>crate::</code>, which does not reach <code>lib.rs</code></td></tr>
+<tr><td><code>extern crate x;</code>, <code>#[path = "…"] mod x;</code></td><td><strong>no</strong></td></tr>
+<tr><td>External crates and <code>std</code></td><td>no edge, by design</td></tr>
+</tbody>
+</table>
+</div>
+<p>Inline <code>mod foo { … }</code> is treated like <code>mod foo;</code>, so it can draw an edge to
+a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml</code>.</p>
+<h2 id="python-py-pyi-pyw"><a class="header" href="#python-py-pyi-pyw">Python (<code>.py</code>, <code>.pyi</code>, <code>.pyw</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Supported</th></tr>
+</thead>
+<tbody>
+<tr><td><code>import a.b</code>, <code>import a, b as c</code></td><td>yes, one edge per module</td></tr>
+<tr><td><code>from a.b import c</code></td><td>yes: to <code>a/b/c.py</code> (or <code>a/b/c/__init__.py</code>) when <code>c</code> is a module, else to <code>a/b.py</code> or <code>a/b/__init__.py</code>, as Python does</td></tr>
+<tr><td><code>from .x import y</code>, <code>from ..x import y</code></td><td>yes: one dot is the file’s own package, each extra dot one level up</td></tr>
+<tr><td><code>from . import y</code></td><td>yes: to <code>y.py</code> when it is a module, else to the package’s <code>__init__.py</code></td></tr>
+<tr><td>Absolute imports</td><td>yes, as Python 3 does: from the ancestor folders that are not packages themselves (no <code>__init__.py</code>), so <code>import json</code> inside a package is the standard library, not a <code>json.py</code> next to it; where several could hold the module, the one that holds most of the dotted name wins</td></tr>
+<tr><td><code>src/</code> layouts (<code>tests/</code> importing <code>src/pkg</code>)</td><td>yes: each of those folders’ <code>src/</code> is tried too</td></tr>
+<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read</td></tr>
+<tr><td><code>.pyi</code> stubs as import targets</td><td><strong>no</strong></td></tr>
+<tr><td>Standard library, installed packages</td><td>no edge, by design</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="javascript-and-typescript-js-jsx-mjs-cjs-ts-tsx-mts-cts"><a class="header" href="#javascript-and-typescript-js-jsx-mjs-cjs-ts-tsx-mts-cts">JavaScript and TypeScript (<code>.js</code>, <code>.jsx</code>, <code>.mjs</code>, <code>.cjs</code>, <code>.ts</code>, <code>.tsx</code>, <code>.mts</code>, <code>.cts</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Supported</th></tr>
+</thead>
+<tbody>
+<tr><td><code>import … from './x'</code>, <code>export … from './x'</code>, <code>export * from './x'</code></td><td>yes</td></tr>
+<tr><td><code>require('./x')</code>, <code>require(`./x`)</code>, <code>import('./x')</code></td><td>yes (not a template string with <code>${…}</code>), also <code>import(/* comment */ './x')</code></td></tr>
+<tr><td><code>import x from './x.json' with { type: 'json' }</code>, and the older <code>assert { … }</code></td><td>yes</td></tr>
+<tr><td><code>import x = require('./x')</code> (TypeScript)</td><td><strong>no</strong></td></tr>
+<tr><td>Relative specifiers (<code>./</code>, <code>../</code>, <code>.</code>, <code>..</code>)</td><td>yes</td></tr>
+<tr><td><code>@/x</code>, <code>~/x</code></td><td>yes: from the nearest folder with a <code>package.json</code> or <code>tsconfig.json</code>, trying <code>src/x</code> then <code>x</code></td></tr>
+<tr><td>Extension probing</td><td>the exact file; <code>.js</code>/<code>.jsx</code> written for a <code>.ts</code>/<code>.tsx</code> file, <code>.mjs</code> for <code>.mts</code>, <code>.cjs</code> for <code>.cts</code>; then <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code> appended; then <code>index.{ts,tsx,js,jsx,mjs,cjs}</code></td></tr>
+<tr><td>Imports of stylesheets, <code>.vue</code>/<code>.svelte</code> components and other assets</td><td>yes, when the file is indexed (a bundler resolves them; TypeScript does not)</td></tr>
+<tr><td><code>index.mts</code>, <code>index.cts</code>, <code>index.d.ts</code>; a folder’s <code>package.json</code> <code>main</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>package.json</code> <code>imports</code> (<code>#name</code>) and a package importing itself by name</td><td><strong>no</strong></td></tr>
+<tr><td>tsconfig <code>paths</code> and <code>baseUrl</code></td><td><strong>no</strong>: tsconfig is not parsed</td></tr>
+<tr><td>Workspace packages by name, <code>package.json</code> <code>exports</code>/<code>main</code></td><td><strong>no</strong></td></tr>
+<tr><td>Packages in <code>node_modules</code></td><td>no edge, by design</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="how-this-is-checked"><a class="header" href="#how-this-is-checked">How this is checked</a></h2>
+<p>Extraction and resolution have unit tests per form
+(<code>src/symbols/extractor.rs</code>, <code>src/dependencies/mod.rs</code>). On top of those,
+<code>examples/graph_oracle.rs</code> compares the whole graph with an independent
+resolver over a pinned repository and lists every edge fcs misses or draws
+wrongly:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Oracle</th><th>Repository</th><th>Result</th></tr>
+</thead>
+<tbody>
+<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>scripts/graph-oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
+<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>scripts/graph-oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>92% of edges, 1 extra; 122 of the 129 misses are tsconfig <code>paths</code> (<code>~utils</code>, <code>vite/module-runner</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>CI runs both, and fails if a change misses or adds more edges than that.</p>
+<pre><code class="language-sh">python3 scripts/graph-oracle/py.py bench-corpus/django &gt; py.json
+cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
+(cd scripts/graph-oracle &amp;&amp; npm ci)
+node scripts/graph-oracle/ts.mjs bench-corpus/vite &gt; ts.json
+cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="fcs-command-line"><a class="header" href="#fcs-command-line"><code>fcs</code> command line</a></h1>
 <!-- Generated by scripts/docs/generate-reference.sh from `fcs --help`; do not edit. -->
@@ -2810,6 +2954,14 @@ kept; a file that was deleted and comes back regains its dependents.</li>
 <li><strong>Sibling check.</strong> As a last safety net, the parent directories of
 every changed path are checked and entries whose file is gone are
 removed.</li>
+<li><strong>Imports.</strong> Every file’s imports are kept as written. Once the whole
+batch is back in the index, the files whose imports could resolve
+differently now are resolved again: those that imported a removed file,
+and those with an import naming a file that appeared. That covers an
+import that fell back to a package (<code>from . import m</code> reaching
+<code>__init__.py</code> while <code>m.py</code> is missing) moving to the new file, and
+back. The dependency graph is therefore a function of the files on
+disk, the same as a fresh build would draw.</li>
 </ol>
 <p>Between batches searches run normally; a search that arrives while the
 lock is held gets a 503 with <code>Retry-After: 1</code>, which <code>fcs</code> and the web UI
@@ -2900,7 +3052,7 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 <tr><td>Page size</td><td>1–1,000</td><td><code>max</code></td></tr>
 <tr><td>Offset</td><td>≤ <code>max_page_offset</code> (100,000)</td><td><code>offset</code>; deeper pages are refused</td></tr>
 <tr><td>Files opened by fast ranking</td><td><code>fast_rank_files</code> (2,000), up to <code>max_fast_rank_files</code> on request</td><td><code>max_files</code></td></tr>
-<tr><td>Match budget</td><td>derived from page size and offset, capped</td><td>stops the scan; reported as <code>truncated_by_budget</code></td></tr>
+<tr><td>Match budget</td><td>derived from page size and offset, capped</td><td>stops the scan; reported as <code>truncated_by_budget</code> and <code>limits_hit</code></td></tr>
 <tr><td>Deadline</td><td><code>timeout_ms</code> or just under <code>request_timeout_secs</code></td><td>the scan stops on its own even if the HTTP response was abandoned</td></tr>
 <tr><td>Context lines</td><td>≤ 10 per hit (<code>/api/context</code>: ≤ 200)</td><td><code>context</code></td></tr>
 <tr><td>Concurrent searches</td><td><code>max_concurrent_searches</code>, shared by REST and gRPC</td><td>beyond it: 503 / <code>RESOURCE_EXHAUSTED</code> immediately</td></tr>
@@ -2911,6 +3063,11 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 </tbody>
 </table>
 </div>
+<p>When a limit cuts a search short, the response names it in <code>limits_hit</code>
+(<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code> or <code>timeout</code>, each with a
+sentence for people). gRPC sends the names in the <code>fcs-limits-hit</code>
+response header, <code>fcs</code> prints them on stderr, and MCP adds a “Results
+capped” line, so a capped result never passes for a complete one.</p>
 <p>None of these need tuning for normal use; they exist so a bad query or an
 abandoned client cannot pin the machine.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -3328,6 +3485,25 @@ what it means in rg terms, as <code>-g</code> globs written by hand.</p>
 engine and Unicode case folding, so any difference is a real difference.
 See <a href="#how-matching-compares-with-grep-ripgrep-and-git-grep">Matching compared with grep and ripgrep</a> for
 where fcs, ripgrep, grep and git grep behave differently, and why.</p>
+<h2 id="generated-queries"><a class="header" href="#generated-queries">Generated queries</a></h2>
+<p>The fixed set holds the cases someone thought of. <code>--generate N</code> adds N
+queries made up from the corpus itself: identifiers, substrings, whole
+lines, punctuation runs and non-ASCII text, each in random case, some with
+MATCH CASE and whole word set. Each runs through fcs and through <code>rg -F</code>
+(with <code>-i</code> and <code>-w</code> as set) and the lines must match. A query that differs
+is shrunk, dropping characters from either end while it still differs, and
+the report ends with the smallest forms as <code>[[query]]</code> blocks to add to
+<code>benches/rg_backtest.toml</code> with the fix.</p>
+<p>CI generates 500 per run: with a fixed seed on pull requests, and a new
+seed on every push to <code>main</code> and once a week, so the set keeps exploring.
+Rerun a failure locally with the seed from the report:</p>
+<pre><code class="language-sh">cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --generate 500 --seed SEED
+</code></pre>
+<p>Its first runs found two whole-word bugs, both now fixed and in the query
+set: a combining mark (an Indic vowel sign, a decomposed accent) was not
+counted as a word character, and with MATCH CASE a match rejected by the
+whole-word test skipped the overlapping one after it (<code>}}</code> in <code>field}}}</code>).</p>
 <h2 id="how-a-query-is-translated"><a class="header" href="#how-a-query-is-translated">How a query is translated</a></h2>
 <div class="table-wrapper">
 <table>
@@ -3475,6 +3651,20 @@ the way a web UI user pages through it under the server’s default
 limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
 skipped, then LOAD MORE to the end. Every match must be shown exactly
 once.</li>
+<li>The ripgrep backtest makes up queries from the corpus (<code>--generate N --seed S</code>), checks them against <code>rg -F</code> and shrinks any that differ to
+the smallest form. CI runs 500 per run.</li>
+<li>Dependency-graph oracles: <code>examples/graph_oracle.rs</code> compares the
+import graph with grimp on Django and with TypeScript’s own resolver on
+Vite, listing every edge fcs misses or draws wrongly. CI fails on any
+regression. Django now matches grimp exactly; Vite’s remaining misses
+are tsconfig <code>paths</code>.</li>
+<li>Capped results say which limit cut them. Search responses carry
+<code>limits_hit</code> (<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code>,
+each with a sentence for people); gRPC sends the names in the
+<code>fcs-limits-hit</code> response header, <code>fcs</code> prints a “results capped” note
+on stderr, MCP’s <code>search_code</code> adds a “Results capped” line (also when
+nothing was found), and the web UI names the limit in the count’s
+tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
@@ -3554,6 +3744,30 @@ reconciled instead.</li>
 <li>Files changed while the initial index was being built could be indexed
 with old content, or stay indexed after being deleted or moved. Content
 that is no longer on disk is now never merged into the index.</li>
+<li>Python imports resolve the way Python 3 does. <code>from pkg import submodule</code> and <code>from . import submodule</code> now point at the submodule,
+not at the package’s <code>__init__.py</code>. An absolute import no longer
+resolves to a same-named file next to the importer (<code>import json</code>
+inside a package reaches a sibling <code>json.py</code> no more, and <code>from django import …</code> inside <code>backends/</code> no longer means <code>backends/django.py</code>).
+<code>src/</code> layouts resolve. On Django the graph went from 87% to 100% of
+grimp’s edges, with 287 wrong edges removed.</li>
+<li>The dependency graph of a watched index now ends up the same as a fresh
+build’s. Every file’s imports are kept, and a change resolves again the
+imports it can affect: a file that appears takes over imports that had
+fallen back to its package, a file that goes hands them back, and an
+edit that removes an import no longer leaves its edge behind when the
+imported file is saved in the same burst. The initial build also
+resolves every import once more at the end, so the graph no longer
+depends on the order files were indexed in.</li>
+<li>JavaScript/TypeScript: <code>import(/* comment */ './x')</code>, imports with the
+older <code>assert { type: 'json' }</code> and <code>.cjs</code> written for a <code>.cts</code> file now
+give edges.</li>
+<li>Whole-word search now uses the same word characters as ripgrep’s <code>-w</code>
+(Unicode <code>\w</code>): combining marks such as Indic vowel signs and decomposed
+accents count as part of a word, so <code>word:yes</code> no longer matches inside
+Hindi, Malayalam or Telugu words.</li>
+<li>Whole-word search with MATCH CASE no longer misses a match that overlaps
+a rejected one (<code>}}</code> at the end of <code>field}}}</code>), and the same on the
+Unicode case-folding path.</li>
 </ul>
 <h2 id="0152---2026-10-13"><a class="header" href="#0152---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2">0.15.2</a> - 2026-10-13</a></h2>
 <p><strong>Search works differently in this release.</strong> Plain-text search is now a

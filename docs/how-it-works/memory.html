@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f59db20d.js";
+            window.path_to_searchindex_js = "../searchindex-0650b713.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0ff2f94c.js"></script>
+        <script src="../toc-ff6984d8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -211,7 +211,7 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 <tr><td>Page size</td><td>1–1,000</td><td><code>max</code></td></tr>
 <tr><td>Offset</td><td>≤ <code>max_page_offset</code> (100,000)</td><td><code>offset</code>; deeper pages are refused</td></tr>
 <tr><td>Files opened by fast ranking</td><td><code>fast_rank_files</code> (2,000), up to <code>max_fast_rank_files</code> on request</td><td><code>max_files</code></td></tr>
-<tr><td>Match budget</td><td>derived from page size and offset, capped</td><td>stops the scan; reported as <code>truncated_by_budget</code></td></tr>
+<tr><td>Match budget</td><td>derived from page size and offset, capped</td><td>stops the scan; reported as <code>truncated_by_budget</code> and <code>limits_hit</code></td></tr>
 <tr><td>Deadline</td><td><code>timeout_ms</code> or just under <code>request_timeout_secs</code></td><td>the scan stops on its own even if the HTTP response was abandoned</td></tr>
 <tr><td>Context lines</td><td>≤ 10 per hit (<code>/api/context</code>: ≤ 200)</td><td><code>context</code></td></tr>
 <tr><td>Concurrent searches</td><td><code>max_concurrent_searches</code>, shared by REST and gRPC</td><td>beyond it: 503 / <code>RESOURCE_EXHAUSTED</code> immediately</td></tr>
@@ -222,6 +222,11 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 </tbody>
 </table>
 </div>
+<p>When a limit cuts a search short, the response names it in <code>limits_hit</code>
+(<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code> or <code>timeout</code>, each with a
+sentence for people). gRPC sends the names in the <code>fcs-limits-hit</code>
+response header, <code>fcs</code> prints them on stderr, and MCP adds a “Results
+capped” line, so a capped result never passes for a complete one.</p>
 <p>None of these need tuning for normal use; they exist so a bad query or an
 abandoned client cannot pin the machine.</p>
 

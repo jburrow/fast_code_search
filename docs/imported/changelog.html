@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f59db20d.js";
+            window.path_to_searchindex_js = "../searchindex-0650b713.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0ff2f94c.js"></script>
+        <script src="../toc-ff6984d8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -206,6 +206,20 @@ the way a web UI user pages through it under the server’s default
 limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
 skipped, then LOAD MORE to the end. Every match must be shown exactly
 once.</li>
+<li>The ripgrep backtest makes up queries from the corpus (<code>--generate N --seed S</code>), checks them against <code>rg -F</code> and shrinks any that differ to
+the smallest form. CI runs 500 per run.</li>
+<li>Dependency-graph oracles: <code>examples/graph_oracle.rs</code> compares the
+import graph with grimp on Django and with TypeScript’s own resolver on
+Vite, listing every edge fcs misses or draws wrongly. CI fails on any
+regression. Django now matches grimp exactly; Vite’s remaining misses
+are tsconfig <code>paths</code>.</li>
+<li>Capped results say which limit cut them. Search responses carry
+<code>limits_hit</code> (<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code>,
+each with a sentence for people); gRPC sends the names in the
+<code>fcs-limits-hit</code> response header, <code>fcs</code> prints a “results capped” note
+on stderr, MCP’s <code>search_code</code> adds a “Results capped” line (also when
+nothing was found), and the web UI names the limit in the count’s
+tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
@@ -285,6 +299,30 @@ reconciled instead.</li>
 <li>Files changed while the initial index was being built could be indexed
 with old content, or stay indexed after being deleted or moved. Content
 that is no longer on disk is now never merged into the index.</li>
+<li>Python imports resolve the way Python 3 does. <code>from pkg import submodule</code> and <code>from . import submodule</code> now point at the submodule,
+not at the package’s <code>__init__.py</code>. An absolute import no longer
+resolves to a same-named file next to the importer (<code>import json</code>
+inside a package reaches a sibling <code>json.py</code> no more, and <code>from django import …</code> inside <code>backends/</code> no longer means <code>backends/django.py</code>).
+<code>src/</code> layouts resolve. On Django the graph went from 87% to 100% of
+grimp’s edges, with 287 wrong edges removed.</li>
+<li>The dependency graph of a watched index now ends up the same as a fresh
+build’s. Every file’s imports are kept, and a change resolves again the
+imports it can affect: a file that appears takes over imports that had
+fallen back to its package, a file that goes hands them back, and an
+edit that removes an import no longer leaves its edge behind when the
+imported file is saved in the same burst. The initial build also
+resolves every import once more at the end, so the graph no longer
+depends on the order files were indexed in.</li>
+<li>JavaScript/TypeScript: <code>import(/* comment */ './x')</code>, imports with the
+older <code>assert { type: 'json' }</code> and <code>.cjs</code> written for a <code>.cts</code> file now
+give edges.</li>
+<li>Whole-word search now uses the same word characters as ripgrep’s <code>-w</code>
+(Unicode <code>\w</code>): combining marks such as Indic vowel signs and decomposed
+accents count as part of a word, so <code>word:yes</code> no longer matches inside
+Hindi, Malayalam or Telugu words.</li>
+<li>Whole-word search with MATCH CASE no longer misses a match that overlaps
+a rejected one (<code>}}</code> at the end of <code>field}}}</code>), and the same on the
+Unicode case-folding path.</li>
 </ul>
 <h2 id="0152---2026-10-13"><a class="header" href="#0152---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2">0.15.2</a> - 2026-10-13</a></h2>
 <p><strong>Search works differently in this release.</strong> Plain-text search is now a

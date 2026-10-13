@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f59db20d.js";
+            window.path_to_searchindex_js = "../searchindex-0650b713.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0ff2f94c.js"></script>
+        <script src="../toc-ff6984d8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -206,6 +206,25 @@ what it means in rg terms, as <code>-g</code> globs written by hand.</p>
 engine and Unicode case folding, so any difference is a real difference.
 See <a href="../reference/matching.html">Matching compared with grep and ripgrep</a> for
 where fcs, ripgrep, grep and git grep behave differently, and why.</p>
+<h2 id="generated-queries"><a class="header" href="#generated-queries">Generated queries</a></h2>
+<p>The fixed set holds the cases someone thought of. <code>--generate N</code> adds N
+queries made up from the corpus itself: identifiers, substrings, whole
+lines, punctuation runs and non-ASCII text, each in random case, some with
+MATCH CASE and whole word set. Each runs through fcs and through <code>rg -F</code>
+(with <code>-i</code> and <code>-w</code> as set) and the lines must match. A query that differs
+is shrunk, dropping characters from either end while it still differs, and
+the report ends with the smallest forms as <code>[[query]]</code> blocks to add to
+<code>benches/rg_backtest.toml</code> with the fix.</p>
+<p>CI generates 500 per run: with a fixed seed on pull requests, and a new
+seed on every push to <code>main</code> and once a week, so the set keeps exploring.
+Rerun a failure locally with the seed from the report:</p>
+<pre><code class="language-sh">cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --generate 500 --seed SEED
+</code></pre>
+<p>Its first runs found two whole-word bugs, both now fixed and in the query
+set: a combining mark (an Indic vowel sign, a decomposed accent) was not
+counted as a word character, and with MATCH CASE a match rejected by the
+whole-word test skipped the overlapping one after it (<code>}}</code> in <code>field}}}</code>).</p>
 <h2 id="how-a-query-is-translated"><a class="header" href="#how-a-query-is-translated">How a query is translated</a></h2>
 <div class="table-wrapper">
 <table>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f59db20d.js";
+            window.path_to_searchindex_js = "../searchindex-0650b713.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0ff2f94c.js"></script>
+        <script src="../toc-ff6984d8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,6 +190,35 @@ case folding, and <code>.gitignore</code> handling. The <a href="../benchmarks/c
 backtest</a> checks this on every engine change.
 It runs a fixed set of searches through both tools and fails on any line one
 finds and the other does not.</p>
+<h2 id="every-search-as-ripgrep-would-run-it"><a class="header" href="#every-search-as-ripgrep-would-run-it">Every search, as ripgrep would run it</a></h2>
+<p>The contract in one table: for each kind of fcs search, the ripgrep run
+that finds the same lines. “Same lines” is what the backtest checks; fcs
+then ranks them and may cap how many it reads (see <em>Ranked, and capped</em>
+below, and <code>limits_hit</code> in every response).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>fcs search</th><th>Same lines as</th><th>Checked by</th></tr>
+</thead>
+<tbody>
+<tr><td><code>foo bar</code> (plain text)</td><td><code>rg -F -i 'foo bar'</code></td><td>backtest, generated queries</td></tr>
+<tr><td><code>foo case:yes</code> (or MATCH CASE, <code>fcs -s</code>)</td><td><code>rg -F 'foo'</code></td><td>backtest, generated queries</td></tr>
+<tr><td><code>foo word:yes</code> (or <code>fcs -w</code>)</td><td><code>rg -F -i -w 'foo'</code></td><td>backtest, generated queries</td></tr>
+<tr><td><code>foo case:yes word:yes</code></td><td><code>rg -F -w 'foo'</code></td><td>backtest, generated queries</td></tr>
+<tr><td>Regex on the API or <code>fcs -e</code></td><td><code>rg 'PATTERN'</code> (<code>rg -U</code> when it mentions <code>\n</code>)</td><td>backtest</td></tr>
+<tr><td>Regex with <code>case=false</code>, <code>(?i)</code> or <code>fcs -e -i</code></td><td><code>rg -i 'PATTERN'</code></td><td>backtest</td></tr>
+<tr><td><code>lang:rust foo</code></td><td><code>rg -F -i -t rust 'foo'</code></td><td>backtest (with <code>globs</code>)</td></tr>
+<tr><td><code>file:*.py foo</code> / <code>-file:tests foo</code></td><td><code>rg -F -i -g '*.py' 'foo'</code> / <code>-g '!tests'</code>; a bare word such as <code>file:parser</code> matches anywhere in the path, which <code>-g</code> has no exact form for</td><td>backtest (with <code>globs</code>)</td></tr>
+<tr><td>A text search’s filename hits (no line number)</td><td>none; closest is <code>rg --files | rg -i 'foo'</code></td><td>not compared</td></tr>
+<tr><td>Path matches (<code>files=N</code>, the FILES box)</td><td>none; closest is <code>rg --files | rg -i</code> with every word required</td><td>unit tests</td></tr>
+<tr><td>Symbols (SYMBOLS, <code>fcs symbols</code>)</td><td>none: definitions come from tree-sitter, not from text</td><td>engine tests</td></tr>
+<tr><td>References (REFERENCES, <code>fcs refs</code>)</td><td>none: call sites come from tree-sitter, not from text</td><td>engine tests</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>fcs</code> on the command line, the web UI, the API, gRPC and MCP all run one
+shared request path, and a test runs the same searches through web, gRPC
+and offline <code>fcs</code> and requires identical hits (<code>tests/frontend_parity.rs</code>).</p>
 <h2 id="where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep"><a class="header" href="#where-fcs-agrees-with-ripgrep-and-differs-from-grep-and-git-grep">Where fcs agrees with ripgrep and differs from grep and git grep</a></h2>
 <div class="table-wrapper">
 <table>
@@ -242,7 +271,10 @@ lines the same way (<code>rg -c</code>).</li>
 order. To keep a broad search fast, a request reads a bounded number of
 matches: by default 100 from one file on the first page, and a budget of
 about eight times the requested page. When either limit is reached, the
-total is shown as “N+” rather than as a count. When a query could be in
+total is shown as “N+” rather than as a count, and the response names
+the limit (<code>limits_hit</code>: <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code> or
+<code>max_files</code>; <code>fcs</code> prints it, MCP adds a “Results capped” line, gRPC
+sends an <code>fcs-limits-hit</code> header). When a query could be in
 more than 5,000 files, Auto ranking opens only the 2,000 most likely
 (<code>fast_rank_files</code>); the header then says “Searched 2,000 of N files”
 and SEARCH ALL FILES opens the rest (up to <code>max_fast_rank_files</code>). LOAD MORE in the web UI
@@ -279,7 +311,7 @@ reports it without failing.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../reference/cli-help.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/graph-support.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -293,7 +325,7 @@ reports it without failing.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../reference/cli-help.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/graph-support.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
