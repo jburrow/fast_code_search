@@ -457,8 +457,8 @@ function renderBackendStatus(keywordUp, semanticUp, serverProblems = 0) {
     if (keywordUp && serverProblems > 0) {
         // The server is up but something at startup went wrong (a busy port,
         // an index owned by another server, a config warning): point at it.
-        banner.style.background = '#f6f1c4';
-        banner.style.color = '#4b4900';
+        banner.style.background = 'var(--warn-wash)';
+        banner.style.color = 'var(--accent-ink-2)';
         banner.style.display = 'flex';
         if (msgEl) {
             msgEl.textContent = `Server started with ${serverProblems} problem${serverProblems === 1 ? '' : 's'}. `;
@@ -475,8 +475,8 @@ function renderBackendStatus(keywordUp, semanticUp, serverProblems = 0) {
         return;
     }
 
-    banner.style.background = '#ffdad6';
-    banner.style.color = '#93000a';
+    banner.style.background = 'var(--danger-soft)';
+    banner.style.color = 'var(--on-danger-soft)';
     banner.style.display = 'flex';
     if (msgEl) {
         msgEl.textContent = 'Keyword search backend not running \u2014 start fast_code_search on port 8080';
@@ -487,9 +487,9 @@ function updateBackendBadge(id, isUp, label) {
     const el = document.getElementById(id);
     if (!el) return;
     el.textContent = `${label}: ${isUp ? '\u2713' : '\u2717'}`;
-    el.style.background = isUp ? '#a9efed' : '#ffdad6';
-    el.style.borderColor = isUp ? '#1e6868' : '#ba1a1a';
-    el.style.color = isUp ? '#00201f' : '#93000a';
+    el.style.background = isUp ? 'var(--info-soft)' : 'var(--danger-soft)';
+    el.style.borderColor = isUp ? 'var(--info)' : 'var(--danger)';
+    el.style.color = isUp ? 'var(--on-info-soft)' : 'var(--on-danger-soft)';
 }
 
 // ============================================
@@ -627,15 +627,15 @@ const LANG_BADGE_STYLE_CACHE = new Map();
  * Build a readable language badge style from the configured language color.
  */
 function getLangBadgeStyle(langClass) {
-    if (!langClass) return 'background:#e7e3ce;color:#1d1c0f;border:1px solid #cbc8aa';
+    if (!langClass) return 'background:var(--surface-4);color:var(--text);border:1px solid var(--border)';
     if (LANG_BADGE_STYLE_CACHE.has(langClass)) return LANG_BADGE_STYLE_CACHE.get(langClass);
 
     const cssValue = getComputedStyle(document.documentElement)
         .getPropertyValue(`--lang-${langClass}`)
-        .trim() || '#e7e3ce';
+        .trim() || 'var(--surface-4)';
     const rgb = parseColorToRgb(cssValue);
     if (!rgb) {
-        const fallback = `background:${cssValue};color:#000;border:1px solid rgba(0,0,0,0.2)`;
+        const fallback = `background:${cssValue};color:var(--ink);border:1px solid var(--badge-border)`;
         LANG_BADGE_STYLE_CACHE.set(langClass, fallback);
         return fallback;
     }
@@ -643,8 +643,10 @@ function getLangBadgeStyle(langClass) {
     const bgLum = relativeLuminance(rgb);
     const blackContrast = contrastRatio(bgLum, 0);
     const whiteContrast = contrastRatio(bgLum, 1);
-    const textColor = whiteContrast > blackContrast ? '#fff' : '#000';
-    const borderColor = textColor === '#fff' ? 'rgba(255,255,255,0.38)' : 'rgba(0,0,0,0.2)';
+    // Black or white, whichever reads better on the language's own colour
+    // (the language palette is fixed, so this is not a theme choice).
+    const textColor = whiteContrast > blackContrast ? 'white' : 'black';
+    const borderColor = textColor === 'white' ? 'var(--badge-border-light)' : 'var(--badge-border)';
 
     const style = `background:${cssValue};color:${textColor};border:1px solid ${borderColor}`;
     LANG_BADGE_STYLE_CACHE.set(langClass, style);
@@ -1590,7 +1592,7 @@ function fileMatchPathHtml(path, ranges) {
             html += run.hit ? '<mark class="highlight">' : '</mark>';
             inMark = run.hit;
         }
-        const style = run.name ? 'color:#646100;font-weight:700' : 'color:#5f5d48';
+        const style = run.name ? 'color:var(--accent-ink);font-weight:700' : 'color:var(--text-3)';
         html += `<span style="${style}">${escapeHtml(run.text)}</span>`;
     }
     return inMark ? html + '</mark>' : html;
@@ -1607,7 +1609,7 @@ function renderFileMatches(data) {
     const total = typeof data.total_files === 'number' ? data.total_files : files.length;
     const rows = files.map((f, i) => `
         <li${i >= FILE_MATCHES_COLLAPSED ? ' class="file-match-extra" hidden' : ''}>
-          <div style="display:flex;align-items:center;gap:12px;padding-right:16px;border-top:1px solid #e3dec8">
+          <div style="display:flex;align-items:center;gap:12px;padding-right:16px;border-top:1px solid var(--border-soft)">
             <button type="button" class="file-match-row" data-file-path="${escapeHtml(f.file_path)}"
                 title="Open ${escapeHtml(f.file_path)}"
                 style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;text-align:left;padding:6px 0 6px 16px;background:none;border:none;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px">
@@ -1616,17 +1618,17 @@ function renderFileMatches(data) {
             </button>
             <div class="flex items-center gap-2 flex-shrink-0">
                 ${hasImportGraph(f.file_path) ? `<a class="explore-graph-link hover:text-primary transition-colors"
-                    style="color:#5f5d48;display:flex"
+                    style="color:var(--text-3);display:flex"
                     href="${escapeHtml(graphExplorerUrl(f.file_path))}"
                     aria-label="Explore this file's imports"
                     title="Explore imports in the dependency explorer">${iconSvg('account_tree', 16)}</a>` : ''}
                 <button type="button" class="copy-path-btn hover:text-primary transition-colors"
-                    style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                    style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
                     data-file-path="${escapeHtml(f.file_path)}"
                     aria-label="Copy file path"
                     title="Copy file path">${iconSvg('content_copy', 16)}</button>
                 <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                    style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                    style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
                     data-file-path="${escapeHtml(f.file_path)}"
                     data-line-number="1"
                     data-whole-file="true"
@@ -1641,14 +1643,14 @@ function renderFileMatches(data) {
         ? `<button type="button" class="file-matches-more load-more-btn" style="margin:8px 16px">SHOW ${hiddenCount} MORE</button>`
         : '';
     const narrow = notFetched > 0
-        ? `<p class="file-matches-narrow" ${hiddenCount > 0 ? 'hidden' : ''} style="margin:8px 16px;font-size:12px;color:#5f5d48">${notFetched.toLocaleString('en-US')} more not shown; add to the path to narrow it.</p>`
+        ? `<p class="file-matches-narrow" ${hiddenCount > 0 ? 'hidden' : ''} style="margin:8px 16px;font-size:12px;color:var(--text-3)">${notFetched.toLocaleString('en-US')} more not shown; add to the path to narrow it.</p>`
         : '';
     fileMatchesSection.innerHTML = `
-        <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000;margin-bottom:16px">
-            <div class="border-b border-black px-4 py-2 flex items-center gap-2" style="background:#dedac6">
+        <div class="bg-white border border-black overflow-hidden" style="box-shadow:var(--shadow-sm);margin-bottom:16px">
+            <div class="border-b border-black px-4 py-2 flex items-center gap-2" style="background:var(--surface-head)">
                 ${iconSvg('description', 16)}
                 <span class="font-label text-xs font-bold tracking-tight">FILES</span>
-                <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${fileMatchesLabel(total)}</span>
+                <span style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:'JetBrains Mono',monospace">${fileMatchesLabel(total)}</span>
             </div>
             <ul style="list-style:none;margin:0;padding:0">${rows}</ul>
             ${footer}${narrow}
@@ -1746,7 +1748,7 @@ function renderGroupHtml(group) {
 
     // Dependency badge
     const depBadge = depCount > 0
-        ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
+        ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:var(--accent-soft);color:var(--ink);font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid var(--badge-border)"
             aria-label="${depCount} dependents; show files that import this file"
             data-file-path="${escapeHtml(group.filePath)}" title="Files that import this one">imported by ${depCount}</button>`
         : '';
@@ -1757,8 +1759,8 @@ function renderGroupHtml(group) {
     const hitsHtml = group.hits.map((result, idx) => {
         const matchType = getMatchTypeLabel(result.match_type);
         const typeBadgeStyle = matchType.isSymbol
-            ? 'background:#a9efed;color:#00201f;border:1px solid #1e6868'
-            : 'background:#e7e3ce;color:#494831;border:1px solid #cbc8aa';
+            ? 'background:var(--info-soft);color:var(--on-info-soft);border:1px solid var(--info)'
+            : 'background:var(--surface-4);color:var(--text-2);border:1px solid var(--border)';
         const isFilenameHit = !result.line_number;
         const viewLine = isFilenameHit ? 1 : result.line_number;
         const lineLabel = isFilenameHit ? 'filename' : `line ${result.line_number}`;
@@ -1782,7 +1784,7 @@ function renderGroupHtml(group) {
                     ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
                     : '';
                 return `<div style="${lineStyle}">` +
-                    `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:#5f5d48;font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
+                    `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:var(--text-3);font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
                     `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
                     `</div>`;
             }).join('');
@@ -1798,28 +1800,28 @@ function renderGroupHtml(group) {
             : `result-code language-${lang}`;
 
         const hitContainerStyle = idx === 0
-            ? 'background:#fff'
-            : 'background:#fff;border-top:1px solid #d4d0ba';
+            ? 'background:var(--surface)'
+            : 'background:var(--surface);border-top:1px solid var(--border-faint)';
 
         return `
             <div style="${hitContainerStyle}">
-                <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
+                <div class="px-4 py-1.5 flex justify-between items-center" style="background:var(--surface-1);border-bottom:1px solid var(--border-soft)">
                     <div class="flex items-center gap-2 min-w-0">
-                        <span class="font-label text-xs" style="color:#5f5d48;flex-shrink:0;cursor:help"
+                        <span class="font-label text-xs" style="color:var(--text-3);flex-shrink:0;cursor:help"
                             title="Ranking score ${result.score.toFixed(2)} (higher ranks first)&#10;&#10;Score = base × multipliers&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)">${lineLabel}</span>
                         <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
                         ${truncatedBadge}
                     </div>
                     <div class="flex items-center gap-3 flex-shrink-0">
                         <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                            style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                            style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
                             data-file-path="${escapeHtml(result.file_path)}"
                             data-line-number="${viewLine}"
                             aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}"
                             title="View full file at this line">${iconSvg('open_in_new', 18)}</button>
                     </div>
                 </div>
-                <div class="overflow-x-auto" style="background:#fff">
+                <div class="overflow-x-auto" style="background:var(--surface)">
                     <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
                 </div>
             </div>
@@ -1827,31 +1829,31 @@ function renderGroupHtml(group) {
     }).join('');
 
     return `
-        <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
+        <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:var(--shadow-sm)" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
             <!-- File header -->
-            <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:#dedac6">
+            <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:var(--surface-head)">
                 <div class="flex items-center gap-2 min-w-0">
                     ${iconSvg(fileIcon, 16)}
                     <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
-                        ${dirPath ? `<span style="color:#5f5d48;font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:#646100;font-weight:700">${escapeHtml(fileName)}</span>
+                        ${dirPath ? `<span style="color:var(--text-3);font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:var(--accent-ink);font-weight:700">${escapeHtml(fileName)}</span>
                     </span>
-                    <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
+                    <span style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
                     ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${escapeHtml(ext)}</span>` : ''}
                     ${depBadge}
                     ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link hover:text-primary transition-colors"
-                        style="color:#5f5d48;display:flex"
+                        style="color:var(--text-3);display:flex"
                         href="${escapeHtml(graphExplorerUrl(group.filePath))}"
                         aria-label="Explore this file's imports"
                         title="Explore imports in the dependency explorer">${iconSvg('account_tree', 16)}</a>` : ''}
                     <button type="button" class="copy-path-btn hover:text-primary transition-colors"
-                        style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                        style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
                         data-file-path="${escapeHtml(group.filePath)}"
                         aria-label="Copy file path"
                         title="Copy file path">${iconSvg('content_copy', 16)}</button>
                     <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                        style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                        style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
                         data-file-path="${escapeHtml(group.filePath)}"
                         data-line-number="${groupViewLine}"
                         aria-label="View full file"
@@ -1984,7 +1986,7 @@ function highlightSelectedGroup(groups, opts = {}) {
         g.setAttribute('aria-selected', selected ? 'true' : 'false');
         g.setAttribute('tabindex', selected || (_selectedGroupIndex < 0 && i === 0) ? '0' : '-1');
         if (selected) {
-            g.style.outline = '3px solid #646100';
+            g.style.outline = '3px solid var(--accent-ink)';
             g.style.outlineOffset = '2px';
             if (opts.focus !== false) g.focus({ preventScroll: true });
             g.scrollIntoView({ block: 'nearest' });
@@ -2265,7 +2267,7 @@ async function showDepsTooltip(badgeEl, filePath) {
                 : '';
             return `<div class="deps-popover-section">` +
                 `<div class="deps-section-title">${escapeHtml(label)} (${files.length})</div>` +
-                `<ul>${items || '<li style="color:#5f5d48;font-style:italic">none</li>'}</ul>` +
+                `<ul>${items || '<li style="color:var(--text-3);font-style:italic">none</li>'}</ul>` +
                 more +
                 `</div>`;
         }
@@ -2400,21 +2402,21 @@ function showDependencyModal(title, filePath, files, description, opts = {}) {
     const fileList = opts.error
         ? `<li><div class="error-message" role="alert"><strong>Error:</strong> ${escapeHtml(opts.error)}</div></li>`
         : files.length > 0
-            ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;color:#1d1c0f">${escapeHtml(f)}</li>`).join('')
-            : '<li style="color:#5f5d48;">No files found</li>';
+            ? files.map(f => `<li style="padding:0.25rem 0;font-family:monospace;font-size:0.85rem;color:var(--text)">${escapeHtml(f)}</li>`).join('')
+            : '<li style="color:var(--text-3);">No files found</li>';
     const countLabel = opts.error ? '' : ` (${files.length})`;
 
     const modal = document.createElement('div');
     modal.id = 'dep-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;';
+    modal.style.cssText = 'position:fixed;inset:0;background:var(--overlay);display:flex;align-items:center;justify-content:center;z-index:1000;';
     modal.innerHTML = `
-        <div class="dep-modal-dialog" style="background:#f2eed9;border:1px solid #cbc8aa;box-shadow:6px 6px 0 #000;padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
+        <div class="dep-modal-dialog" style="background:var(--surface-2);border:1px solid var(--border);box-shadow:var(--shadow-lg);padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:#1d1c0f">${escapeHtml(title)}${countLabel}</h2>
-                <button type="button" class="dep-modal-close" aria-label="Close" title="Close (Esc)" style="background:none;border:1px solid #000;width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:#1d1c0f;display:flex;align-items:center;justify-content:center;">&times;</button>
+                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:var(--text)">${escapeHtml(title)}${countLabel}</h2>
+                <button type="button" class="dep-modal-close" aria-label="Close" title="Close (Esc)" style="background:none;border:1px solid var(--ink);width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:var(--text);display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
-            <p style="font-family:monospace;font-size:0.85rem;color:#1d4f6e;margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
-            <p style="color:#494831;font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
+            <p style="font-family:monospace;font-size:0.85rem;color:var(--link);margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
+            <p style="color:var(--text-2);font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>
             <ul style="list-style:none;padding:0;">${fileList}</ul>
             <a class="deps-popover-explore" style="padding-left:0" href="${escapeHtml(graphExplorerUrl(filePath))}">Open in dependency explorer →</a>
         </div>

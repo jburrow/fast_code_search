@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   search runs as a separate server, instead of claiming the keyword server
   is down (it probed a hard-coded port 8080).
 - The INDEX page's sample files are shown relative to the indexed folder.
+- Web UI internals: all six pages share one header (`static/shell.js`) and
+  one stylesheet of design tokens (`static/app.css`); every colour, shadow
+  and font is a token, Tailwind's colours point at the same tokens, and a
+  test fails on hard-coded colours. This is groundwork for themes and
+  should look the same, apart from the navigation links on the non-search
+  pages now matching the search page. The semantic pages use the same SVG
+  icons as the rest, so the 3.9 MB icon font is gone.
 
 ### Fixed
 - Web UI: the hover preview shows the whole file and scrolls. It used to

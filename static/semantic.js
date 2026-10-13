@@ -164,8 +164,8 @@ function showSemanticNotHere() {
     if (!resultsContainer) return;
     const semanticUrl = `http://${window.location.hostname}:${window.SEMANTIC_PORT || 8081}/semantic.html`;
     resultsContainer.innerHTML = `
-        <div class="server-offline-state no-results" style="background:#fff;border:1px solid #000;box-shadow:2px 2px 0 #000">
-            <p style="font-weight:700;color:#1d1c0f;margin-bottom:0.5rem">Semantic search isn't running on this server</p>
+        <div class="server-offline-state no-results" style="background:var(--surface);border:1px solid var(--ink);box-shadow:var(--shadow-sm)">
+            <p style="font-weight:700;color:var(--text);margin-bottom:0.5rem">Semantic search isn't running on this server</p>
             <p>This is the keyword search server. Semantic search is a separate server,
             <code>fast_code_search_semantic</code>, usually on port ${escapeHtml(String(window.SEMANTIC_PORT || 8081))}.</p>
             <p style="margin-top:0.75rem"><a href="${escapeHtml(semanticUrl)}" style="text-decoration:underline">Open it there</a>
@@ -204,8 +204,8 @@ function renderBackendStatus(keywordUp, semanticServerUp, onSemanticServer) {
 
     // Warning colour: red for hard errors, amber when semantic is up but wrong server
     const isWrongServer = semanticServerUp && !onSemanticServer;
-    banner.style.background = isWrongServer && keywordUp ? '#fff3cd' : '#ffdad6';
-    banner.style.color = isWrongServer && keywordUp ? '#5a4000' : '#93000a';
+    banner.style.background = isWrongServer && keywordUp ? 'var(--warn-soft)' : 'var(--danger-soft)';
+    banner.style.color = isWrongServer && keywordUp ? 'var(--on-warn-soft)' : 'var(--on-danger-soft)';
     banner.style.display = 'flex';
     if (msgEl) msgEl.textContent = parts.join(' \u00b7 ');
 }
@@ -214,9 +214,9 @@ function updateBackendBadge(id, isUp, label) {
     const el = document.getElementById(id);
     if (!el) return;
     el.textContent = `${label}: ${isUp ? '\u2713' : '\u2717'}`;
-    el.style.background = isUp ? '#a9efed' : '#ffdad6';
-    el.style.borderColor = isUp ? '#1e6868' : '#ba1a1a';
-    el.style.color = isUp ? '#00201f' : '#93000a';
+    el.style.background = isUp ? 'var(--info-soft)' : 'var(--danger-soft)';
+    el.style.borderColor = isUp ? 'var(--info)' : 'var(--danger)';
+    el.style.color = isUp ? 'var(--on-info-soft)' : 'var(--on-danger-soft)';
 }
 
 // ============================================
@@ -357,7 +357,7 @@ function displayResults(results, query, latency) {
                 <div class="no-results-icon">🔍</div>
                 <h3>No results found</h3>
                 <p>Try a different query or check if the server has indexed your files.</p>
-                <p style="margin-top: 0.75rem; color: var(--text-secondary); font-size: 0.85rem;">
+                <p style="margin-top: 0.75rem; color: var(--text-2); font-size: 0.85rem;">
                     Query: "${escapeHtml(query)}" • Latency: ${latency}ms
                 </p>
             </div>
@@ -374,7 +374,7 @@ function createGroupedResultCard(group) {
     const firstResult = group.hits[0];
     const ext = fileExtension(group.filePath);
     const langClass = langClassForPath(group.filePath);
-    const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
+    const langStyle = langClass ? `background:var(--lang-${langClass},var(--chip-neutral));` : '';
     const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${escapeHtml(ext)}</span>` : '';
 
     const lastSlash = group.filePath.lastIndexOf('/');
@@ -388,8 +388,8 @@ function createGroupedResultCard(group) {
             <div class="result-header">
                 <div class="result-info">
                     <div class="result-file">
-                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:#7a785f">description</span>
-                        <span style="color:#7a785f;font-weight:400">${escapeHtml(fileDir)}</span><span style="font-weight:700">${escapeHtml(fileName)}</span>
+                        <svg class="icon" width="14" height="14" aria-hidden="true" style="margin-right:4px;color:var(--text-4)"><use href="#i-description"/></svg>
+                        <span style="color:var(--text-4);font-weight:400">${escapeHtml(fileDir)}</span><span style="font-weight:700">${escapeHtml(fileName)}</span>
                     </div>
                     <div class="result-meta">
                         ${langBadge}
@@ -422,7 +422,7 @@ function createSemanticHitCard(result, addTopBorder) {
     // Language badge (uses shared langClassForPath from common.js)
     const ext = fileExtension(result.file_path);
     const langClass = langClassForPath(result.file_path);
-    const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
+    const langStyle = langClass ? `background:var(--lang-${langClass},var(--chip-neutral));` : '';
     const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${escapeHtml(ext)}</span>` : '';
 
     const codeWithLines = formatCodeWithLineNumbers(result.content, result.start_line);
@@ -435,8 +435,8 @@ function createSemanticHitCard(result, addTopBorder) {
                     <div class="result-meta">
                         ${langBadge}
                         <span class="${chunkClass}">${chunkLabel}</span>
-                        ${result.symbol_name ? `<span class="result-badge" style="background:#ebe77f;border-color:#646100;color:#1e1d00;text-transform:none">${escapeHtml(result.symbol_name)}</span>` : ''}
-                        <span style="font-size:0.65rem;color:#7a785f;font-family:'JetBrains Mono',monospace">L${result.start_line}–${result.end_line}</span>
+                        ${result.symbol_name ? `<span class="result-badge" style="background:var(--accent-soft);border-color:var(--accent-ink);color:var(--on-accent-soft);text-transform:none">${escapeHtml(result.symbol_name)}</span>` : ''}
+                        <span style="font-size:0.65rem;color:var(--text-4);font-family:'JetBrains Mono',monospace">L${result.start_line}–${result.end_line}</span>
                     </div>
                 </div>
                 <div class="result-score" title="Similarity score: ${score}%">

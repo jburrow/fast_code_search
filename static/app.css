@@ -1,0 +1,166 @@
+/* ==========================================================================
+   fast_code_search web UI: design tokens and shared styles.
+
+   Every colour, shadow and font the pages use is a variable here. Pages,
+   generated HTML (keyword.js, semantic.js, ...) and the Tailwind config
+   refer to these names, never to raw colours, so a theme only has to
+   redefine the block below. static/tests/tokens.test.js fails the build
+   when a hex colour appears anywhere else.
+
+   The values are the "Bold" look: cream page, yellow accent, black ink,
+   hard offset shadows, uppercase mono labels.
+   ========================================================================== */
+
+:root {
+    /* Surfaces, lightest to darkest */
+    --page: #fefae4;            /* page background */
+    --surface: #fff;            /* cards, inputs, code */
+    --surface-1: #f8f4df;       /* sunken rows, hovered lines */
+    --surface-2: #f2eed9;       /* panels, file meta bar */
+    --surface-3: #ece9d4;
+    --surface-4: #e7e3ce;
+    --surface-head: #dedac6;    /* result and dialog headers */
+    --chip: #e6e2cc;            /* small neutral badges */
+    --chip-neutral: #e2e0d5;    /* language badge without a colour */
+    --overlay: rgba(0, 0, 0, 0.65);
+
+    /* Lines */
+    --ink: #000;                /* strong borders, shadows, text on accent */
+    --border: #cbc8aa;
+    --border-soft: #e3dec8;
+    --border-faint: #d4d0ba;
+
+    /* Text */
+    --text: #1d1c0f;
+    --text-2: #494831;          /* secondary */
+    --text-3: #5f5d48;          /* muted (4.5:1 on --page) */
+    --text-4: #7a785f;          /* faint: hints, placeholders */
+    --on-ink: #fff;             /* text on --ink */
+
+    /* Accent: the match highlight and primary actions */
+    --accent: #fff900;
+    --accent-soft: #ebe77f;
+    --accent-faint: #fff9a8;
+    --accent-wash: #fffbc2;
+    --accent-ink: #646100;      /* accent-coloured text and borders */
+    --accent-ink-2: #4b4900;
+    --on-accent-soft: #1e1d00;
+    --hl-line-bg: var(--accent);
+    --hl-left-border: #646100;
+
+    /* Status */
+    --info: #1e6868;
+    --info-soft: #a9efed;
+    --info-wash: #d9f5f3;
+    --on-info-soft: #00201f;
+    --info-ink: #004f4e;
+    --danger: #ba1a1a;
+    --danger-soft: #ffdad6;
+    --on-danger-soft: #93000a;
+    --warn: #6a6707;
+    --warn-soft: #fff3cd;
+    --warn-wash: #f6f1c4;
+    --on-warn-soft: #5a4000;
+
+    /* Links and code navigation */
+    --link: #1d4f6e;
+    --link-hover: #d44e38;
+    --defn: #0b57d0;
+
+    /* Shape */
+    --shadow-sm: 2px 2px 0 var(--ink);
+    --shadow: 4px 4px 0 var(--ink);
+    --shadow-lg: 6px 6px 0 var(--ink);
+    --shadow-soft: 2px 2px 0 rgba(0, 0, 0, 0.12);
+    --radius: 0;
+    --label-case: uppercase;
+
+    /* Type */
+    --font-ui: 'Inter', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-display: 'Space Grotesk', sans-serif;
+
+    /* Page texture (a data URI cannot read variables, so a theme swaps it whole) */
+    --page-pattern: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
+
+    /* Language badges */
+    --lang-rs: #d44e38; --lang-py: #3d6fad; --lang-js: #d9a41a; --lang-ts: #2f6bbf;
+    --lang-go: #38a0b0; --lang-rb: #b83a28; --lang-java: #cc7a1a; --lang-cs: #2e7c4f;
+    --lang-cpp: #b84030; --lang-c: #5c4fbf; --lang-sh: #2e7c50; --lang-yaml: #8e3fad;
+    --lang-json: #b89010; --lang-css: #4040cc; --lang-proto: #7a28ad;
+    --lang-toml: #a06018; --lang-sql: #b07818; --lang-md: #4a5a6a;
+    --badge-border: rgba(0, 0, 0, 0.2);          /* on light badges */
+    --badge-border-light: rgba(255, 255, 255, 0.38); /* on dark badges */
+}
+
+/* ===== Base ===== */
+body { background-image: var(--page-pattern); }
+
+/* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
+.icon { display: inline-block; fill: currentColor; vertical-align: middle; flex-shrink: 0; }
+
+/* ===== App header and navigation (drawn by shell.js) ===== */
+.app-header {
+    background: var(--surface); color: var(--text);
+    font-family: var(--font-mono); text-transform: var(--label-case); letter-spacing: -0.05em; font-size: 0.875rem; line-height: 1.25rem;
+    display: flex; justify-content: space-between; align-items: center;
+    width: 100%; padding: 0 1.5rem; height: 3.5rem;
+    position: sticky; top: 0; z-index: 50; border-bottom: 1px solid var(--ink);
+}
+.app-header-left { display: flex; align-items: center; gap: 1.5rem; }
+.app-wordmark {
+    font-size: 1rem; line-height: 1.5rem; font-weight: 700; color: var(--ink);
+    background: var(--accent); padding: 0.125rem 0.5rem; border: 1px solid var(--ink);
+}
+.app-nav { display: none; align-items: center; height: 3.5rem; }
+@media (min-width: 768px) { .app-nav { display: flex; } }
+.app-nav a {
+    height: 100%; display: flex; align-items: center; padding: 0 0.75rem; color: var(--text-3);
+    transition: color 75ms, background-color 75ms;
+}
+.app-nav a:hover { background: var(--accent); color: var(--ink); border-bottom: 2px solid var(--ink); }
+.app-nav a[aria-current="page"] { background: var(--accent); color: var(--ink); border-bottom: 2px solid var(--ink); font-weight: 700; }
+.app-help { color: var(--text-3); display: flex; align-items: center; transition: color 150ms; }
+.app-help:hover { color: var(--ink); }
+
+.app-tabbar {
+    position: fixed; bottom: 0; left: 0; width: 100%; z-index: 50; height: 3.5rem;
+    display: flex; justify-content: space-around; align-items: center;
+    background: var(--surface); border-top: 1px solid var(--ink);
+    font-family: var(--font-mono); font-size: 10px; text-transform: var(--label-case);
+}
+@media (min-width: 768px) { .app-tabbar { display: none; } }
+.app-tabbar a {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0.25rem 1rem; color: var(--text-3); transition: all 150ms;
+}
+.app-tabbar a:hover, .app-tabbar a[aria-current="page"] { background: var(--accent); color: var(--ink); }
+
+/* ===== Shared states ===== */
+.status-badge {
+    font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.4rem;
+    border: 1px solid var(--ink); background: var(--accent); color: var(--ink); text-transform: var(--label-case);
+}
+.status-badge.status-idle { background: var(--accent-soft); }
+.status-badge.status-completed { background: var(--info-soft); }
+.status-badge.status-loading_index,
+.status-badge.status-indexing,
+.status-badge.status-discovering { background: var(--accent); }
+.progress-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.progress-fill.completed { background: var(--accent-ink); }
+.loading { padding: 2rem; text-align: center; color: var(--text-3); font-family: var(--font-mono); font-size: 0.85rem; }
+.loading-spinner {
+    width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent-ink);
+    border-radius: 50%; animation: spin 0.7s linear infinite; margin: 0 auto 0.5rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-index-state { padding: 3rem; text-align: center; color: var(--text-3); font-family: var(--font-mono); font-size: 0.82rem; }
+.loading-progress { width: 200px; height: 4px; background: var(--surface-4); border: 1px solid var(--ink); margin: 0.75rem auto 0; overflow: hidden; }
+.loading-progress-bar { height: 100%; background: var(--accent); border-right: 1px solid var(--ink); transition: width 0.3s; }
+.error-message {
+    padding: 1rem 1.5rem; background: var(--danger-soft); border: 1px solid var(--danger);
+    color: var(--on-danger-soft); font-family: var(--font-mono); font-size: 0.82rem;
+}
+#query:disabled { opacity: 0.6; cursor: not-allowed; }
+/* Dead hook some scripts still query for; never shown. */
+.advanced-options { display: none; }
