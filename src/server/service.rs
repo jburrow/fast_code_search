@@ -1,5 +1,5 @@
 use crate::config::IndexerConfig;
-use crate::search::{RankMode, SearchEngine, SearchLimits, SearchSettings};
+use crate::search::{RankMode, SearchEngine, SearchMode, SearchSettings};
 use anyhow::Result;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -134,45 +134,30 @@ impl CodeSearch for CodeSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query.trim().to_string();
-        // proto3 default 0 = "unset": use the REST default page size rather
-        // than clamping to a single result.
-        let max_results = if req.max_results <= 0 {
-            50
-        } else {
-            req.max_results.min(1000) as usize
-        };
-        let include_patterns = req.include_paths.join(";");
-        let exclude_patterns = req.exclude_paths.join(";");
-        let is_regex = req.is_regex;
-        let symbols_only = req.symbols_only;
-        let references = req.references;
-        if references && (is_regex || symbols_only) {
-            return Err(Status::invalid_argument(
-                "references cannot be combined with is_regex or symbols_only",
-            ));
-        }
-        let case_sensitive = req.case_sensitive;
-        let whole_word = req.whole_word;
-        let rank_mode = RankMode::parse(&req.rank);
-        let offset = req.offset.max(0) as usize;
-        self.search_settings
-            .check_offset(offset)
+        // Paging, caps and the deadline are the same for every front end
+        // (see `search::request`). proto3 has no "unset" for numbers or
+        // bools: 0 means the default, and `false` means "as the query says".
+        let mode = SearchMode::from_flags(req.is_regex, req.symbols_only, req.references)
             .map_err(Status::invalid_argument)?;
-        // Same deadline policy as /api/search: the client's deadline if
-        // given, capped by (and otherwise just under) the request timeout.
-        let default_timeout = self.request_timeout.mul_f32(0.9);
-        let timeout = if req.deadline_ms > 0 {
-            std::time::Duration::from_millis((req.deadline_ms as u64).min(30_000))
-                .min(default_timeout)
-        } else {
-            default_timeout
+        let request = crate::search::SearchRequest {
+            query: query.clone(),
+            mode,
+            case_sensitive: req.case_sensitive.then_some(true),
+            whole_word: req.whole_word.then_some(true),
+            include: req.include_paths.join(";"),
+            exclude: req.exclude_paths.join(";"),
+            max_results: req.max_results.max(0) as usize,
+            offset: req.offset.max(0) as usize,
+            rank: RankMode::parse(&req.rank),
+            timeout: (req.deadline_ms > 0)
+                .then(|| std::time::Duration::from_millis(req.deadline_ms as u64)),
+            max_files: None,
+            path_matches: 0,
         };
-        let limits = self.search_settings.apply(
-            SearchLimits::new(max_results)
-                .with_offset(offset)
-                .with_timeout(timeout),
-            None,
-        );
+        let max_results = request.page_size();
+        let limits = request
+            .limits(&self.search_settings, Some(self.request_timeout))
+            .map_err(Status::invalid_argument)?;
         {
             let span = tracing::Span::current();
             span.record("query", query.as_str());
@@ -216,50 +201,10 @@ impl CodeSearch for CodeSearchService {
                 }
             };
 
-            // Same modes, syntax and limits as /api/search.
-            let mut parsed = crate::search::parse_query(&query);
-            if case_sensitive {
-                parsed.options.case_sensitive = true;
-            }
-            if whole_word {
-                parsed.options.whole_word = true;
-            }
-            let (matches, _info) = if references {
-                engine
-                    .search_references_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
-                    })?
-            } else if symbols_only {
-                engine
-                    .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
-                    })?
-            } else if is_regex {
-                engine
-                    .search_regex_with_limits(
-                        &query,
-                        &include_patterns,
-                        &exclude_patterns,
-                        limits,
-                        rank_mode,
-                    )
-                    .map_err(|e| Status::invalid_argument(e.to_string()))?
-            } else {
-                engine
-                    .search_parsed(
-                        &parsed,
-                        &include_patterns,
-                        &exclude_patterns,
-                        limits,
-                        rank_mode,
-                    )
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
-                    })?
-            };
-
+            let matches = engine
+                .run(&request, limits)
+                .map_err(Status::invalid_argument)?
+                .matches;
             Ok::<_, Status>(matches)
         })
         .await

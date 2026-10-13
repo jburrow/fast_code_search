@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A burst of file changes is applied once the tree has been quiet for
   200 ms (at most two seconds), instead of after a fixed two-second
   debounce, so edits show up in search sooner.
+- The web API, the gRPC service and offline `fcs` now run every search
+  through one shared request path (`search::request`): the same default
+  page size, caps, deadline and offset limit, and the same dispatch to
+  the engine. Offline `fcs` now enforces `server.max_page_offset` like the
+  server does. A new test checks that all three return the same hits in
+  the same order.
 
 ### Fixed
 - LOAD MORE past 1000 results repeated some results and skipped others on

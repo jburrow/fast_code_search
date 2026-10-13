@@ -150,14 +150,11 @@ pub struct SearchQuery {
 }
 
 /// Most path matches one request may ask for.
-pub const MAX_FILE_MATCHES: usize = 100;
+pub const MAX_FILE_MATCHES: usize = crate::search::request::MAX_PATH_MATCHES;
 
 fn default_max_results() -> usize {
-    50
+    crate::search::request::DEFAULT_PAGE_SIZE
 }
-
-/// Upper bound for a client-requested search deadline.
-const MAX_SEARCH_TIMEOUT_MS: u64 = 30_000;
 
 /// Records a search's wall time when dropped, so the metric covers the
 /// search's real lifetime even when the HTTP response was abandoned.
@@ -481,62 +478,35 @@ pub async fn search_handler(
         }));
     }
 
-    // `max=0` means "the default page size" (as it does over gRPC).
-    let max_results = if params.max == 0 {
-        default_max_results()
-    } else {
-        params.max.min(1000)
+    // Paging, caps and the deadline are the same for every front end (see
+    // `search::request`); the engine stops just under the HTTP request
+    // timeout so a scan whose response was abandoned ends on its own.
+    let mode =
+        crate::search::SearchMode::from_flags(params.regex, params.symbols, params.references)
+            .map_err(|e| ApiError::from((StatusCode::BAD_REQUEST, e)))?;
+    let request = crate::search::SearchRequest {
+        query: query.clone(),
+        mode,
+        case_sensitive: params.case,
+        whole_word: params.word,
+        include: params.include,
+        exclude: params.exclude,
+        max_results: params.max,
+        offset: params.offset,
+        rank: RankMode::parse(&params.rank),
+        timeout: (params.timeout_ms > 0)
+            .then(|| std::time::Duration::from_millis(params.timeout_ms)),
+        max_files: params.max_files,
+        path_matches: params.files,
     };
-    let offset = params.offset;
     let settings = state.search_settings;
-    settings
-        .check_offset(offset)
+    let limits = request
+        .limits(&settings, Some(state.request_timeout))
         .map_err(|e| ApiError::from((StatusCode::BAD_REQUEST, e)))?;
-    let case_override = params.case;
-    let word_override = params.word;
-    // Every search runs under an engine deadline: the client's `timeout_ms`
-    // if given, capped by (and otherwise just under) the HTTP request
-    // timeout, so a scan whose response was abandoned by the timeout layer
-    // stops on its own instead of holding the read lock and a thread.
-    let default_timeout = state.request_timeout.mul_f32(0.9);
-    let timeout = if params.timeout_ms > 0 {
-        std::time::Duration::from_millis(params.timeout_ms.min(MAX_SEARCH_TIMEOUT_MS))
-            .min(default_timeout)
-    } else {
-        default_timeout
-    };
-    let limits = settings.apply(
-        SearchLimits::new(max_results)
-            .with_offset(offset)
-            .with_timeout(timeout),
-        params.max_files,
-    );
     let max_files_allowed =
         (settings.max_fast_rank_files != usize::MAX).then_some(settings.max_fast_rank_files);
-    let include_patterns = params.include;
-    let exclude_patterns = params.exclude;
-    let is_regex = params.regex;
-    let symbols_only = params.symbols;
-    let references = params.references;
-    // `references` is its own mode: combining it with regex or symbols-only
-    // used to silently ignore the other flag (and swallow invalid regexes).
-    if references && (is_regex || symbols_only) {
-        return Err(ApiError::from((
-            StatusCode::BAD_REQUEST,
-            "references=true cannot be combined with regex=true or symbols=true".to_string(),
-        )));
-    }
     let context_lines = params.context.min(MAX_CONTEXT_LINES);
-    let file_limit = params.files.min(MAX_FILE_MATCHES);
-    let pattern_for_paths =
-        crate::search::regex_pattern_with_case(&query, case_override).into_owned();
-
-    // Parse ranking mode
-    let rank_mode = match params.rank.to_lowercase().as_str() {
-        "fast" => RankMode::Fast,
-        "full" => RankMode::Full,
-        _ => RankMode::Auto, // Default to auto
-    };
+    let offset = request.offset;
 
     // Concurrency limit: each search occupies a blocking-pool thread, so
     // beyond the configured number we answer 503 + Retry-After immediately
@@ -572,101 +542,20 @@ pub async fn search_handler(
         // Blocking here would cause threads to pile up and exhaust the thread pool.
         let engine = try_read_engine(&engine)?;
 
-        // Plain-text and symbol queries understand the query syntax
-        // (file:, lang:, -term, case:, word:, quoted phrases); explicit
-        // parameters override the in-query switches. Regex is passed through.
-        let mut parsed = crate::search::parse_query(&query);
-        if let Some(c) = case_override {
-            parsed.options.case_sensitive = c;
-        }
-        if let Some(w) = word_override {
-            parsed.options.whole_word = w;
-        }
-
-        // Choose search method based on flags. Every mode reports ranking
-        // info (regex/symbols included) and honours the limits.
-        let (matches, ranking_info) = if references {
-            engine
-                .search_references_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
-                .map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        format!("Invalid filter pattern: {}", e),
-                    )
-                })?
-        } else if symbols_only {
-            engine
-                .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
-                .map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        format!("Invalid filter pattern: {}", e),
-                    )
-                })?
-        } else if is_regex {
-            // Regex is case-sensitive by default (like `(?-i)`); an explicit
-            // `case=false` asks for case-insensitive matching, which for a
-            // regex is the `(?i)` flag. `case=true` needs nothing.
-            let pattern = crate::search::regex_pattern_with_case(&query, case_override);
-            engine
-                .search_regex_with_limits(
-                    &pattern,
-                    &include_patterns,
-                    &exclude_patterns,
-                    limits,
-                    rank_mode,
-                )
-                // The engine's error already reads "Invalid regex pattern: …".
-                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
-        } else {
-            engine
-                .search_parsed(
-                    &parsed,
-                    &include_patterns,
-                    &exclude_patterns,
-                    limits,
-                    rank_mode,
-                )
-                .map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        format!("Invalid filter pattern: {}", e),
-                    )
-                })?
+        let outcome = engine
+            .run(&request, limits)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        let has_more = outcome.has_more(offset);
+        let ranking_info = outcome.info;
+        let (files, total_files) = match outcome.paths {
+            Some(found) => (file_matches_to_json(found.matches), Some(found.total)),
+            None => (Vec::new(), None),
         };
-
         // Context lines: each file is read and split ONCE per request (the
         // result already carries the file id — no path lookup, no per-result
         // re-read when many hits come from one file).
-        let results = results_to_json(&engine, matches, context_lines);
-
-        // Path matches: a separate pass over the indexed paths, first page only.
-        let (files, total_files) = if file_limit > 0 && offset == 0 && !symbols_only && !references
-        {
-            let path_query = if is_regex {
-                crate::search::PathQuery::Regex(&pattern_for_paths)
-            } else {
-                crate::search::PathQuery::Terms(&parsed)
-            };
-            let found = engine
-                .search_paths(
-                    path_query,
-                    &include_patterns,
-                    &exclude_patterns,
-                    file_limit,
-                    Some(std::time::Instant::now() + timeout),
-                )
-                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-            (file_matches_to_json(found.matches), Some(found.total))
-        } else {
-            (Vec::new(), None)
-        };
-
+        let results = results_to_json(&engine, outcome.matches, context_lines);
         let total_results = results.len();
-        let has_more = match ranking_info.total_matches {
-            Some(total) => offset + total_results < total,
-            None => true, // truncated by budget/deadline: more may exist
-        };
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
         Ok(Json(SearchResponse {
