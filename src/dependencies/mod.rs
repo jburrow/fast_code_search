@@ -839,8 +839,9 @@ impl DependencyIndex {
                 s.strip_suffix(".js")
                     .or_else(|| s.strip_suffix(".jsx"))
                     .or_else(|| s.strip_suffix(".mjs"))
+                    .or_else(|| s.strip_suffix(".cjs"))
             }) {
-                for ext in ["ts", "tsx", "mts"] {
+                for ext in ["ts", "tsx", "mts", "cts"] {
                     if let Some(found) = self.indexed(Path::new(&format!("{stem}.{ext}"))) {
                         return Some(found);
                     }
@@ -853,7 +854,7 @@ impl DependencyIndex {
                 return Some(found);
             }
         }
-        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+        for ext in Self::JS_EXTENSIONS {
             if let Some(found) = self.indexed(&p.join(format!("index.{ext}"))) {
                 return Some(found);
             }
@@ -1202,6 +1203,8 @@ mod tests {
             ("src/util/merge.ts", ""),
             ("src/lib/helpers.ts", ""),
             ("src/components/Button.tsx", ""),
+            ("src/esm/index.mts", ""),
+            ("src/legacy.cts", ""),
         ]);
         let f = |rel: &str| temp.path().join(rel);
         let r = |from: &str, imp: &str| {
@@ -1219,6 +1222,18 @@ mod tests {
         assert_eq!(
             r("src/app.tsx", "./lib/helpers.js"),
             id_of(&temp, &idx, "src/lib/helpers.ts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./esm"),
+            id_of(&temp, &idx, "src/esm/index.mts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./legacy.cjs"),
+            id_of(&temp, &idx, "src/legacy.cts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./components/Button.jsx"),
+            id_of(&temp, &idx, "src/components/Button.tsx")
         );
         assert_eq!(
             r("src/components/Button.tsx", "../lib/helpers"),
