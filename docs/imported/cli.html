@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0650b713.js";
+            window.path_to_searchindex_js = "../searchindex-b3575302.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ff6984d8.js"></script>
@@ -196,6 +196,7 @@ fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
+fcs check                        # compare fcs with ripgrep and the import resolvers on your code
 </code></pre>
 <h2 id="design"><a class="header" href="#design">Design</a></h2>
 <p><strong>Client first.</strong> The server holds the index in memory, watches the tree and
@@ -301,6 +302,15 @@ such as <code>fcs: Index last synced with disk 2 h 0 min ago (…); file watchin
 it, and <code>fcs status</code> always reports when the index last synced and whether
 watching is on. Restart the server to rescan, or set <code>watch = true</code> under
 <code>[indexer]</code>. See <a href="api.html#index-freshness">API.md</a>.</p>
+<h2 id="checking-fcs-on-your-code"><a class="header" href="#checking-fcs-on-your-code">Checking fcs on your code</a></h2>
+<p><code>fcs check [PATH…]</code> indexes the folders (default: the configuration’s
+<code>paths</code>, else the current folder) afresh in memory, compares 200 queries
+made up from the files with <code>rg -F</code>, and compares the import graph with
+grimp (Python) and TypeScript’s resolver when they are installed. It prints
+a markdown report and exits 1 when a search differs from ripgrep. Options:
+<code>--queries N</code>, <code>--seed N</code> (repeat a run), <code>--rg PATH</code>, <code>--no-search</code>,
+<code>--no-graph</code>. It needs no server. See the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/correctness.md#on-your-own-code-fcs-check">correctness page</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <div class="table-wrapper">
 <table>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0650b713.js";
+            window.path_to_searchindex_js = "../searchindex-b3575302.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ff6984d8.js"></script>
@@ -185,7 +185,10 @@
 <p>A search never scans the whole corpus. It first computes a <strong>candidate
 set</strong> from the trigram index, then reads only those files.</p>
 <h2 id="plain-text"><a class="header" href="#plain-text">Plain text</a></h2>
-<p>The query is lowercased and split into overlapping three-byte windows;
+<p>The query is case-folded (Unicode simple case folding, the fold ripgrep’s
+<code>-i</code> uses, which is lowercase except for a few letters such as <code>ſ</code> and
+<code>µ</code>; the index stores folded text) and split into overlapping three-byte
+windows;
 <code>parse_query</code> yields <code>par</code>, <code>ars</code>, <code>rse</code>, <code>se_</code>, <code>e_q</code>, <code>_qu</code>, <code>que</code>,
 <code>uer</code>, <code>ery</code>. Each trigram has a posting list (a Roaring bitmap of file
 ids); intersecting them gives every file that could contain the query,

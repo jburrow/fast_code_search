@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0650b713.js";
+            window.path_to_searchindex_js = "../searchindex-b3575302.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ff6984d8.js"></script>
@@ -280,18 +280,22 @@ wrongly:</p>
 <tr><th>Language</th><th>Oracle</th><th>Repository</th><th>Result</th></tr>
 </thead>
 <tbody>
-<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>scripts/graph-oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
-<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>scripts/graph-oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>92% of edges, 1 extra; 122 of the 129 misses are tsconfig <code>paths</code> (<code>~utils</code>, <code>vite/module-runner</code>)</td></tr>
+<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>src/check/oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
+<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>src/check/oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>92% of edges, 1 extra; 122 of the 129 misses are tsconfig <code>paths</code> (<code>~utils</code>, <code>vite/module-runner</code>)</td></tr>
 </tbody>
 </table>
 </div>
 <p>CI runs both, and fails if a change misses or adds more edges than that.</p>
-<pre><code class="language-sh">python3 scripts/graph-oracle/py.py bench-corpus/django &gt; py.json
+<pre><code class="language-sh">python3 src/check/oracle/py.py bench-corpus/django &gt; py.json
 cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
-(cd scripts/graph-oracle &amp;&amp; npm ci)
-node scripts/graph-oracle/ts.mjs bench-corpus/vite &gt; ts.json
+(cd scripts/graph-oracle &amp;&amp; npm ci)   # pins TypeScript
+(cd scripts/graph-oracle &amp;&amp; node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) &gt; ts.json
 cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
 </code></pre>
+<p>To run the same comparison on your own code, use <code>fcs check</code> (see
+<a href="../benchmarks/correctness.html#on-your-own-code-fcs-check">Correctness against ripgrep</a>).
+It runs whichever oracles are installed: Python’s needs <code>pip install grimp</code>, TypeScript’s needs <code>typescript</code> in the repository’s
+<code>node_modules</code>.</p>
 
                     </main>
 

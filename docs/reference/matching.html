@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0650b713.js";
+            window.path_to_searchindex_js = "../searchindex-b3575302.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ff6984d8.js"></script>
@@ -230,7 +230,7 @@ and offline <code>fcs</code> and requires identical hits (<code>tests/frontend_p
 <tr><td>Byte order mark at the start of a file</td><td>ignored, so <code>^</code> matches line 1</td><td>ignored (kept with <code>-E none</code>)</td><td>part of line 1, so <code>^</code> misses it</td><td>part of line 1, so <code>^</code> misses it</td></tr>
 <tr><td><code>$</code> on a line ending in CRLF</td><td>matches before the <code>\r</code></td><td>only with <code>--crlf</code></td><td>no</td><td>no</td></tr>
 <tr><td>Pattern that mentions <code>\n</code></td><td>runs over the whole file and reports the line where the match starts</td><td>needs <code>-U</code></td><td>not supported</td><td>not supported</td></tr>
-<tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter; <code>ß</code> is not <code>ss</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
+<tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter, so are <code>s</code> and the long <code>ſ</code>, <code>k</code> and the Kelvin sign <code>K</code>, the micro sign <code>µ</code> and <code>μ</code>; <code>ß</code> is not <code>ss</code> and <code>İ</code> is not <code>i</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
 <tr><td>Hidden files (<code>.github/</code>, <code>.env.example</code>)</td><td>searched</td><td>skipped unless <code>--hidden</code></td><td>searched</td><td>searched if tracked</td></tr>
 <tr><td>Files searched</td><td>the indexed tree, honouring <code>.gitignore</code></td><td>the tree, honouring <code>.gitignore</code></td><td>what you name</td><td>tracked files only</td></tr>
 </tbody>

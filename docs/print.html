@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0650b713.js";
+            window.path_to_searchindex_js = "searchindex-b3575302.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ff6984d8.js"></script>
@@ -389,6 +389,7 @@ fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
+fcs check                        # compare fcs with ripgrep and the import resolvers on your code
 </code></pre>
 <h2 id="design"><a class="header" href="#design">Design</a></h2>
 <p><strong>Client first.</strong> The server holds the index in memory, watches the tree and
@@ -494,6 +495,15 @@ such as <code>fcs: Index last synced with disk 2 h 0 min ago (…); file watchin
 it, and <code>fcs status</code> always reports when the index last synced and whether
 watching is on. Restart the server to rescan, or set <code>watch = true</code> under
 <code>[indexer]</code>. See <a href="#index-freshness">API.md</a>.</p>
+<h2 id="checking-fcs-on-your-code"><a class="header" href="#checking-fcs-on-your-code">Checking fcs on your code</a></h2>
+<p><code>fcs check [PATH…]</code> indexes the folders (default: the configuration’s
+<code>paths</code>, else the current folder) afresh in memory, compares 200 queries
+made up from the files with <code>rg -F</code>, and compares the import graph with
+grimp (Python) and TypeScript’s resolver when they are installed. It prints
+a markdown report and exits 1 when a search differs from ripgrep. Options:
+<code>--queries N</code>, <code>--seed N</code> (repeat a run), <code>--rg PATH</code>, <code>--no-search</code>,
+<code>--no-graph</code>. It needs no server. See the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/correctness.md#on-your-own-code-fcs-check">correctness page</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1851,7 +1861,7 @@ and offline <code>fcs</code> and requires identical hits (<code>tests/frontend_p
 <tr><td>Byte order mark at the start of a file</td><td>ignored, so <code>^</code> matches line 1</td><td>ignored (kept with <code>-E none</code>)</td><td>part of line 1, so <code>^</code> misses it</td><td>part of line 1, so <code>^</code> misses it</td></tr>
 <tr><td><code>$</code> on a line ending in CRLF</td><td>matches before the <code>\r</code></td><td>only with <code>--crlf</code></td><td>no</td><td>no</td></tr>
 <tr><td>Pattern that mentions <code>\n</code></td><td>runs over the whole file and reports the line where the match starts</td><td>needs <code>-U</code></td><td>not supported</td><td>not supported</td></tr>
-<tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter; <code>ß</code> is not <code>ss</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
+<tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter, so are <code>s</code> and the long <code>ſ</code>, <code>k</code> and the Kelvin sign <code>K</code>, the micro sign <code>µ</code> and <code>μ</code>; <code>ß</code> is not <code>ss</code> and <code>İ</code> is not <code>i</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
 <tr><td>Hidden files (<code>.github/</code>, <code>.env.example</code>)</td><td>searched</td><td>skipped unless <code>--hidden</code></td><td>searched</td><td>searched if tracked</td></tr>
 <tr><td>Files searched</td><td>the indexed tree, honouring <code>.gitignore</code></td><td>the tree, honouring <code>.gitignore</code></td><td>what you name</td><td>tracked files only</td></tr>
 </tbody>
@@ -2023,18 +2033,22 @@ wrongly:</p>
 <tr><th>Language</th><th>Oracle</th><th>Repository</th><th>Result</th></tr>
 </thead>
 <tbody>
-<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>scripts/graph-oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
-<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>scripts/graph-oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>92% of edges, 1 extra; 122 of the 129 misses are tsconfig <code>paths</code> (<code>~utils</code>, <code>vite/module-runner</code>)</td></tr>
+<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>src/check/oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
+<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>src/check/oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>92% of edges, 1 extra; 122 of the 129 misses are tsconfig <code>paths</code> (<code>~utils</code>, <code>vite/module-runner</code>)</td></tr>
 </tbody>
 </table>
 </div>
 <p>CI runs both, and fails if a change misses or adds more edges than that.</p>
-<pre><code class="language-sh">python3 scripts/graph-oracle/py.py bench-corpus/django &gt; py.json
+<pre><code class="language-sh">python3 src/check/oracle/py.py bench-corpus/django &gt; py.json
 cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
-(cd scripts/graph-oracle &amp;&amp; npm ci)
-node scripts/graph-oracle/ts.mjs bench-corpus/vite &gt; ts.json
+(cd scripts/graph-oracle &amp;&amp; npm ci)   # pins TypeScript
+(cd scripts/graph-oracle &amp;&amp; node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) &gt; ts.json
 cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
 </code></pre>
+<p>To run the same comparison on your own code, use <code>fcs check</code> (see
+<a href="#on-your-own-code-fcs-check">Correctness against ripgrep</a>).
+It runs whichever oracles are installed: Python’s needs <code>pip install grimp</code>, TypeScript’s needs <code>typescript</code> in the repository’s
+<code>node_modules</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="fcs-command-line"><a class="header" href="#fcs-command-line"><code>fcs</code> command line</a></h1>
 <!-- Generated by scripts/docs/generate-reference.sh from `fcs --help`; do not edit. -->
@@ -2055,6 +2069,7 @@ Commands:
   symbols  Search symbol definitions (functions, types, classes, ...) only
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
+  check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2115,6 +2130,7 @@ Examples:
   vim -q &lt;(fcs --format vimgrep TODO)
   fcs status                    is the server up, what does it hold
   fcs mcp                       MCP over stdio, for coding agents
+  fcs check                     compare fcs with ripgrep and the import resolvers
 </code></pre>
 <h2 id="fcs-search---help"><a class="header" href="#fcs-search---help"><code>fcs search --help</code></a></h2>
 <pre><code class="language-text">Search file contents (the default; `fcs QUERY` works too)
@@ -2148,13 +2164,13 @@ Options:
           
           [default: 0]
 
-      --server &lt;URL&gt;
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
   -C, --context &lt;N&gt;
           Lines of context before and after each hit (0-10)
           
           [default: 0]
+
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
@@ -2162,23 +2178,28 @@ Options:
   -g, --glob &lt;GLOB&gt;
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --offline
-          Search the on-disk index directly instead of asking the server
-
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
 
+      --offline
+          Search the on-disk index directly instead of asking the server
+
       --no-offline
           Never fall back to the on-disk index when the server is unreachable
-
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
 
       --rank &lt;RANK&gt;
           Ranking: auto, fast (metadata only, big candidate sets), full
           
           [default: auto]
           [possible values: auto, fast, full]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --timeout-ms &lt;MS&gt;
+          Stop scanning after this many milliseconds and return the best so far
+          
+          [default: 0]
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2188,16 +2209,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --timeout-ms &lt;MS&gt;
-          Stop scanning after this many milliseconds and return the best so far
-          
-          [default: 0]
+      --max-files &lt;N&gt;
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
       --json
           Shorthand for --format json
-
-      --max-files &lt;N&gt;
-          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -2249,13 +2265,13 @@ Options:
           
           [default: 0]
 
-      --server &lt;URL&gt;
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
   -C, --context &lt;N&gt;
           Lines of context before and after each hit (0-10)
           
           [default: 0]
+
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
@@ -2263,23 +2279,28 @@ Options:
   -g, --glob &lt;GLOB&gt;
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --offline
-          Search the on-disk index directly instead of asking the server
-
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
 
+      --offline
+          Search the on-disk index directly instead of asking the server
+
       --no-offline
           Never fall back to the on-disk index when the server is unreachable
-
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
 
       --rank &lt;RANK&gt;
           Ranking: auto, fast (metadata only, big candidate sets), full
           
           [default: auto]
           [possible values: auto, fast, full]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --timeout-ms &lt;MS&gt;
+          Stop scanning after this many milliseconds and return the best so far
+          
+          [default: 0]
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2289,16 +2310,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --timeout-ms &lt;MS&gt;
-          Stop scanning after this many milliseconds and return the best so far
-          
-          [default: 0]
+      --max-files &lt;N&gt;
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
       --json
           Shorthand for --format json
-
-      --max-files &lt;N&gt;
-          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -2350,13 +2366,13 @@ Options:
           
           [default: 0]
 
-      --server &lt;URL&gt;
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
   -C, --context &lt;N&gt;
           Lines of context before and after each hit (0-10)
           
           [default: 0]
+
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
@@ -2364,23 +2380,28 @@ Options:
   -g, --glob &lt;GLOB&gt;
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --offline
-          Search the on-disk index directly instead of asking the server
-
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
 
+      --offline
+          Search the on-disk index directly instead of asking the server
+
       --no-offline
           Never fall back to the on-disk index when the server is unreachable
-
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
 
       --rank &lt;RANK&gt;
           Ranking: auto, fast (metadata only, big candidate sets), full
           
           [default: auto]
           [possible values: auto, fast, full]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --timeout-ms &lt;MS&gt;
+          Stop scanning after this many milliseconds and return the best so far
+          
+          [default: 0]
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2390,16 +2411,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --timeout-ms &lt;MS&gt;
-          Stop scanning after this many milliseconds and return the best so far
-          
-          [default: 0]
+      --max-files &lt;N&gt;
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
       --json
           Shorthand for --format json
-
-      --max-files &lt;N&gt;
-          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -2475,6 +2491,79 @@ Options:
 Usage: fcs mcp [OPTIONS]
 
 Options:
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config &lt;FILE&gt;
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --format &lt;FORMAT&gt;
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
+
+      --json
+          Shorthand for --format json
+
+  -l, --files-with-matches
+          Print only the files that match, one per line
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color &lt;COLOR&gt;
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+</code></pre>
+<h2 id="fcs-check---help"><a class="header" href="#fcs-check---help"><code>fcs check --help</code></a></h2>
+<pre><code class="language-text">Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
+
+Usage: fcs check [OPTIONS] [PATH]...
+
+Arguments:
+  [PATH]...
+          Folders to check (default: the configuration's indexed paths, else the current folder). They are indexed afresh, in memory
+
+Options:
+      --queries &lt;N&gt;
+          Queries made up from the files and compared with `rg -F`
+          
+          [default: 200]
+
+      --seed &lt;N&gt;
+          Seed for the queries, to repeat a run (default: a fresh one)
+
+      --rg &lt;PATH&gt;
+          The ripgrep binary
+          
+          [default: rg]
+
+      --no-search
+          Skip the search check
+
+      --no-graph
+          Skip the dependency graph check
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
@@ -2739,7 +2828,7 @@ fsyncs it, and renames it into place; saves are serialized within the
 process. A crash leaves the previous index intact.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
-<li><strong>Pinned.</strong> <code>tests/fixtures/index-v7.fcsidx</code> is compared byte for byte
+<li><strong>Pinned.</strong> <code>tests/fixtures/index-v8.fcsidx</code> is compared byte for byte
 in the test suite; a deliberate format change bumps the magic and
 regenerates the fixture (<code>FCS_WRITE_GOLDEN=1 cargo test golden</code>).</li>
 <li><strong>Older formats</strong> are rejected with a message asking for a rebuild;
@@ -2804,7 +2893,10 @@ for full-text and regex search without symbols.</p>
 <p>A search never scans the whole corpus. It first computes a <strong>candidate
 set</strong> from the trigram index, then reads only those files.</p>
 <h2 id="plain-text"><a class="header" href="#plain-text">Plain text</a></h2>
-<p>The query is lowercased and split into overlapping three-byte windows;
+<p>The query is case-folded (Unicode simple case folding, the fold ripgrep’s
+<code>-i</code> uses, which is lowercase except for a few letters such as <code>ſ</code> and
+<code>µ</code>; the index stores folded text) and split into overlapping three-byte
+windows;
 <code>parse_query</code> yields <code>par</code>, <code>ars</code>, <code>rse</code>, <code>se_</code>, <code>e_q</code>, <code>_qu</code>, <code>que</code>,
 <code>uer</code>, <code>ery</code>. Each trigram has a posting list (a Roaring bitmap of file
 ids); intersecting them gives every file that could contain the query,
@@ -3504,6 +3596,34 @@ Rerun a failure locally with the seed from the report:</p>
 set: a combining mark (an Indic vowel sign, a decomposed accent) was not
 counted as a word character, and with MATCH CASE a match rejected by the
 whole-word test skipped the overlapping one after it (<code>}}</code> in <code>field}}}</code>).</p>
+<h2 id="on-your-own-code-fcs-check"><a class="header" href="#on-your-own-code-fcs-check">On your own code: <code>fcs check</code></a></h2>
+<p>The backtest and the graph oracles run on pinned open-source trees. <code>fcs check</code> runs the same
+checks on the folders you index, so a gap that only your code exposes
+shows up too:</p>
+<pre><code class="language-sh">fcs check                      # the configuration's paths, else the current folder
+fcs check ~/src/app --seed 42  # one folder; repeat a run with its seed
+</code></pre>
+<p>It indexes the folders afresh, in memory, with your configuration’s
+settings, then:</p>
+<ol>
+<li>makes up 200 queries from your files (<code>--queries N</code>) and compares each
+with <code>rg -F</code>, as above; any query that differs is shrunk and reported
+with the lines only one side found;</li>
+<li>compares the import graph with grimp for Python and with TypeScript’s
+own resolver for JavaScript and TypeScript, when those are installed
+(<code>pip install grimp</code>; <code>typescript</code> in the repository’s <code>node_modules</code>),
+grouping the missed edges by the kind of import. See
+<a href="#dependency-graph-support">Dependency graph support</a> for which
+misses are known gaps.</li>
+</ol>
+<p>The report is markdown on stdout, progress on stderr. The exit status is 1
+when a search differs from ripgrep: that is a bug, please report it with the
+shrunk query. Graph differences are reported but do not fail the run.
+<code>--no-search</code> and <code>--no-graph</code> skip either half.</p>
+<p>Its first run, on Django, found a real bug: case-insensitive search did not
+fold the long <code>ſ</code> to <code>s</code> (or the micro sign <code>µ</code> to <code>μ</code>) as ripgrep does.
+Search now uses Unicode simple case folding throughout (<code>src/search/fold.rs</code>,
+checked against regex-syntax’s tables for every character).</p>
 <h2 id="how-a-query-is-translated"><a class="header" href="#how-a-query-is-translated">How a query is translated</a></h2>
 <div class="table-wrapper">
 <table>
@@ -3633,6 +3753,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><code>fcs check [PATH…]</code>: checks fcs on your own code. It indexes the folders
+in memory, compares queries made up from the files with <code>rg -F</code> (exit 1
+on any difference, with each differing query shrunk), and compares the
+import graph with grimp (Python) and TypeScript’s own resolver when they
+are installed. The graph oracles’ scripts moved to <code>src/check/oracle/</code>.</li>
 <li>Web UI: the file viewer, the hover preview and the dependency explorer’s
 source pane mark every hit in the whole file in a strip beside the
 scrollbar (query matches; import lines in the explorer). Click the strip
@@ -3722,6 +3847,12 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Case-insensitive search now folds case exactly as ripgrep’s <code>-i</code> does
+(Unicode simple case folding): <code>s</code> finds the long <code>ſ</code>, <code>k</code> the Kelvin
+sign, <code>μ</code> the micro sign <code>µ</code>, and the Greek symbol forms (<code>ϐ</code>, <code>ϑ</code>, …)
+their letters. The index stores folded text, so the on-disk index format
+is now version 8 and an existing index is rebuilt once on upgrade. Found
+by <code>fcs check</code> on Django.</li>
 <li>LOAD MORE past 1000 results repeated some results and skipped others on
 broad searches, because each deeper page ranked a different sample of
 the matches. Every page that ends at result 1000 or later now ranks the
@@ -5474,7 +5605,7 @@ symbols, edges, parked imports, reference names and per-file references),
 a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
 back to back. Save streams bitmaps from the live map; load memory-maps the
 file, checks bounds and checksum, and deserializes bitmaps in parallel from
-the mapping. <code>tests/fixtures/index-v7.fcsidx</code> pins the format byte for
+the mapping. <code>tests/fixtures/index-v8.fcsidx</code> pins the format byte for
 byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
 deliberate format change (and bump the version).</li>
 </ol>

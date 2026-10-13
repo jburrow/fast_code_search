@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0650b713.js";
+            window.path_to_searchindex_js = "../searchindex-b3575302.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ff6984d8.js"></script>
@@ -188,6 +188,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><code>fcs check [PATH…]</code>: checks fcs on your own code. It indexes the folders
+in memory, compares queries made up from the files with <code>rg -F</code> (exit 1
+on any difference, with each differing query shrunk), and compares the
+import graph with grimp (Python) and TypeScript’s own resolver when they
+are installed. The graph oracles’ scripts moved to <code>src/check/oracle/</code>.</li>
 <li>Web UI: the file viewer, the hover preview and the dependency explorer’s
 source pane mark every hit in the whole file in a strip beside the
 scrollbar (query matches; import lines in the explorer). Click the strip
@@ -277,6 +282,12 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Case-insensitive search now folds case exactly as ripgrep’s <code>-i</code> does
+(Unicode simple case folding): <code>s</code> finds the long <code>ſ</code>, <code>k</code> the Kelvin
+sign, <code>μ</code> the micro sign <code>µ</code>, and the Greek symbol forms (<code>ϐ</code>, <code>ϑ</code>, …)
+their letters. The index stores folded text, so the on-disk index format
+is now version 8 and an existing index is rebuilt once on upgrade. Found
+by <code>fcs check</code> on Django.</li>
 <li>LOAD MORE past 1000 results repeated some results and skipped others on
 broad searches, because each deeper page ranked a different sample of
 the matches. Every page that ends at result 1000 or later now ranks the
