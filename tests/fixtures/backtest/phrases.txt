@@ -1,0 +1,13 @@
+Several words are one phrase, quotes and dashes included.
+call "fn main" by its quoted name
+fn main
+fn  main with two spaces
+fn
+main
+-Wall gcc is the flag first
+gcc then -Wall
+import os sys
+import os
+Runtime -test runs without tests
+Runtime test
+def __init__(self)

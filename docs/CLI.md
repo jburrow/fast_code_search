@@ -8,7 +8,8 @@ on-disk index directly.
 ![fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing](images/demos/cli.gif)
 
 ```bash
-fcs 'fn main'                    # lines holding both words; the phrase ranks first
+fcs 'fn main'                    # lines holding the phrase, like rg -F -i
+fcs -- -Wall                     # a query starting with - goes after --
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
@@ -58,16 +59,17 @@ configuration file, then `http://127.0.0.1:8080`. A bind address such as
 
 | Option | Meaning |
 |---|---|
-| `QUERY` | Words must all appear in a file; lines with the phrase rank first. `"quoted phrase"`, `-term`, `file:PATTERN`, `-file:PATTERN`, `lang:rust`, `case:yes`, `word:yes` as in the web UI. |
+| `QUERY` | Literal text, like `rg -F`: several words are one phrase, quotes and a leading `-` are part of it (put such a query after `--`). `file:PATTERN`, `-file:PATTERN`, `lang:rust`, `case:yes`, `word:yes` as in the web UI. |
 | `-e`, `--regex` | Treat the query as a regular expression (matched one line at a time; mention `\n` for multi-line patterns). |
-| `-s`, `--case-sensitive` / `-i`, `--ignore-case` | Override case handling (plain text is case-insensitive by default). |
+| `-s`, `--case-sensitive` / `-i`, `--ignore-case` | Override case handling (plain text ignores case by default, a regex matches it; `-e -i` ignores it). |
 | `-w`, `--word` | Whole words only. |
 | `-n`, `--max N` | Hits to print (default 50, up to 1000). |
-| `--offset N` | Skip the first N hits; ordering is deterministic, so `--offset 50` is page two. |
+| `--offset N` | Skip the first N hits; ordering is deterministic, so `--offset 50` is page two. Up to the server's `max_page_offset` (100,000 by default). |
 | `-C`, `--context N` | Lines of context around each hit (up to 10). |
 | `-g`, `--glob GLOB` | Only files matching the glob (repeatable). `src/**/*.rs`, `*.py`, `tests` (a bare name matches anywhere in the path). |
 | `--exclude GLOB` | Skip files matching the glob (repeatable). |
 | `--rank auto\|fast\|full` | Ranking mode; `auto` reads every candidate up to 5,000 files and samples by file metadata beyond that. |
+| `--max-files N` | Files a fast-ranked search opens (default: the server's `fast_rank_files`, 2,000; up to its `max_fast_rank_files`). |
 | `--timeout-ms MS` | Stop scanning after MS and return the best hits so far. |
 | `-l`, `--files-with-matches` | Print file paths only, once each. |
 | `--format grouped\|vimgrep\|json`, `--json` | Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server's response object. |

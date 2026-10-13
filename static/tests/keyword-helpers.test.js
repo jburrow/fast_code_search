@@ -72,18 +72,16 @@ test('mergeRanges: sorts, drops empty ranges and merges overlaps', () => {
 
 // ---------- query tokenizer (parity with src/search/query_syntax.rs) ----------
 
-test('parseQueryTerms: plain words and quoted phrases', () => {
-    assert.deepEqual(H.parseQueryTerms('hello world').terms, ['hello', 'world']);
-    assert.deepEqual(H.parseQueryTerms('"hello world"').terms, ['hello world']);
-    assert.deepEqual(H.parseQueryTerms('  fn\tmain\n').terms, ['fn', 'main']);
-    assert.deepEqual(H.parseQueryTerms(''), { terms: [], excludeTerms: [], caseSensitive: false, wholeWord: false });
+test('parseQueryTerms: several words are one literal phrase', () => {
+    assert.deepEqual(H.parseQueryTerms('hello world').terms, ['hello world']);
+    assert.deepEqual(H.parseQueryTerms('  fn  main\t( \n').terms, ['fn  main\t(']);
+    assert.deepEqual(H.parseQueryTerms(''), { text: '', terms: [], caseSensitive: false, wholeWord: false });
     assert.deepEqual(H.parseQueryTerms(null).terms, []);
 });
 
-test('parseQueryTerms: operators are consumed, -term excludes', () => {
-    const q = H.parseQueryTerms('needle lang:rust file:src/ -file:test case:yes word:y -haystack -lang:py');
+test('parseQueryTerms: operators are consumed', () => {
+    const q = H.parseQueryTerms('needle lang:rust file:src/ -file:test case:yes word:y -lang:py');
     assert.deepEqual(q.terms, ['needle']);
-    assert.deepEqual(q.excludeTerms, ['haystack']);
     assert.equal(q.caseSensitive, true);
     assert.equal(q.wholeWord, true);
     assert.deepEqual(H.parseQueryTerms('file:*.toml x').terms, ['x']);
@@ -92,53 +90,38 @@ test('parseQueryTerms: operators are consumed, -term excludes', () => {
     assert.equal(H.parseQueryTerms('a case:no').caseSensitive, false);
     assert.equal(H.parseQueryTerms('a case:TRUE').caseSensitive, true);
     assert.equal(H.parseQueryTerms('a word:1').wholeWord, true);
+    // operators between pieces of text join them with one space
+    assert.deepEqual(H.parseQueryTerms('fn  file:src/  main').terms, ['fn main']);
 });
 
-test('parseQueryTerms: - negates only before a letter, _ or a quote', () => {
-    assert.deepEqual(H.parseQueryTerms('-1 x').terms, ['-1', 'x']);
-    assert.deepEqual(H.parseQueryTerms('-> fn').terms, ['->', 'fn']);
-    assert.deepEqual(H.parseQueryTerms('-> fn').excludeTerms, []);
-    const q = H.parseQueryTerms('-1.5 - -_x -Wall');
-    assert.deepEqual(q.terms, ['-1.5', '-']);
-    assert.deepEqual(q.excludeTerms, ['_x', 'Wall']);
+test('parseQueryTerms: quotes and a leading - are text', () => {
+    assert.deepEqual(H.parseQueryTerms('-Wall gcc').terms, ['-Wall gcc']);
+    assert.deepEqual(H.parseQueryTerms('-> fn').terms, ['-> fn']);
+    assert.deepEqual(H.parseQueryTerms('"fn main"').terms, ['"fn main"']);
+    assert.deepEqual(H.parseQueryTerms('{ "success": True').terms, ['{ "success": True']);
+    assert.deepEqual(H.parseQueryTerms('"file:x"').terms, ['"file:x"']);
+    assert.deepEqual(H.parseQueryTerms('x = ""').terms, ['x = ""']);
 });
 
-test('parseQueryTerms: quoting makes operator-like text literal', () => {
-    assert.deepEqual(H.parseQueryTerms('"file:"').terms, ['file:']);
-    assert.deepEqual(H.parseQueryTerms('"-foo"').terms, ['-foo']);
-    assert.deepEqual(H.parseQueryTerms('x -"dog here"').excludeTerms, ['dog here']);
-    assert.deepEqual(H.parseQueryTerms('x -"dog here"').terms, ['x']);
-    // a quote after the colon still belongs to the operator
-    assert.deepEqual(H.parseQueryTerms('file:"my dir" x').terms, ['x']);
-    assert.deepEqual(H.parseQueryTerms('-"file:x"').excludeTerms, ['file:x']);
-});
-
-test('parseQueryTerms: quotes inside a token are literal', () => {
-    assert.deepEqual(H.parseQueryTerms('{ "success": True').terms, ['{', '"success":', 'True']);
-    assert.deepEqual(H.parseQueryTerms('"key":"value"').terms, ['"key":"value"']);
-    assert.deepEqual(H.parseQueryTerms('say("hi")').terms, ['say("hi")']);
-    assert.deepEqual(H.parseQueryTerms('"open x').terms, ['"open', 'x']);
-    assert.deepEqual(H.parseQueryTerms('x = ""').terms, ['x', '=', '""']);
-    assert.deepEqual(H.parseQueryTerms('"a b" c').terms, ['a b', 'c']);
-});
-
-test('parseQueryTerms: an operator without an argument or with a bad language is a term', () => {
+test('parseQueryTerms: an operator without an argument or with a bad language is text', () => {
     const q = H.parseQueryTerms('file: lang: case: word:');
-    assert.deepEqual(q.terms, ['file:', 'lang:', 'case:', 'word:']);
+    assert.deepEqual(q.terms, ['file: lang: case: word:']);
     assert.equal(q.caseSensitive, false);
     assert.equal(q.wholeWord, false);
-    assert.deepEqual(H.parseQueryTerms('-file:').excludeTerms, ['file:']);
-    assert.deepEqual(H.parseQueryTerms('lang:??? x').terms, ['lang:???', 'x']);
+    assert.deepEqual(H.parseQueryTerms('-file:').terms, ['-file:']);
+    assert.deepEqual(H.parseQueryTerms('lang:??? x').terms, ['lang:??? x']);
+    // a quoted argument holds spaces; an unclosed one is literal
+    assert.deepEqual(H.parseQueryTerms('x file:"my dir"').terms, ['x']);
+    assert.deepEqual(H.parseQueryTerms('file:"my dir').terms, ['dir']);
+    assert.deepEqual(H.parseQueryTerms('url=file:x').terms, ['url=file:x']);
 });
 
-test('tokenizeQuery records where the first quote stood', () => {
-    assert.deepEqual(H.tokenizeQuery('a "b c" -"d"'), [
-        { text: 'a', quoteAt: null },
-        { text: 'b c', quoteAt: 0 },
-        { text: '-d', quoteAt: 1 },
+test('tokenizeQuery records spans, operators and arguments', () => {
+    assert.deepEqual(H.tokenizeQuery('a file:"b c" case:'), [
+        { start: 0, end: 1, op: '', arg: null },
+        { start: 2, end: 12, op: 'file:', arg: 'b c' },
+        { start: 13, end: 18, op: 'case:', arg: null },
     ]);
-    // an unclosed quote is an ordinary character (`print("hello`)
-    assert.deepEqual(H.tokenizeQuery('"open phrase').map(t => t.text), ['"open', 'phrase']);
 });
 
 // ---------- regex translation ----------
@@ -174,19 +157,19 @@ function ranges(text, query, opts) {
     return H.matcherRanges(text, H.buildQueryMatcher(query, opts));
 }
 
-test('buildQueryMatcher: every term is matched case-insensitively', () => {
-    assert.deepEqual(ranges('fn main() { Main }', 'fn main'), [[0, 2], [3, 7], [12, 16]]);
+test('buildQueryMatcher: the phrase is matched case-insensitively', () => {
+    assert.deepEqual(ranges('fn main() { FN MAIN } fn  main', 'fn main'), [[0, 7], [12, 19]]);
     assert.deepEqual(ranges('let x = 1;', 'lang:rust let'), [[0, 3]]);
     assert.equal(H.buildQueryMatcher('', {}), null);
     assert.equal(H.buildQueryMatcher('lang:rust'), null);
-    assert.equal(H.buildQueryMatcher('-x'), null);
+    assert.deepEqual(ranges('gcc -x', '-x'), [[4, 6]]);
 });
 
-test('buildQueryMatcher: longest term wins, case:yes and word:yes are honoured', () => {
-    assert.deepEqual(ranges('foobar foo', 'foo foobar'), [[0, 6], [7, 10]]);
+test('buildQueryMatcher: case:yes and word:yes are honoured', () => {
     assert.deepEqual(ranges('Foo foo', 'case:yes Foo'), [[0, 3]]);
     assert.deepEqual(ranges('foo foobar _foo', 'word:yes foo'), [[0, 3]]);
-    assert.deepEqual(ranges('a.b axb', '"a.b"'), [[0, 3]]); // regex metacharacters are literal
+    assert.deepEqual(ranges('a.b axb "a.b"', 'a.b'), [[0, 3], [9, 12]]); // regex metacharacters are literal
+    assert.deepEqual(ranges('a.b "a.b"', '"a.b"'), [[4, 9]]); // so are quotes
 });
 
 test('buildQueryMatcher: regex and references modes', () => {
@@ -564,4 +547,54 @@ test('rankDefinitions: exact name only, same file first, deduplicated', () => {
     ]);
     assert.deepEqual(H.rankDefinitions([], 'x', 'a.rs'), []);
     assert.equal(H.definitionQuery('foo'), 'word:yes case:yes foo');
+});
+
+// ---------- case and more files ----------
+
+test('searchCaseParam: MATCH CASE means the same in every mode', () => {
+    assert.equal(H.searchCaseParam({ matchCase: true }), 'true');
+    assert.equal(H.searchCaseParam({ matchCase: true, isRegex: true }), 'true');
+    assert.equal(H.searchCaseParam({ matchCase: false, isRegex: true }), 'false');
+    // plain text leaves case:yes in the query in charge
+    assert.equal(H.searchCaseParam({ matchCase: false }), null);
+    assert.equal(H.searchCaseParam({ matchCase: false, isReferences: true }), null);
+});
+
+test('searchIgnoresCase and the results header say which way case went', () => {
+    assert.equal(H.searchIgnoresCase({ query: 'foo' }), true);
+    assert.equal(H.searchIgnoresCase({ query: 'foo case:yes' }), false);
+    assert.equal(H.searchIgnoresCase({ query: 'foo', matchCase: true }), false);
+    assert.equal(H.searchIgnoresCase({ query: 'fo+', isRegex: true }), true);
+    assert.equal(H.searchIgnoresCase({ query: 'Foo', isReferences: true }), false);
+    const data = { total_candidates: 10 };
+    assert.equal(H.searchMetaLabel(data, 36, true).text, '36 ms · ignoring case');
+    assert.equal(H.searchMetaLabel(data, 36, false).text, '36 ms · matching case');
+    assert.equal(H.searchMetaLabel(data, 36).text, '36 ms');
+});
+
+test('buildQueryMatcher follows MATCH CASE', () => {
+    const r = (text, q, opts) => H.matcherRanges(text, H.buildQueryMatcher(q, opts));
+    assert.deepEqual(r('Foo foo', 'foo', { caseSensitive: true }), [[4, 7]]);
+    assert.deepEqual(r('Foo foo', 'foo', {}), [[0, 3], [4, 7]]);
+    assert.deepEqual(r('Foo foo', 'foo', { regex: true, caseSensitive: false }), [[0, 3], [4, 7]]);
+    assert.deepEqual(r('Foo foo', 'foo', { regex: true, caseSensitive: true }), [[4, 7]]);
+});
+
+test('moreFilesRequest: every candidate, or as many as the server allows', () => {
+    assert.equal(H.moreFilesRequest({ total_candidates: 100, candidates_searched: 100 }), null);
+    assert.equal(H.moreFilesRequest({}), null);
+    assert.deepEqual(H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 2000 }),
+        { maxFiles: 12000, label: 'SEARCH ALL FILES' });
+    assert.deepEqual(
+        H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 2000, max_files_allowed: 5000 }),
+        { maxFiles: 5000, label: 'SEARCH 5,000 FILES' });
+    assert.equal(
+        H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 5000, max_files_allowed: 5000 }),
+        null);
+});
+
+test('noResultSuggestions: no "ignore case" when the regex already ignores it', () => {
+    const labels = (q, mc) => H.noResultSuggestions(q, true, mc).map(s => s.label);
+    assert.ok(labels('Foo', true).includes('Ignore case'));
+    assert.ok(!labels('Foo', false).includes('Ignore case'));
 });

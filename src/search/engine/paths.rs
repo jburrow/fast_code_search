@@ -6,12 +6,12 @@
 //! This is a separate, cheap pass over the indexed paths: no file is opened
 //! and the content results are untouched, so they still match ripgrep.
 //!
-//! Matching, for a plain-text query: every term must appear in the path as
-//! shown in results (case-insensitive unless `case:yes`, `word:yes`
+//! Matching, for a plain-text query: every whitespace-separated word of the
+//! text must appear in the path as shown in results (case-insensitive unless `case:yes`, `word:yes`
 //! honoured, `\` read as `/`). A term holding a `/` may also match the file's
 //! absolute path, so a pasted `/home/me/repo/src/main.rs` finds the file,
-//! as long as the match reaches into the shown part. `-term` drops paths
-//! containing the term; `file:` / `lang:` and include/exclude globs filter
+//! as long as the match reaches into the shown part. `file:` / `lang:` and
+//! include/exclude globs filter
 //! as they do for content. A regex is matched against the shown path.
 
 use super::*;
@@ -72,18 +72,9 @@ impl SearchEngine {
             PathQuery::Regex(pattern) => (&empty, Some(self.cached_regex(pattern)?)),
         };
         let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
-        let terms: Vec<PathTerm> = parsed
-            .terms
-            .iter()
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| PathTerm::new(t))
-            .collect();
-        let excluded: Vec<PathTerm> = parsed
-            .exclude_terms
-            .iter()
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| PathTerm::new(t))
-            .collect();
+        // Unlike content search, the text is split into words: `web api`
+        // finds `src/web/api.rs`.
+        let terms: Vec<PathTerm> = parsed.text.split_whitespace().map(PathTerm::new).collect();
         if regex.is_none() && terms.is_empty() {
             return Ok(PathSearch::default());
         }
@@ -111,9 +102,6 @@ impl SearchEngine {
             };
             let shown = &qualified[start.min(qualified.len())..];
             if !path_filter.is_empty() && !path_filter.matches(&qualified) {
-                continue;
-            }
-            if excluded.iter().any(|t| t.find(shown, opts).is_some()) {
                 continue;
             }
             let hit = match &regex {

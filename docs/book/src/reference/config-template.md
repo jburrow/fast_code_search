@@ -37,6 +37,20 @@ max_concurrent_searches = 64
 # Per-request timeout (seconds) for both servers
 request_timeout_secs = 30
 
+# When a query could be in many files (over 5000), Auto ranking orders them
+# by file metadata and opens only the best ones. This is how many it opens
+# unless the request asks for more (0 = every candidate file).
+fast_rank_files = 2000
+
+# Most files a request may ask for (the web UI's SEARCH MORE FILES button,
+# `max_files` on /api/search). 0 = no limit; set one on a shared server.
+max_fast_rank_files = 0
+
+# Deepest result offset a client may page to (LOAD MORE past 1000 results,
+# `--offset`, `offset` on /api/search). Deep pages cost a scan of that many
+# matches. 0 = no limit.
+max_page_offset = 100000
+
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
 # request so that UI edits are visible without recompiling the server.

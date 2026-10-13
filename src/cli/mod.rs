@@ -10,8 +10,8 @@
 //!   known (from the configuration or `--index-path`), the on-disk index is
 //!   loaded in-process and searched read-only. It is a few seconds slower
 //!   and may be stale; a note says so on stderr.
-//! - **Same semantics as the web UI.** The query syntax (`file:`, `lang:`,
-//!   `-term`, `"phrase"`, `case:`, `word:`), modes (regex, symbols,
+//! - **Same semantics as the web UI.** The query syntax (a literal text
+//!   plus `file:`, `lang:`, `case:`, `word:`), modes (regex, symbols,
 //!   references) and result shape are the server's; offline searches go
 //!   through the same engine calls the server uses.
 //! - **Grep conventions.** `path:line:col:text` when piped (what editors'
@@ -44,13 +44,14 @@ pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "mcp",
     version,
     about = "Search a fast_code_search index from the command line",
     long_about = "Search the code index kept by a running fast_code_search server.\n\n\
-                  `fcs QUERY` is `fcs search QUERY`. The query syntax is the web UI's: several \
-                  words must all appear in a file (lines with the phrase rank first), \
-                  \"quoted phrase\", -term, file:PATTERN, -file:PATTERN, lang:rust, \
-                  case:yes, word:yes.\n\n\
+                  `fcs QUERY` is `fcs search QUERY`. The query is the web UI's: literal text, \
+                  like rg -F (several words are one phrase; quotes and a leading - are text), \
+                  plus file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes. Put a query \
+                  starting with - after --.\n\n\
                   Exit status: 0 = matches found, 1 = no matches, 2 = error.",
     after_help = "Examples:\n  \
-                  fcs 'fn main'                 lines holding both words, phrase first\n  \
+                  fcs 'fn main'                 lines holding the phrase\n  \
+                  fcs -- -Wall                  a query starting with -\n  \
                   fcs -e 'fn\\s+\\w+\\(' -g '*.rs'  regex, Rust files only\n  \
                   fcs refs SearchEngine         call sites and type mentions\n  \
                   fcs symbols parse_query       definitions only\n  \
@@ -147,7 +148,7 @@ pub enum Rank {
 /// What to search for.
 #[derive(Args, Debug, Clone, Default)]
 pub struct SearchArgs {
-    /// The query (web UI syntax; quote it if it has spaces)
+    /// The query (web UI syntax; several words are one phrase)
     #[arg(value_name = "QUERY", required = true, num_args = 1..)]
     pub query: Vec<String>,
     /// Treat the query as a regular expression
@@ -156,7 +157,7 @@ pub struct SearchArgs {
     /// Match case exactly
     #[arg(short = 's', long, conflicts_with = "ignore_case")]
     pub case_sensitive: bool,
-    /// Ignore case (the default for plain text; useful to override case:yes)
+    /// Ignore case (the default for plain text; with -e, makes a regex ignore it too)
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
     /// Match whole words only
@@ -183,6 +184,10 @@ pub struct SearchArgs {
     /// Stop scanning after this many milliseconds and return the best so far
     #[arg(long, default_value_t = 0, value_name = "MS")]
     pub timeout_ms: u64,
+    /// Files fast ranking may open when a query could be in very many
+    /// (default: the server's fast_rank_files, 2000)
+    #[arg(long, value_name = "N")]
+    pub max_files: Option<usize>,
 }
 
 /// Search mode, chosen by the subcommand.
@@ -210,6 +215,8 @@ pub struct SearchRequest {
     pub timeout_ms: u64,
     /// Files whose path matches to list too (0 = none).
     pub files: usize,
+    /// Candidate files fast ranking may open (`None` = the server's default).
+    pub max_files: Option<usize>,
 }
 
 impl SearchRequest {
@@ -234,6 +241,7 @@ impl SearchRequest {
             rank: args.rank,
             timeout_ms: args.timeout_ms,
             files: 0,
+            max_files: args.max_files,
         }
     }
 
@@ -274,6 +282,9 @@ impl SearchRequest {
         }
         if self.files > 0 {
             p.push(("files", self.files.to_string()));
+        }
+        if let Some(n) = self.max_files {
+            p.push(("max_files", n.to_string()));
         }
         p
     }
@@ -576,7 +587,15 @@ impl Session {
         if let Some(w) = req.word {
             parsed.options.whole_word = w;
         }
-        let mut limits = SearchLimits::new(req.max).with_offset(req.offset);
+        let settings = self
+            .config
+            .as_ref()
+            .map(|c| crate::search::SearchSettings::from_config(&c.server))
+            .unwrap_or_default();
+        let mut limits = settings.apply(
+            SearchLimits::new(req.max).with_offset(req.offset),
+            req.max_files,
+        );
         if req.timeout_ms > 0 {
             limits = limits.with_timeout(Duration::from_millis(req.timeout_ms.min(30_000)));
         }
@@ -645,6 +664,7 @@ impl Session {
             rank_mode: Some(format!("{:?}", info.mode).to_lowercase()),
             total_candidates: Some(info.total_candidates),
             candidates_searched: Some(info.candidates_searched),
+            max_files_allowed: None,
         })
     }
 

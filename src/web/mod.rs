@@ -60,6 +60,8 @@ pub struct WebState {
     /// Cross-origin callers allowed by configuration; `/mcp` also accepts
     /// these as browser origins.
     pub cors_origins: Arc<Vec<String>>,
+    /// Fast-ranking file count and paging depth (`[server]` settings).
+    pub search_settings: crate::search::SearchSettings,
 }
 
 /// Knobs for [`create_router_with_options`].
@@ -80,6 +82,8 @@ pub struct RouterOptions {
     /// service so both surfaces share `max_concurrent_searches`; `None`
     /// creates a private one sized from `max_concurrent_searches`.
     pub search_permits: Option<Arc<tokio::sync::Semaphore>>,
+    /// Fast-ranking file count and paging depth.
+    pub search_settings: crate::search::SearchSettings,
 }
 
 impl Default for RouterOptions {
@@ -91,6 +95,7 @@ impl Default for RouterOptions {
             body_limit: 64 * 1024,
             indexer_config: None,
             search_permits: None,
+            search_settings: crate::search::SearchSettings::default(),
         }
     }
 }
@@ -101,6 +106,7 @@ impl From<&crate::config::ServerConfig> for RouterOptions {
             cors_origins: c.cors_origins.clone(),
             max_concurrent_searches: c.max_concurrent_searches,
             request_timeout: std::time::Duration::from_secs(c.request_timeout_secs.max(1)),
+            search_settings: crate::search::SearchSettings::from_config(c),
             ..Default::default()
         }
     }
@@ -159,6 +165,7 @@ pub fn create_router_with_options(
         last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         graph_cache: Arc::default(),
         cors_origins: Arc::new(opts.cors_origins.clone()),
+        search_settings: opts.search_settings,
     };
 
     let router = Router::new()
@@ -454,6 +461,7 @@ mod tests {
             last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             graph_cache: Arc::default(),
             cors_origins: Arc::default(),
+            search_settings: crate::search::SearchSettings::default(),
         };
         let router = Router::new()
             .route(

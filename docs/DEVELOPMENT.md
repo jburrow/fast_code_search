@@ -93,7 +93,7 @@ fast_code_search/
 │   │   ├── watcher.rs          # notify-based file watcher
 │   │   ├── file_discovery.rs   # walk (walkdir / ignore crate), eligibility rules
 │   │   ├── path_filter.rs      # include/exclude globs
-│   │   ├── query_syntax.rs     # file:/lang:/-term/case:/word: parsing
+│   │   ├── query_syntax.rs     # literal text + file:/lang:/case:/word: parsing
 │   │   ├── ranking.rs          # RankingWeights / FileScoreWeights
 │   │   └── regex_search.rs     # regex -> trigram constraints
 │   ├── symbols/
@@ -212,7 +212,7 @@ cargo +nightly udeps
 
 ### Search Pipeline
 
-1. **Parse** (`query_syntax.rs`): terms, `-term`, `file:`/`lang:` globs, `case:`/`word:`.
+1. **Parse** (`query_syntax.rs`): the literal text, `file:`/`lang:` globs, `case:`/`word:`.
 2. **Candidates**: intersection of each term's trigram bitmaps (index is lowercase),
    then the path filter (precomputed display paths, no allocation).
 3. **`run_candidates`** (`engine/query.rs`): fast vs full mode, fast-mode ordering by

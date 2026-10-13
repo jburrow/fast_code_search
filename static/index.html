@@ -662,7 +662,7 @@
 
         <!-- Search Execution Section -->
         <section id="search-section" class="space-y-3">
-            <div class="flex flex-col md:flex-row gap-3">
+            <div class="flex flex-col lg:flex-row gap-3">
                 <!-- Search input -->
                 <div class="flex-grow relative">
                     <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
@@ -670,9 +670,9 @@
                     </div>
                     <label for="query" class="sr-only">Search query</label>
                     <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
-                        class="w-full bg-surface-container-lowest border border-black pl-12 pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                        class="w-full bg-surface-container-lowest border border-black pl-12 pr-4 lg:pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
                     <div class="absolute inset-y-0 right-4 flex items-center gap-2">
-                        <span class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden sm:inline">CMD+K</span>
+                        <span class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden lg:inline">CMD+K</span>
                     </div>
                     <!-- Search history dropdown -->
                     <div id="search-history-dropdown" style="display:none" class="absolute top-full left-0 right-0 z-50 bg-white border border-black border-t-0 shadow-md max-h-64 overflow-y-auto"></div>
@@ -683,6 +683,14 @@
                          which keyword.js derives from the checkbox state
                          (syncToggleVisuals), so URL/storage/history changes
                          always look the way they behave. -->
+                    <!-- Case is not a mode: it combines with any of them. Off = ignore
+                         case in every mode (regex included); on = match it exactly. -->
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Match case exactly (off: upper and lower case are the same, in every mode)">
+                        <input type="checkbox" id="case-mode" class="sr-only">
+                        <span aria-hidden="true" style="font-family:'JetBrains Mono',monospace">Aa</span>
+                        <span class="hidden xl:inline">MATCH CASE</span>
+                        <span class="sr-only xl:hidden">Match case</span>
+                    </label>
                     <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Enable regular expression syntax">
                         <input type="checkbox" id="regex-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-code"/></svg>
@@ -710,7 +718,7 @@
                     </button>
                 </div>
                 <!-- Execute button -->
-                <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
+                <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-4 lg:px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
                     EXECUTE_QUERY
                 </button>
             </div>
@@ -727,7 +735,7 @@
                         <ul class="regex-help-examples">
                             <li><button type="button" data-example="fn \w+\("><code>fn \w+\(</code></button> function definitions</li>
                             <li><button type="button" data-example="TODO|FIXME"><code>TODO|FIXME</code></button> either word</li>
-                            <li><button type="button" data-example="(?i)error"><code>(?i)error</code></button> ignore case</li>
+                            <li><button type="button" data-example="&quot;[^&quot;]*&quot;"><code>"[^"]*"</code></button> a quoted string</li>
                             <li><button type="button" data-example="\bconfig\b"><code>\bconfig\b</code></button> whole word only</li>
                             <li><button type="button" data-example="\{\s*&quot;success&quot;:\s*True"><code>\{\s*"success":\s*True</code></button> any spacing</li>
                             <li><button type="button" data-example="^import "><code>^import </code></button> at the start of a line</li>
@@ -738,7 +746,7 @@
                     <div>
                         <p class="regex-help-title">Things that catch people out</p>
                         <ul class="regex-help-rules">
-                            <li><strong>Case-sensitive.</strong> Plain search ignores case; regex does not. Start with <code>(?i)</code> to ignore it.</li>
+                            <li><strong>Case.</strong> Upper and lower case are the same unless MATCH CASE is on, as in plain search.</li>
                             <li><strong>Special characters.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> mean something. Put <code>\</code> before one to match it: <code>\{</code>, <code>\.</code>, <code>\(</code>.</li>
                             <li><strong>Spaces are exact.</strong> <code>a b</code> needs exactly one space. Use <code>\s*</code> (any, even none) or <code>\s+</code> (at least one).</li>
                             <li><strong>One line at a time.</strong> <code>.</code> and <code>\s</code> stop at the end of a line. Use <code>\n</code> or <code>(?s)</code> to match across lines.</li>
@@ -754,6 +762,7 @@
                 <div class="flex gap-4 items-center flex-wrap" aria-live="polite" aria-atomic="true">
                     <span id="results-count" class="font-label text-xs font-bold bg-black text-white px-2 py-0.5"></span>
                     <span id="search-meta" class="font-label text-xs text-outline"></span>
+                    <button type="button" id="more-files-btn" class="font-label text-xs font-bold underline hover:text-black" style="display: none;"></button>
                     <span id="index-freshness" class="font-label text-xs text-outline" style="display: none;"></span>
                 </div>
                 <div class="flex gap-3">

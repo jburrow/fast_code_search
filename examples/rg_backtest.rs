@@ -19,12 +19,10 @@
 //!   one hit per line where a match *starts*; rg's JSON gives each
 //!   submatch's start, so both sides are compared on start lines.
 //! - `mode = "text"` (default): the query is parsed with fcs's own parser,
-//!   and each term becomes `rg -F -e TERM`, with `-i` unless `case:yes` and
-//!   `-w` for `word:yes`. One term: the line sets must be equal. Several
-//!   terms (file-level AND): the files must be those holding every term and
-//!   none of the `-term`s, every fcs line must hold at least one term, and
-//!   every line holding all of them must be reported (fcs keeps only a few
-//!   single-term lines per file by design, so those are not required).
+//!   and its text (everything but the `file:`, `lang:`, `case:` and `word:`
+//!   operators, spaces, quotes and dashes included) becomes
+//!   `rg -F -e TEXT`, with `-i` unless `case:yes` and `-w` for `word:yes`.
+//!   The line sets must be equal.
 //! - `file:` / `lang:` operators are fcs syntax with no rg equivalent;
 //!   such a query must say what it means in rg terms with `globs`
 //!   (rg `-g` globs, relative to each tree, `!` to exclude), which keeps
@@ -447,77 +445,22 @@ fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> 
         word: parsed.options.whole_word,
         multiline: false,
     };
-    let terms: Vec<&String> = parsed
-        .terms
-        .iter()
-        .filter(|t| !t.trim().is_empty())
-        .collect();
-    if terms.is_empty() {
+    if parsed.text.trim().is_empty() {
         let f = flatten(fcs);
         return Ok(Outcome {
             expected: Hits::new(),
             missing: BTreeSet::new(),
             extra: f,
-            note: "no terms: fcs should return nothing".into(),
+            note: "no text: fcs should return nothing".into(),
         });
     }
-    let per_term: Vec<Hits> = terms
-        .iter()
-        .map(|t| rg_hits(c, rg, t, flags, &q.globs))
-        .collect::<Result<_>>()?;
-    // Files holding every term and no excluded one.
-    let mut files: BTreeSet<String> = per_term[0].keys().cloned().collect();
-    for h in &per_term[1..] {
-        files.retain(|f| h.contains_key(f));
-    }
-    for x in &parsed.exclude_terms {
-        let xh = rg_hits(c, rg, x, flags, &q.globs)?;
-        files.retain(|f| !xh.contains_key(f));
-    }
-    // Lines holding any term (what may be reported) and all terms (what
-    // must be).
-    let mut any = Hits::new();
-    let mut all = Hits::new();
-    for f in &files {
-        let sets: Vec<&BTreeSet<usize>> = per_term.iter().map(|h| &h[f]).collect();
-        let union: BTreeSet<usize> = sets.iter().flat_map(|s| s.iter().copied()).collect();
-        let inter: BTreeSet<usize> = union
-            .iter()
-            .copied()
-            .filter(|l| sets.iter().all(|s| s.contains(l)))
-            .collect();
-        any.insert(f.clone(), union);
-        all.insert(f.clone(), inter);
-    }
-    let fcs_flat = flatten(fcs);
-    if terms.len() == 1 {
-        let e = flatten(&any);
-        return Ok(Outcome {
-            missing: e.difference(&fcs_flat).cloned().collect(),
-            extra: fcs_flat.difference(&e).cloned().collect(),
-            expected: any,
-            note: String::new(),
-        });
-    }
-    let any_flat = flatten(&any);
-    let all_flat = flatten(&all);
-    let fcs_files: BTreeSet<&String> = fcs.keys().collect();
-    let mut missing: BTreeSet<(String, usize)> = all_flat.difference(&fcs_flat).cloned().collect();
-    // A file with every term but none of them on one line still has to
-    // be reported (by some line).
-    for f in &files {
-        if !fcs_files.contains(f) {
-            if let Some(l) = any[f].iter().next() {
-                missing.insert((f.clone(), *l));
-            }
-        }
-    }
-    let extra = fcs_flat.difference(&any_flat).cloned().collect();
+    let expected = rg_hits(c, rg, &parsed.text, flags, &q.globs)?;
+    let (e, f) = (flatten(&expected), flatten(fcs));
     Ok(Outcome {
-        expected: all,
-        missing,
-        extra,
-        note: format!("{} terms: AND by file", terms.len()),
+        missing: e.difference(&f).cloned().collect(),
+        extra: f.difference(&e).cloned().collect(),
+        expected,
+        note: String::new(),
     })
 }
 

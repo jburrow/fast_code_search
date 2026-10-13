@@ -143,6 +143,10 @@ pub struct SearchQuery {
     /// (`offset=0`) of a text or regex search.
     #[serde(default)]
     files: usize,
+    /// Candidate files fast ranking may open (default: the server's
+    /// `fast_rank_files`, 2000; capped by `max_fast_rank_files`).
+    #[serde(default)]
+    max_files: Option<usize>,
 }
 
 /// Most path matches one request may ask for.
@@ -258,6 +262,10 @@ pub struct SearchResponse {
     /// Files actually searched (may be less in fast mode)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates_searched: Option<usize>,
+    /// Most candidate files this server lets a request open (`max_files`),
+    /// when it sets a limit. A client may ask for up to this many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_files_allowed: Option<usize>,
 }
 
 /// Index stats response
@@ -469,6 +477,7 @@ pub async fn search_handler(
             rank_mode: None,
             total_candidates: None,
             candidates_searched: None,
+            max_files_allowed: None,
         }));
     }
 
@@ -479,15 +488,10 @@ pub async fn search_handler(
         params.max.min(1000)
     };
     let offset = params.offset;
-    if offset > SearchLimits::MAX_OFFSET {
-        return Err(ApiError::from((
-            StatusCode::BAD_REQUEST,
-            format!(
-                "offset must be at most {}; narrow the query instead of paging deeper",
-                SearchLimits::MAX_OFFSET
-            ),
-        )));
-    }
+    let settings = state.search_settings;
+    settings
+        .check_offset(offset)
+        .map_err(|e| ApiError::from((StatusCode::BAD_REQUEST, e)))?;
     let case_override = params.case;
     let word_override = params.word;
     // Every search runs under an engine deadline: the client's `timeout_ms`
@@ -501,9 +505,14 @@ pub async fn search_handler(
     } else {
         default_timeout
     };
-    let limits = SearchLimits::new(max_results)
-        .with_offset(offset)
-        .with_timeout(timeout);
+    let limits = settings.apply(
+        SearchLimits::new(max_results)
+            .with_offset(offset)
+            .with_timeout(timeout),
+        params.max_files,
+    );
+    let max_files_allowed =
+        (settings.max_fast_rank_files != usize::MAX).then_some(settings.max_fast_rank_files);
     let include_patterns = params.include;
     let exclude_patterns = params.exclude;
     let is_regex = params.regex;
@@ -675,6 +684,7 @@ pub async fn search_handler(
             rank_mode: Some(format!("{:?}", ranking_info.mode).to_lowercase()),
             total_candidates: Some(ranking_info.total_candidates),
             candidates_searched: Some(ranking_info.candidates_searched),
+            max_files_allowed,
         }))
     })
     .await

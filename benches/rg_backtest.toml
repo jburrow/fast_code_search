@@ -31,15 +31,15 @@ q = "QuerySet"
 
 [[query]]
 q = "def __init__"
-why = "two terms: AND by file, phrase lines"
+why = "two words are one phrase, as in rg -F"
 
 [[query]]
 q = "fn main"
-why = "two terms, includes `fn  main` and `fn\\tmain` variants"
+why = "one phrase: `fn  main` and `fn\\tmain` must not match"
 
 [[query]]
 q = "\"fn main\""
-why = "quoted phrase is one literal term"
+why = "quotes are text: finds `\"fn main\"` with its quotes"
 
 [[query]]
 q = "self.assertEqual"
@@ -67,7 +67,15 @@ why = "negative number is a term"
 
 [[query]]
 q = "-Wall gcc"
-why = "-Wall negates: files with gcc but not Wall"
+why = "a leading - is text, not an exclusion"
+
+[[query]]
+q = "-Wall"
+why = "bug report: a leading - was dropped as negation"
+
+[[query]]
+q = "fn  main"
+why = "spacing inside the text is exact"
 
 # Short terms (fewer than 3 bytes: no trigrams, every file is a candidate).
 [[query]]
@@ -187,14 +195,14 @@ globs = ["*.txt"]
 
 [[query]]
 q = "\"file:\""
-why = "quoted operator is a literal term"
+why = "quotes are text, and `\"file:\"` is not an operator"
 
 [[query]]
 q = "file:notanoperator"
 globs = ["*notanoperator*", "**/*notanoperator*/**"]
 why = "a file: filter with nothing to search: fcs returns nothing"
 
-# --------------------------------------------------------- several terms
+# ------------------------------------------- several words (one phrase)
 
 [[query]]
 q = "async fn spawn"
@@ -207,6 +215,7 @@ q = "import os sys"
 
 [[query]]
 q = "Runtime -test"
+why = "the phrase `Runtime -test`, not an exclusion"
 
 [[query]]
 q = "needle -needle_1"
@@ -397,7 +406,7 @@ why = "rg #1176: regex metacharacters in a text query"
 
 [[query]]
 q = "\"-test\""
-why = "rg #270: a quoted leading dash is a term, not negation"
+why = "rg #270: a leading dash is text (here with quotes, also text)"
 
 [[query]]
 q = "test123"
