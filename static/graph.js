@@ -4,9 +4,10 @@
 // Four views over /api/graph/*: a file's neighbourhood (what it imports on
 // the left, what imports it on the right), the impact of changing it, the
 // import chain between two files, and the folder-level module map. The
-// source pane shows the selected file with its import lines marked and
-// linked. Uses escapeHtml / readErrorBody (common.js), hljsLangForPath /
-// splitHighlightedHtml (lib/keyword-helpers.js) and lib/graph-helpers.js.
+// source pane shows the selected file in the shared code viewer
+// (code-view.js) with its import lines marked, linked and on the ruler.
+// Uses escapeHtml / readErrorBody (common.js), hljsLangForPath
+// (lib/keyword-helpers.js) and lib/graph-helpers.js.
 // ============================================
 
 (() => {
@@ -21,7 +22,6 @@ const MODES = ['hood', 'impact', 'path', 'map'];
 const MAP_MAX_FOLDERS = 400;
 const MAP_COLUMN_CAP = 40;
 const SOURCE_WINDOW = 2000;
-const HLJS_MAX_CHARS = 1_000_000;
 const INCLUDE_MAX_CHARS = 6000;
 
 const params = new URLSearchParams(location.search);
@@ -390,16 +390,6 @@ async function openFolder(dir) {
 
 // ---------- source pane ----------
 
-function highlightLines(text, lang) {
-    const plain = () => text.split('\n').map(esc);
-    if (typeof hljs === 'undefined' || text.length > HLJS_MAX_CHARS || !hljs.getLanguage(lang)) return plain();
-    try {
-        const lines = splitHighlightedHtml(hljs.highlight(text, { language: lang, ignoreIllegals: true }).value);
-        return lines.length === text.split('\n').length ? lines : plain();
-    } catch (_) {
-        return plain();
-    }
-}
 const hlCache = new Map();
 function linesOf(p, content) {
     if (!hlCache.has(p)) {
@@ -410,7 +400,7 @@ function linesOf(p, content) {
 }
 
 let sourceSeq = 0;
-let sourceView = null; // {p, lines, imports, from, to}
+let sourceView = null; // {p, view}
 
 /**
  * Show `p` in the source pane. `line` (1-based) or `importOf` (a file `p`
@@ -458,37 +448,30 @@ async function renderSource(p, { line = null, importOf = null } = {}) {
     const lines = linesOf(p, file.content);
     const byLine = new Map();
     imports.imports.forEach(i => { if (!byLine.has(i.line)) byLine.set(i.line, i); });
+    const shown = (imp) => imp && imp.target && (S.containment || !imp.containment);
     let target = line;
     if (importOf) target = imports.imports.find(i => i.target === importOf)?.line ?? null;
-    const t = Math.min(Math.max(1, target || 1), lines.length);
-    sourceView = { p, lines, byLine, from: Math.max(1, t - SOURCE_WINDOW), to: Math.min(lines.length, t + SOURCE_WINDOW) };
-    paintSource();
-    if (target != null) {
-        const ln = document.getElementById('L' + target);
-        if (ln) { code.scrollTop = ln.offsetTop - code.clientHeight / 3; ln.classList.add('flash'); }
-    } else {
-        code.scrollTop = 0;
-    }
-}
-
-function paintSource() {
-    const { lines, byLine, from, to } = sourceView;
-    const parts = [];
-    if (from > 1) parts.push(`<button class="more-lines" data-more="up">Show ${Math.min(SOURCE_WINDOW, from - 1).toLocaleString()} earlier lines</button>`);
-    for (let n = from; n <= to; n++) {
-        const imp = byLine.get(n);
-        let cls = '', extra = '';
-        if (imp && imp.target && (S.containment || !imp.containment)) {
-            cls = ' imp';
-            extra = `<button class="go${imp.containment ? ' mod' : ''}" data-preview="${esc(imp.target)}" title="Open ${esc(imp.target)}">→ ${esc(base(imp.target))}</button>`;
-        } else if (imp && !imp.target) {
-            cls = ' ext';
-            extra = `<span class="extag" title="${esc(imp.spec)}: an external package, the standard library, or a file outside the index">external</span>`;
-        }
-        parts.push(`<div class="ln${cls}" id="L${n}"><span class="n">${n}</span><span class="c">${lines[n - 1] || ' '}${extra}</span></div>`);
-    }
-    if (to < lines.length) parts.push(`<button class="more-lines" data-more="down">Show ${Math.min(SOURCE_WINDOW, lines.length - to).toLocaleString()} more lines</button>`);
-    $('#code').innerHTML = parts.join('');
+    const view = new CodeView(code, {
+        lines,
+        lang: hljsLangForPath(p),
+        target: target || 1,
+        window: SOURCE_WINDOW,
+        hits: [...byLine.keys()].filter(n => shown(byLine.get(n))).sort((a, b) => a - b),
+        hitLabel: 'import',
+        decorate: (n) => {
+            const imp = byLine.get(n);
+            if (shown(imp)) {
+                return { cls: 'imp', extra: `<button class="go${imp.containment ? ' mod' : ''}" data-preview="${esc(imp.target)}" title="Open ${esc(imp.target)}">→ ${esc(base(imp.target))}</button>` };
+            }
+            if (imp && !imp.target) {
+                return { cls: 'ext', extra: `<span class="extag" title="${esc(imp.spec)}: an external package, the standard library, or a file outside the index">external</span>` };
+            }
+            return null;
+        },
+    });
+    sourceView = { p, view };
+    if (target != null) view.goTo(target, { where: 'third', flash: true });
+    else view.scroller.scrollTop = 0;
 }
 
 // ---------- files list ----------
@@ -667,15 +650,6 @@ document.addEventListener('click', (ev) => {
     }
     const g = ev.target.closest('[data-go]');
     if (g) { go(g.dataset.go); return; }
-    const more = ev.target.closest('[data-more]');
-    if (more && sourceView) {
-        const keep = $('#code').scrollHeight - $('#code').scrollTop;
-        if (more.dataset.more === 'up') sourceView.from = Math.max(1, sourceView.from - SOURCE_WINDOW);
-        else sourceView.to = Math.min(sourceView.lines.length, sourceView.to + SOURCE_WINDOW);
-        paintSource();
-        if (more.dataset.more === 'up') $('#code').scrollTop = $('#code').scrollHeight - keep;
-        return;
-    }
     if (ev.target.closest('#backBtn')) back();
     if (ev.target.closest('#centreHere') && S.preview) go(S.preview);
     if (ev.target.closest('#swapPath') && S.pathTo) {

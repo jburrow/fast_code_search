@@ -104,30 +104,22 @@
         .chip:hover { background: var(--info-wash); }
         .chip.out { border-color: var(--dep); color: var(--dep); }
         .chip.out:hover { background: var(--accent-faint); }
-        .code { flex: 1; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--surface); }
-        .ln { display: grid; grid-template-columns: 56px minmax(0, 1fr); }
-        .ln .n { text-align: right; padding-right: 10px; color: var(--text-3); user-select: none; font-variant-numeric: tabular-nums; border-right: 1px solid var(--border); }
-        .ln .c { padding-left: 10px; white-space: pre; }
-        .ln.imp { background: var(--accent-faint); }
-        .ln.imp .n { color: var(--accent-ink-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent-ink); }
-        .ln.ext { background: var(--surface-2); }
-        .ln.flash { animation: flash 1.2s ease-out; }
-        @keyframes flash { from { background: var(--accent-soft); } }
+        .code { flex: 1; min-height: 0; background: var(--surface); }
+        .code .file-code { font-size: 12px; }
+        .file-line.imp { background: var(--accent-faint); }
+        .file-line.imp .file-line-num { color: var(--accent-ink-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent-ink); }
+        .file-line.ext { background: var(--surface-2); }
         .go { margin-left: 10px; border: 1px solid var(--dep); color: var(--dep); background: var(--surface); font-size: 10.5px; padding: 0 6px; cursor: pointer; border-radius: var(--radius); }
         .go:hover { background: var(--accent-soft); color: var(--text); }
         .go.mod { border-style: dashed; }
         .extag { margin-left: 10px; color: var(--text-3); font-size: 10.5px; border: 1px solid var(--border); padding: 0 6px; border-radius: var(--radius); }
-        .code .more-lines { display: block; width: 100%; padding: 4px; background: var(--surface-2); border: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; color: var(--text-3); cursor: pointer; }
-        .code .more-lines:hover { color: var(--text); background: var(--accent-faint); }
-
-        @media (prefers-reduced-motion: reduce) { .ln.flash { animation: none; } }
         @media (max-width: 900px) {
             .app { height: auto; }
             .panes { grid-template-columns: minmax(0, 1fr); }
             .pane { border-right: 0; border-bottom: 1px solid var(--border); }
             .pane.files-pane .files { max-height: 220px; }
             .graphwrap { height: 60vh; flex: none; }
-            .code { max-height: 70vh; }
+            .code { height: 70vh; flex: none; }
             .stats { margin-left: 0; width: 100%; }
         }
     </style>
@@ -178,6 +170,7 @@
     <script src="/common.js"></script>
     <script src="/lib/keyword-helpers.js"></script>
     <script src="/lib/graph-helpers.js"></script>
+    <script src="/code-view.js"></script>
     <script src="/graph.js"></script>
 </body>
 </html>

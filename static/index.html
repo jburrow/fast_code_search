@@ -32,13 +32,13 @@
         }
         /* Show code exactly as typed: JetBrains Mono would draw != as ≠ and
            => as an arrow, which misleads when searching for operators. */
-        .result-code, .file-code, .ctx-tooltip { font-variant-ligatures: none; }
+        .result-code, .ctx-tooltip { font-variant-ligatures: none; }
         /* Result code block — neutralise hljs background */
         .result-code, .result-code.hljs {
             background: var(--surface) !important;
             color: inherit;
             margin: 0;
-            padding: 0.625rem 1rem;
+            padding: 0.25rem 0;
             font-size: 0.78rem;
             line-height: 1.55;
             overflow-x: auto;
@@ -83,8 +83,9 @@
         /* The whole file scrolls inside the preview; the wheel never reaches
            the page behind it (which used to scroll and close the preview). */
         .ctx-file-body {
-            overflow: auto;
-            overscroll-behavior: contain;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
             flex: 1;
             min-height: 0;
         }
@@ -290,53 +291,14 @@
         }
         .file-modal-close:hover { background: var(--hover); }
         .file-modal-body {
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
             flex: 1;
             padding: 0;
             background: var(--surface);
         }
-        /* File view lines */
-        .file-meta {
-            padding: 0.35rem 1rem;
-            background: var(--surface-2);
-            border-bottom: 1px solid var(--border);
-            font-family: var(--font-mono);
-            font-size: 0.72rem;
-            color: var(--text-3);
-        }
-        .file-code { font-family: var(--font-mono); font-size: 0.78rem; }
-        .file-line {
-            display: flex;
-            padding: 0 1rem;
-            line-height: 1.55;
-        }
-        .file-line:hover { background: var(--surface-1); }
-        /* Matched line highlight */
-        .file-line-highlight { background: var(--hl-line-bg) !important; }
-        .file-line-num {
-            color: var(--text-3);
-            min-width: 3rem;
-            text-align: right;
-            padding-right: 1.25rem;
-            user-select: none;
-            flex-shrink: 0;
-        }
-        .file-line-content { white-space: pre; flex: 1; }
-        /* "Show more" controls at the edges of the rendered window */
-        .file-more:empty { display: none; }
-        .file-more { padding: 0.35rem 1rem; background: var(--surface-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-        .file-more-btn {
-            font-family: var(--font-label);
-            font-size: 0.72rem;
-            font-weight: 700;
-            padding: 0.3rem 0.75rem;
-            background: var(--surface);
-            color: var(--text);
-            border: 1px solid var(--line-strong);
-            box-shadow: var(--shadow-sm);
-            cursor: pointer;
-        }
-        .file-more-btn:hover { background: var(--hover); }
         /* Empty / loading / error states */
         .empty-state {
             padding: 3rem 1.5rem;
@@ -377,6 +339,40 @@
         .load-more-btn:hover { background: var(--primary-hover); color: var(--on-primary-hover); }
         .load-more-btn:disabled { opacity: 0.6; cursor: wait; }
         /* Hit whose content was cut at the 500-byte window */
+        /* A result group: one header row (the file name opens the file;
+           copy and the dependency explorer show on hover), then each hit as
+           its code with the line numbers in a gutter. */
+        .group-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.75rem; background: var(--surface-head); border-bottom: 1px solid var(--line-strong); min-width: 0; }
+        .group-open { display: flex; align-items: center; gap: 0.5rem; min-width: 0; flex: 0 1 auto; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text); text-align: left; }
+        .group-path { font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .group-dir { color: var(--text-3); }
+        .group-name { color: var(--accent-ink); font-weight: 700; }
+        .group-open:hover .group-name, .group-open:focus-visible .group-name { text-decoration: underline; }
+        .result-badge { display: inline-flex; align-items: center; gap: 0.3rem; flex-shrink: 0; padding: 1px 6px; font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--text-2); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); white-space: nowrap; }
+        .lang-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .deps-badge { cursor: pointer; }
+        .deps-badge:hover { background: var(--hover); color: var(--text); }
+        .group-badges { display: flex; gap: 0.4rem; margin-left: auto; flex-shrink: 0; }
+        .group-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; opacity: 0; transition: opacity 0.1s; }
+        .group-actions a, .group-actions button { display: flex; color: var(--text-3); background: none; border: 0; padding: 0; cursor: pointer; }
+        .group-actions a:hover, .group-actions button:hover { color: var(--accent-ink); }
+        .result-group:hover .group-actions, .result-group:focus-within .group-actions, .result-group[aria-selected="true"] .group-actions { opacity: 1; }
+        @media (hover: none) { .group-actions { opacity: 1; } }
+        .result-code + .result-code { border-top: 1px dashed var(--border-faint); }
+        .hit-line { display: flex; align-items: baseline; border-left: 3px solid transparent; }
+        .hit-line.hit-match { background: var(--hl-line-bg); border-left-color: var(--hl-left-border); }
+        .hit-num { flex: 0 0 3.25rem; text-align: right; padding-right: 0.75rem; color: var(--text-3); font-size: 0.72rem; font-variant-numeric: tabular-nums; user-select: none; }
+        button.hit-num { background: none; border: 0; font-family: inherit; line-height: inherit; cursor: pointer; color: var(--text-2); font-weight: 700; border-radius: 0; }
+        button.hit-num:hover, button.hit-num:focus-visible { color: var(--text); text-decoration: underline; outline: none; }
+        .hit-line .ctx-line-content { flex: 1; min-width: 0; white-space: pre; overflow-x: auto; padding-right: 0.75rem; }
+        .hit-tags { display: flex; gap: 0.3rem; flex-shrink: 0; padding: 0 0.5rem; }
+        .hit-tag { font-family: var(--font-label); text-transform: var(--label-case); font-size: 9.5px; padding: 0 5px; line-height: 1.6; color: var(--on-info-soft); background: var(--info-soft); border: 1px solid var(--info); border-radius: var(--radius); }
+        /* Phone: the path gets the room; the badges go before it is cut */
+        @media (max-width: 639px) {
+            .group-badges, .group-count { display: none; }
+            .group-head { padding: 0.35rem 0.5rem; }
+            .hit-num { flex-basis: 2.5rem; padding-right: 0.5rem; }
+        }
         .truncated-badge {
             font-family: var(--font-label);
             font-size: 10px;
@@ -760,6 +756,7 @@
     <script src="/highlight-languages.min.js"></script>
     <script src="/common.js"></script>
     <script src="/lib/keyword-helpers.js"></script>
+    <script src="/code-view.js"></script>
     <script src="/keyword.js"></script>
     <script>
         // Filter panel toggle — bound to every .filter-toggle (the always-visible

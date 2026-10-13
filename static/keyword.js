@@ -618,42 +618,6 @@ function updateProgressUI(status) {
 }
 
 // ============================================
-// SYNTAX HIGHLIGHTING HELPERS
-// ============================================
-
-const LANG_BADGE_STYLE_CACHE = new Map();
-
-/**
- * Build a readable language badge style from the configured language color.
- */
-function getLangBadgeStyle(langClass) {
-    if (!langClass) return 'background:var(--surface-4);color:var(--text);border:1px solid var(--border)';
-    if (LANG_BADGE_STYLE_CACHE.has(langClass)) return LANG_BADGE_STYLE_CACHE.get(langClass);
-
-    const cssValue = getComputedStyle(document.documentElement)
-        .getPropertyValue(`--lang-${langClass}`)
-        .trim() || 'var(--surface-4)';
-    const rgb = parseColorToRgb(cssValue);
-    if (!rgb) {
-        const fallback = `background:${cssValue};color:var(--ink);border:1px solid var(--badge-border)`;
-        LANG_BADGE_STYLE_CACHE.set(langClass, fallback);
-        return fallback;
-    }
-
-    const bgLum = relativeLuminance(rgb);
-    const blackContrast = contrastRatio(bgLum, 0);
-    const whiteContrast = contrastRatio(bgLum, 1);
-    // Black or white, whichever reads better on the language's own colour
-    // (the language palette is fixed, so this is not a theme choice).
-    const textColor = whiteContrast > blackContrast ? 'white' : 'black';
-    const borderColor = textColor === 'white' ? 'var(--badge-border-light)' : 'var(--badge-border)';
-
-    const style = `background:${cssValue};color:${textColor};border:1px solid ${borderColor}`;
-    LANG_BADGE_STYLE_CACHE.set(langClass, style);
-    return style;
-}
-
-// ============================================
 // MATCH HIGHLIGHTING
 //
 // The server reports the matched range of every hit as UTF-8 byte offsets
@@ -740,30 +704,6 @@ function currentQueryMatcher() {
 // added per "Show more" click. A 60k-line file used to be highlighted and
 // laid out in full, line by line, before the modal could scroll.
 const FILE_VIEW_WINDOW = 1000;
-const FILE_VIEW_STEP = 1000;
-// Files larger than this are shown without syntax colouring.
-const HLJS_MAX_CHARS = 2_000_000;
-
-/**
- * Highlight `text` once for `lang` and return an escaped HTML string per
- * line. Falls back to plain escaped lines when hljs is missing, the language
- * is unknown, the file is very large, or highlighting throws.
- * @returns {string[]}
- */
-function highlightLines(text, lang) {
-    const plain = () => text.split('\n').map(escapeHtml);
-    if (typeof hljs === 'undefined' || text.length > HLJS_MAX_CHARS) return plain();
-    const language = lang && lang !== 'plaintext' && hljs.getLanguage(lang) ? lang : null;
-    if (!language) return plain();
-    try {
-        const html = hljs.highlight(text, { language, ignoreIllegals: true }).value;
-        const lines = splitHighlightedHtml(html);
-        // Sanity: hljs never adds or removes newlines, so the counts agree.
-        return lines.length === text.split('\n').length ? lines : plain();
-    } catch (_) {
-        return plain();
-    }
-}
 
 /**
  * Highlight a snippet cut from the middle of a file (search result context,
@@ -778,21 +718,11 @@ function highlightSnippetLines(lines, lang) {
     return prefix ? out.slice(1) : out;
 }
 
-/** One rendered file line; `html` is already escaped/highlighted. */
-function renderFileLineHtml(html, lineNum, highlightLine) {
-    const isHighlighted = lineNum === highlightLine;
-    const cls = isHighlighted ? 'file-line file-line-highlight' : 'file-line';
-    return `<div class="${cls}" id="file-line-${lineNum}">` +
-        `<span class="file-line-num">${lineNum}</span>` +
-        `<span class="file-line-content">${html}</span>` +
-        `</div>`;
-}
-
 /**
- * Fetch a file and render it into `container` with syntax highlighting,
- * query-term highlighting, and the matched line scrolled into view within
- * the container. Only ±FILE_VIEW_WINDOW lines around the target are laid
- * out; "Show more" controls extend the window in either direction.
+ * Fetch a file and show it in `container` in the shared code viewer
+ * (code-view.js): syntax and query highlighting, the target line marked and
+ * centred, and every line the query matches marked on the ruler. Returns the
+ * CodeView, or nothing if `signal` aborted.
  */
 async function populateFileView(container, filePath, highlightLine, matcher, signal, opts = {}) {
     let data = _fileContentCache.get(filePath);
@@ -810,74 +740,26 @@ async function populateFileView(container, filePath, highlightLine, matcher, sig
         if (_fileContentCache.size >= FILE_CACHE_MAX) _fileContentCache.delete(_fileContentCache.keys().next().value);
         _fileContentCache.set(filePath, data);
     }
-    if (signal && signal.aborted) return;
+    if (signal && signal.aborted) return null;
     const lang = hljsLangForPath(filePath);
     const lines = highlightLines(data.content, lang);
-    const total = lines.length;
-    const target = Math.min(Math.max(1, highlightLine || 1), total);
-    let from = Math.max(1, target - FILE_VIEW_WINDOW);
-    let to = Math.min(total, target + FILE_VIEW_WINDOW);
+    const target = Math.min(Math.max(1, highlightLine || 1), lines.length);
 
     container.innerHTML =
-        `<div class="file-meta">${Number(data.line_count || total).toLocaleString()} lines · ${formatBytes(data.size_bytes || 0)}` +
+        `<div class="file-meta">${Number(data.line_count || lines.length).toLocaleString()} lines · ${formatBytes(data.size_bytes || 0)}` +
             (opts.hint === false ? '' : `<span class="file-meta-hint">${DEFN_KEY_LABEL}-click a name for its definition · double-click for more</span>`) + `</div>` +
-        `<div class="file-code" data-lang="${lang}">` +
-            `<div class="file-more" data-side="above"></div>` +
-            `<div class="file-lines"></div>` +
-            `<div class="file-more" data-side="below"></div>` +
-        `</div>`;
-    const linesEl = container.querySelector('.file-lines');
-    const aboveEl = container.querySelector('.file-more[data-side="above"]');
-    const belowEl = container.querySelector('.file-more[data-side="below"]');
-
-    const renderRange = (a, b) => {
-        const holder = document.createElement('div');
-        holder.innerHTML = lines.slice(a - 1, b).map((html, i) => renderFileLineHtml(html, a + i, highlightLine > 0 ? target : 0)).join('');
-        if (matcher) holder.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
-        return holder;
-    };
-
-    linesEl.append(...renderRange(from, to).childNodes);
-
-    const updateMoreControls = () => {
-        const hiddenAbove = from - 1;
-        const hiddenBelow = total - to;
-        aboveEl.innerHTML = hiddenAbove > 0
-            ? `<button type="button" class="file-more-btn">Show ${Math.min(FILE_VIEW_STEP, hiddenAbove).toLocaleString()} more lines above (${hiddenAbove.toLocaleString()} hidden)</button>`
-            : '';
-        belowEl.innerHTML = hiddenBelow > 0
-            ? `<button type="button" class="file-more-btn">Show ${Math.min(FILE_VIEW_STEP, hiddenBelow).toLocaleString()} more lines below (${hiddenBelow.toLocaleString()} hidden)</button>`
-            : '';
-        const aboveBtn = aboveEl.querySelector('button');
-        if (aboveBtn) aboveBtn.addEventListener('click', () => {
-            const newFrom = Math.max(1, from - FILE_VIEW_STEP);
-            // Keep the visible lines where they are while content is prepended.
-            const prevTop = container.scrollTop;
-            const prevHeight = container.scrollHeight;
-            linesEl.prepend(...renderRange(newFrom, from - 1).childNodes);
-            from = newFrom;
-            container.scrollTop = prevTop + (container.scrollHeight - prevHeight);
-            updateMoreControls();
-        });
-        const belowBtn = belowEl.querySelector('button');
-        if (belowBtn) belowBtn.addEventListener('click', () => {
-            const newTo = Math.min(total, to + FILE_VIEW_STEP);
-            linesEl.append(...renderRange(to + 1, newTo).childNodes);
-            to = newTo;
-            updateMoreControls();
-        });
-    };
-    updateMoreControls();
-
-    // Scroll the matched line to the centre of the container.
-    // Using getBoundingClientRect so it works for both fixed-position tooltips
-    // and normal flow modal bodies.
-    const targetLine = container.querySelector(`#file-line-${target}`);
-    if (targetLine) {
-        const cRect = container.getBoundingClientRect();
-        const lRect = targetLine.getBoundingClientRect();
-        container.scrollTop += lRect.top - cRect.top - container.clientHeight / 2 + lRect.height / 2;
-    }
+        `<div class="file-view-code"></div>`;
+    const view = new CodeView(container.querySelector('.file-view-code'), {
+        lines,
+        lang,
+        target,
+        mark: highlightLine > 0 ? target : 0,
+        hits: matchLineNumbers(data.content, matcher),
+        paintLine: matcher ? (span) => highlightTermsIn(span, matcher) : null,
+        window: FILE_VIEW_WINDOW,
+    });
+    view.goTo(target);
+    return view;
 }
 
 // ============================================
@@ -987,38 +869,36 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
 
     const body = tooltip.querySelector('.ctx-file-body');
     try {
-        await populateFileView(body, filePath, wholeFile ? 0 : lineNumber,
+        const view = await populateFileView(body, filePath, wholeFile ? 0 : lineNumber,
             _currentMatcher || currentQueryMatcher(), signal, { hint: false });
-        if (signal.aborted) return;
-        wireContextNav(tooltip, body, wholeFile ? 0 : lineNumber);
+        if (!view || signal.aborted) return;
+        wireContextNav(tooltip, view, wholeFile ? 0 : lineNumber);
     } catch (e) {
         if (e.name === 'AbortError') return;
         body.innerHTML = `<div class="error-message">${escapeHtml(e.message)}</div>`;
     }
 }
 
-/** "↑ 3 of 12 ↓": step the preview through the lines the query matches. */
-function wireContextNav(tooltip, body, startLine) {
+/**
+ * "↑ 3 of 12 ↓": step the preview through the lines the query matches in
+ * the whole file (not just the lines laid out), as the ruler marks them.
+ */
+function wireContextNav(tooltip, view, startLine) {
     const nav = tooltip.querySelector('.ctx-nav');
     const pos = tooltip.querySelector('.ctx-nav-pos');
-    const hits = () => [...body.querySelectorAll('.file-line')].filter(l => l.querySelector('mark.highlight'));
-    let lines = hits();
+    const lines = view.hits;
     if (!lines.length) return;
-    let current = Math.max(0, lines.findIndex(l => l.id === `file-line-${startLine}`));
+    let current = Math.max(0, lines.indexOf(startLine));
     const show = (i, scroll) => {
-        lines = hits(); // "Show more" may have added lines
         current = (i + lines.length) % lines.length;
-        lines.forEach(l => l.classList.remove('ctx-current'));
-        const line = lines[current];
-        line.classList.add('ctx-current');
-        pos.textContent = `${current + 1} of ${lines.length}`;
-        if (scroll) {
-            body.scrollTop += line.getBoundingClientRect().top - body.getBoundingClientRect().top
-                - body.clientHeight / 2 + line.offsetHeight / 2;
-        }
+        view.linesEl.querySelectorAll('.ctx-current').forEach(l => l.classList.remove('ctx-current'));
+        const row = scroll ? view.goTo(lines[current]) : view.row(lines[current]);
+        if (row) row.classList.add('ctx-current');
+        pos.textContent = `${(current + 1).toLocaleString()} of ${lines.length.toLocaleString()}`;
     };
     nav.hidden = false;
     show(current, false);
+    view.onJump = (line) => show(lines.indexOf(line), false);
     nav.addEventListener('click', (e) => {
         const btn = e.target.closest('button[data-step]');
         if (btn) show(current + Number(btn.dataset.step), true);
@@ -1743,122 +1623,80 @@ function renderGroupHtml(group) {
 
     const fileIcon = fileIconName(group.filePath);
 
-    // Language badge style
-    const langBadgeStyle = getLangBadgeStyle(langClass);
-
-    // Dependency badge
     const depBadge = depCount > 0
-        ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:var(--accent-soft);color:var(--ink);font-size:10px;font-family:var(--font-mono);border:1px solid var(--badge-border)"
+        ? `<button type="button" class="deps-badge result-badge"
             aria-label="${depCount} dependents; show files that import this file"
             data-file-path="${escapeHtml(group.filePath)}" title="Files that import this one">imported by ${depCount}</button>`
+        : '';
+    // A muted outline badge with the language's colour as a dot, so it no
+    // longer competes with the match highlight.
+    const langBadge = ext
+        ? `<span class="result-badge lang-badge"><span class="lang-dot" style="background:var(--lang-${langClass || 'default'}, var(--text-4))"></span>${escapeHtml(ext)}</span>`
         : '';
 
     // A filename hit has line_number 0: the viewer opens at line 1 for it.
     const groupViewLine = Math.max(1, firstHit.line_number || 0);
 
-    const hitsHtml = group.hits.map((result, idx) => {
+    // Each hit is its code: the line number in a gutter (the match line's
+    // number opens the file there and previews it on hover), the hit's kind
+    // as a small tag when it is a definition or reference. It used to be a
+    // header row ("line 76 · Symbol · open") above the code.
+    const hitsHtml = group.hits.map((result) => {
         const matchType = getMatchTypeLabel(result.match_type);
-        const typeBadgeStyle = matchType.isSymbol
-            ? 'background:var(--info-soft);color:var(--on-info-soft);border:1px solid var(--info)'
-            : 'background:var(--surface-4);color:var(--text-2);border:1px solid var(--border)';
         const isFilenameHit = !result.line_number;
         const viewLine = isFilenameHit ? 1 : result.line_number;
-        const lineLabel = isFilenameHit ? 'filename' : `line ${result.line_number}`;
-        const truncatedBadge = result.content_truncated
-            ? `<span class="truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
-            : '';
+        const tags = (matchType.isSymbol ? `<span class="hit-tag">${matchType.text}</span>` : '') +
+            (result.content_truncated
+                ? `<span class="hit-tag truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
+                : '');
+        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}&#10;Click to open the file here; hover to preview it`;
+        const matchNum = `<button type="button" class="hit-num view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
+            aria-label="Open file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}" title="${title}">${isFilenameHit ? 'file' : result.line_number}</button>`;
 
-        // Build code content — with context lines if available, otherwise just the match line
-        let codeContent;
-        if (result.context_lines && result.context_lines.length > 0) {
-            const startLine = result.context_start_line || 1;
-            codeContent = result.context_lines.map((line, i) => {
-                const lineNum = startLine + i;
-                const isMatch = lineNum === result.line_number;
-                const lineStyle = isMatch
-                    ? 'display:flex;background:var(--hl-line-bg);border-left:3px solid var(--hl-left-border)'
-                    : 'display:flex;border-left:3px solid transparent';
-                // The match line carries the server's byte offsets into the
-                // full line so the highlight pass can mark the exact hit.
-                const offsetAttrs = isMatch
+        // With context, every line of the window; without, the match line
+        // alone (its offsets are into `content` rather than the full line).
+        const hasContext = result.context_lines && result.context_lines.length > 0;
+        const rows = hasContext
+            ? result.context_lines.map((text, i) => ({ text, n: (result.context_start_line || 1) + i }))
+            : [{ text: result.content, n: result.line_number }];
+        const codeRows = rows.map(({ text, n }) => {
+            const isMatch = n === result.line_number;
+            // The match line carries the server's byte offsets so the
+            // highlight pass can mark the exact hit.
+            const offsets = !isMatch ? ''
+                : hasContext
                     ? ` data-lms="${Number(result.line_match_start) || 0}" data-lme="${Number(result.line_match_end) || 0}"`
-                    : '';
-                return `<div style="${lineStyle}">` +
-                    `<span style="flex-shrink:0;width:3.5em;text-align:right;padding-right:0.75em;color:var(--text-3);font-size:0.75em;user-select:none;line-height:1.5em">${lineNum}</span>` +
-                    `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsetAttrs} style="flex:1;white-space:pre;overflow-x:auto">${escapeHtml(line)}</span>` +
-                    `</div>`;
-            }).join('');
-        } else {
-            codeContent = escapeHtml(result.content);
-        }
-        const matchOffsetAttrs = result.context_lines
-            ? ''
-            : ` data-ms="${Number(result.match_start) || 0}" data-me="${Number(result.match_end) || 0}"`;
+                    : ` data-lms="${Number(result.match_start) || 0}" data-lme="${Number(result.match_end) || 0}"`;
+            return `<div class="hit-line${isMatch ? ' hit-match' : ''}">` +
+                (isMatch ? matchNum : `<span class="hit-num">${n}</span>`) +
+                `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsets}>${escapeHtml(text)}</span>` +
+                (isMatch && tags ? `<span class="hit-tags">${tags}</span>` : '') +
+                `</div>`;
+        }).join('');
 
-        const preClass = result.context_lines
-            ? `result-code result-code-ctx language-${lang}`
-            : `result-code language-${lang}`;
-
-        const hitContainerStyle = idx === 0
-            ? 'background:var(--surface)'
-            : 'background:var(--surface);border-top:1px solid var(--border-faint)';
-
-        return `
-            <div style="${hitContainerStyle}">
-                <div class="px-4 py-1.5 flex justify-between items-center" style="background:var(--surface-1);border-bottom:1px solid var(--border-soft)">
-                    <div class="flex items-center gap-2 min-w-0">
-                        <span class="font-label text-xs" style="color:var(--text-3);flex-shrink:0;cursor:help"
-                            title="Ranking score ${result.score.toFixed(2)} (higher ranks first)&#10;&#10;Score = base × multipliers&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)">${lineLabel}</span>
-                        <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:var(--font-mono)">${matchType.text}</span>
-                        ${truncatedBadge}
-                    </div>
-                    <div class="flex items-center gap-3 flex-shrink-0">
-                        <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                            style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
-                            data-file-path="${escapeHtml(result.file_path)}"
-                            data-line-number="${viewLine}"
-                            aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}"
-                            title="View full file at this line">${iconSvg('open_in_new', 18)}</button>
-                    </div>
-                </div>
-                <div class="overflow-x-auto" style="background:var(--surface)">
-                    <pre class="${preClass}"${matchOffsetAttrs} data-has-context="${result.context_lines ? 'true' : 'false'}" data-lang="${lang}">${codeContent}</pre>
-                </div>
-            </div>
-        `;
+        return `<pre class="result-code result-code-ctx language-${lang}" data-has-context="true" data-lang="${lang}">${codeRows}</pre>`;
     }).join('');
 
     return `
         <div class="result-group bg-white border border-black rounded overflow-hidden" style="box-shadow:var(--shadow-sm)" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
-            <!-- File header -->
-            <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:var(--surface-head)">
-                <div class="flex items-center gap-2 min-w-0">
+            <div class="group-head">
+                <button type="button" class="group-open" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}"
+                    title="Open ${escapeHtml(group.filePath)}">
                     ${iconSvg(fileIcon, 16)}
-                    <span class="font-mono text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
-                        ${dirPath ? `<span style="color:var(--text-3);font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:var(--accent-ink);font-weight:700">${escapeHtml(fileName)}</span>
-                    </span>
-                    <span style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:var(--font-mono)">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
-                </div>
-                <div class="flex items-center gap-2 flex-shrink-0">
-                    ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:var(--font-mono)">${escapeHtml(ext)}</span>` : ''}
-                    ${depBadge}
-                    ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link hover:text-primary transition-colors"
-                        style="color:var(--text-3);display:flex"
+                    <span class="group-path font-mono">${dirPath ? `<span class="group-dir">${escapeHtml(dirPath)}</span>` : ''}<span class="group-name">${escapeHtml(fileName)}</span></span>
+                </button>
+                <span class="result-badge group-count">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
+                <span class="group-badges">${langBadge}${depBadge}</span>
+                <span class="group-actions">
+                    ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link"
                         href="${escapeHtml(graphExplorerUrl(group.filePath))}"
                         aria-label="Explore this file's imports"
                         title="Explore imports in the dependency explorer">${iconSvg('account_tree', 16)}</a>` : ''}
-                    <button type="button" class="copy-path-btn hover:text-primary transition-colors"
-                        style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
+                    <button type="button" class="copy-path-btn"
                         data-file-path="${escapeHtml(group.filePath)}"
                         aria-label="Copy file path"
                         title="Copy file path">${iconSvg('content_copy', 16)}</button>
-                    <button type="button" class="view-file-btn hover:text-primary transition-colors"
-                        style="cursor:pointer;color:var(--text-3);background:none;border:none;padding:0;display:flex"
-                        data-file-path="${escapeHtml(group.filePath)}"
-                        data-line-number="${groupViewLine}"
-                        aria-label="View full file"
-                        title="View full file">${iconSvg('open_in_new', 18)}</button>
-                </div>
+                </span>
             </div>
             ${hitsHtml}
         </div>
@@ -1874,32 +1712,25 @@ function wireResultGroups(root) {
     // Syntax-highlight each result, then mark the hit: the match line from
     // the server's byte offsets, every line from the query terms.
     root.querySelectorAll('pre.result-code').forEach(pre => {
-        const hasContext = pre.dataset.hasContext === 'true';
+        // One pass over the whole window: per-line highlighting coloured
+        // the prose of multi-line comments and strings as code.
         const lang = pre.dataset.lang || 'plaintext';
-        if (hasContext) {
-            // One pass over the whole window: per-line highlighting coloured
-            // the prose of multi-line comments and strings as code.
-            const spans = [...pre.querySelectorAll('.ctx-line-content')];
-            const texts = spans.map(span => span.textContent);
-            const htmlLines = highlightSnippetLines(texts, lang);
-            spans.forEach((span, i) => {
-                const text = texts[i];
-                span.innerHTML = htmlLines[i];
-                const extra = span.dataset.lms !== undefined
-                    ? [byteRangeToCharRange(text, Number(span.dataset.lms), Number(span.dataset.lme))]
-                    : [];
-                highlightTermsIn(span, _currentMatcher, extra);
-            });
-        } else {
-            const text = pre.textContent;
-            if (typeof hljs !== 'undefined') {
-                try { hljs.highlightElement(pre); } catch (_) { /* leave plain */ }
-            }
-            const extra = pre.dataset.ms !== undefined
-                ? [byteRangeToCharRange(text, Number(pre.dataset.ms), Number(pre.dataset.me))]
+        const spans = [...pre.querySelectorAll('.ctx-line-content')];
+        const texts = spans.map(span => span.textContent);
+        const htmlLines = highlightSnippetLines(texts, lang);
+        spans.forEach((span, i) => {
+            const text = texts[i];
+            span.innerHTML = htmlLines[i];
+            const extra = span.dataset.lms !== undefined
+                ? [byteRangeToCharRange(text, Number(span.dataset.lms), Number(span.dataset.lme))]
                 : [];
-            highlightTermsIn(pre, _currentMatcher, extra);
-        }
+            highlightTermsIn(span, _currentMatcher, extra);
+        });
+    });
+
+    // The file name opens the file at its first hit.
+    root.querySelectorAll('.group-open').forEach(btn => {
+        btn.addEventListener('click', () => showFileModal(btn.dataset.filePath, parseInt(btn.dataset.lineNumber, 10) || 1));
     });
 
     // Attach View button click handler and context tooltip
@@ -2528,8 +2359,6 @@ async function showFileModal(filePath, highlightLine, opts = {}) {
     const body = document.createElement('div');
     body.className = 'file-modal-body';
     body.id = 'file-modal-body';
-    // Focusable so keyboard users can scroll the file with the arrow keys.
-    body.setAttribute('tabindex', '0');
     body.innerHTML = '<div class="loading">Loading file…</div>';
 
     dialog.appendChild(header);
@@ -2545,19 +2374,21 @@ async function showFileModal(filePath, highlightLine, opts = {}) {
 
     // Clicking a line number selects that line, as on GitHub, and puts it in
     // the URL so Copy link (or the address bar) shares it.
+    let view = null;
     body.addEventListener('click', (e) => {
         const num = e.target.closest('.file-line-num');
-        if (!num) return;
+        if (!num || !view) return;
         const line = parseInt(num.textContent, 10);
         if (!(line > 0)) return;
-        body.querySelectorAll('.file-line-highlight').forEach(el => el.classList.remove('file-line-highlight'));
-        num.parentElement.classList.add('file-line-highlight');
+        view.setMark(line);
         _fileView = { file: filePath, line };
         setFileViewHash(filePath, line);
     });
 
     try {
-        await populateFileView(body, filePath, highlightLine, _currentMatcher || currentQueryMatcher());
+        view = await populateFileView(body, filePath, highlightLine, _currentMatcher || currentQueryMatcher());
+        // The scroll area takes focus so the arrow keys scroll the file.
+        if (view) view.scroller.setAttribute('aria-label', `Contents of ${filePath}`);
     } catch (error) {
         body.innerHTML = `<div class="error-message"><strong>Error:</strong> ${escapeHtml(error.message)}</div>`;
     }
@@ -2625,10 +2456,7 @@ function isDefnModifier(e) {
 /** The code line element (one line of text) that `el` sits in, or null. */
 function codeLineElement(el) {
     if (!el || !el.closest) return null;
-    const line = el.closest('.file-modal-body .file-line-content, .ctx-line-content');
-    if (line) return line;
-    const pre = el.closest('pre.result-code');
-    return pre && pre.dataset.hasContext !== 'true' ? pre : null;
+    return el.closest('.file-modal-body .file-line-content, .ctx-line-content');
 }
 
 /** A DOM Range over the [start, end) text offsets of `el`. */

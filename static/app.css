@@ -541,3 +541,62 @@ code.hljs { padding: 3px 5px; }
 .error-state .btn { margin-top: 1rem; }
 /* Dead hook some scripts still query for; never shown. */
 .advanced-options { display: none; }
+
+/* ---------- Code viewer (code-view.js) ----------
+   The file viewer, the hover preview and the dependency explorer's source
+   pane. The host fills its parent; lines scroll in .cv-scroll and the ruler
+   beside it marks every hit in the whole file. */
+.file-view-code { flex: 1; min-height: 0; }
+.code-view { display: flex; min-height: 0; position: relative; }
+.cv-scroll { flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; }
+.cv-scroll:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.cv-ruler { flex: 0 0 12px; position: relative; background: var(--surface-2); border-left: 1px solid var(--border); cursor: pointer; }
+.cv-ruler[hidden] { display: none; }
+.cv-mark { position: absolute; left: 2px; right: 2px; height: 3px; margin-top: -1px; background: var(--hl-left-border); pointer-events: none; }
+.cv-mark-current { left: 0; right: 0; height: 2px; background: var(--text); }
+.file-meta {
+    padding: 0.35rem 1rem;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-3);
+    flex-shrink: 0;
+}
+/* Code exactly as typed: the mono font would draw != as ≠ and => as an
+   arrow, which misleads when searching for operators. */
+.file-code { font-family: var(--font-mono); font-size: 0.78rem; font-variant-ligatures: none; }
+.file-line { display: flex; padding: 0 1rem 0 0; line-height: 1.55; }
+.file-line:hover { background: var(--surface-1); }
+.file-line-highlight { background: var(--hl-line-bg) !important; }
+.file-line-num {
+    color: var(--text-3);
+    min-width: 3.5rem;
+    text-align: right;
+    padding-right: 1rem;
+    margin-right: 0.75rem;
+    border-right: 1px solid var(--border-faint);
+    user-select: none;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+.file-line-content { white-space: pre; flex: 1; }
+.file-line.flash { animation: cv-flash 1.2s ease-out; }
+@keyframes cv-flash { from { background: var(--accent-soft); } }
+@media (prefers-reduced-motion: reduce) { .file-line.flash { animation: none; } }
+/* "Show more" at the edges of the rendered window */
+.file-more:empty { display: none; }
+.file-more { padding: 0.35rem 1rem; background: var(--surface-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.file-more-btn {
+    font-family: var(--font-label);
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.3rem 0.75rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+.file-more-btn:hover { background: var(--hover); }
