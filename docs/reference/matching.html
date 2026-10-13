@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -211,31 +211,27 @@ finds and the other does not.</p>
 <h2 id="where-fcs-differs-from-all-of-them"><a class="header" href="#where-fcs-differs-from-all-of-them">Where fcs differs from all of them</a></h2>
 <p>These follow from fcs being a code search server rather than a line filter.</p>
 <ul>
-<li><strong>Case-insensitive by default.</strong> Text searches ignore case unless the query
-says <code>case:yes</code>. grep, git grep and ripgrep are case-sensitive by default.
-A regex is case-sensitive unless it uses <code>(?i)</code> or the request sets the
-case option. The backtest passes <code>-i</code> to ripgrep whenever fcs ignores
-case.</li>
-<li><strong>Several words are not a phrase.</strong> <code>fn main</code> finds files that contain
-both words, anywhere in the file. Lines holding the phrase rank first,
-then lines holding both words, then at most three lines per file holding
-only one of them. Quote the words (<code>"fn main"</code>) to search for the exact
-phrase, as grep would.</li>
-<li><strong>Operators.</strong> <code>-term</code>, <code>file:</code>, <code>lang:</code>, <code>case:</code> and <code>word:</code> are query
-syntax, not text. To search for one literally, quote it: <code>"-test"</code>,
-<code>"file:"</code>. A <code>-</code> only negates before a letter, <code>_</code> or quote, so <code>-&gt;</code>,
-<code>-1.5</code> and <code>--flag</code> are searched as written. See <a href="query-syntax.html">Query
-syntax</a>.</li>
+<li><strong>Case-insensitive by default.</strong> Plain text ignores case unless the query
+says <code>case:yes</code>; grep, git grep and ripgrep match case by default (<code>rg -i</code> is the fcs default, <code>rg -s</code> is <code>case:yes</code>). On the API and in <code>fcs</code>
+a regex matches case unless it uses <code>(?i)</code> or the request says
+<code>case=false</code>; in the web UI the MATCH CASE toggle decides for both. The
+backtest passes <code>-i</code> to ripgrep whenever fcs ignores case.</li>
+<li><strong>Operators.</strong> Plain text is a literal, like <code>rg -F</code>: several words are
+one phrase, and quotes and a leading <code>-</code> are part of the text. The only
+exceptions are whole words with an argument: <code>file:</code>, <code>-file:</code>,
+<code>lang:</code>, <code>-lang:</code>, <code>case:</code> and <code>word:</code>. To search for one of those
+literally, use a regex. The query is trimmed at both ends (<code>rg ' x'</code>
+keeps its leading space). See <a href="query-syntax.html">Query syntax</a>.</li>
 <li><strong>File names match too.</strong> A text search also lists files whose <em>name</em>
 matches, as a hit without a line number. grep has no equivalent, so the
 backtest leaves these out of the comparison.</li>
 <li><strong>Paths match, separately.</strong> When asked (<code>files=N</code> on <code>/api/search</code>, the
 web UI’s <strong>FILES</strong> box, <code>fcs</code> on a terminal, MCP <code>search_code</code>), the files
 whose <em>path</em> matches are returned apart from the content results, which
-do not change. Every term must appear in the path as results show it,
-case-insensitively unless <code>case:yes</code>; <code>\</code> counts as <code>/</code>; <code>word:yes</code>,
-<code>-term</code>, <code>file:</code>, <code>lang:</code> and include/exclude globs apply as they do to
-content. A term holding a <code>/</code> also matches the file’s absolute path, so a
+do not change. Here the text is split into words, and every word must
+appear in the path as results show it, case-insensitively unless
+<code>case:yes</code>; <code>\</code> counts as <code>/</code>; <code>word:yes</code>, <code>file:</code>, <code>lang:</code> and
+include/exclude globs apply as they do to content. A term holding a <code>/</code> also matches the file’s absolute path, so a
 pasted <code>/home/me/repo/src/main.rs</code> works, but only when the match reaches
 past the indexed folder (<code>/home/</code> alone lists nothing). A regex is
 matched against the shown path. This is closest to <code>rg --files | rg PATTERN</code>; it is not part of the backtest, which compares content only.</li>
@@ -246,13 +242,17 @@ lines the same way (<code>rg -c</code>).</li>
 order. To keep a broad search fast, a request reads a bounded number of
 matches: by default 100 from one file on the first page, and a budget of
 about eight times the requested page. When either limit is reached, the
-total is shown as “N+” rather than as a count. LOAD MORE in the web UI
+total is shown as “N+” rather than as a count. When a query could be in
+more than 5,000 files, Auto ranking opens only the 2,000 most likely
+(<code>fast_rank_files</code>); the header then says “Searched 2,000 of N files”
+and SEARCH ALL FILES opens the rest (up to <code>max_fast_rank_files</code>). LOAD MORE in the web UI
 fetches the whole list again at the bigger size, up to 1000 results, so
 every match ends up shown exactly once. Results already on screen can
 move when it does. Past 1000 results it fetches the next page instead.
 An API client asking for <code>offset</code> pages of a search that hit its budget
 can see a result repeated or skipped between pages. Asking again from
-offset 0 with a larger <code>max</code> avoids that.</li>
+offset 0 with a larger <code>max</code> avoids that. Paging stops at offset 100,000
+by default (<code>max_page_offset</code>).</li>
 <li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
 Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
 (<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16

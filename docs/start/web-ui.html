@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -192,12 +192,20 @@ the binary.</p>
 pause). <code>Ctrl</code>/<code>Cmd</code>+<code>K</code> focuses the box from anywhere; <code>/</code> does too.</li>
 <li><strong>REGEX</strong>, <strong>SYMBOLS</strong> and <strong>REFERENCES</strong> switch modes; <strong>FILTER</strong> opens
 page size, ranking mode, context lines and include/exclude globs.</li>
-<li>The <a href="../reference/query-syntax.html">query syntax</a> works in the box:
-<code>"exact phrase"</code>, <code>-term</code>, <code>file:src/</code>, <code>lang:rust</code>, <code>case:yes</code>.</li>
+<li><strong>MATCH CASE</strong> (<code>Aa</code>) matches upper and lower case exactly, in every mode;
+off, case is ignored in plain text and regex alike. The summary line
+says which applied (“ignoring case” or “matching case”).</li>
+<li>What you type is searched for as written, like <code>rg -F</code>: several words are
+one phrase, and quotes and a leading <code>-</code> are part of the text. The
+<a href="../reference/query-syntax.html">operators</a> <code>file:src/</code>, <code>lang:rust</code>,
+<code>case:yes</code> and <code>word:yes</code> narrow it.</li>
 <li>Results are grouped by file, best hit first, with every query term
 highlighted from the server’s match offsets. <strong>Load more</strong> pages through
 the rest; the summary line says how many matches exist and whether the
-scan was cut short by its budget.</li>
+scan was cut short by its budget. When a query could be in thousands of
+files, fast ranking opens only the most likely 2,000; the summary says
+“Searched 2,000 of N files” and <strong>SEARCH ALL FILES</strong> opens the rest (or
+as many as the server allows).</li>
 <li>Files whose <em>path</em> matches the query are listed in a <strong>FILES</strong> box above
 the results, so typing or pasting <code>src/web/api.rs</code> (or just <code>api.rs</code>)
 finds the file even when no line mentions it. File names rank first;

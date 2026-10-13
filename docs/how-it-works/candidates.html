@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -189,9 +189,8 @@ set</strong> from the trigram index, then reads only those files.</p>
 <code>parse_query</code> yields <code>par</code>, <code>ars</code>, <code>rse</code>, <code>se_</code>, <code>e_q</code>, <code>_qu</code>, <code>que</code>,
 <code>uer</code>, <code>ery</code>. Each trigram has a posting list (a Roaring bitmap of file
 ids); intersecting them gives every file that could contain the query,
-independent of corpus size. For several terms the intersection covers
-every term, and the phrase’s own trigrams select the subset that may
-contain the phrase.</p>
+independent of corpus size. Several words are one phrase, so their
+trigrams (spaces included) are intersected the same way.</p>
 <p>Queries shorter than three characters have no trigrams and fall back to
 all files, bounded by the match budget and ranking mode.</p>
 <h2 id="regex"><a class="header" href="#regex">Regex</a></h2>
@@ -218,8 +217,9 @@ against the current content.</p>
 <p>Every search runs under a <code>QueryRun</code>: a match budget derived from the page
 size and offset (capped), and a deadline just under the request timeout.
 When either stops the scan the response says so
-(<code>truncated_by_budget</code>), and paging beyond 10,000 hits is refused rather
-than allowed to grow the budget without bound.</p>
+(<code>truncated_by_budget</code>). A deep page gets a budget that reaches it, so
+paging past <code>max_page_offset</code> (100,000 by default) is refused rather than
+allowed to grow the budget without bound.</p>
 
                     </main>
 

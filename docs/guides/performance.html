@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -210,8 +210,10 @@ and restrict <code>include_extensions</code>.</p>
 and rarer the trigrams, the smaller the candidate set. Short queries
 (under three characters) have no trigrams and scan everything.</li>
 <li><strong>Fast versus full ranking.</strong> Above 5,000 candidates the engine reads only
-the top 2,000 by file metadata (<code>rank=auto</code>); <code>rank=full</code> reads them all.
-Files containing a multi-term query’s phrase are always among those read.</li>
+the top 2,000 by file metadata (<code>rank=auto</code>; <code>fast_rank_files</code> in the
+configuration); <code>rank=full</code> reads them all. The web UI’s SEARCH ALL FILES
+(<code>max_files</code> on the API, <code>fcs --max-files</code>) opens more for one search, up
+to <code>max_fast_rank_files</code>.</li>
 <li><strong>Budget and deadline.</strong> Every search stops at a match budget and at a
 deadline derived from <code>request_timeout_secs</code> (or a smaller <code>timeout_ms</code>),
 reporting <code>truncated_by_budget</code> when it did. Narrow the query (<code>file:</code>,

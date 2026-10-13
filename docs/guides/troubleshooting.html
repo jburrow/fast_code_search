@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -194,8 +194,10 @@
 <tr><td>A file you edited is not found</td><td>Watcher off, or the inotify limit was hit</td><td>Set <code>watch = true</code>; on Linux check the log for “Failed to watch” and raise <code>fs.inotify.max_user_watches</code></td></tr>
 <tr><td>Files from an excluded directory still appear</td><td>Rules changed while the server ran</td><td>Restart; reconciliation drops files the current rules exclude</td></tr>
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
-<tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.12 lines with the phrase rank first; upgrade</td></tr>
-<tr><td>A regex finds nothing that plain search finds</td><td>Regex is case-sensitive, and <code>{ ( .</code> are syntax</td><td>Start with <code>(?i)</code>, escape special characters with <code>\</code>, use <code>\s*</code> for spacing; the web UI’s suggestions under an empty result do this for you</td></tr>
+<tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.16 several words are one phrase; upgrade</td></tr>
+<tr><td><code>fn main</code> misses <code>fn  main</code> or <code>fn\tmain</code></td><td>Plain text is a literal, spacing included</td><td>Use a regex: <code>fn\s+main</code></td></tr>
+<tr><td>“Searched 2,000 of N files”</td><td>Fast ranking opened only the most likely files</td><td>Click SEARCH ALL FILES (<code>max_files</code> on the API, <code>fcs --max-files</code>); raise <code>fast_rank_files</code> to change the default</td></tr>
+<tr><td>A regex finds nothing that plain search finds</td><td><code>{ ( .</code> are syntax; outside the web UI a regex is also case-sensitive</td><td>Escape special characters with <code>\</code>, use <code>\s*</code> for spacing, start with <code>(?i)</code> (or <code>fcs -e -i</code>); the web UI’s suggestions under an empty result do this for you</td></tr>
 <tr><td>A regex is slow</td><td>No required literal, so every file is scanned</td><td>Anchor it with a literal (<code>fn\s+main</code> rather than <code>\w+\s+\w+</code>)</td></tr>
 <tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
 <tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>

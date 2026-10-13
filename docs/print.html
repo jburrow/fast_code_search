@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -360,7 +360,7 @@ of it); later starts load the saved index in seconds and reconcile what
 changed while the server was down.</p>
 <h2 id="3-search"><a class="header" href="#3-search">3. Search</a></h2>
 <p>From another terminal:</p>
-<pre><code class="language-bash">fcs 'fn main'                 # lines holding both words; the phrase ranks first
+<pre><code class="language-bash">fcs 'fn main'                 # lines holding the phrase, like rg -F -i
 fcs symbols SearchEngine      # definitions only
 fcs refs SearchEngine         # call sites and type mentions
 fcs -e 'fn\s+\w+\(' -g '*.rs' # a regex, Rust files only
@@ -380,7 +380,8 @@ terminal, with grep-style output and exit codes, so it slots into editors,
 shell pipelines and scripts. When no server is running it can search the
 on-disk index directly.</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"><span class="img-wrapper"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"></span></label></p>
-<pre><code class="language-bash">fcs 'fn main'                    # lines holding both words; the phrase ranks first
+<pre><code class="language-bash">fcs 'fn main'                    # lines holding the phrase, like rg -F -i
+fcs -- -Wall                     # a query starting with - goes after --
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
@@ -425,16 +426,17 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><th>Option</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td><code>QUERY</code></td><td>Words must all appear in a file; lines with the phrase rank first. <code>"quoted phrase"</code>, <code>-term</code>, <code>file:PATTERN</code>, <code>-file:PATTERN</code>, <code>lang:rust</code>, <code>case:yes</code>, <code>word:yes</code> as in the web UI.</td></tr>
+<tr><td><code>QUERY</code></td><td>Literal text, like <code>rg -F</code>: several words are one phrase, quotes and a leading <code>-</code> are part of it (put such a query after <code>--</code>). <code>file:PATTERN</code>, <code>-file:PATTERN</code>, <code>lang:rust</code>, <code>case:yes</code>, <code>word:yes</code> as in the web UI.</td></tr>
 <tr><td><code>-e</code>, <code>--regex</code></td><td>Treat the query as a regular expression (matched one line at a time; mention <code>\n</code> for multi-line patterns).</td></tr>
-<tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text is case-insensitive by default).</td></tr>
+<tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text ignores case by default, a regex matches it; <code>-e -i</code> ignores it).</td></tr>
 <tr><td><code>-w</code>, <code>--word</code></td><td>Whole words only.</td></tr>
 <tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to 1000).</td></tr>
-<tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two.</td></tr>
+<tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two. Up to the server’s <code>max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>-C</code>, <code>--context N</code></td><td>Lines of context around each hit (up to 10).</td></tr>
 <tr><td><code>-g</code>, <code>--glob GLOB</code></td><td>Only files matching the glob (repeatable). <code>src/**/*.rs</code>, <code>*.py</code>, <code>tests</code> (a bare name matches anywhere in the path).</td></tr>
 <tr><td><code>--exclude GLOB</code></td><td>Skip files matching the glob (repeatable).</td></tr>
 <tr><td><code>--rank auto|fast|full</code></td><td>Ranking mode; <code>auto</code> reads every candidate up to 5,000 files and samples by file metadata beyond that.</td></tr>
+<tr><td><code>--max-files N</code></td><td>Files a fast-ranked search opens (default: the server’s <code>fast_rank_files</code>, 2,000; up to its <code>max_fast_rank_files</code>).</td></tr>
 <tr><td><code>--timeout-ms MS</code></td><td>Stop scanning after MS and return the best hits so far.</td></tr>
 <tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print file paths only, once each.</td></tr>
 <tr><td><code>--format grouped|vimgrep|json</code>, <code>--json</code></td><td>Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server’s response object.</td></tr>
@@ -526,12 +528,20 @@ the binary.</p>
 pause). <code>Ctrl</code>/<code>Cmd</code>+<code>K</code> focuses the box from anywhere; <code>/</code> does too.</li>
 <li><strong>REGEX</strong>, <strong>SYMBOLS</strong> and <strong>REFERENCES</strong> switch modes; <strong>FILTER</strong> opens
 page size, ranking mode, context lines and include/exclude globs.</li>
-<li>The <a href="#query-syntax-1">query syntax</a> works in the box:
-<code>"exact phrase"</code>, <code>-term</code>, <code>file:src/</code>, <code>lang:rust</code>, <code>case:yes</code>.</li>
+<li><strong>MATCH CASE</strong> (<code>Aa</code>) matches upper and lower case exactly, in every mode;
+off, case is ignored in plain text and regex alike. The summary line
+says which applied (“ignoring case” or “matching case”).</li>
+<li>What you type is searched for as written, like <code>rg -F</code>: several words are
+one phrase, and quotes and a leading <code>-</code> are part of the text. The
+<a href="#query-syntax-1">operators</a> <code>file:src/</code>, <code>lang:rust</code>,
+<code>case:yes</code> and <code>word:yes</code> narrow it.</li>
 <li>Results are grouped by file, best hit first, with every query term
 highlighted from the server’s match offsets. <strong>Load more</strong> pages through
 the rest; the summary line says how many matches exist and whether the
-scan was cut short by its budget.</li>
+scan was cut short by its budget. When a query could be in thousands of
+files, fast ranking opens only the most likely 2,000; the summary says
+“Searched 2,000 of N files” and <strong>SEARCH ALL FILES</strong> opens the rest (or
+as many as the server allows).</li>
 <li>Files whose <em>path</em> matches the query are listed in a <strong>FILES</strong> box above
 the results, so typing or pasting <code>src/web/api.rs</code> (or just <code>api.rs</code>)
 finds the file even when no line mentions it. File names rank first;
@@ -865,6 +875,9 @@ web_address = "0.0.0.0:8080"
 cors_origins = ["https://ide.example.com"]   # only if a page on another origin calls the API
 max_concurrent_searches = 64
 request_timeout_secs = 30
+fast_rank_files = 2000      # files fast ranking opens when a query could be in over 5,000 (0 = all)
+max_fast_rank_files = 0     # most a request may ask for (SEARCH ALL FILES, max_files); 0 = no limit
+max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
 </code></pre>
 <p>See <a href="#deployment-guide">Deployment</a> for a reverse-proxy example and
 the system-wide systemd unit, and the <a href="#security-policy">security policy</a>.</p>
@@ -904,8 +917,10 @@ and restrict <code>include_extensions</code>.</p>
 and rarer the trigrams, the smaller the candidate set. Short queries
 (under three characters) have no trigrams and scan everything.</li>
 <li><strong>Fast versus full ranking.</strong> Above 5,000 candidates the engine reads only
-the top 2,000 by file metadata (<code>rank=auto</code>); <code>rank=full</code> reads them all.
-Files containing a multi-term query’s phrase are always among those read.</li>
+the top 2,000 by file metadata (<code>rank=auto</code>; <code>fast_rank_files</code> in the
+configuration); <code>rank=full</code> reads them all. The web UI’s SEARCH ALL FILES
+(<code>max_files</code> on the API, <code>fcs --max-files</code>) opens more for one search, up
+to <code>max_fast_rank_files</code>.</li>
 <li><strong>Budget and deadline.</strong> Every search stops at a match budget and at a
 deadline derived from <code>request_timeout_secs</code> (or a smaller <code>timeout_ms</code>),
 reporting <code>truncated_by_budget</code> when it did. Narrow the query (<code>file:</code>,
@@ -942,8 +957,10 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tr><td>A file you edited is not found</td><td>Watcher off, or the inotify limit was hit</td><td>Set <code>watch = true</code>; on Linux check the log for “Failed to watch” and raise <code>fs.inotify.max_user_watches</code></td></tr>
 <tr><td>Files from an excluded directory still appear</td><td>Rules changed while the server ran</td><td>Restart; reconciliation drops files the current rules exclude</td></tr>
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
-<tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.12 lines with the phrase rank first; upgrade</td></tr>
-<tr><td>A regex finds nothing that plain search finds</td><td>Regex is case-sensitive, and <code>{ ( .</code> are syntax</td><td>Start with <code>(?i)</code>, escape special characters with <code>\</code>, use <code>\s*</code> for spacing; the web UI’s suggestions under an empty result do this for you</td></tr>
+<tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.16 several words are one phrase; upgrade</td></tr>
+<tr><td><code>fn main</code> misses <code>fn  main</code> or <code>fn\tmain</code></td><td>Plain text is a literal, spacing included</td><td>Use a regex: <code>fn\s+main</code></td></tr>
+<tr><td>“Searched 2,000 of N files”</td><td>Fast ranking opened only the most likely files</td><td>Click SEARCH ALL FILES (<code>max_files</code> on the API, <code>fcs --max-files</code>); raise <code>fast_rank_files</code> to change the default</td></tr>
+<tr><td>A regex finds nothing that plain search finds</td><td><code>{ ( .</code> are syntax; outside the web UI a regex is also case-sensitive</td><td>Escape special characters with <code>\</code>, use <code>\s*</code> for spacing, start with <code>(?i)</code> (or <code>fcs -e -i</code>); the web UI’s suggestions under an empty result do this for you</td></tr>
 <tr><td>A regex is slow</td><td>No required literal, so every file is scanned</td><td>Anchor it with a literal (<code>fn\s+main</code> rather than <code>\w+\s+\w+</code>)</td></tr>
 <tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
 <tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>
@@ -1397,14 +1414,15 @@ when the request timeout is hit.</p>
 <tbody>
 <tr><td><code>q</code></td><td>required</td><td>Query. Plain text understands the <a href="#query-syntax">query syntax</a>; with <code>regex=true</code> it is a regular expression.</td></tr>
 <tr><td><code>max</code></td><td>50</td><td>Page size, 1–1000 (<code>0</code> = default).</td></tr>
-<tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most 10,000.</td></tr>
+<tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most <code>max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>regex</code></td><td>false</td><td>Treat <code>q</code> as a regex (Rust <code>regex</code> syntax, matched one line at a time unless the pattern mentions <code>\n</code> or sets <code>(?s)</code>).</td></tr>
 <tr><td><code>symbols</code></td><td>false</td><td>Definitions only (functions, types, classes, …) plus filename matches.</td></tr>
 <tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code> (400).</td></tr>
-<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. A regex is case-sensitive by default; <code>case=false</code> adds <code>(?i)</code>.</td></tr>
+<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. Plain text ignores case by default; a regex is case-sensitive by default and <code>case=false</code> adds <code>(?i)</code>.</td></tr>
 <tr><td><code>word</code></td><td>—</td><td><code>true</code> for whole-word matching.</td></tr>
 <tr><td><code>include</code> / <code>exclude</code></td><td>—</td><td>Semicolon-separated path globs (<code>src/**/*.rs;lib/**</code>).</td></tr>
 <tr><td><code>rank</code></td><td>auto</td><td><code>auto</code>, <code>fast</code> (metadata-ranked sample, used above 5,000 candidates) or <code>full</code>.</td></tr>
+<tr><td><code>max_files</code></td><td><code>fast_rank_files</code> (2000)</td><td>Files a fast-ranked search opens. Capped by <code>max_fast_rank_files</code>, reported in <code>max_files_allowed</code> when the server sets one. When <code>candidates_searched</code> &lt; <code>total_candidates</code>, ask again with <code>max_files=total_candidates</code> to search the rest.</td></tr>
 <tr><td><code>context</code></td><td>0</td><td>Context lines before and after each hit, 0–10.</td></tr>
 <tr><td><code>timeout_ms</code></td><td>0</td><td>Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server’s request timeout).</td></tr>
 <tr><td><code>files</code></td><td>0</td><td>Also return up to this many files whose <em>path</em> matches <code>q</code>, 0–100, in <code>files</code> (first page of a text or regex search only).</td></tr>
@@ -1451,10 +1469,11 @@ separate from <code>results</code>, which are unchanged:</p>
 }
 </code></pre>
 <p><code>match_ranges</code> are <code>[start, end)</code> byte offsets into <code>file_path</code>, one per
-term. Every term must appear in the shown path (case-insensitive unless
-<code>case:yes</code>, <code>\</code> read as <code>/</code>); a term containing <code>/</code> may also match the
-absolute path, so a pasted absolute path finds its file. <code>-term</code>, <code>file:</code>,
-<code>lang:</code>, <code>include</code> and <code>exclude</code> filter as for content. See <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/matching.md">how matching
+word of the query (path matching splits it on spaces). Every word must
+appear in the shown path (case-insensitive unless <code>case:yes</code>, <code>\</code> read as
+<code>/</code>); a word containing <code>/</code> may also match the absolute path, so a pasted
+absolute path finds its file. <code>file:</code>, <code>lang:</code>, <code>include</code> and <code>exclude</code>
+filter as for content. See <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/matching.md">how matching
 compares with grep and ripgrep</a>.</p>
 <h3 id="index-freshness"><a class="header" href="#index-freshness">Index freshness</a></h3>
 <p>With <code>watch = false</code> (the default), the server indexes the tree when it
@@ -1499,16 +1518,16 @@ off” beside the search time, <code>fcs</code> prints the same warning on stder
 after an agent writes a file) is tracked in
 <a href="https://github.com/jburrow/fast_code_search/issues/140">#140</a>.</p>
 <h3 id="query-syntax"><a class="header" href="#query-syntax">Query syntax</a></h3>
-<p>Plain-text queries (not <code>regex=true</code>):</p>
+<p>Plain-text queries (not <code>regex=true</code>) are a literal, like <code>rg -F</code>: the
+query minus its operators is searched for as written.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Syntax</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td><code>fn main</code></td><td>Several terms: a file must contain every term. Lines holding the phrase rank first, then lines holding every term, then the rest.</td></tr>
-<tr><td><code>"exact phrase"</code></td><td>One term containing spaces. Quotes that do not wrap a whole word are part of the term: <code>{ "success": True</code> searches for <code>"success":</code> with its quotes.</td></tr>
-<tr><td><code>-term</code></td><td>Drop files that contain <code>term</code> (only before a letter, <code>_</code> or a quote, so <code>-&gt;</code> and <code>-1</code> are ordinary terms).</td></tr>
+<tr><td><code>fn main</code></td><td>The phrase <code>fn main</code>, exactly one space. Several words are one phrase.</td></tr>
+<tr><td><code>"fn main"</code>, <code>-Wall</code></td><td>Quotes and a leading <code>-</code> are part of the text.</td></tr>
 <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td><td>Only / never paths matching the glob; a bare word matches anywhere in the path, <code>src/</code> means everything under <code>src</code>.</td></tr>
 <tr><td><code>lang:rust</code> / <code>-lang:py</code></td><td>Only / never files of that language.</td></tr>
 <tr><td><code>case:yes</code></td><td>Case-sensitive.</td></tr>
@@ -1530,14 +1549,13 @@ after an agent writes a file) is tracked in
 <tr><td>Match at the start of the line</td><td>1.5×</td></tr>
 <tr><td>File under <code>src/</code> or <code>lib/</code></td><td>1.5×</td></tr>
 <tr><td>Files that import this file</td><td><code>1 + 0.5·log10(dependents)</code></td></tr>
-<tr><td>Line holds the whole phrase / every term</td><td>tier above all other lines</td></tr>
 <tr><td>Long line</td><td>inverse-length damping</td></tr>
 <tr><td>Test or example path (fast mode)</td><td>0.7×</td></tr>
 </tbody>
 </table>
 </div>
-<p>Within a tier, hits are interleaved by file (every file’s best hit first)
-so one file cannot fill a page.</p>
+<p>Hits are interleaved by file (every file’s best hit first) so one file
+cannot fill a page.</p>
 <h3 id="import-graph"><a class="header" href="#import-graph">Import graph</a></h3>
 <p>The dependency explorer (<code>/graph.html</code>) is built on these. Every endpoint
 answers from memory under the engine read lock. <code>file</code> accepts a display
@@ -1614,7 +1632,8 @@ streams <code>SearchResult</code> messages with the same fields and modes as RES
 <code>deadline_ms</code>), and <code>Index</code> adds paths under the configured roots. The
 standard <code>grpc.health.v1</code> service is served too. A minimal client:
 <a href="https://github.com/jburrow/fast_code_search/blob/main/examples/client.rs"><code>examples/client.rs</code></a> (<code>cargo run --example client</code>).</p>
-<p>Limits match REST: <code>offset</code> ≤ 10,000, the search semaphore is shared with
+<p>Limits match REST: <code>offset</code> ≤ <code>max_page_offset</code>, fast ranking opens
+<code>fast_rank_files</code>, the search semaphore is shared with
 the REST side, and every search runs under a deadline derived from the
 request timeout.</p>
 <h2 id="server-command-line"><a class="header" href="#server-command-line">Server command line</a></h2>
@@ -1647,6 +1666,9 @@ web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED
 request_timeout_secs = 30         # searches get an engine deadline just under this
+fast_rank_files = 2000            # files fast ranking opens by default (0 = all)
+max_fast_rank_files = 0           # most a request may ask for with max_files (0 = no limit)
+max_page_offset = 100000          # deepest offset a client may page to (0 = no limit)
 cors_origins = []                 # e.g. ["https://ide.example.com"]; empty = same-origin only
 
 [indexer]
@@ -1690,15 +1712,18 @@ parameter of the API. It applies to plain-text queries; with <code>regex=true</c
 (<code>fcs -e</code>) the whole query is a regular expression instead. For how the
 results compare with grep, ripgrep and git grep, see <a href="#how-matching-compares-with-grep-ripgrep-and-git-grep">Matching compared
 with grep and ripgrep</a>.</p>
+<p>The text you type is searched for as written, like <code>rg -F</code>. The operators
+below are the only exceptions; everything else, spaces, quotes and dashes
+included, is part of the text.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Write</th><th>To get</th></tr>
 </thead>
 <tbody>
-<tr><td><code>fn main</code></td><td>Files containing <strong>every</strong> term. Lines holding the phrase <code>fn main</code> rank first, then lines holding both terms, then the rest.</td></tr>
-<tr><td><code>"fn main"</code></td><td>One term: the exact phrase, spaces included. A quote opens a phrase only when it wraps a whole word; other quotes are searched for as written, so <code>{ "success": True</code> finds that text with its quotes.</td></tr>
-<tr><td><code>-tests</code></td><td>Drop files that contain <code>tests</code>. Only a <code>-</code> before a letter, <code>_</code> or quote negates, so <code>-&gt;</code>, <code>-1</code> and <code>--flag</code> are ordinary terms.</td></tr>
+<tr><td><code>fn main</code></td><td>Lines holding the phrase <code>fn main</code>, with exactly one space. Several words are one phrase.</td></tr>
+<tr><td><code>"fn main"</code></td><td>Lines holding <code>"fn main"</code> with its quotes. Quotes are text: <code>{ "success": True</code> finds that text as written.</td></tr>
+<tr><td><code>-Wall</code></td><td>Lines holding <code>-Wall</code>. A leading <code>-</code> is text too (<code>-&gt;</code>, <code>-1</code>, <code>--flag</code>). On the command line put such a query after <code>--</code>: <code>fcs -- -Wall</code>.</td></tr>
 <tr><td><code>file:src/</code></td><td>Only paths under a <code>src</code> directory. A bare word matches anywhere in the path (<code>file:parser</code>); globs are used as written (<code>file:*.rs</code>, <code>file:crates/**/tests/**</code>).</td></tr>
 <tr><td><code>-file:vendor</code></td><td>Never paths matching the pattern.</td></tr>
 <tr><td><code>lang:rust</code>, <code>-lang:py</code></td><td>Only / never files of that language (by extension: <code>rs</code>/<code>rust</code>, <code>py</code>/<code>python</code>, <code>ts</code>, <code>js</code>, <code>go</code>, <code>java</code>, …).</td></tr>
@@ -1707,7 +1732,19 @@ with grep and ripgrep</a>.</p>
 </tbody>
 </table>
 </div>
-<p>Operators can be combined: <code>Widget file:src/ -lang:ts -tests case:yes</code>.</p>
+<p>Operators can be combined: <code>Widget file:src/ -lang:ts case:yes</code>. They are
+whole words with an argument: <code>file:</code> alone, or <code>url=file:x</code>, is text.
+Operators between words join the words with one space, so <code>fn file:src/ main</code> searches for <code>fn main</code> under <code>src/</code>. The ends of the query are
+trimmed; spaces inside it are kept. To search for operator-looking text
+such as <code>file:x</code>, use a regex.</p>
+<h2 id="case"><a class="header" href="#case">Case</a></h2>
+<p>Plain text ignores case unless the query says <code>case:yes</code>. A regex matches
+case unless it starts with <code>(?i)</code> or the request says to ignore it. The
+web UI’s <strong>MATCH CASE</strong> toggle (<code>case</code> on the API, <code>fcs -s</code> / <code>-i</code>, MCP
+<code>case_sensitive</code>) sets it for every mode: off, upper and lower case are
+the same in plain text and regex alike; on, they are matched exactly. The
+results header always says which applied (“ignoring case” or “matching
+case”).</p>
 <h2 id="modes"><a class="header" href="#modes">Modes</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1730,9 +1767,9 @@ with grep and ripgrep</a>.</p>
 with no required literal of three or more characters scans every file.</li>
 <li><code>^</code> and <code>$</code> anchor at line boundaries (CRLF included); <code>\s</code> does not
 cross a line break unless the pattern is a multi-line one.</li>
-<li>A regex is case-sensitive, unlike plain search: <code>true</code> does not find
-<code>True</code>. <code>(?i)</code> makes the pattern case-insensitive; <code>case=false</code> on the
-API adds it for you.</li>
+<li>On the API and <code>fcs -e</code>, a regex is case-sensitive unless it starts
+with <code>(?i)</code> or the request says <code>case=false</code> (<code>fcs -e -i</code>). In the web
+UI it follows MATCH CASE, like plain search.</li>
 <li><code>{ } ( ) [ ] . * + ? | ^ $ \</code> are syntax; escape one with <code>\</code> to match
 it (<code>\{</code>, <code>\.</code>). For code exactly as written, search without regex.</li>
 <li>Spaces are exact: <code>\{ "a"</code> misses <code>{"a"</code>. Use <code>\s*</code> for any amount of
@@ -1773,31 +1810,27 @@ finds and the other does not.</p>
 <h2 id="where-fcs-differs-from-all-of-them"><a class="header" href="#where-fcs-differs-from-all-of-them">Where fcs differs from all of them</a></h2>
 <p>These follow from fcs being a code search server rather than a line filter.</p>
 <ul>
-<li><strong>Case-insensitive by default.</strong> Text searches ignore case unless the query
-says <code>case:yes</code>. grep, git grep and ripgrep are case-sensitive by default.
-A regex is case-sensitive unless it uses <code>(?i)</code> or the request sets the
-case option. The backtest passes <code>-i</code> to ripgrep whenever fcs ignores
-case.</li>
-<li><strong>Several words are not a phrase.</strong> <code>fn main</code> finds files that contain
-both words, anywhere in the file. Lines holding the phrase rank first,
-then lines holding both words, then at most three lines per file holding
-only one of them. Quote the words (<code>"fn main"</code>) to search for the exact
-phrase, as grep would.</li>
-<li><strong>Operators.</strong> <code>-term</code>, <code>file:</code>, <code>lang:</code>, <code>case:</code> and <code>word:</code> are query
-syntax, not text. To search for one literally, quote it: <code>"-test"</code>,
-<code>"file:"</code>. A <code>-</code> only negates before a letter, <code>_</code> or quote, so <code>-&gt;</code>,
-<code>-1.5</code> and <code>--flag</code> are searched as written. See <a href="#query-syntax-1">Query
-syntax</a>.</li>
+<li><strong>Case-insensitive by default.</strong> Plain text ignores case unless the query
+says <code>case:yes</code>; grep, git grep and ripgrep match case by default (<code>rg -i</code> is the fcs default, <code>rg -s</code> is <code>case:yes</code>). On the API and in <code>fcs</code>
+a regex matches case unless it uses <code>(?i)</code> or the request says
+<code>case=false</code>; in the web UI the MATCH CASE toggle decides for both. The
+backtest passes <code>-i</code> to ripgrep whenever fcs ignores case.</li>
+<li><strong>Operators.</strong> Plain text is a literal, like <code>rg -F</code>: several words are
+one phrase, and quotes and a leading <code>-</code> are part of the text. The only
+exceptions are whole words with an argument: <code>file:</code>, <code>-file:</code>,
+<code>lang:</code>, <code>-lang:</code>, <code>case:</code> and <code>word:</code>. To search for one of those
+literally, use a regex. The query is trimmed at both ends (<code>rg ' x'</code>
+keeps its leading space). See <a href="#query-syntax-1">Query syntax</a>.</li>
 <li><strong>File names match too.</strong> A text search also lists files whose <em>name</em>
 matches, as a hit without a line number. grep has no equivalent, so the
 backtest leaves these out of the comparison.</li>
 <li><strong>Paths match, separately.</strong> When asked (<code>files=N</code> on <code>/api/search</code>, the
 web UI’s <strong>FILES</strong> box, <code>fcs</code> on a terminal, MCP <code>search_code</code>), the files
 whose <em>path</em> matches are returned apart from the content results, which
-do not change. Every term must appear in the path as results show it,
-case-insensitively unless <code>case:yes</code>; <code>\</code> counts as <code>/</code>; <code>word:yes</code>,
-<code>-term</code>, <code>file:</code>, <code>lang:</code> and include/exclude globs apply as they do to
-content. A term holding a <code>/</code> also matches the file’s absolute path, so a
+do not change. Here the text is split into words, and every word must
+appear in the path as results show it, case-insensitively unless
+<code>case:yes</code>; <code>\</code> counts as <code>/</code>; <code>word:yes</code>, <code>file:</code>, <code>lang:</code> and
+include/exclude globs apply as they do to content. A term holding a <code>/</code> also matches the file’s absolute path, so a
 pasted <code>/home/me/repo/src/main.rs</code> works, but only when the match reaches
 past the indexed folder (<code>/home/</code> alone lists nothing). A regex is
 matched against the shown path. This is closest to <code>rg --files | rg PATTERN</code>; it is not part of the backtest, which compares content only.</li>
@@ -1808,13 +1841,17 @@ lines the same way (<code>rg -c</code>).</li>
 order. To keep a broad search fast, a request reads a bounded number of
 matches: by default 100 from one file on the first page, and a budget of
 about eight times the requested page. When either limit is reached, the
-total is shown as “N+” rather than as a count. LOAD MORE in the web UI
+total is shown as “N+” rather than as a count. When a query could be in
+more than 5,000 files, Auto ranking opens only the 2,000 most likely
+(<code>fast_rank_files</code>); the header then says “Searched 2,000 of N files”
+and SEARCH ALL FILES opens the rest (up to <code>max_fast_rank_files</code>). LOAD MORE in the web UI
 fetches the whole list again at the bigger size, up to 1000 results, so
 every match ends up shown exactly once. Results already on screen can
 move when it does. Past 1000 results it fetches the next page instead.
 An API client asking for <code>offset</code> pages of a search that hit its budget
 can see a result repeated or skipped between pages. Asking again from
-offset 0 with a larger <code>max</code> avoids that.</li>
+offset 0 with a larger <code>max</code> avoids that. Paging stops at offset 100,000
+by default (<code>max_page_offset</code>).</li>
 <li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
 Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
 (<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16
@@ -1837,7 +1874,7 @@ The narrative guide is <a href="#fcs--the-command-line-client">Command-line clie
 <h2 id="fcs---help"><a class="header" href="#fcs---help"><code>fcs --help</code></a></h2>
 <pre><code class="language-text">Search the code index kept by a running fast_code_search server.
 
-`fcs QUERY` is `fcs search QUERY`. The query syntax is the web UI's: several words must all appear in a file (lines with the phrase rank first), "quoted phrase", -term, file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes.
+`fcs QUERY` is `fcs search QUERY`. The query is the web UI's: literal text, like rg -F (several words are one phrase; quotes and a leading - are text), plus file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes. Put a query starting with - after --.
 
 Exit status: 0 = matches found, 1 = no matches, 2 = error.
 
@@ -1900,7 +1937,8 @@ Options:
           Print version
 
 Examples:
-  fcs 'fn main'                 lines holding both words, phrase first
+  fcs 'fn main'                 lines holding the phrase
+  fcs -- -Wall                  a query starting with -
   fcs -e 'fn\s+\w+\(' -g '*.rs'  regex, Rust files only
   fcs refs SearchEngine         call sites and type mentions
   fcs symbols parse_query       definitions only
@@ -1916,7 +1954,7 @@ Usage: fcs search [OPTIONS] &lt;QUERY&gt;...
 
 Arguments:
   &lt;QUERY&gt;...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -1926,7 +1964,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -1988,6 +2026,9 @@ Options:
 
       --json
           Shorthand for --format json
+
+      --max-files &lt;N&gt;
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -2014,7 +2055,7 @@ Usage: fcs refs [OPTIONS] &lt;QUERY&gt;...
 
 Arguments:
   &lt;QUERY&gt;...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -2024,7 +2065,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -2086,6 +2127,9 @@ Options:
 
       --json
           Shorthand for --format json
+
+      --max-files &lt;N&gt;
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -2112,7 +2156,7 @@ Usage: fcs symbols [OPTIONS] &lt;QUERY&gt;...
 
 Arguments:
   &lt;QUERY&gt;...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -2122,7 +2166,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -2184,6 +2228,9 @@ Options:
 
       --json
           Shorthand for --format json
+
+      --max-files &lt;N&gt;
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -2358,6 +2405,20 @@ max_concurrent_searches = 64
 
 # Per-request timeout (seconds) for both servers
 request_timeout_secs = 30
+
+# When a query could be in many files (over 5000), Auto ranking orders them
+# by file metadata and opens only the best ones. This is how many it opens
+# unless the request asks for more (0 = every candidate file).
+fast_rank_files = 2000
+
+# Most files a request may ask for (the web UI's SEARCH MORE FILES button,
+# `max_files` on /api/search). 0 = no limit; set one on a shared server.
+max_fast_rank_files = 0
+
+# Deepest result offset a client may page to (LOAD MORE past 1000 results,
+# `--offset`, `offset` on /api/search). Deep pages cost a scan of that many
+# matches. 0 = no limit.
+max_page_offset = 100000
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
@@ -2569,9 +2630,8 @@ set</strong> from the trigram index, then reads only those files.</p>
 <code>parse_query</code> yields <code>par</code>, <code>ars</code>, <code>rse</code>, <code>se_</code>, <code>e_q</code>, <code>_qu</code>, <code>que</code>,
 <code>uer</code>, <code>ery</code>. Each trigram has a posting list (a Roaring bitmap of file
 ids); intersecting them gives every file that could contain the query,
-independent of corpus size. For several terms the intersection covers
-every term, and the phrase’s own trigrams select the subset that may
-contain the phrase.</p>
+independent of corpus size. Several words are one phrase, so their
+trigrams (spaces included) are intersected the same way.</p>
 <p>Queries shorter than three characters have no trigrams and fall back to
 all files, bounded by the match budget and ranking mode.</p>
 <h2 id="regex"><a class="header" href="#regex">Regex</a></h2>
@@ -2598,8 +2658,9 @@ against the current content.</p>
 <p>Every search runs under a <code>QueryRun</code>: a match budget derived from the page
 size and offset (capped), and a deadline just under the request timeout.
 When either stops the scan the response says so
-(<code>truncated_by_budget</code>), and paging beyond 10,000 hits is refused rather
-than allowed to grow the budget without bound.</p>
+(<code>truncated_by_budget</code>). A deep page gets a budget that reaches it, so
+paging past <code>max_page_offset</code> (100,000 by default) is refused rather than
+allowed to grow the budget without bound.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ranking-1"><a class="header" href="#ranking-1">Ranking</a></h1>
 <p>This is the part that makes results feel right. A hit’s score combines a
@@ -2624,10 +2685,6 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
     line --&gt; S((score))
     file --&gt; S
     codebase --&gt; S
-    S --&gt; T{tier}
-    T --&gt;|whole phrase| T1[first]
-    T --&gt;|every term| T2[then]
-    T --&gt;|some terms| T3[last]
 </code></pre>
 <h2 id="line-level-signals"><a class="header" href="#line-level-signals">Line-level signals</a></h2>
 <pre><code class="language-text">score = base
@@ -2641,25 +2698,15 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.</p>
-<h2 id="multi-term-tiers"><a class="header" href="#multi-term-tiers">Multi-term tiers</a></h2>
-<p>For <code>fn main</code>, every line holding at least one term is a hit, but they are
-sorted into tiers before any score is compared:</p>
-<ol>
-<li>lines holding the phrase <code>fn main</code> as written;</li>
-<li>lines holding every term;</li>
-<li>lines holding fewer of them.</li>
-</ol>
-<p>Each tier adds a step larger than any single-term score, so tiers never
-interleave. Within a file the best-tier lines are emitted first, so the
-per-file cap and the match budget cannot cut them off; and files whose
-trigrams contain the phrase are always opened, even under fast ranking.</p>
 <h2 id="diversity"><a class="header" href="#diversity">Diversity</a></h2>
-<p>Within a tier, hits are ordered by their rank inside their file: every
+<p>Hits are ordered by their rank inside their file: every
 file’s best hit, then every file’s second hit, and so on. One file holding
 a hundred matches cannot fill the page. Ties break on score, then file,
 then line, so paging is deterministic.</p>
 <h2 id="fast-ranking"><a class="header" href="#fast-ranking">Fast ranking</a></h2>
-<p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read,
+<p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read
+(<code>fast_rank_files</code>; a request may ask for more with <code>max_files</code>, up to
+<code>max_fast_rank_files</code>),
 chosen by a per-file score that needs no I/O: base, <code>src/</code>/<code>lib/</code>, code
 extension, <code>log2(symbol count)</code> (capped), <code>log2(dependents)</code> (capped),
 ×0.7 for test and example paths, ×5 when the query matches the file’s
@@ -2677,9 +2724,9 @@ ranks them with the same file-level signals.</p>
 <tr><th>Query</th><th>First result</th><th>Why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>fn main</code></td><td><code>fn main() {</code></td><td>phrase tier; a definition; start of line</td></tr>
+<tr><td><code>fn main</code></td><td><code>fn main() {</code></td><td>a definition; start of line</td></tr>
 <tr><td><code>SearchEngine</code></td><td><code>pub struct SearchEngine {</code></td><td>definition (3×) in <code>src/</code> (1.5×) with many importers</td></tr>
-<tr><td><code>impl SearchEngine</code></td><td><code>impl SearchEngine {</code></td><td>phrase tier over lines that only say <code>impl</code></td></tr>
+<tr><td><code>impl SearchEngine</code></td><td><code>impl SearchEngine {</code></td><td>the phrase at the start of the line, in <code>src/</code></td></tr>
 <tr><td><code>fcs refs prune_vanished_in</code></td><td>the call in <code>incremental.rs</code></td><td>the reference table, not text matching</td></tr>
 <tr><td><code>Widget</code> in a tree with a <code>widget_test.rs</code></td><td>the definition, then the importers, then the test</td><td>test paths are demoted</td></tr>
 </tbody>
@@ -2792,7 +2839,8 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 </thead>
 <tbody>
 <tr><td>Page size</td><td>1–1,000</td><td><code>max</code></td></tr>
-<tr><td>Offset</td><td>≤ 10,000</td><td><code>offset</code>; deeper pages are refused</td></tr>
+<tr><td>Offset</td><td>≤ <code>max_page_offset</code> (100,000)</td><td><code>offset</code>; deeper pages are refused</td></tr>
+<tr><td>Files opened by fast ranking</td><td><code>fast_rank_files</code> (2,000), up to <code>max_fast_rank_files</code> on request</td><td><code>max_files</code></td></tr>
 <tr><td>Match budget</td><td>derived from page size and offset, capped</td><td>stops the scan; reported as <code>truncated_by_budget</code></td></tr>
 <tr><td>Deadline</td><td><code>timeout_ms</code> or just under <code>request_timeout_secs</code></td><td>the scan stops on its own even if the HTTP response was abandoned</td></tr>
 <tr><td>Context lines</td><td>≤ 10 per hit (<code>/api/context</code>: ≤ 200)</td><td><code>context</code></td></tr>
@@ -3228,12 +3276,10 @@ where fcs, ripgrep, grep and git grep behave differently, and why.</p>
 <tr><th>fcs query</th><th>ripgrep run</th><th>Compared how</th></tr>
 </thead>
 <tbody>
-<tr><td>One term (<code>Runtime</code>)</td><td><code>rg -F -i -e Runtime</code></td><td>the same lines exactly</td></tr>
+<tr><td>Text (<code>Runtime</code>, <code>fn main</code>, <code>"x":</code>, <code>-Wall</code>)</td><td><code>rg -F -i -e TEXT</code>, the text as typed minus operators</td><td>the same lines exactly</td></tr>
 <tr><td><code>case:yes</code></td><td>drops <code>-i</code></td><td>the same lines exactly</td></tr>
 <tr><td><code>word:yes</code></td><td>adds <code>-w</code></td><td>the same lines exactly</td></tr>
-<tr><td>Several terms (<code>fn main</code>)</td><td>one <code>rg -F</code> run per term</td><td>the files must be those holding every term; every line holding all terms must be reported; every reported line must hold at least one term (fcs keeps only a few single-term lines per file by design)</td></tr>
-<tr><td><code>-term</code></td><td>an rg run for <code>term</code>, then those files are removed</td><td>as above</td></tr>
-<tr><td><code>file:</code> / <code>lang:</code></td><td>the query’s own <code>globs</code> (<code>-g</code>)</td><td>as above</td></tr>
+<tr><td><code>file:</code> / <code>lang:</code></td><td>the query’s own <code>globs</code> (<code>-g</code>)</td><td>the same lines exactly</td></tr>
 <tr><td>Regex</td><td><code>rg -e PATTERN</code>, plus <code>-U</code> when the pattern spans lines</td><td>the line where each match starts</td></tr>
 </tbody>
 </table>
@@ -3261,10 +3307,10 @@ files, optional groups and <code>{0}</code> repeats, character classes, flags
 changed mid-pattern, word boundaries next to punctuation, and matches that
 start on a newline.</li>
 </ul>
-<p>The query set, <code>benches/rg_backtest.toml</code>, has 124 queries. Each one says
+<p>The query set, <code>benches/rg_backtest.toml</code>, has 126 queries. Each one says
 what it exercises (<code>why</code>). They cover literals, short terms, quotes, case
-and whole-word options, Unicode, path and language filters, several terms,
-negation and regex.</p>
+and whole-word options, Unicode, path and language filters, phrases,
+leading dashes and regex.</p>
 <h2 id="beyond-matching"><a class="header" href="#beyond-matching">Beyond matching</a></h2>
 <p>Two more checks run on every query:</p>
 <ul>
@@ -3337,6 +3383,36 @@ files in a <strong>FILES</strong> box above the results in the web UI, first in 
 <code>search_code</code>, and above the hits in <code>fcs</code> on a terminal. File names rank
 above directories. Content results are unchanged. API: <code>files=N</code> on
 <code>/api/search</code> adds <code>files</code> and <code>total_files</code> to the response.</li>
+<li>Web UI: <strong>MATCH CASE</strong> toggle. It means the same in every mode: off,
+upper and lower case are the same in plain text and regex alike; on,
+they are matched exactly. The results header says which applied
+(“ignoring case” or “matching case”). MCP <code>search_code</code> takes
+<code>case_sensitive</code>.</li>
+<li>Web UI: <strong>SEARCH ALL FILES</strong>. When a query could be in more than 5,000
+files, fast ranking opens only the 2,000 most likely (“Searched 2,000 of
+N files”); the button opens the rest. API: <code>max_files</code> on <code>/api/search</code>,
+<code>fcs --max-files</code>.</li>
+<li>Configuration: <code>fast_rank_files</code> (default 2000) sets how many files fast
+ranking opens, <code>max_fast_rank_files</code> (default 0, no limit) caps what a
+request may ask for, and <code>max_page_offset</code> (default 100000, 0 = no limit)
+sets how deep a client may page. Responses report the cap as
+<code>max_files_allowed</code> when one is set.</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li><strong>Plain-text search is a literal, like <code>rg -F</code>.</strong> Several words are one
+phrase: <code>fn main</code> finds lines holding <code>fn main</code>, not every line holding
+<code>fn</code> or <code>main</code> in files that contain both. Quotes and a leading <code>-</code> are
+part of the text: <code>"fn main"</code> finds the words with their quotes and
+<code>-Wall</code> finds <code>-Wall</code>. The <code>-term</code> exclusion and quoted phrases are gone;
+<code>file:</code>, <code>-file:</code>, <code>lang:</code>, <code>-lang:</code>, <code>case:</code> and <code>word:</code> still work. On
+the command line, put a query starting with <code>-</code> after <code>--</code>.</li>
+<li>Paging is no longer refused past offset 10,000: the limit is
+<code>max_page_offset</code> (100,000 by default), and a deep page gets a match
+budget that reaches it.</li>
+<li>Web UI: with MATCH CASE off a regex ignores case, like plain search. The
+API and <code>fcs -e</code> keep matching a regex’s case by default, as ripgrep does.</li>
+<li>The search row stacks below 1024 px wide so the input keeps its room.</li>
 </ul>
 <h2 id="0151---2026-10-13"><a class="header" href="#0151---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.14.0...v0.15.1">0.15.1</a> - 2026-10-13</a></h2>
 <p>Same changes as 0.15.0, with the version number set correctly. The v0.15.0
@@ -3448,7 +3524,7 @@ literally or escaped. The regex docs gained examples and pitfalls.</li>
 <li>rustls 0.23.36 -&gt; 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
 messages accepted across encryption-level boundaries).</li>
 </ul>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
 <li>
 <p>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
@@ -3566,7 +3642,7 @@ recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
 slow. CI runs it and the documentation site shows the result alongside
 the latency and ranking-quality figures, with two new book pages.</li>
 </ul>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li>Ranking: single-term lines of a multi-term query are capped per file and
 the files holding the phrase are scanned first, so the match budget can
@@ -3608,7 +3684,7 @@ reference, moved out of the README.</li>
 <li>Release pages carry an install table, checksum instructions and a
 first-run line alongside the changelog section.</li>
 </ul>
-<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
 <ul>
 <li>README rewritten as a landing page that leads with how results are
 ranked; benchmark figures are from the latest CI run and link to it.</li>
@@ -3624,7 +3700,7 @@ moved under <code>docs/internal/</code>.</li>
 built-in runner over <code>static/tests</code>) and fails if the committed
 <code>tailwind.css</code> does not match the markup.</li>
 </ul>
-<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
+<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
 <ul>
 <li>Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
 icon font (which stays only for the semantic pages); result groups are
@@ -3661,7 +3737,7 @@ HTTP client).</li>
 </ul>
 <p>Fixes from the 2026-09-06 engine and UI review
 (<code>docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md</code>).</p>
-<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
+<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
 <ul>
 <li>Line-mode regex patterns are matched in one pass per file (compiled with
 <code>(?mR)</code>, one hit per line, per-line semantics for <code>^</code>, <code>$</code>, <code>\s</code> and CRLF
@@ -3855,7 +3931,7 @@ and the standard <code>grpc.health.v1</code> service.</li>
 <li>gRPC <code>SearchRequest.offset</code> / <code>rank</code> / <code>deadline_ms</code>; results carry
 <code>dependency_count</code>.</li>
 </ul>
-<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
+<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
 <ul>
 <li>Build: the semantic engine is behind the <code>semantic</code> Cargo feature (off by
 default; <code>ml-models</code> implies it), release binaries use thin LTO and are
@@ -3961,7 +4037,7 @@ refresh, dependency-edge removal) instead of leaving stale entries until restart
 <li>Keyboard navigation in results (<code>j</code>/<code>k</code>/arrows to move, Enter to open, <code>/</code> to focus).</li>
 <li>Per-result copy-path button.</li>
 </ul>
-<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
+<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
 <ul>
 <li>API errors are now consistent JSON (<code>{ "error": … }</code>); 503s include <code>Retry-After</code>.</li>
 <li>Static assets use compile-time content hashes for ETags and honor <code>If-None-Match</code>
@@ -4000,7 +4076,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Dependency popover and tooltip interactions in the web UI to improve code navigation context.</li>
 <li>Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.</li>
 </ul>
-<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
+<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
 <ul>
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
@@ -4015,7 +4091,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
 <h2 id="074---2026-03-20"><a class="header" href="#074---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.3...v0.7.4">0.7.4</a> - 2026-03-20</a></h2>
-<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
+<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
 <ul>
 <li>New UI theme for the keyword search interface with improved layout and styling.</li>
 </ul>
@@ -4024,7 +4100,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li>New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.</li>
 </ul>
-<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
+<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
 <ul>
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
@@ -4039,7 +4115,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).</li>
 <li>New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.</li>
 </ul>
-<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
+<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
 <ul>
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
@@ -4060,7 +4136,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>URL state encoding for semantic search UI; refactored shared helpers into <code>common.js</code> (#93).</li>
 <li>VS Code configuration and tasks for Rust development.</li>
 </ul>
-<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
+<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
 <ul>
 <li>Refactor code structure for improved readability and maintainability.</li>
 </ul>
@@ -4070,7 +4146,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li><strong>GitHub Pages site</strong> (<code>docs/site/</code>): A static project site deployed to <code>gh-pages</code> on every push to <code>main</code> via a new <code>pages.yml</code> workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from <code>dev/bench/</code> pushed by <code>github-action-benchmark</code>), Codecov coverage badge, dynamically-rendered changelog (from <code>changelog.json</code> generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses <code>clean-exclude: dev/</code> to preserve benchmark data, and both <code>pages.yml</code> and <code>benchmark.yml</code> share a <code>gh-pages-deploy</code> concurrency group to prevent simultaneous pushes.</li>
 </ul>
 <h2 id="069---2026-02-28"><a class="header" href="#069---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.8...v0.6.9">0.6.9</a> - 2026-02-28</a></h2>
-<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
+<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
 <ul>
 <li>Version bump and release.</li>
 </ul>
@@ -4201,7 +4277,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
 <h2 id="055---2026-02-26"><a class="header" href="#055---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5">0.5.5</a> - 2026-02-26</a></h2>
-<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
+<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
 <ul>
 <li>Maintenance release: version/changelog update only; no functional code changes.</li>
 </ul>
@@ -4265,7 +4341,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
+<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
 <ul>
 <li>Semantic search vector index now uses HNSW instead of linear search</li>
 <li>Updated documentation with HNSW configuration and tuning guide</li>
@@ -4298,7 +4374,7 @@ are serialised.</li>
 <p><strong>Semantic model download verification</strong>: Optional SHA256 verification via <code>FCS_MODEL_SHA256</code> or <code>FCS_MODEL_SHA256_&lt;MODEL&gt;</code></p>
 </li>
 </ul>
-<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
+<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
 <ul>
 <li>Tracing subscriber upgraded from simple <code>FmtSubscriber</code> to layered <code>Registry</code> (fmt + OTel)</li>
 <li><code>tracing-subscriber</code> now uses <code>registry</code> feature alongside <code>env-filter</code></li>
@@ -4339,7 +4415,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
+<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
 <ul>
 <li>Symbol extractor now handles C/C++ function declarators correctly (name is in <code>declarator</code> field, not <code>name</code>)</li>
 </ul>
@@ -4374,7 +4450,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
+<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
 <ul>
 <li>Search methods now use file metadata ranking instead of early termination for large candidate sets</li>
 <li><code>search_regex()</code> and <code>search_symbols()</code> also use fast ranking for consistency</li>
@@ -4432,7 +4508,7 @@ are serialised.</li>
 <p><strong>Symbols-only search mode</strong>: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via <code>symbols=true</code> query parameter in REST API or <code>symbols_only=true</code> in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.</p>
 </li>
 </ul>
-<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
+<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
@@ -4455,7 +4531,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="022---2026-02-01"><a class="header" href="#022---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.1...v0.2.2">0.2.2</a> - 2026-02-01</a></h2>
-<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
+<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
 <ul>
 <li><strong>Improved indexing log readability</strong>: The background indexing completion message now formats large numbers with underscore separators (e.g., <code>89_210</code>), rounds <code>files_per_sec</code> to whole numbers, and removes redundant raw byte values.</li>
 </ul>
@@ -4900,7 +4976,7 @@ cargo install cargo-deny
 │   │   ├── watcher.rs          # notify-based file watcher
 │   │   ├── file_discovery.rs   # walk (walkdir / ignore crate), eligibility rules
 │   │   ├── path_filter.rs      # include/exclude globs
-│   │   ├── query_syntax.rs     # file:/lang:/-term/case:/word: parsing
+│   │   ├── query_syntax.rs     # literal text + file:/lang:/case:/word: parsing
 │   │   ├── ranking.rs          # RankingWeights / FileScoreWeights
 │   │   └── regex_search.rs     # regex -&gt; trigram constraints
 │   ├── symbols/
@@ -5004,7 +5080,7 @@ deliberate format change (and bump the version).</li>
 </ol>
 <h3 id="search-pipeline"><a class="header" href="#search-pipeline">Search Pipeline</a></h3>
 <ol>
-<li><strong>Parse</strong> (<code>query_syntax.rs</code>): terms, <code>-term</code>, <code>file:</code>/<code>lang:</code> globs, <code>case:</code>/<code>word:</code>.</li>
+<li><strong>Parse</strong> (<code>query_syntax.rs</code>): the literal text, <code>file:</code>/<code>lang:</code> globs, <code>case:</code>/<code>word:</code>.</li>
 <li><strong>Candidates</strong>: intersection of each term’s trigram bitmaps (index is lowercase),
 then the path filter (precomputed display paths, no allocation).</li>
 <li><strong><code>run_candidates</code></strong> (<code>engine/query.rs</code>): fast vs full mode, fast-mode ordering by

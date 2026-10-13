@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -187,7 +187,8 @@ terminal, with grep-style output and exit codes, so it slots into editors,
 shell pipelines and scripts. When no server is running it can search the
 on-disk index directly.</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"><span class="img-wrapper"><img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/cli.gif" alt="fcs in a terminal: a phrase search, symbol definitions, references, a regex and a files-only listing"></span></label></p>
-<pre><code class="language-bash">fcs 'fn main'                    # lines holding both words; the phrase ranks first
+<pre><code class="language-bash">fcs 'fn main'                    # lines holding the phrase, like rg -F -i
+fcs -- -Wall                     # a query starting with - goes after --
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
@@ -232,16 +233,17 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><th>Option</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td><code>QUERY</code></td><td>Words must all appear in a file; lines with the phrase rank first. <code>"quoted phrase"</code>, <code>-term</code>, <code>file:PATTERN</code>, <code>-file:PATTERN</code>, <code>lang:rust</code>, <code>case:yes</code>, <code>word:yes</code> as in the web UI.</td></tr>
+<tr><td><code>QUERY</code></td><td>Literal text, like <code>rg -F</code>: several words are one phrase, quotes and a leading <code>-</code> are part of it (put such a query after <code>--</code>). <code>file:PATTERN</code>, <code>-file:PATTERN</code>, <code>lang:rust</code>, <code>case:yes</code>, <code>word:yes</code> as in the web UI.</td></tr>
 <tr><td><code>-e</code>, <code>--regex</code></td><td>Treat the query as a regular expression (matched one line at a time; mention <code>\n</code> for multi-line patterns).</td></tr>
-<tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text is case-insensitive by default).</td></tr>
+<tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text ignores case by default, a regex matches it; <code>-e -i</code> ignores it).</td></tr>
 <tr><td><code>-w</code>, <code>--word</code></td><td>Whole words only.</td></tr>
 <tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to 1000).</td></tr>
-<tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two.</td></tr>
+<tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two. Up to the server’s <code>max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>-C</code>, <code>--context N</code></td><td>Lines of context around each hit (up to 10).</td></tr>
 <tr><td><code>-g</code>, <code>--glob GLOB</code></td><td>Only files matching the glob (repeatable). <code>src/**/*.rs</code>, <code>*.py</code>, <code>tests</code> (a bare name matches anywhere in the path).</td></tr>
 <tr><td><code>--exclude GLOB</code></td><td>Skip files matching the glob (repeatable).</td></tr>
 <tr><td><code>--rank auto|fast|full</code></td><td>Ranking mode; <code>auto</code> reads every candidate up to 5,000 files and samples by file metadata beyond that.</td></tr>
+<tr><td><code>--max-files N</code></td><td>Files a fast-ranked search opens (default: the server’s <code>fast_rank_files</code>, 2,000; up to its <code>max_fast_rank_files</code>).</td></tr>
 <tr><td><code>--timeout-ms MS</code></td><td>Stop scanning after MS and return the best hits so far.</td></tr>
 <tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print file paths only, once each.</td></tr>
 <tr><td><code>--format grouped|vimgrep|json</code>, <code>--json</code></td><td>Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server’s response object.</td></tr>

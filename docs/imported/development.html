@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -266,7 +266,7 @@ cargo install cargo-deny
 │   │   ├── watcher.rs          # notify-based file watcher
 │   │   ├── file_discovery.rs   # walk (walkdir / ignore crate), eligibility rules
 │   │   ├── path_filter.rs      # include/exclude globs
-│   │   ├── query_syntax.rs     # file:/lang:/-term/case:/word: parsing
+│   │   ├── query_syntax.rs     # literal text + file:/lang:/case:/word: parsing
 │   │   ├── ranking.rs          # RankingWeights / FileScoreWeights
 │   │   └── regex_search.rs     # regex -&gt; trigram constraints
 │   ├── symbols/
@@ -370,7 +370,7 @@ deliberate format change (and bump the version).</li>
 </ol>
 <h3 id="search-pipeline"><a class="header" href="#search-pipeline">Search Pipeline</a></h3>
 <ol>
-<li><strong>Parse</strong> (<code>query_syntax.rs</code>): terms, <code>-term</code>, <code>file:</code>/<code>lang:</code> globs, <code>case:</code>/<code>word:</code>.</li>
+<li><strong>Parse</strong> (<code>query_syntax.rs</code>): the literal text, <code>file:</code>/<code>lang:</code> globs, <code>case:</code>/<code>word:</code>.</li>
 <li><strong>Candidates</strong>: intersection of each term’s trigram bitmaps (index is lowercase),
 then the path filter (precomputed display paths, no allocation).</li>
 <li><strong><code>run_candidates</code></strong> (<code>engine/query.rs</code>): fast vs full mode, fast-mode ordering by

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -223,14 +223,15 @@ when the request timeout is hit.</p>
 <tbody>
 <tr><td><code>q</code></td><td>required</td><td>Query. Plain text understands the <a href="#query-syntax">query syntax</a>; with <code>regex=true</code> it is a regular expression.</td></tr>
 <tr><td><code>max</code></td><td>50</td><td>Page size, 1–1000 (<code>0</code> = default).</td></tr>
-<tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most 10,000.</td></tr>
+<tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most <code>max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>regex</code></td><td>false</td><td>Treat <code>q</code> as a regex (Rust <code>regex</code> syntax, matched one line at a time unless the pattern mentions <code>\n</code> or sets <code>(?s)</code>).</td></tr>
 <tr><td><code>symbols</code></td><td>false</td><td>Definitions only (functions, types, classes, …) plus filename matches.</td></tr>
 <tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code> (400).</td></tr>
-<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. A regex is case-sensitive by default; <code>case=false</code> adds <code>(?i)</code>.</td></tr>
+<tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. Plain text ignores case by default; a regex is case-sensitive by default and <code>case=false</code> adds <code>(?i)</code>.</td></tr>
 <tr><td><code>word</code></td><td>—</td><td><code>true</code> for whole-word matching.</td></tr>
 <tr><td><code>include</code> / <code>exclude</code></td><td>—</td><td>Semicolon-separated path globs (<code>src/**/*.rs;lib/**</code>).</td></tr>
 <tr><td><code>rank</code></td><td>auto</td><td><code>auto</code>, <code>fast</code> (metadata-ranked sample, used above 5,000 candidates) or <code>full</code>.</td></tr>
+<tr><td><code>max_files</code></td><td><code>fast_rank_files</code> (2000)</td><td>Files a fast-ranked search opens. Capped by <code>max_fast_rank_files</code>, reported in <code>max_files_allowed</code> when the server sets one. When <code>candidates_searched</code> &lt; <code>total_candidates</code>, ask again with <code>max_files=total_candidates</code> to search the rest.</td></tr>
 <tr><td><code>context</code></td><td>0</td><td>Context lines before and after each hit, 0–10.</td></tr>
 <tr><td><code>timeout_ms</code></td><td>0</td><td>Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server’s request timeout).</td></tr>
 <tr><td><code>files</code></td><td>0</td><td>Also return up to this many files whose <em>path</em> matches <code>q</code>, 0–100, in <code>files</code> (first page of a text or regex search only).</td></tr>
@@ -277,10 +278,11 @@ separate from <code>results</code>, which are unchanged:</p>
 }
 </code></pre>
 <p><code>match_ranges</code> are <code>[start, end)</code> byte offsets into <code>file_path</code>, one per
-term. Every term must appear in the shown path (case-insensitive unless
-<code>case:yes</code>, <code>\</code> read as <code>/</code>); a term containing <code>/</code> may also match the
-absolute path, so a pasted absolute path finds its file. <code>-term</code>, <code>file:</code>,
-<code>lang:</code>, <code>include</code> and <code>exclude</code> filter as for content. See <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/matching.md">how matching
+word of the query (path matching splits it on spaces). Every word must
+appear in the shown path (case-insensitive unless <code>case:yes</code>, <code>\</code> read as
+<code>/</code>); a word containing <code>/</code> may also match the absolute path, so a pasted
+absolute path finds its file. <code>file:</code>, <code>lang:</code>, <code>include</code> and <code>exclude</code>
+filter as for content. See <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/matching.md">how matching
 compares with grep and ripgrep</a>.</p>
 <h3 id="index-freshness"><a class="header" href="#index-freshness">Index freshness</a></h3>
 <p>With <code>watch = false</code> (the default), the server indexes the tree when it
@@ -325,16 +327,16 @@ off” beside the search time, <code>fcs</code> prints the same warning on stder
 after an agent writes a file) is tracked in
 <a href="https://github.com/jburrow/fast_code_search/issues/140">#140</a>.</p>
 <h3 id="query-syntax"><a class="header" href="#query-syntax">Query syntax</a></h3>
-<p>Plain-text queries (not <code>regex=true</code>):</p>
+<p>Plain-text queries (not <code>regex=true</code>) are a literal, like <code>rg -F</code>: the
+query minus its operators is searched for as written.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Syntax</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td><code>fn main</code></td><td>Several terms: a file must contain every term. Lines holding the phrase rank first, then lines holding every term, then the rest.</td></tr>
-<tr><td><code>"exact phrase"</code></td><td>One term containing spaces. Quotes that do not wrap a whole word are part of the term: <code>{ "success": True</code> searches for <code>"success":</code> with its quotes.</td></tr>
-<tr><td><code>-term</code></td><td>Drop files that contain <code>term</code> (only before a letter, <code>_</code> or a quote, so <code>-&gt;</code> and <code>-1</code> are ordinary terms).</td></tr>
+<tr><td><code>fn main</code></td><td>The phrase <code>fn main</code>, exactly one space. Several words are one phrase.</td></tr>
+<tr><td><code>"fn main"</code>, <code>-Wall</code></td><td>Quotes and a leading <code>-</code> are part of the text.</td></tr>
 <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td><td>Only / never paths matching the glob; a bare word matches anywhere in the path, <code>src/</code> means everything under <code>src</code>.</td></tr>
 <tr><td><code>lang:rust</code> / <code>-lang:py</code></td><td>Only / never files of that language.</td></tr>
 <tr><td><code>case:yes</code></td><td>Case-sensitive.</td></tr>
@@ -356,14 +358,13 @@ after an agent writes a file) is tracked in
 <tr><td>Match at the start of the line</td><td>1.5×</td></tr>
 <tr><td>File under <code>src/</code> or <code>lib/</code></td><td>1.5×</td></tr>
 <tr><td>Files that import this file</td><td><code>1 + 0.5·log10(dependents)</code></td></tr>
-<tr><td>Line holds the whole phrase / every term</td><td>tier above all other lines</td></tr>
 <tr><td>Long line</td><td>inverse-length damping</td></tr>
 <tr><td>Test or example path (fast mode)</td><td>0.7×</td></tr>
 </tbody>
 </table>
 </div>
-<p>Within a tier, hits are interleaved by file (every file’s best hit first)
-so one file cannot fill a page.</p>
+<p>Hits are interleaved by file (every file’s best hit first) so one file
+cannot fill a page.</p>
 <h3 id="import-graph"><a class="header" href="#import-graph">Import graph</a></h3>
 <p>The dependency explorer (<code>/graph.html</code>) is built on these. Every endpoint
 answers from memory under the engine read lock. <code>file</code> accepts a display
@@ -440,7 +441,8 @@ streams <code>SearchResult</code> messages with the same fields and modes as RES
 <code>deadline_ms</code>), and <code>Index</code> adds paths under the configured roots. The
 standard <code>grpc.health.v1</code> service is served too. A minimal client:
 <a href="https://github.com/jburrow/fast_code_search/blob/main/examples/client.rs"><code>examples/client.rs</code></a> (<code>cargo run --example client</code>).</p>
-<p>Limits match REST: <code>offset</code> ≤ 10,000, the search semaphore is shared with
+<p>Limits match REST: <code>offset</code> ≤ <code>max_page_offset</code>, fast ranking opens
+<code>fast_rank_files</code>, the search semaphore is shared with
 the REST side, and every search runs under a deadline derived from the
 request timeout.</p>
 <h2 id="server-command-line"><a class="header" href="#server-command-line">Server command line</a></h2>
@@ -473,6 +475,9 @@ web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED
 request_timeout_secs = 30         # searches get an engine deadline just under this
+fast_rank_files = 2000            # files fast ranking opens by default (0 = all)
+max_fast_rank_files = 0           # most a request may ask for with max_files (0 = no limit)
+max_page_offset = 100000          # deepest offset a client may page to (0 = no limit)
 cors_origins = []                 # e.g. ["https://ide.example.com"]; empty = same-origin only
 
 [indexer]

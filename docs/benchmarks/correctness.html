@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -213,12 +213,10 @@ where fcs, ripgrep, grep and git grep behave differently, and why.</p>
 <tr><th>fcs query</th><th>ripgrep run</th><th>Compared how</th></tr>
 </thead>
 <tbody>
-<tr><td>One term (<code>Runtime</code>)</td><td><code>rg -F -i -e Runtime</code></td><td>the same lines exactly</td></tr>
+<tr><td>Text (<code>Runtime</code>, <code>fn main</code>, <code>"x":</code>, <code>-Wall</code>)</td><td><code>rg -F -i -e TEXT</code>, the text as typed minus operators</td><td>the same lines exactly</td></tr>
 <tr><td><code>case:yes</code></td><td>drops <code>-i</code></td><td>the same lines exactly</td></tr>
 <tr><td><code>word:yes</code></td><td>adds <code>-w</code></td><td>the same lines exactly</td></tr>
-<tr><td>Several terms (<code>fn main</code>)</td><td>one <code>rg -F</code> run per term</td><td>the files must be those holding every term; every line holding all terms must be reported; every reported line must hold at least one term (fcs keeps only a few single-term lines per file by design)</td></tr>
-<tr><td><code>-term</code></td><td>an rg run for <code>term</code>, then those files are removed</td><td>as above</td></tr>
-<tr><td><code>file:</code> / <code>lang:</code></td><td>the query’s own <code>globs</code> (<code>-g</code>)</td><td>as above</td></tr>
+<tr><td><code>file:</code> / <code>lang:</code></td><td>the query’s own <code>globs</code> (<code>-g</code>)</td><td>the same lines exactly</td></tr>
 <tr><td>Regex</td><td><code>rg -e PATTERN</code>, plus <code>-U</code> when the pattern spans lines</td><td>the line where each match starts</td></tr>
 </tbody>
 </table>
@@ -246,10 +244,10 @@ files, optional groups and <code>{0}</code> repeats, character classes, flags
 changed mid-pattern, word boundaries next to punctuation, and matches that
 start on a newline.</li>
 </ul>
-<p>The query set, <code>benches/rg_backtest.toml</code>, has 124 queries. Each one says
+<p>The query set, <code>benches/rg_backtest.toml</code>, has 126 queries. Each one says
 what it exercises (<code>why</code>). They cover literals, short terms, quotes, case
-and whole-word options, Unicode, path and language filters, several terms,
-negation and regex.</p>
+and whole-word options, Unicode, path and language filters, phrases,
+leading dashes and regex.</p>
 <h2 id="beyond-matching"><a class="header" href="#beyond-matching">Beyond matching</a></h2>
 <p>Two more checks run on every query:</p>
 <ul>

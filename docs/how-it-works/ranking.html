@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -204,10 +204,6 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
     line --&gt; S((score))
     file --&gt; S
     codebase --&gt; S
-    S --&gt; T{tier}
-    T --&gt;|whole phrase| T1[first]
-    T --&gt;|every term| T2[then]
-    T --&gt;|some terms| T3[last]
 </code></pre>
 <h2 id="line-level-signals"><a class="header" href="#line-level-signals">Line-level signals</a></h2>
 <pre><code class="language-text">score = base
@@ -221,25 +217,15 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.</p>
-<h2 id="multi-term-tiers"><a class="header" href="#multi-term-tiers">Multi-term tiers</a></h2>
-<p>For <code>fn main</code>, every line holding at least one term is a hit, but they are
-sorted into tiers before any score is compared:</p>
-<ol>
-<li>lines holding the phrase <code>fn main</code> as written;</li>
-<li>lines holding every term;</li>
-<li>lines holding fewer of them.</li>
-</ol>
-<p>Each tier adds a step larger than any single-term score, so tiers never
-interleave. Within a file the best-tier lines are emitted first, so the
-per-file cap and the match budget cannot cut them off; and files whose
-trigrams contain the phrase are always opened, even under fast ranking.</p>
 <h2 id="diversity"><a class="header" href="#diversity">Diversity</a></h2>
-<p>Within a tier, hits are ordered by their rank inside their file: every
+<p>Hits are ordered by their rank inside their file: every
 file’s best hit, then every file’s second hit, and so on. One file holding
 a hundred matches cannot fill the page. Ties break on score, then file,
 then line, so paging is deterministic.</p>
 <h2 id="fast-ranking"><a class="header" href="#fast-ranking">Fast ranking</a></h2>
-<p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read,
+<p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read
+(<code>fast_rank_files</code>; a request may ask for more with <code>max_files</code>, up to
+<code>max_fast_rank_files</code>),
 chosen by a per-file score that needs no I/O: base, <code>src/</code>/<code>lib/</code>, code
 extension, <code>log2(symbol count)</code> (capped), <code>log2(dependents)</code> (capped),
 ×0.7 for test and example paths, ×5 when the query matches the file’s
@@ -257,9 +243,9 @@ ranks them with the same file-level signals.</p>
 <tr><th>Query</th><th>First result</th><th>Why</th></tr>
 </thead>
 <tbody>
-<tr><td><code>fn main</code></td><td><code>fn main() {</code></td><td>phrase tier; a definition; start of line</td></tr>
+<tr><td><code>fn main</code></td><td><code>fn main() {</code></td><td>a definition; start of line</td></tr>
 <tr><td><code>SearchEngine</code></td><td><code>pub struct SearchEngine {</code></td><td>definition (3×) in <code>src/</code> (1.5×) with many importers</td></tr>
-<tr><td><code>impl SearchEngine</code></td><td><code>impl SearchEngine {</code></td><td>phrase tier over lines that only say <code>impl</code></td></tr>
+<tr><td><code>impl SearchEngine</code></td><td><code>impl SearchEngine {</code></td><td>the phrase at the start of the line, in <code>src/</code></td></tr>
 <tr><td><code>fcs refs prune_vanished_in</code></td><td>the call in <code>incremental.rs</code></td><td>the reference table, not text matching</td></tr>
 <tr><td><code>Widget</code> in a tree with a <code>widget_test.rs</code></td><td>the definition, then the importers, then the test</td><td>test paths are demoted</td></tr>
 </tbody>

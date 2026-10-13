@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
+            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -187,15 +187,18 @@ parameter of the API. It applies to plain-text queries; with <code>regex=true</c
 (<code>fcs -e</code>) the whole query is a regular expression instead. For how the
 results compare with grep, ripgrep and git grep, see <a href="matching.html">Matching compared
 with grep and ripgrep</a>.</p>
+<p>The text you type is searched for as written, like <code>rg -F</code>. The operators
+below are the only exceptions; everything else, spaces, quotes and dashes
+included, is part of the text.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Write</th><th>To get</th></tr>
 </thead>
 <tbody>
-<tr><td><code>fn main</code></td><td>Files containing <strong>every</strong> term. Lines holding the phrase <code>fn main</code> rank first, then lines holding both terms, then the rest.</td></tr>
-<tr><td><code>"fn main"</code></td><td>One term: the exact phrase, spaces included. A quote opens a phrase only when it wraps a whole word; other quotes are searched for as written, so <code>{ "success": True</code> finds that text with its quotes.</td></tr>
-<tr><td><code>-tests</code></td><td>Drop files that contain <code>tests</code>. Only a <code>-</code> before a letter, <code>_</code> or quote negates, so <code>-&gt;</code>, <code>-1</code> and <code>--flag</code> are ordinary terms.</td></tr>
+<tr><td><code>fn main</code></td><td>Lines holding the phrase <code>fn main</code>, with exactly one space. Several words are one phrase.</td></tr>
+<tr><td><code>"fn main"</code></td><td>Lines holding <code>"fn main"</code> with its quotes. Quotes are text: <code>{ "success": True</code> finds that text as written.</td></tr>
+<tr><td><code>-Wall</code></td><td>Lines holding <code>-Wall</code>. A leading <code>-</code> is text too (<code>-&gt;</code>, <code>-1</code>, <code>--flag</code>). On the command line put such a query after <code>--</code>: <code>fcs -- -Wall</code>.</td></tr>
 <tr><td><code>file:src/</code></td><td>Only paths under a <code>src</code> directory. A bare word matches anywhere in the path (<code>file:parser</code>); globs are used as written (<code>file:*.rs</code>, <code>file:crates/**/tests/**</code>).</td></tr>
 <tr><td><code>-file:vendor</code></td><td>Never paths matching the pattern.</td></tr>
 <tr><td><code>lang:rust</code>, <code>-lang:py</code></td><td>Only / never files of that language (by extension: <code>rs</code>/<code>rust</code>, <code>py</code>/<code>python</code>, <code>ts</code>, <code>js</code>, <code>go</code>, <code>java</code>, …).</td></tr>
@@ -204,7 +207,19 @@ with grep and ripgrep</a>.</p>
 </tbody>
 </table>
 </div>
-<p>Operators can be combined: <code>Widget file:src/ -lang:ts -tests case:yes</code>.</p>
+<p>Operators can be combined: <code>Widget file:src/ -lang:ts case:yes</code>. They are
+whole words with an argument: <code>file:</code> alone, or <code>url=file:x</code>, is text.
+Operators between words join the words with one space, so <code>fn file:src/ main</code> searches for <code>fn main</code> under <code>src/</code>. The ends of the query are
+trimmed; spaces inside it are kept. To search for operator-looking text
+such as <code>file:x</code>, use a regex.</p>
+<h2 id="case"><a class="header" href="#case">Case</a></h2>
+<p>Plain text ignores case unless the query says <code>case:yes</code>. A regex matches
+case unless it starts with <code>(?i)</code> or the request says to ignore it. The
+web UI’s <strong>MATCH CASE</strong> toggle (<code>case</code> on the API, <code>fcs -s</code> / <code>-i</code>, MCP
+<code>case_sensitive</code>) sets it for every mode: off, upper and lower case are
+the same in plain text and regex alike; on, they are matched exactly. The
+results header always says which applied (“ignoring case” or “matching
+case”).</p>
 <h2 id="modes"><a class="header" href="#modes">Modes</a></h2>
 <div class="table-wrapper">
 <table>
@@ -227,9 +242,9 @@ with grep and ripgrep</a>.</p>
 with no required literal of three or more characters scans every file.</li>
 <li><code>^</code> and <code>$</code> anchor at line boundaries (CRLF included); <code>\s</code> does not
 cross a line break unless the pattern is a multi-line one.</li>
-<li>A regex is case-sensitive, unlike plain search: <code>true</code> does not find
-<code>True</code>. <code>(?i)</code> makes the pattern case-insensitive; <code>case=false</code> on the
-API adds it for you.</li>
+<li>On the API and <code>fcs -e</code>, a regex is case-sensitive unless it starts
+with <code>(?i)</code> or the request says <code>case=false</code> (<code>fcs -e -i</code>). In the web
+UI it follows MATCH CASE, like plain search.</li>
 <li><code>{ } ( ) [ ] . * + ? | ^ $ \</code> are syntax; escape one with <code>\</code> to match
 it (<code>\{</code>, <code>\.</code>). For code exactly as written, search without regex.</li>
 <li>Spaces are exact: <code>\{ "a"</code> misses <code>{"a"</code>. Use <code>\s*</code> for any amount of
