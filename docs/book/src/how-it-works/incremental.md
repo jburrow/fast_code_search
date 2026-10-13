@@ -47,6 +47,14 @@ A batch is applied under one write lock in three phases:
 3. **Sibling check.** As a last safety net, the parent directories of
    every changed path are checked and entries whose file is gone are
    removed.
+4. **Imports.** Every file's imports are kept as written. Once the whole
+   batch is back in the index, the files whose imports could resolve
+   differently now are resolved again: those that imported a removed file,
+   and those with an import naming a file that appeared. That covers an
+   import that fell back to a package (`from . import m` reaching
+   `__init__.py` while `m.py` is missing) moving to the new file, and
+   back. The dependency graph is therefore a function of the files on
+   disk, the same as a fresh build would draw.
 
 Between batches searches run normally; a search that arrives while the
 lock is held gets a 503 with `Retry-After: 1`, which `fcs` and the web UI

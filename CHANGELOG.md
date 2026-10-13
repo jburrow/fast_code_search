@@ -126,6 +126,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import …` inside `backends/` no longer means `backends/django.py`).
   `src/` layouts resolve. On Django the graph went from 87% to 100% of
   grimp's edges, with 287 wrong edges removed.
+- The dependency graph of a watched index now ends up the same as a fresh
+  build's. Every file's imports are kept, and a change resolves again the
+  imports it can affect: a file that appears takes over imports that had
+  fallen back to its package, a file that goes hands them back, and an
+  edit that removes an import no longer leaves its edge behind when the
+  imported file is saved in the same burst. The initial build also
+  resolves every import once more at the end, so the graph no longer
+  depends on the order files were indexed in.
 - JavaScript/TypeScript: `import(/* comment */ './x')`, imports with the
   older `assert { type: 'json' }` and `.cjs` written for a `.cts` file now
   give edges.

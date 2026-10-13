@@ -424,6 +424,9 @@ impl DependencyIndex {
             if self.indexed(&b.join("__init__.py")).is_none() {
                 for root in [b.to_path_buf(), b.join("src")] {
                     if let Some((k, p)) = self.python_candidates(&root, &segments) {
+                        if k == segments.len() {
+                            return Some(p); // the whole name: nothing beats it
+                        }
                         if best.as_ref().is_none_or(|(bk, _)| k > *bk) {
                             best = Some((k, p));
                         }
@@ -630,6 +633,27 @@ impl DependencyIndex {
         // via id_to_path; also prunes the filename index so a removed path
         // can never be picked as a bare-name resolution candidate).
         self.unregister_path_lookups(file_id);
+    }
+
+    /// Remove every edge out of `file_id`, keeping the file and the edges
+    /// into it. Returns the files that lost an in-edge.
+    pub fn remove_out_edges(&mut self, file_id: u32) -> Vec<u32> {
+        let Some(targets) = self.imports.remove(&file_id) else {
+            return Vec::new();
+        };
+        for &to_file in &targets {
+            if let Some(set) = self.imported_by.get_mut(&to_file) {
+                set.remove(&file_id);
+                let count = set.len() as u32;
+                if count == 0 {
+                    self.imported_by.remove(&to_file);
+                    self.import_counts.remove(&to_file);
+                } else {
+                    self.import_counts.insert(to_file, count);
+                }
+            }
+        }
+        targets.into_iter().collect()
     }
 
     /// Clear all dependency information
