@@ -1,6 +1,12 @@
 {
   "releases": [
     {
+      "version": "0.15.1",
+      "date": "2026-10-13",
+      "summary": "Same changes as 0.15.0, with the version number set correctly. The v0.15.0 tag was pushed before the version bump, so its binaries report 0.14.0 and its release has no changelog notes. Use 0.15.1.",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.15.1"
+    },
+    {
       "version": "0.14.0",
       "date": "2026-10-08",
       "summary": "",
@@ -41,12 +47,6 @@
       "date": "2026-09-06",
       "summary": "",
       "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.10.0"
-    },
-    {
-      "version": "0.9.0",
-      "date": "2026-06-10",
-      "summary": "",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.9.0"
     }
   ]
 }
