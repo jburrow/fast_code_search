@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-dfdd8ac4.js";
+            window.path_to_searchindex_js = "../searchindex-bba40793.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -249,7 +249,7 @@ what it exercises (<code>why</code>). They cover literals, short terms, quotes, 
 and whole-word options, Unicode, path and language filters, phrases,
 leading dashes and regex.</p>
 <h2 id="beyond-matching"><a class="header" href="#beyond-matching">Beyond matching</a></h2>
-<p>Two more checks run on every query:</p>
+<p>Three more checks run on every query:</p>
 <ul>
 <li><strong>Repeatable.</strong> The first page (50 results) is fetched three times and
 must be identical. A search that stops at its match budget must still
@@ -258,11 +258,21 @@ give the same answer every time.</li>
 matches is loaded the way the web UI’s LOAD MORE does it: the whole list
 again, 50 longer each time, while the server says more exist. Every match
 must end up shown exactly once.</li>
+<li><strong>Default limits</strong> (<code>--check-defaults</code>, on in CI). Everything above runs
+without result limits, so it cannot see a problem the limits themselves
+cause. This check walks each query with up to 20,000 matches
+(<code>--defaults-max-hits</code>) the way a web UI user would with the server’s
+default settings, once with Auto ranking and once with Fast: the first
+page, SEARCH ALL FILES if ranking skipped files, then LOAD MORE until
+the server says there is no more (the whole list again up to 1000, then
+50 at a time by <code>offset</code>). Every match must end up shown exactly once,
+and a total given as an exact count must be the real one whenever every
+candidate file was searched.</li>
 </ul>
 <h2 id="running-it"><a class="header" href="#running-it">Running it</a></h2>
 <pre><code class="language-bash"># what CI runs (the corpora are shallow clones; see .github/workflows/backtest.yml)
 cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
-    tests/fixtures/backtest --check-paging --markdown report.md --json report.json
+    tests/fixtures/backtest --check-paging --check-defaults --markdown report.md --json report.json
 
 # just the edge cases: no clones needed, a few seconds
 cargo run --release --example rg_backtest -- tests/fixtures/backtest
@@ -295,15 +305,26 @@ results and skipped others. It also found that Greek words with a final
 sigma were missed, that a regex able to match nothing reported a line past
 the end of a file, and that a byte order mark stopped <code>^</code> from matching
 line 1. All five are fixed (see the <a href="../imported/changelog.html">changelog</a>).</p>
+<p>The default-limits check was added after fast ranking’s 2,000-file cap and
+the old offset ceiling were found by hand, not by the backtest. On its first
+run it found that LOAD MORE past 1000 results repeated some matches and
+skipped others on broad queries (<code>self.assertEqual</code> over Django lost 1,213
+of 17,717), because each deeper page ranked a different sample. That is
+fixed too.</p>
 <h2 id="what-it-does-not-cover"><a class="header" href="#what-it-does-not-cover">What it does not cover</a></h2>
 <ul>
 <li><strong>Symbol and reference searches.</strong> They have no grep equivalent.</li>
 <li><strong>Ranking order.</strong> That is the <a href="ranking-quality.html">ranking-quality
 suite</a>.</li>
-<li><strong>API <code>offset</code> paging across a search that hit its budget.</strong> It is not
-stable (see <a href="../reference/matching.html#where-fcs-differs-from-all-of-them">Matching compared with grep and
+<li><strong>API <code>offset</code> paging below 1000 results across a search that hit its
+budget.</strong> It is not stable (see <a href="../reference/matching.html#where-fcs-differs-from-all-of-them">Matching compared with grep and
 ripgrep</a>).
-Only the web UI’s LOAD MORE is checked.</li>
+The web UI never pages that way; its LOAD MORE is checked.</li>
+<li><strong>Queries with more than 20,000 matches</strong> under the default limits. Each
+deep page re-runs the search, so walking them all is slow; raise
+<code>--defaults-max-hits</code> to include them.</li>
+<li><strong>The search deadline.</strong> The walk runs with no time limit. A search the
+deadline stops is a sample of whatever was read in time.</li>
 <li><strong>GNU grep’s test suite.</strong> It has not been mined yet.</li>
 </ul>
 

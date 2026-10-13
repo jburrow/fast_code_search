@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-dfdd8ac4.js";
+            window.path_to_searchindex_js = "../searchindex-bba40793.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -249,10 +249,13 @@ and SEARCH ALL FILES opens the rest (up to <code>max_fast_rank_files</code>). LO
 fetches the whole list again at the bigger size, up to 1000 results, so
 every match ends up shown exactly once. Results already on screen can
 move when it does. Past 1000 results it fetches the next page instead.
-An API client asking for <code>offset</code> pages of a search that hit its budget
-can see a result repeated or skipped between pages. Asking again from
-offset 0 with a larger <code>max</code> avoids that. Paging stops at offset 100,000
-by default (<code>max_page_offset</code>).</li>
+Every page that ends at result 1000 or later ranks the same sample (a
+budget of 100,000 matches), so those pages fit together with no repeats
+or gaps. Shorter pages use a smaller budget, so an API client asking for
+<code>offset</code> pages below 1000 of a search that hit its budget can see a
+result repeated or skipped between pages. Asking again from offset 0
+with a larger <code>max</code> avoids that. Paging stops at offset 100,000 by
+default (<code>max_page_offset</code>).</li>
 <li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
 Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
 (<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16
