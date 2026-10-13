@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Web UI themes: Bold (the existing look, still the default), Corporate and
+  Corporate dark. On a first visit the UI asks which to use, previewing each
+  live; the palette button in the header (replacing the `?` link, which
+  went to the Docs page also in the navigation) changes it later. The choice
+  is kept per browser. New `[server]` settings: `default_theme` (`"bold"`,
+  `"corporate"` or `"corporate-dark"`) for people who haven't chosen, and
+  `theme_picker = false` to skip the first-run question on a shared server.
 - The ripgrep backtest's `--check-defaults` (on in CI) walks every query
   the way a web UI user pages through it under the server's default
   limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
@@ -15,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once.
 
 ### Changed
+- Web UI: one rule for labels and buttons. Labels are written in sentence
+  case and the theme decides whether they show in capitals (Bold does), so
+  buttons, toggles and headings on every page now look alike. The search
+  button reads SEARCH instead of EXECUTE_QUERY. The Index pages lost their
+  emoji (SVG icons instead) and use the same cards and buttons as the rest,
+  and the dependency explorer's buttons and chips match the search page.
 - Web UI: file names are never re-cased. The dependency explorer's pane
   title, extension badges and the compact search box in the header showed
   them in capitals; they now show as written.

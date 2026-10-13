@@ -6,11 +6,12 @@
 //   <template id="app-header-extra">…page-specific header content…</template>
 //   <script src="/shell.js" data-page="search"></script>
 //
-// It writes the shared header (wordmark, nav, help link) and the phone tab
+// It writes the shared header (wordmark, nav, theme button) and the phone tab
 // bar in place before the page paints, so all pages share one copy and
 // cannot drift apart. `data-page` marks the current nav entry; the optional
-// template's content goes between the nav and the help link (the search
+// template's content goes between the nav and the theme button (the search
 // page's index stats and compact search box, the semantic page's stats).
+// The theme button opens the menu in theme.js.
 (function () {
     'use strict';
 
@@ -25,6 +26,7 @@
     '<symbol id="i-content-copy" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></symbol>',
     '<symbol id="i-open-in-new" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></symbol>',
     '<symbol id="i-help-outline" viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></symbol>',
+    '<symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></symbol>',
     '<symbol id="i-analytics" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></symbol>',
     '<symbol id="i-account-tree" viewBox="0 0 24 24"><path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z"/></symbol>',
     '<symbol id="i-description" viewBox="0 0 24 24"><path d="M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></symbol>',
@@ -56,13 +58,15 @@
         `<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">${SYMBOLS.join('')}</svg>` +
         `<header class="app-header">` +
             `<div class="app-header-left">` +
-                `<div class="app-wordmark">FAST_CODE_SEARCH</div>` +
+                `<div class="app-wordmark">fast_code_search</div>` +
                 `<nav class="app-nav" aria-label="Main">` +
                     PAGES.map(p => `<a href="${p.href}"${here(p)}>${p.label}</a>`).join('') +
                 `</nav>` +
             `</div>` +
             extraHtml +
-            `<a href="/docs.html" class="app-help" title="Documentation" aria-label="Documentation">${icon('i-help-outline', 20)}</a>` +
+            `<div class="app-tools">` +
+                `<button type="button" class="app-tool" id="theme-btn" title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded="false">${icon('i-palette', 20)}</button>` +
+            `</div>` +
         `</header>` +
         `<nav class="app-tabbar" aria-label="Main">` +
             PAGES.map(p => `<a href="${p.href}"${here(p)}>${icon(p.icon, 20)}<span>${p.label}</span></a>`).join('') +
@@ -70,4 +74,11 @@
 
     if (script) script.insertAdjacentHTML('beforebegin', html);
     if (extra) extra.remove();
+
+    const themeBtn = document.getElementById('theme-btn');
+    if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+            if (window.fcsTheme) window.fcsTheme.openMenu(themeBtn);
+        });
+    }
 })();

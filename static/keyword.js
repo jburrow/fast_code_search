@@ -448,10 +448,10 @@ function renderBackendStatus(keywordUp, semanticUp, serverProblems = 0) {
     const banner = document.getElementById('backend-banner');
     if (!banner) return;
 
-    updateBackendBadge('keyword-status-badge', keywordUp, 'KEYWORD');
+    updateBackendBadge('keyword-status-badge', keywordUp, 'Keyword');
     const semanticBadge = document.getElementById('semantic-status-badge');
     if (semanticBadge) semanticBadge.style.display = semanticEnabled() ? '' : 'none';
-    updateBackendBadge('semantic-status-badge', semanticUp, 'SEMANTIC');
+    updateBackendBadge('semantic-status-badge', semanticUp, 'Semantic');
 
     const msgEl = document.getElementById('backend-banner-msg');
     if (keywordUp && serverProblems > 0) {
@@ -1316,7 +1316,7 @@ async function showNoResultSuggestions(search) {
     if (!box) return;
     const signal = _searchAbort?.signal;
     const candidates = noResultSuggestions(search.query, search.isRegex, search.matchCase);
-    const caseTip = search.matchCase ? 'MATCH CASE is on. ' : '';
+    const caseTip = search.matchCase ? '<span class="label-case">Match case</span> is on. ' : '';
     const tips = search.isRegex
         ? `<p class="suggestion-hint">${caseTip}Regex matches one line at a time. ${REGEX_HELP_LINK}</p>`
         : (caseTip ? `<p class="suggestion-hint">${caseTip}</p>` : '');
@@ -1400,7 +1400,7 @@ async function loadMoreResults() {
     const btn = document.getElementById('load-more-btn');
     if (btn) {
         btn.disabled = true;
-        btn.textContent = 'LOADING…';
+        btn.textContent = 'Loading…';
     }
 
     if (_searchAbort) _searchAbort.abort();
@@ -1414,7 +1414,7 @@ async function loadMoreResults() {
         if (next.offset > 0) params.set('offset', String(next.offset));
         const data = await fetchSearchPage(params, signal, (attempt, max) => {
             const b = document.getElementById('load-more-btn');
-            if (b) b.textContent = `INDEX UPDATING, RETRYING… (${attempt}/${max})`;
+            if (b) b.textContent = `Index updating, retrying… (${attempt}/${max})`;
         });
         if (signal.aborted || _currentSearch !== search) return;
         const firstNewGroup = groupResultsByFile(search.results).length;
@@ -1521,7 +1521,7 @@ function renderSearch(search, durationMs, opts = {}) {
         (data.has_more
             ? `<div id="load-more-row" class="load-more-row">
                 <button id="load-more-btn" type="button" class="load-more-btn"
-                    title="${loadMoreTitle(search)}">LOAD MORE</button>
+                    title="${loadMoreTitle(search)}">Load more</button>
                </div>`
             : '');
 
@@ -1612,7 +1612,7 @@ function renderFileMatches(data) {
           <div style="display:flex;align-items:center;gap:12px;padding-right:16px;border-top:1px solid var(--border-soft)">
             <button type="button" class="file-match-row" data-file-path="${escapeHtml(f.file_path)}"
                 title="Open ${escapeHtml(f.file_path)}"
-                style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;text-align:left;padding:6px 0 6px 16px;background:none;border:none;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px">
+                style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;text-align:left;padding:6px 0 6px 16px;background:none;border:none;cursor:pointer;font-family:var(--font-mono);font-size:12px">
                 ${iconSvg(fileIconName(f.file_path), 16)}
                 <span class="truncate">${fileMatchPathHtml(f.file_path, f.match_ranges)}</span>
             </button>
@@ -1640,17 +1640,17 @@ function renderFileMatches(data) {
     const hiddenCount = Math.max(0, files.length - FILE_MATCHES_COLLAPSED);
     const notFetched = total - files.length;
     const footer = hiddenCount > 0
-        ? `<button type="button" class="file-matches-more load-more-btn" style="margin:8px 16px">SHOW ${hiddenCount} MORE</button>`
+        ? `<button type="button" class="file-matches-more load-more-btn" style="margin:8px 16px">Show ${hiddenCount} more</button>`
         : '';
     const narrow = notFetched > 0
         ? `<p class="file-matches-narrow" ${hiddenCount > 0 ? 'hidden' : ''} style="margin:8px 16px;font-size:12px;color:var(--text-3)">${notFetched.toLocaleString('en-US')} more not shown; add to the path to narrow it.</p>`
         : '';
     fileMatchesSection.innerHTML = `
-        <div class="bg-white border border-black overflow-hidden" style="box-shadow:var(--shadow-sm);margin-bottom:16px">
+        <div class="bg-white border border-black rounded overflow-hidden" style="box-shadow:var(--shadow-sm);margin-bottom:16px">
             <div class="border-b border-black px-4 py-2 flex items-center gap-2" style="background:var(--surface-head)">
                 ${iconSvg('description', 16)}
-                <span class="font-label text-xs font-bold tracking-tight">FILES</span>
-                <span style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:'JetBrains Mono',monospace">${fileMatchesLabel(total)}</span>
+                <span class="font-label label-case text-xs font-bold tracking-tight">Files</span>
+                <span class="label-case" style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:var(--font-label)">${fileMatchesLabel(total)}</span>
             </div>
             <ul style="list-style:none;margin:0;padding:0">${rows}</ul>
             ${footer}${narrow}
@@ -1748,7 +1748,7 @@ function renderGroupHtml(group) {
 
     // Dependency badge
     const depBadge = depCount > 0
-        ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:var(--accent-soft);color:var(--ink);font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid var(--badge-border)"
+        ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:var(--accent-soft);color:var(--ink);font-size:10px;font-family:var(--font-mono);border:1px solid var(--badge-border)"
             aria-label="${depCount} dependents; show files that import this file"
             data-file-path="${escapeHtml(group.filePath)}" title="Files that import this one">imported by ${depCount}</button>`
         : '';
@@ -1809,7 +1809,7 @@ function renderGroupHtml(group) {
                     <div class="flex items-center gap-2 min-w-0">
                         <span class="font-label text-xs" style="color:var(--text-3);flex-shrink:0;cursor:help"
                             title="Ranking score ${result.score.toFixed(2)} (higher ranks first)&#10;&#10;Score = base × multipliers&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)">${lineLabel}</span>
-                        <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
+                        <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:var(--font-mono)">${matchType.text}</span>
                         ${truncatedBadge}
                     </div>
                     <div class="flex items-center gap-3 flex-shrink-0">
@@ -1829,18 +1829,18 @@ function renderGroupHtml(group) {
     }).join('');
 
     return `
-        <div class="result-group bg-white border border-black overflow-hidden" style="box-shadow:var(--shadow-sm)" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
+        <div class="result-group bg-white border border-black rounded overflow-hidden" style="box-shadow:var(--shadow-sm)" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
             <!-- File header -->
             <div class="border-b border-black px-4 py-2 flex justify-between items-center" style="background:var(--surface-head)">
                 <div class="flex items-center gap-2 min-w-0">
                     ${iconSvg(fileIcon, 16)}
-                    <span class="font-label text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
+                    <span class="font-mono text-xs font-bold tracking-tight truncate" title="${escapeHtml(group.filePath)}">
                         ${dirPath ? `<span style="color:var(--text-3);font-weight:400">${escapeHtml(dirPath)}</span>` : ''}<span style="color:var(--accent-ink);font-weight:700">${escapeHtml(fileName)}</span>
                     </span>
-                    <span style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
+                    <span style="padding:2px 6px;background:var(--chip);border:1px solid var(--border);color:var(--text-2);font-size:10px;font-family:var(--font-mono)">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
-                    ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${escapeHtml(ext)}</span>` : ''}
+                    ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:var(--font-mono)">${escapeHtml(ext)}</span>` : ''}
                     ${depBadge}
                     ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link hover:text-primary transition-colors"
                         style="color:var(--text-3);display:flex"
@@ -2412,8 +2412,8 @@ function showDependencyModal(title, filePath, files, description, opts = {}) {
     modal.innerHTML = `
         <div class="dep-modal-dialog" style="background:var(--surface-2);border:1px solid var(--border);box-shadow:var(--shadow-lg);padding:1.5rem;max-width:600px;width:90%;max-height:80vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:'JetBrains Mono',monospace;color:var(--text)">${escapeHtml(title)}${countLabel}</h2>
-                <button type="button" class="dep-modal-close" aria-label="Close" title="Close (Esc)" style="background:none;border:1px solid var(--ink);width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:var(--text);display:flex;align-items:center;justify-content:center;">&times;</button>
+                <h2 id="dep-modal-title" style="font-size:1.1rem;font-family:var(--font-mono);color:var(--text)">${escapeHtml(title)}${countLabel}</h2>
+                <button type="button" class="dep-modal-close" aria-label="Close" title="Close (Esc)" style="background:none;border:1px solid var(--line-strong);width:1.75rem;height:1.75rem;font-size:1.1rem;cursor:pointer;color:var(--text);display:flex;align-items:center;justify-content:center;">&times;</button>
             </div>
             <p style="font-family:monospace;font-size:0.85rem;color:var(--link);margin-bottom:0.5rem;word-break:break-all">${escapeHtml(filePath)}</p>
             <p style="color:var(--text-2);font-size:0.85rem;margin-bottom:0.75rem;">${description}</p>

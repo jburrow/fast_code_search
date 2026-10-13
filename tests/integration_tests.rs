@@ -751,6 +751,48 @@ async fn test_http_search_concurrency_limit() -> Result<()> {
     Ok(())
 }
 
+/// `/ui-config.js` hands the pages the server's theme settings before they
+/// paint (static/theme.js reads `window.FCS_UI`).
+#[tokio::test]
+async fn test_http_ui_config_script() -> Result<()> {
+    use fast_code_search::config::UiTheme;
+    use fast_code_search::web::{create_router_with_options, RouterOptions, UiSettings};
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let opts = RouterOptions {
+        ui_settings: UiSettings {
+            default_theme: UiTheme::CorporateDark,
+            theme_picker: false,
+        },
+        ..Default::default()
+    };
+    let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let resp = reqwest::get(format!("http://{addr}/ui-config.js")).await?;
+    assert_eq!(resp.status(), 200);
+    let content_type = resp.headers()["content-type"].to_str()?.to_string();
+    assert!(
+        content_type.starts_with("application/javascript"),
+        "{content_type}"
+    );
+    let body = resp.text().await?;
+    assert_eq!(
+        body.trim(),
+        r#"window.FCS_UI = {"default_theme":"corporate-dark","theme_picker":false};"#
+    );
+    Ok(())
+}
+
 /// Roadmap 1.9: `/api/context` must cap the window and never overflow.
 /// `context=usize::MAX` used to compute `match_idx + context + 1` (a panic in
 /// debug builds, a wrapped index in release) and could otherwise return the
