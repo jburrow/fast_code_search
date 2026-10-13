@@ -648,7 +648,7 @@ pub async fn imports_handler(
         let statements = crate::symbols::SymbolExtractor::new_for_source(canonical, Some(&content))
             .extract_imports(&content)
             .unwrap_or_default();
-        let imports = statements
+        let mut imports: Vec<ImportLine> = statements
             .into_iter()
             .map(|s| {
                 let target_id = index
@@ -665,6 +665,10 @@ pub async fn imports_handler(
                 }
             })
             .collect();
+        // `from pkg import a, b` is one entry per name; show one row per
+        // line and target.
+        let mut seen = std::collections::HashSet::new();
+        imports.retain(|i| seen.insert((i.line, i.target.clone())));
         Ok(ImportsResponse {
             file: shown_path(engine, id, &q.file),
             imports,

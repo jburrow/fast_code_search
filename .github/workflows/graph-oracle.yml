@@ -1,0 +1,88 @@
+name: graph oracle
+
+# Does the dependency graph draw the edges the languages' own resolvers
+# draw? examples/graph_oracle.rs compares fcs's import graph with grimp on
+# Django and with TypeScript's resolveModuleName on Vite, and fails when a
+# change misses or adds more edges than the recorded baseline. Lower the
+# baselines when a fix closes a gap.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "examples/graph_oracle.rs"
+      - "scripts/graph-oracle/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/graph-oracle.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  oracle:
+    name: fcs graph vs grimp and TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out Django (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: django/django
+          ref: "5.2"
+          path: bench-corpus/django
+          fetch-depth: 1
+      - name: Check out Vite (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: vitejs/vite
+          ref: v6.3.5
+          path: bench-corpus/vite
+          fetch-depth: 1
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the oracles
+        run: |
+          python -m pip install grimp==3.17
+          (cd scripts/graph-oracle && npm ci)
+
+      - name: Build
+        run: cargo build --release --example graph_oracle
+
+      - name: Python (grimp on Django)
+        run: |
+          python scripts/graph-oracle/py.py bench-corpus/django > py.json
+          ./target/release/examples/graph_oracle bench-corpus/django --oracle py.json --lang py \
+            --max-missing 0 --max-extra 0 --markdown graph-py.md
+
+      - name: TypeScript (resolveModuleName on Vite)
+        run: |
+          node scripts/graph-oracle/ts.mjs bench-corpus/vite > ts.json
+          ./target/release/examples/graph_oracle bench-corpus/vite --oracle ts.json --lang ts \
+            --max-missing 129 --max-extra 1 --markdown graph-ts.md
+
+      - name: Report
+        if: always()
+        run: cat graph-py.md graph-ts.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

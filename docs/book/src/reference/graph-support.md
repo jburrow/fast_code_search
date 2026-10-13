@@ -2,9 +2,10 @@
 
 What the import graph (the dependency explorer, "imported by N", `/api/graph`,
 MCP's graph tools) understands, per language. An import that is not listed
-here produces no edge. The graph has no oracle yet, so this page is the
-contract: if fcs misses an edge listed as supported, that is a bug; if it
-misses one listed as not handled, that is a known gap.
+here produces no edge. If fcs misses an edge listed as supported, that is a
+bug; if it misses one listed as not handled, that is a known gap. Python
+and TypeScript are checked against their own resolvers (see the end of the
+page).
 
 Edges exist for **Rust, Python and JavaScript/TypeScript** only. Go, Java,
 C and C++ `#include`, C#, Ruby and every other language are searched and
@@ -46,12 +47,12 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 | Form | Supported |
 |---|---|
 | `import a.b`, `import a, b as c` | yes, one edge per module |
-| `from a.b import c` | yes, to `a/b.py` or `a/b/__init__.py` |
+| `from a.b import c` | yes: to `a/b/c.py` (or `a/b/c/__init__.py`) when `c` is a module, else to `a/b.py` or `a/b/__init__.py`, as Python does |
 | `from .x import y`, `from ..x import y` | yes: one dot is the file's own package, each extra dot one level up |
-| `from . import y` | **partly**: the edge goes to the package's `__init__.py`, not to `y.py` |
-| `from pkg import submodule` | **partly**: the edge goes to `pkg/__init__.py` (or `pkg.py`), not to the submodule |
-| Absolute imports | resolved from the file's directory and up to 7 parents, nearest first |
-| `src/` layouts (`tests/` importing `src/pkg`) | **no**: no `pyproject.toml`, `setup.cfg` or `sys.path` is read |
+| `from . import y` | yes: to `y.py` when it is a module, else to the package's `__init__.py` |
+| Absolute imports | yes, as Python 3 does: from the ancestor folders that are not packages themselves (no `__init__.py`), so `import json` inside a package is the standard library, not a `json.py` next to it; where several could hold the module, the one that holds most of the dotted name wins |
+| `src/` layouts (`tests/` importing `src/pkg`) | yes: each of those folders' `src/` is tried too |
+| Other `sys.path` entries (`pyproject.toml`, `setup.cfg`, `PYTHONPATH`) | **no**: no configuration is read |
 | `.pyi` stubs as import targets | **no** |
 | Standard library, installed packages | no edge, by design |
 
@@ -60,12 +61,15 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 | Form | Supported |
 |---|---|
 | `import … from './x'`, `export … from './x'`, `export * from './x'` | yes |
-| `require('./x')`, `` require(`./x`) ``, `import('./x')` | yes (not a template string with `${…}`) |
+| `require('./x')`, `` require(`./x`) ``, `import('./x')` | yes (not a template string with `${…}`), also `import(/* comment */ './x')` |
+| `import x from './x.json' with { type: 'json' }`, and the older `assert { … }` | yes |
 | `import x = require('./x')` (TypeScript) | **no** |
 | Relative specifiers (`./`, `../`, `.`, `..`) | yes |
 | `@/x`, `~/x` | yes: from the nearest folder with a `package.json` or `tsconfig.json`, trying `src/x` then `x` |
-| Extension probing | the exact file; `.js`/`.jsx`/`.mjs` written for a `.ts`/`.tsx`/`.mts` file; then `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json` appended; then `index.{ts,tsx,js,jsx,mjs,cjs}` |
-| `.cjs` written for a `.cts` file; `index.mts`, `index.cts`, `index.d.ts` | **no** |
+| Extension probing | the exact file; `.js`/`.jsx` written for a `.ts`/`.tsx` file, `.mjs` for `.mts`, `.cjs` for `.cts`; then `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json` appended; then `index.{ts,tsx,js,jsx,mjs,cjs}` |
+| Imports of stylesheets, `.vue`/`.svelte` components and other assets | yes, when the file is indexed (a bundler resolves them; TypeScript does not) |
+| `index.mts`, `index.cts`, `index.d.ts`; a folder's `package.json` `main` | **no** |
+| `package.json` `imports` (`#name`) and a package importing itself by name | **no** |
 | tsconfig `paths` and `baseUrl` | **no**: tsconfig is not parsed |
 | Workspace packages by name, `package.json` `exports`/`main` | **no** |
 | Packages in `node_modules` | no edge, by design |
@@ -73,8 +77,22 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 ## How this is checked
 
 Extraction and resolution have unit tests per form
-(`src/symbols/extractor.rs`, `src/dependencies/mod.rs`). The next step in
-the reliability plan is an oracle per language: TypeScript's own
-`ts.resolveModuleName` and Python's `grimp`, run over pinned repositories,
-with every edge fcs draws or misses reported like the [ripgrep
-backtest](../benchmarks/correctness.md) does for search.
+(`src/symbols/extractor.rs`, `src/dependencies/mod.rs`). On top of those,
+`examples/graph_oracle.rs` compares the whole graph with an independent
+resolver over a pinned repository and lists every edge fcs misses or draws
+wrongly:
+
+| Language | Oracle | Repository | Result |
+|---|---|---|---|
+| Python | [grimp](https://github.com/python-grimp/grimp) 3.17 (`scripts/graph-oracle/py.py`) | Django 5.2 | 3,041 of 3,041 edges, none extra |
+| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`scripts/graph-oracle/ts.mjs`) | Vite 6.3.5 | 92% of edges, 1 extra; 122 of the 129 misses are tsconfig `paths` (`~utils`, `vite/module-runner`) |
+
+CI runs both, and fails if a change misses or adds more edges than that.
+
+```sh
+python3 scripts/graph-oracle/py.py bench-corpus/django > py.json
+cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
+(cd scripts/graph-oracle && npm ci)
+node scripts/graph-oracle/ts.mjs bench-corpus/vite > ts.json
+cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
+```

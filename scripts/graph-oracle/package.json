@@ -1,0 +1,9 @@
+{
+  "name": "fcs-graph-oracle",
+  "private": true,
+  "description": "Independent import resolvers the dependency-graph oracle compares fcs against",
+  "type": "module",
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}
