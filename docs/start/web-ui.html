@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-dd1d82c1.js";
+            window.path_to_searchindex_js = "../searchindex-eb6634d2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -276,6 +276,15 @@ module) are hidden by default since they are structure rather than
 dependencies; <strong>Show mod declarations</strong> brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.</p>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
+<h2 id="themes"><a class="header" href="#themes">Themes</a></h2>
+<p>The first time you open the UI it asks you to pick a theme; hover an option
+to try it on the page. <strong>Bold</strong> (the default) has capitalised labels and
+hard edges; <strong>Corporate</strong> and <strong>Corporate dark</strong> are quieter, with sentence
+case and rounded corners. Change it any time with the palette button in the
+header. The choice is kept in your browser. On a shared server,
+<code>default_theme</code> sets the theme for people who haven’t chosen one and
+<code>theme_picker = false</code> skips the first-run question (see
+<a href="../guides/configuration.html">Configuration</a>).</p>
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the

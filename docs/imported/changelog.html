@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-dd1d82c1.js";
+            window.path_to_searchindex_js = "../searchindex-eb6634d2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -188,6 +188,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Web UI themes: Bold (the existing look, still the default), Corporate and
+Corporate dark. On a first visit the UI asks which to use, previewing each
+live; the palette button in the header (replacing the <code>?</code> link, which
+went to the Docs page also in the navigation) changes it later. The choice
+is kept per browser. New <code>[server]</code> settings: <code>default_theme</code> (<code>"bold"</code>,
+<code>"corporate"</code> or <code>"corporate-dark"</code>) for people who haven’t chosen, and
+<code>theme_picker = false</code> to skip the first-run question on a shared server.</li>
 <li>The ripgrep backtest’s <code>--check-defaults</code> (on in CI) walks every query
 the way a web UI user pages through it under the server’s default
 limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
@@ -196,6 +203,12 @@ once.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Web UI: one rule for labels and buttons. Labels are written in sentence
+case and the theme decides whether they show in capitals (Bold does), so
+buttons, toggles and headings on every page now look alike. The search
+button reads SEARCH instead of EXECUTE_QUERY. The Index pages lost their
+emoji (SVG icons instead) and use the same cards and buttons as the rest,
+and the dependency explorer’s buttons and chips match the search page.</li>
 <li>Web UI: file names are never re-cased. The dependency explorer’s pane
 title, extension badges and the compact search box in the header showed
 them in capitals; they now show as written.</li>

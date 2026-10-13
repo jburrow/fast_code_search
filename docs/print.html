@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-dd1d82c1.js";
+            window.path_to_searchindex_js = "searchindex-eb6634d2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -612,6 +612,15 @@ module) are hidden by default since they are structure rather than
 dependencies; <strong>Show mod declarations</strong> brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.</p>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
+<h2 id="themes"><a class="header" href="#themes">Themes</a></h2>
+<p>The first time you open the UI it asks you to pick a theme; hover an option
+to try it on the page. <strong>Bold</strong> (the default) has capitalised labels and
+hard edges; <strong>Corporate</strong> and <strong>Corporate dark</strong> are quieter, with sentence
+case and rounded corners. Change it any time with the palette button in the
+header. The choice is kept in your browser. On a shared server,
+<code>default_theme</code> sets the theme for people who haven’t chosen one and
+<code>theme_picker = false</code> skips the first-run question (see
+<a href="#configuration-cookbook">Configuration</a>).</p>
 <h2 id="other-pages"><a class="header" href="#other-pages">Other pages</a></h2>
 <ul>
 <li><strong>Index</strong> (<code>/diagnostics.html</code>): file counts, extension breakdown, the
@@ -882,6 +891,8 @@ request_timeout_secs = 30
 fast_rank_files = 2000      # files fast ranking opens when a query could be in over 5,000 (0 = all)
 max_fast_rank_files = 0     # most a request may ask for (SEARCH ALL FILES, max_files); 0 = no limit
 max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
+default_theme = "corporate" # web UI theme: "bold" (default), "corporate" or "corporate-dark"
+theme_picker = false        # don't ask each person to pick a theme on their first visit
 </code></pre>
 <p>See <a href="#deployment-guide">Deployment</a> for a reverse-proxy example and
 the system-wide systemd unit, and the <a href="#security-policy">security policy</a>.</p>
@@ -2434,6 +2445,15 @@ max_page_offset = 100000
 # binary; TOML has no "unset" value, so this one key stays commented out.
 # static_dir = "static"
 
+# Web UI theme for people who haven't picked one: "bold", "corporate" or
+# "corporate-dark". Each browser remembers its own choice.
+default_theme = "bold"
+
+# Ask people to pick a theme on their first visit. Set false on a shared
+# server to use default_theme without asking (they can still change it from
+# the palette button in the header).
+theme_picker = true
+
 [indexer]
 # Paths to index on startup
 # Add your project directories here
@@ -3430,6 +3450,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Web UI themes: Bold (the existing look, still the default), Corporate and
+Corporate dark. On a first visit the UI asks which to use, previewing each
+live; the palette button in the header (replacing the <code>?</code> link, which
+went to the Docs page also in the navigation) changes it later. The choice
+is kept per browser. New <code>[server]</code> settings: <code>default_theme</code> (<code>"bold"</code>,
+<code>"corporate"</code> or <code>"corporate-dark"</code>) for people who haven’t chosen, and
+<code>theme_picker = false</code> to skip the first-run question on a shared server.</li>
 <li>The ripgrep backtest’s <code>--check-defaults</code> (on in CI) walks every query
 the way a web UI user pages through it under the server’s default
 limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
@@ -3438,6 +3465,12 @@ once.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Web UI: one rule for labels and buttons. Labels are written in sentence
+case and the theme decides whether they show in capitals (Bold does), so
+buttons, toggles and headings on every page now look alike. The search
+button reads SEARCH instead of EXECUTE_QUERY. The Index pages lost their
+emoji (SVG icons instead) and use the same cards and buttons as the rest,
+and the dependency explorer’s buttons and chips match the search page.</li>
 <li>Web UI: file names are never re-cased. The dependency explorer’s pane
 title, extension badges and the compact search box in the header showed
 them in capitals; they now show as written.</li>
@@ -5291,6 +5324,19 @@ extras (stats, the compact search box) in <code>&lt;template id="app-header-extr
 <code>var(--shadow)</code>, …) defined once in <code>static/app.css</code>. Never write a colour
 anywhere else: <code>static/tests/tokens.test.js</code> fails on a hex or <code>rgb()</code>
 value outside <code>app.css</code>, and on a <code>var(--…)</code> that isn’t defined.</li>
+<li><strong>Themes:</strong> the <code>:root, [data-theme="bold"]</code> block in <code>app.css</code> is the
+default theme; <code>[data-theme="corporate"]</code> and <code>[data-theme="corporate-dark"]</code>
+redefine every token (colours, radius, fonts, label case) so a preview of
+one theme renders correctly inside a page in another. <code>static/theme.js</code>
+applies the saved theme before the page paints and draws the header menu
+and first-run picker. Adding a theme means a block in <code>app.css</code>, an entry
+in <code>theme.js</code> and a <code>UiTheme</code> variant in <code>src/config.rs</code>; a test checks
+all three agree and that every block sets every token.</li>
+<li><strong>Labels and buttons:</strong> write labels in sentence case (“Match case”) and
+give them the <code>label-case</code> class (or <code>text-transform: var(--label-case)</code>):
+Bold shows them in capitals, the corporate themes as written. Never put a
+file name, path or query inside one. Buttons use <code>.btn</code> / <code>.btn-primary</code>.
+The token test fails on a literal <code>uppercase</code> or a hard-coded font name.</li>
 <li><strong>Tailwind</strong> colour names in <code>tailwind.config.js</code> point at the same tokens.
 After changing classes or the config, run <code>npm run build:css</code> and commit
 <code>static/tailwind.css</code> (CI checks it is up to date).</li>
