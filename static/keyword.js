@@ -1514,12 +1514,32 @@ function renderFileMatches(data) {
     const total = typeof data.total_files === 'number' ? data.total_files : files.length;
     const rows = files.map((f, i) => `
         <li${i >= FILE_MATCHES_COLLAPSED ? ' class="file-match-extra" hidden' : ''}>
+          <div style="display:flex;align-items:center;gap:12px;padding-right:16px;border-top:1px solid #e3dec8">
             <button type="button" class="file-match-row" data-file-path="${escapeHtml(f.file_path)}"
                 title="Open ${escapeHtml(f.file_path)}"
-                style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 16px;background:none;border:none;border-top:1px solid #e3dec8;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px">
+                style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;text-align:left;padding:6px 0 6px 16px;background:none;border:none;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px">
                 ${iconSvg(fileIconName(f.file_path), 16)}
                 <span class="truncate">${fileMatchPathHtml(f.file_path, f.match_ranges)}</span>
             </button>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                ${hasImportGraph(f.file_path) ? `<a class="explore-graph-link hover:text-primary transition-colors"
+                    style="color:#5f5d48;display:flex"
+                    href="${escapeHtml(graphExplorerUrl(f.file_path))}"
+                    aria-label="Explore this file's imports"
+                    title="Explore imports in the dependency explorer">${iconSvg('account_tree', 16)}</a>` : ''}
+                <button type="button" class="copy-path-btn hover:text-primary transition-colors"
+                    style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                    data-file-path="${escapeHtml(f.file_path)}"
+                    aria-label="Copy file path"
+                    title="Copy file path">${iconSvg('content_copy', 16)}</button>
+                <button type="button" class="view-file-btn hover:text-primary transition-colors"
+                    style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
+                    data-file-path="${escapeHtml(f.file_path)}"
+                    data-line-number="1"
+                    aria-label="View full file"
+                    title="View full file">${iconSvg('open_in_new', 18)}</button>
+            </div>
+          </div>
         </li>`).join('');
     const hiddenCount = Math.max(0, files.length - FILE_MATCHES_COLLAPSED);
     const notFetched = total - files.length;
@@ -1543,6 +1563,8 @@ function renderFileMatches(data) {
     fileMatchesSection.querySelectorAll('.file-match-row').forEach(btn => {
         btn.addEventListener('click', () => showFileModal(btn.dataset.filePath, 1));
     });
+    // Preview-on-hover, view and copy buttons work as on a result group.
+    wireResultGroups(fileMatchesSection);
     const more = fileMatchesSection.querySelector('.file-matches-more');
     if (more) {
         more.addEventListener('click', () => {
