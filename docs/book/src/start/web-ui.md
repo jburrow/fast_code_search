@@ -84,6 +84,16 @@ module) are hidden by default since they are structure rather than
 dependencies; **Show mod declarations** brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.
 
+For JavaScript/TypeScript, relative imports (`./x`, `../x`) are probed
+with each extension, `index.*` and the `.js` to `.ts` swap. Non-relative
+imports go through the `paths` and `baseUrl` of the nearest `tsconfig.json`
+(or `jsconfig.json`), following relative `extends`, the way `tsc` does.
+An `@/` or `~/` import with no `paths` entry is tried under the package's
+`src/` and then its root. Anything else counts as an npm package and is
+marked external, which includes workspace packages imported by their
+package name (`@acme/shared`) unless `paths` maps them. The graph is built
+when files are indexed, so re-index after changing `paths`.
+
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 
 ## Other pages

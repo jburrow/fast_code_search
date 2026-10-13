@@ -34,6 +34,29 @@ pub struct DependencyIndex {
     /// crate's own binaries and tests `use` it by, or `None` when the
     /// manifest names no package. Read once per crate.
     rust_crate_names: std::sync::RwLock<FxHashMap<PathBuf, Option<String>>>,
+    /// tsconfig.json / jsconfig.json `baseUrl` and `paths`, read on demand.
+    js_configs: std::sync::RwLock<JsConfigCache>,
+}
+
+/// Module resolution settings from the nearest tsconfig.json or
+/// jsconfig.json, with its `extends` chain applied.
+#[derive(Debug, Default)]
+struct JsConfig {
+    /// `compilerOptions.baseUrl`, absolute.
+    base_url: Option<PathBuf>,
+    /// `compilerOptions.paths`: pattern (at most one `*`) -> targets.
+    paths: Vec<(String, Vec<String>)>,
+    /// Directory `paths` targets are relative to: `baseUrl` when set,
+    /// otherwise the directory of the config that declared `paths`.
+    paths_base: PathBuf,
+}
+
+#[derive(Debug, Default)]
+struct JsConfigCache {
+    /// Directory of an importing file -> its nearest config file.
+    nearest: FxHashMap<PathBuf, Option<PathBuf>>,
+    /// Config file -> its parsed settings (`None` if unreadable).
+    parsed: FxHashMap<PathBuf, Option<std::sync::Arc<JsConfig>>>,
 }
 
 /// Resolve `.` and `..` components without touching the file system.
@@ -57,6 +80,145 @@ pub fn normalize_lexically(path: &Path) -> PathBuf {
             }
             other => out.push(other.as_os_str()),
         }
+    }
+    out
+}
+
+fn is_js_config_name(name: &str) -> bool {
+    name == "jsconfig.json" || (name.starts_with("tsconfig") && name.ends_with(".json"))
+}
+
+/// Read a tsconfig/jsconfig, applying its `extends` chain (relative and
+/// absolute entries; configs from npm packages are skipped). `None` when
+/// the file cannot be read or parsed.
+fn load_js_config(file: &Path, depth: usize) -> Option<JsConfig> {
+    const MAX_EXTENDS_DEPTH: usize = 8;
+    let text = std::fs::read_to_string(file).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&strip_jsonc(&text)).ok()?;
+    let dir = file.parent()?;
+    let mut config = JsConfig {
+        paths_base: dir.to_path_buf(),
+        ..JsConfig::default()
+    };
+    let mut paths_dir = None;
+    if depth < MAX_EXTENDS_DEPTH {
+        let extends: Vec<&str> = match value.get("extends") {
+            Some(serde_json::Value::String(s)) => vec![s.as_str()],
+            Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+            _ => Vec::new(),
+        };
+        // Later entries override earlier ones.
+        for parent in extends {
+            let parent_path = Path::new(parent);
+            if !(parent.starts_with('.') || parent_path.is_absolute()) {
+                continue;
+            }
+            let mut parent_file = normalize_lexically(&dir.join(parent_path));
+            if parent_file.extension().is_none_or(|e| e != "json") {
+                parent_file.as_mut_os_string().push(".json");
+            }
+            if let Some(inherited) = load_js_config(&parent_file, depth + 1) {
+                if inherited.base_url.is_some() {
+                    config.base_url = inherited.base_url;
+                }
+                if !inherited.paths.is_empty() {
+                    config.paths = inherited.paths;
+                    paths_dir = Some(inherited.paths_base);
+                }
+            }
+        }
+    }
+    let options = value.get("compilerOptions");
+    if let Some(base) = options
+        .and_then(|o| o.get("baseUrl"))
+        .and_then(|b| b.as_str())
+    {
+        config.base_url = Some(normalize_lexically(&dir.join(base)));
+    }
+    if let Some(paths) = options
+        .and_then(|o| o.get("paths"))
+        .and_then(|p| p.as_object())
+    {
+        config.paths = paths
+            .iter()
+            .map(|(pattern, targets)| {
+                let targets = targets
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|t| t.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (pattern.clone(), targets)
+            })
+            .collect();
+        paths_dir = Some(dir.to_path_buf());
+    }
+    config.paths_base = config
+        .base_url
+        .clone()
+        .or(paths_dir)
+        .unwrap_or_else(|| dir.to_path_buf());
+    Some(config)
+}
+
+/// tsconfig files are JSON with comments and trailing commas: drop both so
+/// `serde_json` can parse them.
+fn strip_jsonc(text: &str) -> String {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut no_comments = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            no_comments.push(c);
+            match c {
+                '\\' => no_comments.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('/', Some('/')) => {
+                if chars.by_ref().any(|c| c == '\n') {
+                    no_comments.push('\n');
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = ' ';
+                chars
+                    .by_ref()
+                    .find(|&c| std::mem::replace(&mut prev, c) == '*' && c == '/');
+                no_comments.push(' ');
+            }
+            _ => {
+                in_string = c == '"';
+                no_comments.push(c);
+            }
+        }
+    }
+    let mut out = String::with_capacity(no_comments.len());
+    let mut chars = no_comments.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                '\\' => out.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        in_string = c == '"';
+        // A trailing comma: the next significant character closes.
+        if c == ',' && matches!(chars.clone().find(|c| !c.is_whitespace()), Some('}' | ']')) {
+            continue;
+        }
+        out.push(c);
     }
     out
 }
@@ -113,6 +275,15 @@ impl DependencyIndex {
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(root);
             }
+        }
+        if stored_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(is_js_config_name)
+        {
+            // An edited config can change any directory's resolution
+            // (through `extends`), so start over.
+            *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
         }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
@@ -454,8 +625,15 @@ impl DependencyIndex {
         if spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".." {
             return self.js_candidates(&dir.join(spec));
         }
-        // Source-root aliases (`@/x`, `~/x`): nearest ancestor with a
-        // package.json or tsconfig.json, then `src/x` or `x` under it.
+        // tsconfig/jsconfig `paths`, then `baseUrl`, as tsc resolves them.
+        if let Some(config) = self.js_config(dir) {
+            if let Some(found) = self.resolve_js_config(&config, spec) {
+                return Some(found);
+            }
+        }
+        // Source-root aliases (`@/x`, `~/x`) with no `paths` entry (bundler
+        // aliases): nearest ancestor with a package.json or tsconfig.json,
+        // then `src/x` or `x` under it.
         if let Some(rest) = spec.strip_prefix("@/").or_else(|| spec.strip_prefix("~/")) {
             let mut d = Some(dir);
             while let Some(root) = d {
@@ -471,6 +649,74 @@ impl DependencyIndex {
         // Bare package specifiers (`react`, `lodash/merge`, `@scope/pkg`) are
         // external: never guess a same-named local file.
         None
+    }
+
+    /// Resolve a non-relative specifier through `paths` (exact pattern
+    /// first, then the wildcard pattern with the longest prefix; each of
+    /// its targets in order), then under `baseUrl`.
+    fn resolve_js_config(&self, config: &JsConfig, spec: &str) -> Option<PathBuf> {
+        let exact = config.paths.iter().find(|(pattern, _)| pattern == spec);
+        let matched = exact.map(|(_, targets)| (targets, "")).or_else(|| {
+            config
+                .paths
+                .iter()
+                .filter_map(|(pattern, targets)| {
+                    let (prefix, suffix) = pattern.split_once('*')?;
+                    let star = spec.strip_prefix(prefix)?.strip_suffix(suffix)?;
+                    Some((prefix.len(), targets, star))
+                })
+                .max_by_key(|(len, _, _)| *len)
+                .map(|(_, targets, star)| (targets, star))
+        });
+        if let Some((targets, star)) = matched {
+            for target in targets {
+                let target = target.replacen('*', star, 1);
+                if let Some(found) = self.js_candidates(&config.paths_base.join(target)) {
+                    return Some(found);
+                }
+            }
+        }
+        config
+            .base_url
+            .as_ref()
+            .and_then(|base| self.js_candidates(&base.join(spec)))
+    }
+
+    /// Settings of the tsconfig.json (or jsconfig.json) nearest to `dir`.
+    fn js_config(&self, dir: &Path) -> Option<std::sync::Arc<JsConfig>> {
+        let cached = {
+            let cache = self.js_configs.read().unwrap_or_else(|e| e.into_inner());
+            cache.nearest.get(dir).map(|config_file| {
+                config_file
+                    .as_ref()
+                    .map(|f| cache.parsed.get(f).cloned().flatten())
+            })
+        };
+        if let Some(config) = cached {
+            return config.flatten();
+        }
+        let config_file = dir.ancestors().find_map(|d| {
+            ["tsconfig.json", "jsconfig.json"]
+                .iter()
+                .map(|name| d.join(name))
+                .find(|f| f.is_file())
+        });
+        let config = config_file.as_ref().and_then(|f| {
+            let parsed = self
+                .js_configs
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .parsed
+                .get(f)
+                .cloned();
+            parsed.unwrap_or_else(|| load_js_config(f, 0).map(std::sync::Arc::new))
+        });
+        let mut cache = self.js_configs.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(f) = &config_file {
+            cache.parsed.insert(f.clone(), config.clone());
+        }
+        cache.nearest.insert(dir.to_path_buf(), config_file);
+        config
     }
 
     /// Probe `p`, `p.<ext>`, `p` with `.js` swapped for `.ts`/`.tsx`, and
@@ -621,6 +867,7 @@ impl DependencyIndex {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
     }
 
     /// Canonical path a file id is registered under.
@@ -884,6 +1131,92 @@ mod tests {
     /// Roadmap 6.5 finding: candidate probing must not touch the file
     /// system. `..` / `.` in a candidate are resolved lexically and a
     /// candidate that is not indexed is simply absent from the map.
+    /// tsconfig `paths` (exact, wildcard, longest prefix, several targets)
+    /// and `baseUrl`, inherited through a relative `extends` from a config
+    /// written with comments and trailing commas (an Nx-style monorepo).
+    #[test]
+    fn test_resolve_js_tsconfig_paths() {
+        let base = r##"{
+            // shared settings
+            "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                    "@acme/shared": ["libs/shared/src/index.ts"],
+                    "@acme/ui/*": ["libs/ui/src/*"],
+                    "@acme/ui/icons/*": ["libs/icons/src/*"],
+                    "@/*": ["apps/web/app/*"],
+                    "#gen/*": ["missing/*", "libs/gen/*"], /* fallback */
+                },
+            },
+        }"##;
+        let (temp, idx) = setup(&[
+            ("tsconfig.base.json", base),
+            (
+                "apps/web/tsconfig.json",
+                r#"{ "extends": "../../tsconfig.base", "include": ["src"], }"#,
+            ),
+            ("apps/web/src/main.ts", ""),
+            ("apps/web/src/components/Button.tsx", ""),
+            ("apps/web/app/routes.ts", ""),
+            ("libs/shared/src/index.ts", ""),
+            ("libs/ui/src/card.tsx", ""),
+            ("libs/icons/src/star.ts", ""),
+            ("libs/gen/api.ts", ""),
+            ("libs/ui/src/plain.ts", ""),
+            (
+                "libs/ui/tsconfig.json",
+                r#"{"compilerOptions": {"baseUrl": "src"}}"#,
+            ),
+        ]);
+        let from = |rel: &str| temp.path().join(rel).canonicalize().unwrap();
+        let r = |file: &str, spec: &str| {
+            idx.resolve_import_path(&from(file), spec)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        let main = "apps/web/src/main.ts";
+        assert_eq!(
+            r(main, "@acme/shared"),
+            id_of(&temp, &idx, "libs/shared/src/index.ts")
+        );
+        assert_eq!(
+            r(main, "@acme/ui/card"),
+            id_of(&temp, &idx, "libs/ui/src/card.tsx")
+        );
+        assert_eq!(
+            r(main, "@acme/ui/icons/star"),
+            id_of(&temp, &idx, "libs/icons/src/star.ts"),
+            "longest prefix wins"
+        );
+        assert_eq!(
+            r(main, "@/routes"),
+            id_of(&temp, &idx, "apps/web/app/routes.ts"),
+            "`paths` beats the @/ -> src/ guess"
+        );
+        assert_eq!(r(main, "#gen/api"), id_of(&temp, &idx, "libs/gen/api.ts"));
+        assert_eq!(
+            r(main, "apps/web/src/components/Button"),
+            id_of(&temp, &idx, "apps/web/src/components/Button.tsx"),
+            "baseUrl"
+        );
+        assert_eq!(r(main, "react"), None, "bare package");
+        assert_eq!(r(main, "@acme/missing"), None);
+        // A package's own tsconfig (no extends) applies to its files only.
+        assert_eq!(
+            r("libs/ui/src/card.tsx", "plain"),
+            id_of(&temp, &idx, "libs/ui/src/plain.ts")
+        );
+        assert_eq!(r("libs/ui/src/card.tsx", "@acme/shared"), None);
+    }
+
+    #[test]
+    fn test_strip_jsonc() {
+        let text = "\u{feff}{\n  // c\n  \"a\": \"http://x/*y*/\", /* b */\n  \"b\": [1, 2,],\n  \"q\": \"\\\"//\",\n}";
+        let v: serde_json::Value = serde_json::from_str(&strip_jsonc(text)).unwrap();
+        assert_eq!(v["a"], "http://x/*y*/");
+        assert_eq!(v["b"], serde_json::json!([1, 2]));
+        assert_eq!(v["q"], "\"//");
+    }
+
     #[test]
     fn test_normalize_lexically() {
         let n = |s: &str| normalize_lexically(Path::new(s));

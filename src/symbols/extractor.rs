@@ -1378,8 +1378,17 @@ impl SymbolExtractor {
                 match child.kind() {
                     // `import x from './bar'` and re-exports `export { x } from './bar'`
                     // (barrel index files) both carry a `source` field.
+                    // TypeScript's `import x = require('./bar')` keeps its
+                    // `source` on the `import_require_clause` child.
                     "import_statement" | "export_statement" => {
-                        if let Some(source_node) = child.child_by_field_name("source") {
+                        let source_node = child.child_by_field_name("source").or_else(|| {
+                            let mut c = child.walk();
+                            let clause = child
+                                .children(&mut c)
+                                .find(|n| n.kind() == "import_require_clause");
+                            clause.and_then(|n| n.child_by_field_name("source"))
+                        });
+                        if let Some(source_node) = source_node {
                             let path = &source[source_node.byte_range()];
                             let path = path.trim_matches(|c| c == '"' || c == '\'' || c == '`');
                             imports.push(ImportStatement {
@@ -1677,6 +1686,18 @@ const { a, b } = obj;
         let mut paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
         paths.sort();
         assert_eq!(paths, vec!["./a", "./b", "./c", "./d", "./e"], "{paths:?}");
+
+        // TypeScript-only forms: `import x = require()` and `import type`.
+        let ts = concat!(
+            "import fs = require('./fs-shim');\n",
+            "import type { T } from './types';\n",
+            "export * as ns from './ns';\n",
+        );
+        let imports = SymbolExtractor::new(Path::new("index.ts"))
+            .extract_imports(ts)
+            .unwrap();
+        let paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths, vec!["./fs-shim", "./types", "./ns"], "{paths:?}");
     }
 
     /// Roadmap 5.6: Python — classes, functions, methods, module constants,

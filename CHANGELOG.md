@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check the files it just wrote.
 
 ### Fixed
+- Dependency graph: TypeScript and JavaScript imports that go through a
+  `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
+  `components/Button`) now link to the file they name, including settings
+  inherited through `extends`. They were treated as npm packages, so repos
+  that rely on aliases had few edges. `import x = require('./x')` is also
+  picked up now.
 - Web UI: search result context and hover previews are syntax-highlighted in
   one pass, so doc comments and other multi-line comments are shown as
   comments instead of having their words coloured as code (also when the

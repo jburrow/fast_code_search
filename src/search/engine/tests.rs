@@ -165,6 +165,45 @@ fn test_waiting_import_resolves_when_target_appears() {
     assert_eq!(engine.get_dependents(helper_id), vec![main_id]);
 }
 
+/// TypeScript: tsconfig `paths` aliases and `import x = require()` become
+/// graph edges once the full build resolves its parked imports.
+#[test]
+fn test_typescript_path_aliases_build_edges() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    fs::create_dir_all(root.join("src/app")).unwrap();
+    fs::create_dir_all(root.join("libs/shared")).unwrap();
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "paths": { "@shared/*": ["libs/shared/*"] } } }"#,
+    )
+    .unwrap();
+    let main_path = root.join("src/app/main.ts");
+    let money_path = root.join("libs/shared/money.ts");
+    let legacy_path = root.join("src/app/legacy.ts");
+    fs::write(
+        &main_path,
+        "import { add } from '@shared/money';\nimport legacy = require('./legacy');\n",
+    )
+    .unwrap();
+    fs::write(&money_path, "export const add = 1;\n").unwrap();
+    fs::write(&legacy_path, "export = {};\n").unwrap();
+
+    let mut engine = SearchEngine::new();
+    // The importer first, so both imports are parked until the final pass.
+    engine.index_file(&main_path).unwrap();
+    engine.index_file(&money_path).unwrap();
+    engine.index_file(&legacy_path).unwrap();
+    engine.resolve_imports();
+
+    let id = |p: &std::path::Path| engine.find_file_id(&p.to_string_lossy()).unwrap();
+    let mut deps = engine.dependency_index.get_dependencies(id(&main_path));
+    deps.sort();
+    let mut expected = vec![id(&money_path), id(&legacy_path)];
+    expected.sort();
+    assert_eq!(deps, expected);
+}
+
 #[test]
 fn test_case_insensitive_search() {
     let temp_dir = TempDir::new().unwrap();
