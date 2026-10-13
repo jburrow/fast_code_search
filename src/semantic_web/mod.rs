@@ -36,6 +36,12 @@ pub fn create_router(state: WebState) -> Router {
         .route("/api/diagnostics", get(diagnostics_handler))
         // WebSocket for progress streaming
         .route("/ws/progress", get(ws_progress_handler))
+        // Theme settings: the semantic server has no theme keys, so the
+        // pages get the defaults (each browser's own choice still applies).
+        .route(
+            "/ui-config.js",
+            get(|| async { crate::web::ui_config_response(&crate::web::UiSettings::default()) }),
+        )
         // Static files
         .route("/", get(index_handler))
         .route("/{*file}", get(static_handler))

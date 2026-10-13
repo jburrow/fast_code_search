@@ -154,6 +154,30 @@ pub struct ServerConfig {
     /// Example: `static_dir = "static"`
     #[serde(default)]
     pub static_dir: Option<String>,
+
+    /// Web UI theme for people who haven't picked one in their browser:
+    /// `"bold"` (the default), `"corporate"` or `"corporate-dark"`.
+    #[serde(default)]
+    pub default_theme: UiTheme,
+
+    /// Show the theme picker on a person's first visit to the web UI. Set
+    /// false on a shared instance to use `default_theme` without asking;
+    /// people can still change theme from the header.
+    #[serde(default = "default_true")]
+    pub theme_picker: bool,
+}
+
+/// A web UI theme (the token blocks in `static/app.css`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiTheme {
+    /// Yellow and black, square corners, capital labels.
+    #[default]
+    Bold,
+    /// White and grey with one blue accent, rounded corners, sentence case.
+    Corporate,
+    /// Corporate on dark surfaces.
+    CorporateDark,
 }
 
 /// Indexer-related configuration
@@ -324,6 +348,8 @@ impl Default for ServerConfig {
             max_fast_rank_files: 0,
             max_page_offset: default_max_page_offset(),
             static_dir: None,
+            default_theme: UiTheme::default(),
+            theme_picker: true,
         }
     }
 }
@@ -685,6 +711,15 @@ max_page_offset = 100000
 # binary; TOML has no "unset" value, so this one key stays commented out.
 # static_dir = "static"
 
+# Web UI theme for people who haven't picked one: "bold", "corporate" or
+# "corporate-dark". Each browser remembers its own choice.
+default_theme = "bold"
+
+# Ask people to pick a theme on their first visit. Set false on a shared
+# server to use default_theme without asking (they can still change it from
+# the palette button in the header).
+theme_picker = true
+
 [indexer]
 # Paths to index on startup
 # Add your project directories here
@@ -917,6 +952,18 @@ paths = ["/code/project"]
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.server.address, "127.0.0.1:8080");
         assert_eq!(config.indexer.paths, vec!["/code/project"]);
+    }
+
+    #[test]
+    fn test_ui_theme_names() {
+        let toml = "[server]\ndefault_theme = \"corporate-dark\"\ntheme_picker = false\n";
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.server.default_theme, UiTheme::CorporateDark);
+        assert!(!config.server.theme_picker);
+        assert!(toml::from_str::<Config>("[server]\ndefault_theme = \"dark\"\n").is_err());
+        let defaults = Config::default();
+        assert_eq!(defaults.server.default_theme, UiTheme::Bold);
+        assert!(defaults.server.theme_picker);
     }
 
     #[test]

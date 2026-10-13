@@ -164,7 +164,7 @@ function showSemanticNotHere() {
     if (!resultsContainer) return;
     const semanticUrl = `http://${window.location.hostname}:${window.SEMANTIC_PORT || 8081}/semantic.html`;
     resultsContainer.innerHTML = `
-        <div class="server-offline-state no-results" style="background:var(--surface);border:1px solid var(--ink);box-shadow:var(--shadow-sm)">
+        <div class="server-offline-state no-results" style="background:var(--surface);border:1px solid var(--line-strong);box-shadow:var(--shadow-sm)">
             <p style="font-weight:700;color:var(--text);margin-bottom:0.5rem">Semantic search isn't running on this server</p>
             <p>This is the keyword search server. Semantic search is a separate server,
             <code>fast_code_search_semantic</code>, usually on port ${escapeHtml(String(window.SEMANTIC_PORT || 8081))}.</p>
@@ -180,8 +180,8 @@ function renderBackendStatus(keywordUp, semanticServerUp, onSemanticServer) {
     const banner = document.getElementById('backend-banner');
     if (!banner) return;
 
-    updateBackendBadge('keyword-status-badge', keywordUp, 'KEYWORD');
-    updateBackendBadge('semantic-status-badge', semanticServerUp && onSemanticServer, 'SEMANTIC');
+    updateBackendBadge('keyword-status-badge', keywordUp, 'Keyword');
+    updateBackendBadge('semantic-status-badge', semanticServerUp && onSemanticServer, 'Semantic');
 
     const msgEl = document.getElementById('backend-banner-msg');
 
@@ -393,7 +393,7 @@ function createGroupedResultCard(group) {
                     </div>
                     <div class="result-meta">
                         ${langBadge}
-                        <span class="result-badge">${group.hits.length} ${group.hits.length === 1 ? 'CHUNK' : 'CHUNKS'}</span>
+                        <span class="result-badge">${group.hits.length} ${group.hits.length === 1 ? 'chunk' : 'chunks'}</span>
                     </div>
                 </div>
                 <div class="result-score" title="Top similarity score in file: ${(firstResult.similarity_score * 100).toFixed(1)}%">
@@ -413,11 +413,11 @@ function createSemanticHitCard(result, addTopBorder) {
     const scorePercent = Math.min(100, parseFloat(score));
 
     // Chunk type badge
-    let chunkLabel = 'CODE';
+    let chunkLabel = 'Code';
     let chunkClass = 'result-badge';
-    if (result.chunk_type === 'function') { chunkLabel = 'FUNCTION'; chunkClass = 'result-badge chunk-function'; }
-    else if (result.chunk_type === 'class')    { chunkLabel = 'CLASS';    chunkClass = 'result-badge chunk-class'; }
-    else if (result.chunk_type === 'module')   { chunkLabel = 'MODULE';   chunkClass = 'result-badge chunk-module'; }
+    if (result.chunk_type === 'function') { chunkLabel = 'Function'; chunkClass = 'result-badge chunk-function'; }
+    else if (result.chunk_type === 'class')    { chunkLabel = 'Class';    chunkClass = 'result-badge chunk-class'; }
+    else if (result.chunk_type === 'module')   { chunkLabel = 'Module';   chunkClass = 'result-badge chunk-module'; }
 
     // Language badge (uses shared langClassForPath from common.js)
     const ext = fileExtension(result.file_path);
@@ -436,7 +436,7 @@ function createSemanticHitCard(result, addTopBorder) {
                         ${langBadge}
                         <span class="${chunkClass}">${chunkLabel}</span>
                         ${result.symbol_name ? `<span class="result-badge" style="background:var(--accent-soft);border-color:var(--accent-ink);color:var(--on-accent-soft);text-transform:none">${escapeHtml(result.symbol_name)}</span>` : ''}
-                        <span style="font-size:0.65rem;color:var(--text-4);font-family:'JetBrains Mono',monospace">L${result.start_line}–${result.end_line}</span>
+                        <span style="font-size:0.65rem;color:var(--text-4);font-family:var(--font-mono)">L${result.start_line}–${result.end_line}</span>
                     </div>
                 </div>
                 <div class="result-score" title="Similarity score: ${score}%">

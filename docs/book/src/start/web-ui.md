@@ -103,6 +103,17 @@ resolved for Rust, Python and JavaScript/TypeScript.
 
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 
+## Themes
+
+The first time you open the UI it asks you to pick a theme; hover an option
+to try it on the page. **Bold** (the default) has capitalised labels and
+hard edges; **Corporate** and **Corporate dark** are quieter, with sentence
+case and rounded corners. Change it any time with the palette button in the
+header. The choice is kept in your browser. On a shared server,
+`default_theme` sets the theme for people who haven't chosen one and
+`theme_picker = false` skips the first-run question (see
+[Configuration](../guides/configuration.md)).
+
 ## Other pages
 
 - **Index** (`/diagnostics.html`): file counts, extension breakdown, the

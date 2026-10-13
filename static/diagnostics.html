@@ -4,318 +4,18 @@
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Index Diagnostics — Fast Code Search</title>
+    <!-- Theme first, so the page paints in the right colours (theme.js) -->
+    <script src="/ui-config.js"></script>
+    <script src="/theme.js"></script>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
     <style>
-        /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
-        /* Override rounded corners for new design */
-        .card { border-radius: 0 !important; box-shadow: var(--shadow-soft); }
-        .stat-item { border-radius: 0 !important; }
-        .test-results { border-radius: 0 !important; }
-        .sample-files { border-radius: 0 !important; }
-        .test-details { border-radius: 0 !important; }
-        .status-banner { border-radius: 0 !important; }
-        .card h3 { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
-        .refresh-btn {
-            background: var(--accent) !important; color: var(--ink) !important;
-            border: 1px solid var(--ink) !important; border-radius: 0 !important;
-            padding: 0.5rem 1rem; cursor: pointer; font-size: 0.78rem;
-            font-family: 'JetBrains Mono', monospace; font-weight: 700;
-            text-transform: uppercase; letter-spacing: 0.05em;
-            display: flex; align-items: center; gap: 0.5rem; margin-left: auto;
-            transition: background 0.1s, color 0.1s;
-        }
-        .refresh-btn:hover { background: var(--ink) !important; color: var(--accent) !important; }
-        .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .refresh-btn.loading::after {
-            content: ''; width: 14px; height: 14px;
-            border: 2px solid transparent; border-top-color: currentColor;
-            border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;
-        }
-        .diagnostics-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 1rem;
-        }
-
-        .diagnostics-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-            gap: 1rem;
-        }
-
-        .diagnostics-header h1 {
-            font-size: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .back-link {
-            color: var(--accent-ink);
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
-
-        .back-link:hover {
-            color: var(--accent-ink-2);
-        }
-
-        .status-banner {
-            padding: 1rem 1.5rem;
-            border-radius: 4px;
-            margin-bottom: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .status-banner.healthy {
-            background: color-mix(in srgb, var(--info) 10%, transparent);
-            border: 1px solid var(--info);
-        }
-
-        .status-banner.degraded {
-            background: color-mix(in srgb, var(--warn) 10%, transparent);
-            border: 1px solid var(--warn);
-        }
-
-        .status-banner.unhealthy {
-            background: color-mix(in srgb, var(--danger) 10%, transparent);
-            border: 1px solid var(--danger);
-        }
-
-        .status-icon {
-            font-size: 2rem;
-        }
-
-        .status-text h2 {
-            font-size: 1.25rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .status-text p {
-            color: var(--text-2);
-            font-size: 0.875rem;
-        }
-
-
-        .cards-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .card {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 1rem;
-        }
-
-        .card h3 {
-            font-size: 1rem;
-            color: var(--text-2);
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .stat-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 0.75rem;
-        }
-
-        .stat-item {
-            background: var(--page);
-            padding: 0.75rem;
-            border-radius: 4px;
-        }
-
-        .stat-item .value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--text);
-            font-variant-numeric: tabular-nums;
-        }
-
-        .stat-item .label {
-            font-size: 0.65rem;
-            color: var(--text-4);
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            font-weight: 600;
-        }
-
-        .extension-list {
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .extension-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 0.5rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .extension-item:last-child {
-            border-bottom: none;
-        }
-
-        .extension-name {
-            font-family: 'JetBrains Mono', 'Fira Code', monospace;
-            color: var(--accent-ink);
-            font-size: 0.825rem;
-        }
-
-        .extension-count {
-            color: var(--text-2);
-        }
-
-        .test-results {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .test-results-header {
-            padding: 1rem;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .test-results-header h3 {
-            font-size: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .test-summary {
-            display: flex;
-            gap: 1rem;
-            font-size: 0.875rem;
-        }
-
-        .test-summary .passed {
-            color: var(--info);
-        }
-
-        .test-summary .failed {
-            color: var(--danger);
-        }
-
-        .test-list {
-            list-style: none;
-        }
-
-        .test-item {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: flex-start;
-            gap: 0.75rem;
-        }
-
-        .test-item:last-child {
-            border-bottom: none;
-        }
-
-        .test-icon {
-            font-size: 1.25rem;
-            flex-shrink: 0;
-        }
-
-        .test-icon.pass {
-            color: var(--info);
-        }
-
-        .test-icon.fail {
-            color: var(--danger);
-        }
-
-        .test-content {
-            flex: 1;
-        }
-
-        .test-name {
-            font-weight: 500;
-            font-family: monospace;
-        }
-
-        .test-message {
-            font-size: 0.875rem;
-            color: var(--text-2);
-            margin-top: 0.25rem;
-        }
-
-        .test-details {
-            font-size: 0.75rem;
-            color: var(--text-4);
-            margin-top: 0.25rem;
-            font-family: monospace;
-            background: var(--page);
-            padding: 0.5rem;
-            border-radius: 4px;
-        }
-
-        .test-duration {
-            font-size: 0.75rem;
-            color: var(--text-4);
-            white-space: nowrap;
-        }
-
-        .sample-files {
-            background: var(--page);
-            border-radius: 4px;
-            padding: 0.5rem;
-            max-height: 150px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 0.75rem;
-        }
-
-        .sample-file {
-            padding: 0.25rem 0;
-            color: var(--text-2);
-            word-break: break-all;
-        }
-
-        .meta-info {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1rem;
-            font-size: 0.75rem;
-            color: var(--text-4);
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border);
-        }
-
-        .loading-state {
-            text-align: center;
-            padding: 3rem;
-            color: var(--text-2);
-        }
-
-        .error-state {
-            text-align: center;
-            padding: 3rem;
-            color: var(--danger);
-        }
+        .extension-list { max-height: 200px; overflow-y: auto; }
+        .extension-item { display: flex; justify-content: space-between; padding: 0.5rem; border-bottom: 1px solid var(--border); }
+        .extension-item:last-child { border-bottom: none; }
+        .extension-name { font-family: var(--font-mono); color: var(--accent-ink); font-size: 0.825rem; }
+        .extension-count { color: var(--text-2); }
     </style>
 </head>
 
@@ -327,8 +27,8 @@
 
     <main class="max-w-[1440px] mx-auto p-6">
         <div id="content">
-            <div style="text-align:center;padding:3rem;font-family:'JetBrains Mono',monospace;font-size:0.85rem;color:var(--text-4);">
-                Loading diagnostics...
+            <div class="loading">
+                Loading diagnostics…
             </div>
         </div>
     </main>
@@ -364,7 +64,7 @@
                     <div class="error-state">
                         <h2>Failed to load diagnostics</h2>
                         <p>${escapeHtml(error.message)}</p>
-                        <button class="refresh-btn" onclick="loadDiagnostics(true)">🔄 Retry</button>
+                        <button class="btn btn-primary" onclick="loadDiagnostics(true)">Retry</button>
                     </div>
                 `;
             } finally {
@@ -385,7 +85,7 @@
                 <div class="sample-file"><strong>${label}:</strong> ${escapeHtml(value || 'unknown')}</div>`;
             return `
                 <div class="card" style="margin-bottom: 1.5rem;">
-                    <h3>🛠️ Service</h3>
+                    <h3>Service</h3>
                     <div class="sample-files">
                         ${row('Web UI / REST', service.web_ui)}
                         ${row('gRPC', service.grpc)}
@@ -393,7 +93,7 @@
                     </div>
                     ${problems.length > 0 ? `
                         <div class="sample-files" style="margin-top: 0.75rem;">
-                            <div class="sample-file"><strong>⚠️ Problems (${problems.length}):</strong></div>
+                            <div class="sample-file"><strong>Problems (${problems.length}):</strong></div>
                             ${problems.map(p => `
                                 <div class="sample-file" style="white-space: normal; color: var(--warn);">${escapeHtml(p)}</div>
                             `).join('')}
@@ -406,10 +106,9 @@
             // Every string below comes from the server and, through it, from
             // file names in arbitrary indexed repositories: escape all of them.
             const status = ['healthy', 'degraded', 'unhealthy'].includes(data.status) ? data.status : 'unhealthy';
-            const statusIcon = status === 'healthy' ? '✅' :
-                status === 'degraded' ? '⚠️' : '❌';
-            const statusText = status === 'healthy' ? 'All Systems Operational' :
-                status === 'degraded' ? 'Degraded Performance' : 'System Unhealthy';
+            const statusIcon = {healthy: 'i-check', degraded: 'i-warning'}[status] || 'i-error';
+            const statusText = status === 'healthy' ? 'All systems operational' :
+                status === 'degraded' ? 'Degraded performance' : 'Unhealthy';
             const index = data.index || {};
             const config = data.config || {};
             const summary = data.test_summary || {};
@@ -417,29 +116,27 @@
             const content = document.getElementById('content');
             content.innerHTML = `
                 <div class="status-banner ${status}">
-                    <span class="status-icon">${statusIcon}</span>
+                    <span class="status-icon"><svg class="icon" width="32" height="32" aria-hidden="true"><use href="#${statusIcon}"/></svg></span>
                     <div class="status-text">
                         <h2>${statusText}</h2>
-                        <p>Version ${escapeHtml(data.version)} • Uptime: ${escapeHtml(data.uptime_human)}</p>
+                        <p>Version ${escapeHtml(data.version)} · uptime ${escapeHtml(data.uptime_human)}</p>
                     </div>
-                    <button id="refresh-btn" class="refresh-btn" onclick="loadDiagnostics(true)">
-                        🔄 Refresh
-                    </button>
+                    <button id="refresh-btn" class="btn btn-primary" onclick="loadDiagnostics(true)">Refresh</button>
                 </div>
 
                 ${renderService(data.service)}
 
                 <div class="cards-grid">
                     <div class="card">
-                        <h3>📊 Index Statistics</h3>
+                        <h3>Index statistics</h3>
                         <div class="stat-grid">
                             <div class="stat-item">
                                 <div class="value">${fmtNum(index.num_files)}</div>
-                                <div class="label">Files Indexed</div>
+                                <div class="label">Files indexed</div>
                             </div>
                             <div class="stat-item">
                                 <div class="value">${escapeHtml(index.total_size_human)}</div>
-                                <div class="label" title="File content currently mapped into memory by searches">Mapped Content</div>
+                                <div class="label" title="File content currently mapped into memory by searches">Mapped content</div>
                             </div>
                             <div class="stat-item">
                                 <div class="value">${fmtNum(index.num_trigrams)}</div>
@@ -453,7 +150,7 @@
                     </div>
 
                     <div class="card">
-                        <h3>📁 Files by Extension</h3>
+                        <h3>Files by extension</h3>
                         <div class="extension-list">
                             ${(index.files_by_extension || []).slice(0, 10).map(ext => `
                                 <div class="extension-item">
@@ -465,7 +162,7 @@
                     </div>
 
                     <div class="card">
-                        <h3>📂 Sample Indexed Files</h3>
+                        <h3>Sample indexed files</h3>
                         <div class="sample-files">
                             ${(index.sample_files || []).map(f => `
                                 <div class="sample-file">${escapeHtml(f)}</div>
@@ -474,9 +171,9 @@
                     </div>
 
                     <div class="card">
-                        <h3>⚙️ Configuration</h3>
+                        <h3>Configuration</h3>
                         <div class="sample-files">
-                            <div class="sample-file"><strong>Indexed Paths:</strong></div>
+                            <div class="sample-file"><strong>Indexed paths:</strong></div>
                             ${(config.indexed_paths || []).map(p => `
                                 <div class="sample-file">&nbsp;&nbsp;${escapeHtml(p)}</div>
                             `).join('')}
@@ -487,7 +184,7 @@
                                 `).join('')}
                             ` : ''}
                             <div class="sample-file" style="margin-top: 0.5rem;">
-                                <strong>File Watcher:</strong> ${config.watch_enabled ? 'Enabled' : 'Disabled'}
+                                <strong>File watcher:</strong> ${config.watch_enabled ? 'Enabled' : 'Disabled'}
                             </div>
                         </div>
                     </div>
@@ -495,7 +192,7 @@
 
                 <div class="test-results">
                     <div class="test-results-header">
-                        <h3>🧪 Self-Test Results</h3>
+                        <h3>Self-test results</h3>
                         <div class="test-summary">
                             <span class="passed">✓ ${fmtNum(summary.passed)} passed</span>
                             <span class="failed">${summary.failed > 0 ? '✗ ' + fmtNum(summary.failed) + ' failed' : ''}</span>
@@ -505,9 +202,7 @@
                     <ul class="test-list">
                         ${(data.self_tests || []).map(test => `
                             <li class="test-item">
-                                <span class="test-icon ${test.passed ? 'pass' : 'fail'}">
-                                    ${test.passed ? '✓' : '✗'}
-                                </span>
+                                <span class="test-icon ${test.passed ? 'pass' : 'fail'}"><svg class="icon" width="18" height="18" aria-label="${test.passed ? 'Passed' : 'Failed'}"><use href="#${test.passed ? 'i-check' : 'i-error'}"/></svg></span>
                                 <div class="test-content">
                                     <div class="test-name">${escapeHtml(test.name)}</div>
                                     <div class="test-message">${escapeHtml(test.message)}</div>
@@ -521,7 +216,7 @@
 
                 <div class="meta-info">
                     <span>Generated: ${escapeHtml(data.generated_at)}</span>
-                    <span>Server Type: Keyword Search (Trigram-based)</span>
+                    <span>Server: keyword search (trigram index)</span>
                 </div>
             `;
         }

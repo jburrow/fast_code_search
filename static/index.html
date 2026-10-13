@@ -8,13 +8,12 @@
          Left false, no probe is made (a refused probe logs a console error). -->
     <meta name="fcs-semantic-enabled" content="false"/>
     <title>Fast Code Search</title>
+    <!-- Theme first, so the page paints in the right colours (theme.js) -->
+    <script src="/ui-config.js"></script>
+    <script src="/theme.js"></script>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
-    <!-- The page is a hard-coded light theme (result code is on a white background),
-         so always use the light highlight.js theme. Loading the dark theme under
-         prefers-color-scheme:dark rendered pale tokens on white = unreadable. -->
-    <link rel="stylesheet" href="/highlight-light.min.css">
     <style>
         /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
         /* Search hit highlight */
@@ -44,7 +43,7 @@
             line-height: 1.55;
             overflow-x: auto;
             white-space: pre;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: var(--font-mono);
         }
         /* Context tooltip */
         .ctx-tooltip {
@@ -54,9 +53,9 @@
             max-width: none;
             min-width: 280px;
             background: var(--surface);
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             overflow: hidden;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.85rem;
             flex-direction: column;
             box-shadow: var(--shadow);
@@ -67,20 +66,20 @@
             gap: 0.75rem;
             padding: 0.3rem 0.5rem 0.3rem 0.75rem;
             background: var(--surface-head);
-            border-bottom: 1px solid var(--ink);
+            border-bottom: 1px solid var(--line-strong);
             font-size: 0.72rem;
             color: var(--text-2);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             flex-shrink: 0;
         }
         .ctx-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ctx-nav { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
         .ctx-nav[hidden] { display: none; }
         .ctx-header button {
-            background: var(--surface); border: 1px solid var(--ink); cursor: pointer;
+            background: var(--surface); border: 1px solid var(--line-strong); cursor: pointer;
             font: inherit; color: var(--text); padding: 0.05rem 0.45rem;
         }
-        .ctx-header button:hover, .ctx-header button:focus-visible { background: var(--accent); outline: none; }
+        .ctx-header button:hover, .ctx-header button:focus-visible { background: var(--hover); outline: none; }
         /* The whole file scrolls inside the preview; the wheel never reaches
            the page behind it (which used to scroll and close the preview). */
         .ctx-file-body {
@@ -102,10 +101,10 @@
             min-width: 200px;
             max-width: 360px;
             background: var(--surface);
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             box-shadow: var(--shadow);
             overflow: hidden;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.78rem;
         }
         .deps-popover-header {
@@ -128,7 +127,7 @@
             font-size: 0.7rem;
             font-weight: 600;
             color: var(--text-3);
-            text-transform: uppercase;
+            text-transform: var(--label-case);
             letter-spacing: 0.04em;
             margin-bottom: 0.3rem;
         }
@@ -173,7 +172,7 @@
             padding: 0.4rem 0.65rem;
             border-top: 1px solid var(--border);
             color: var(--info);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 0.72rem;
             text-decoration: none;
         }
@@ -191,7 +190,7 @@
         }
         .file-modal-dialog {
             background: var(--surface);
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             box-shadow: var(--shadow-lg);
             width: 90vw;
             max-width: 1100px;
@@ -202,7 +201,7 @@
         }
         .file-modal-header {
             background: var(--surface-head);
-            border-bottom: 1px solid var(--ink);
+            border-bottom: 1px solid var(--line-strong);
             padding: 0.5rem 1rem;
             display: flex;
             justify-content: space-between;
@@ -210,7 +209,7 @@
             flex-shrink: 0;
         }
         .file-modal-path {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.78rem;
             font-weight: 600;
             color: var(--text);
@@ -219,15 +218,15 @@
             margin-left: auto;
             margin-right: 0.75rem;
             padding: 0.15rem 0.5rem;
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             background: var(--surface);
             color: var(--text);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 0.72rem;
             text-decoration: none;
             white-space: nowrap;
         }
-        .file-modal-explore:hover { background: var(--accent); }
+        .file-modal-explore:hover { background: var(--hover); }
         .file-modal-explore + .file-modal-explore { margin-left: 0; }
         .file-modal-back { margin-left: 0; margin-right: 0.75rem; }
         .file-meta-hint { float: right; color: var(--text-4); }
@@ -245,15 +244,15 @@
             max-height: 60vh;
             overflow-y: auto;
             background: var(--surface);
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             box-shadow: var(--shadow-sm);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.72rem;
         }
         .code-menu-title {
             padding: 0.3rem 0.6rem;
             background: var(--surface-head);
-            border-bottom: 1px solid var(--ink);
+            border-bottom: 1px solid var(--line-strong);
             font-weight: 700;
             color: var(--text);
         }
@@ -271,13 +270,13 @@
             font: inherit;
         }
         .code-menu button + button { border-top: 1px solid var(--border-soft); }
-        .code-menu button:hover, .code-menu button:focus-visible { background: var(--accent); outline: none; }
+        .code-menu button:hover, .code-menu button:focus-visible { background: var(--hover); outline: none; }
         .code-menu button code { color: var(--text-3); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
         .file-modal-body .file-line-num { cursor: pointer; }
         .file-modal-body .file-line-num:hover { color: var(--text); text-decoration: underline; }
         .file-modal-close {
             background: none;
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             width: 1.75rem;
             height: 1.75rem;
             cursor: pointer;
@@ -289,7 +288,7 @@
             color: var(--text);
             transition: background 0.1s;
         }
-        .file-modal-close:hover { background: var(--accent); }
+        .file-modal-close:hover { background: var(--hover); }
         .file-modal-body {
             overflow-y: auto;
             flex: 1;
@@ -301,11 +300,11 @@
             padding: 0.35rem 1rem;
             background: var(--surface-2);
             border-bottom: 1px solid var(--border);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.72rem;
             color: var(--text-3);
         }
-        .file-code { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+        .file-code { font-family: var(--font-mono); font-size: 0.78rem; }
         .file-line {
             display: flex;
             padding: 0 1rem;
@@ -327,30 +326,30 @@
         .file-more:empty { display: none; }
         .file-more { padding: 0.35rem 1rem; background: var(--surface-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
         .file-more-btn {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 0.72rem;
             font-weight: 700;
             padding: 0.3rem 0.75rem;
             background: var(--surface);
             color: var(--text);
-            border: 1px solid var(--ink);
+            border: 1px solid var(--line-strong);
             box-shadow: var(--shadow-sm);
             cursor: pointer;
         }
-        .file-more-btn:hover { background: var(--accent); }
+        .file-more-btn:hover { background: var(--hover); }
         /* Empty / loading / error states */
         .empty-state {
             padding: 3rem 1.5rem;
             text-align: center;
             color: var(--text-3);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 0.85rem;
         }
         /* Progress bar animation */
         /* Status badge */
         /* Search disabled state */
         /* Mode toggle "on" look — set only by syncToggleVisuals() in keyword.js */
-        .mode-toggle.toggle-on { background: var(--accent); color: var(--ink); }
+        .mode-toggle.toggle-on { background: var(--accent); color: var(--on-accent); }
         /* The checkbox inside is sr-only, so show keyboard focus on the label */
         .mode-toggle:has(input:focus-visible) { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
         /* Keyboard-selected result group (j/k) */
@@ -363,22 +362,23 @@
         /* Paging */
         .load-more-row { display: flex; justify-content: center; padding: 0.5rem 0 1rem; }
         .load-more-btn {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.05em;
             padding: 0.6rem 1.5rem;
             background: var(--accent);
-            color: var(--ink);
-            border: 1px solid var(--ink);
+            color: var(--on-accent);
+            border: 1px solid var(--line-strong);
             box-shadow: var(--shadow-sm);
             cursor: pointer;
+            text-transform: var(--label-case);
         }
-        .load-more-btn:hover { background: var(--ink); color: var(--accent); }
+        .load-more-btn:hover { background: var(--primary-hover); color: var(--on-primary-hover); }
         .load-more-btn:disabled { opacity: 0.6; cursor: wait; }
         /* Hit whose content was cut at the 500-byte window */
         .truncated-badge {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 10px;
             padding: 2px 6px;
             background: var(--danger-soft);
@@ -391,22 +391,22 @@
         .copy-path-btn.copy-ok { color: var(--info) !important; }
         .copy-path-btn.copy-failed { color: var(--danger) !important; }
         /* Regex cheat-sheet and search suggestions */
-        #regex-help { display: none; background: var(--surface); border: 1px solid var(--ink); padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: var(--text); }
+        #regex-help { display: none; background: var(--surface); border: 1px solid var(--line-strong); padding: 1rem; font-family: var(--font-label); font-size: 0.78rem; color: var(--text); }
         #regex-help.open { display: block; }
         .regex-help-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
         .regex-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem 2rem; }
         .regex-help-title { font-weight: 700; margin-bottom: 0.4rem; }
         .regex-help-examples, .regex-help-rules { list-style: none; padding: 0; margin: 0 0 0.5rem; display: grid; gap: 0.35rem; }
-        .regex-help-examples button { background: var(--surface-2); border: 1px solid var(--ink); padding: 0.1rem 0.4rem; margin-right: 0.4rem; cursor: pointer; }
-        .regex-help-examples button:hover { background: var(--accent); }
+        .regex-help-examples button { background: var(--surface-2); border: 1px solid var(--line-strong); padding: 0.1rem 0.4rem; margin-right: 0.4rem; cursor: pointer; }
+        .regex-help-examples button:hover { background: var(--hover); }
         #regex-help code, .search-suggestions code, .regex-error code { background: var(--surface-2); padding: 0 0.2rem; }
         #regex-help a { text-decoration: underline; }
         .regex-help-link { background: none; border: none; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; color: inherit; }
         .search-suggestions { margin-top: 1rem; display: grid; gap: 0.6rem; justify-items: center; }
         .suggestion-hint { color: var(--text-3); }
         .suggestion-list { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
-        .suggestion-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; max-width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--ink); box-shadow: var(--shadow-sm); padding: 0.4rem 0.7rem; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
-        .suggestion-btn:hover { background: var(--accent); }
+        .suggestion-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; max-width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sm); padding: 0.4rem 0.7rem; cursor: pointer; font-family: var(--font-label); font-size: 0.75rem; }
+        .suggestion-btn:hover { background: var(--hover); }
         .suggestion-btn code { overflow-wrap: anywhere; }
         .suggestion-label { font-weight: 700; }
         .suggestion-count { font-weight: 400; color: var(--text-3); }
@@ -415,18 +415,22 @@
         /* Phone width: the toggles wrap instead of FILTER being cut off */
         @media (max-width: 767px) {
             #mode-toggle-group { flex-wrap: wrap; flex-shrink: 1; }
-            #mode-toggle-group > * { flex-grow: 1; justify-content: center; border-bottom: 1px solid var(--ink); margin-bottom: -1px; }
+            #mode-toggle-group > * { flex-grow: 1; justify-content: center; border-bottom: 1px solid var(--line-strong); margin-bottom: -1px; }
         }
         /* FILTER toggle: number of path filters set */
-        .filter-count { min-width: 1.1rem; padding: 0 0.3rem; background: var(--ink); color: var(--accent); font-size: 0.65rem; line-height: 1.1rem; text-align: center; }
-        .filter-toggle.toggle-on { background: var(--accent); color: var(--ink); }
+        .filter-count { min-width: 1.1rem; padding: 0 0.3rem; background: var(--primary-hover); color: var(--on-primary-hover); font-size: 0.65rem; line-height: 1.1rem; text-align: center; }
+        .filter-toggle.toggle-on { background: var(--accent); color: var(--on-accent); }
         /* Results bar: the path filters these results went through */
-        .active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
+        .active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-family: var(--font-mono); font-size: 0.72rem; }
         .active-filters[hidden] { display: none; }
-        .active-filter { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 28rem; padding: 0.05rem 0.2rem 0.05rem 0.45rem; background: var(--surface); border: 1px solid var(--ink); }
+        .active-filter { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 28rem; padding: 0.05rem 0.2rem 0.05rem 0.45rem; background: var(--surface); border: 1px solid var(--line-strong); }
         .active-filter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .active-filter button { background: none; border: none; cursor: pointer; padding: 0 0.25rem; font: inherit; font-weight: 700; }
-        .active-filter button:hover { background: var(--accent); }
+        .active-filter button:hover { background: var(--hover); }
+        /* Corners follow the theme */
+        .ctx-tooltip, .deps-popover, .file-modal-dialog, .code-menu, #regex-help, .suggestion-btn,
+        .load-more-btn, .file-more-btn, .file-modal-explore, .file-modal-close, .active-filter,
+        .regex-help-examples button, .truncated-badge, .regex-error pre { border-radius: var(--radius); }
         /* Filter panel */
         #filter-panel { display: none; }
         #filter-panel.open { display: block; }
@@ -444,7 +448,7 @@
            (the links end near x=510; a 340px box centred at 512 starts at 342). */
         #nav-search {
             position: absolute;
-            right: 52px; /* 24px header padding + 20px help icon + 8px gap */
+            right: 70px; /* 24px header padding + 38px theme button + 8px gap */
             top: 50%;
             /* -10px: slides up from just below centre on enter; resting at -50% (true centre) */
             transform: translateY(calc(-50% - 10px));
@@ -453,9 +457,10 @@
             display: flex;
             align-items: stretch;
             height: 36px;
-            border: 1.5px solid var(--ink);
+            border: 1.5px solid var(--line-strong);
             background: var(--surface);
-            box-shadow: 3px 3px 0 var(--ink);
+            box-shadow: var(--shadow-sm);
+            border-radius: var(--radius);
             transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
                         transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
             z-index: 10;
@@ -493,7 +498,7 @@
             border: none;
             outline: none;
             background: transparent;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.78rem;
             color: var(--text);
             padding: 0 0.4rem;
@@ -507,19 +512,19 @@
             justify-content: center;
             padding: 0 0.65rem;
             background: var(--accent);
-            color: var(--ink);
-            border-left: 1.5px solid var(--ink);
+            color: var(--on-accent);
+            border-left: 1.5px solid var(--line-strong);
             cursor: pointer;
             font-size: 0.65rem;
             font-weight: 700;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             letter-spacing: 0.06em;
-            text-transform: uppercase;
+            text-transform: var(--label-case);
             flex-shrink: 0;
             transition: background 0.1s;
             white-space: nowrap;
         }
-        #nav-search-btn:hover { background: var(--accent-soft); }
+        #nav-search-btn:hover { background: var(--accent-soft); color: var(--on-accent-soft); }
         @media (prefers-reduced-motion: reduce) {
             #nav-search { transition: opacity 0.01ms; }
         }
@@ -533,16 +538,16 @@
         <!-- Compact search bar — slides into nav when main search scrolls out of view -->
         <div id="nav-search" role="search" aria-label="Quick search" aria-hidden="true">
             <span id="nav-search-icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg></span>
-            <input type="text" id="nav-query" placeholder="SEARCH..." autocomplete="off"
+            <input type="text" id="nav-query" placeholder="Search…" autocomplete="off"
                    tabindex="-1" aria-label="Quick search query"/>
-            <button id="nav-search-btn" tabindex="-1" title="Execute search">RUN ↵</button>
+            <button id="nav-search-btn" tabindex="-1" title="Run search" class="label-case">Run ↵</button>
         </div>
         <!-- Index stats row (hidden while the compact search occupies its track) -->
-        <div id="header-stats" class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
-            <span title="Total number of source files in the index">FILES: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
-            <span title="Total size of all indexed file content">CONTENT: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
-            <span title="Number of unique 3-character sequences">TRIGRAMS: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
-            <span title="Number of import/dependency edges used to boost relevance scoring">DEPS: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
+        <div id="header-stats" class="hidden lg:flex items-center gap-4 text-[10px] font-label label-case text-outline">
+            <span title="Total number of source files in the index">Files: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
+            <span title="Total size of all indexed file content">Content: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of unique 3-character sequences">Trigrams: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of import/dependency edges used to boost relevance scoring">Deps: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
         </div>
         
     </template>
@@ -564,8 +569,8 @@
         <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-warning"/></svg>
         <span id="backend-banner-msg" class="flex-1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         <div class="flex items-center gap-2 flex-shrink-0">
-            <span id="keyword-status-badge" class="status-badge">KEYWORD</span>
-            <span id="semantic-status-badge" class="status-badge">SEMANTIC</span>
+            <span id="keyword-status-badge" class="status-badge">Keyword</span>
+            <span id="semantic-status-badge" class="status-badge">Semantic</span>
         </div>
     </div>
 
@@ -581,65 +586,65 @@
                         <span class="text-outline flex items-center"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-search"/></svg></span>
                     </div>
                     <label for="query" class="sr-only">Search query</label>
-                    <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
-                        class="w-full bg-surface-container-lowest border border-black pl-12 pr-4 lg:pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                    <input type="text" id="query" placeholder="Search the repository…" autocomplete="off" autofocus
+                        class="w-full bg-surface-container-lowest border border-black rounded pl-12 pr-4 lg:pr-24 py-4 font-mono text-base focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     <div class="absolute inset-y-0 right-4 flex items-center gap-2">
-                        <span id="focus-shortcut" class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden lg:inline" title="Focus the search box">CTRL+K</span>
+                        <span id="focus-shortcut" class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label label-case border border-outline-variant hidden lg:inline" title="Focus the search box">Ctrl+K</span>
                     </div>
                     <!-- Search history dropdown -->
                     <div id="search-history-dropdown" style="display:none" class="absolute top-full left-0 right-0 z-50 bg-white border border-black border-t-0 shadow-md max-h-64 overflow-y-auto"></div>
                 </div>
                 <!-- Toggle group -->
-                <div id="mode-toggle-group" class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
+                <div id="mode-toggle-group" class="flex gap-0 border border-black rounded overflow-hidden flex-shrink-0">
                     <!-- Mode toggles: the "on" look comes from the .toggle-on class,
                          which keyword.js derives from the checkbox state
                          (syncToggleVisuals), so URL/storage/history changes
                          always look the way they behave. -->
                     <!-- Case is not a mode: it combines with any of them. Off = ignore
                          case in every mode (regex included); on = match it exactly. -->
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Match case exactly (off: upper and lower case are the same, in every mode)">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Match case exactly (off: upper and lower case are the same, in every mode)">
                         <input type="checkbox" id="case-mode" class="sr-only">
-                        <span aria-hidden="true" style="font-family:'JetBrains Mono',monospace">Aa</span>
-                        <span class="hidden xl:inline">MATCH CASE</span>
+                        <span aria-hidden="true" class="as-typed" style="font-family:var(--font-mono)">Aa</span>
+                        <span class="hidden xl:inline">Match case</span>
                         <span class="sr-only xl:hidden">Match case</span>
                     </label>
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Enable regular expression syntax">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Enable regular expression syntax">
                         <input type="checkbox" id="regex-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-code"/></svg>
-                        <span>REGEX</span>
+                        <span>Regex</span>
                     </label>
                     <button type="button" id="regex-help-btn" aria-expanded="false" aria-controls="regex-help" aria-label="Regex help and examples" title="Regex help and examples"
-                        class="flex items-center px-2 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors border-r border-black">
+                        class="flex items-center px-2 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors border-r border-black">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-help-outline"/></svg>
                     </button>
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Only match symbol definitions">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Only match symbol definitions">
                         <input type="checkbox" id="symbols-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-function"/></svg>
-                        <span>SYMBOLS</span>
+                        <span>Symbols</span>
                     </label>
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Find references (call sites, type mentions) of the identifier in the query">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Find references (call sites, type mentions) of the identifier in the query">
                         <input type="checkbox" id="references-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-link"/></svg>
-                        <span>REFERENCES</span>
+                        <span>References</span>
                     </label>
                     <!-- The one FILTER toggle. Its count shows how many path filters
                          are set, so a filter left on is never invisible. -->
-                    <button type="button" id="filter-toggle-btn" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold" title="Show filter and ranking options" aria-expanded="false" aria-controls="filter-panel">
+                    <button type="button" id="filter-toggle-btn" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold" title="Show filter and ranking options" aria-expanded="false" aria-controls="filter-panel">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg>
-                        <span>FILTER</span>
+                        <span>Filter</span>
                         <span id="filter-count" class="filter-count" hidden></span>
                     </button>
                 </div>
                 <!-- Execute button -->
-                <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-4 lg:px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
-                    EXECUTE_QUERY
+                <button id="search-btn" class="rounded bg-primary-container text-on-accent font-label label-case font-bold px-4 lg:px-8 py-4 border border-black hover:bg-primary-hover hover:text-on-primary-hover transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
+                    Search
                 </button>
             </div>
 
             <!-- Regex cheat-sheet (toggled by the ? next to REGEX; keyword.js) -->
             <div id="regex-help" role="region" aria-label="Regex help">
                 <div class="regex-help-head">
-                    <strong>REGEX CHEAT-SHEET</strong>
+                    <strong class="label-case">Regex cheat sheet</strong>
                     <button type="button" id="regex-help-close" class="regex-help-link">Close</button>
                 </div>
                 <div class="regex-help-grid">
@@ -659,11 +664,11 @@
                     <div>
                         <p class="regex-help-title">Things that catch people out</p>
                         <ul class="regex-help-rules">
-                            <li><strong>Case.</strong> Upper and lower case are the same unless MATCH CASE is on, as in plain search.</li>
+                            <li><strong>Case.</strong> Upper and lower case are the same unless <span class="label-case">Match case</span> is on, as in plain search.</li>
                             <li><strong>Special characters.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> mean something. Put <code>\</code> before one to match it: <code>\{</code>, <code>\.</code>, <code>\(</code>.</li>
                             <li><strong>Spaces are exact.</strong> <code>a b</code> needs exactly one space. Use <code>\s*</code> (any, even none) or <code>\s+</code> (at least one).</li>
                             <li><strong>One line at a time.</strong> <code>.</code> and <code>\s</code> stop at the end of a line. Use <code>\n</code> or <code>(?s)</code> to match across lines.</li>
-                            <li><strong>Literal text?</strong> Turn REGEX off: plain search matches what you type, quotes included.</li>
+                            <li><strong>Literal text?</strong> Turn <span class="label-case">Regex</span> off: plain search matches what you type, quotes included.</li>
                         </ul>
                         <p><a href="/docs.html#regex-search">Full regex guide</a></p>
                     </div>
@@ -673,9 +678,9 @@
             <!-- Results meta bar (shown after search) -->
             <div id="results-header" class="flex justify-between items-center border-b border-outline-variant pb-2 px-1" style="display: none;">
                 <div class="flex gap-4 items-center flex-wrap" aria-live="polite" aria-atomic="true">
-                    <span id="results-count" class="font-label text-xs font-bold bg-black text-on-ink px-2 py-0.5"></span>
+                    <span id="results-count" class="font-label label-case text-xs font-bold bg-black text-on-ink px-2 py-0.5"></span>
                     <span id="search-meta" class="font-label text-xs text-outline"></span>
-                    <button type="button" id="more-files-btn" class="font-label text-xs font-bold underline hover:text-black" style="display: none;"></button>
+                    <button type="button" id="more-files-btn" class="font-label label-case text-xs font-bold underline hover:text-black" style="display: none;"></button>
                     <span id="index-freshness" class="font-label text-xs text-outline" style="display: none;"></span>
                 </div>
                 <!-- Which path filters these results went through (keyword.js) -->
@@ -683,11 +688,11 @@
             </div>
 
             <!-- Filter panel (hidden by default) -->
-            <div id="filter-panel" class="bg-surface-container-low border border-black p-4 space-y-3">
+            <div id="filter-panel" class="bg-surface-container-low border border-black rounded p-4 space-y-3">
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        MAX RESULTS
-                        <select id="max-results" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Max results
+                        <select id="max-results" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus">
                             <option value="25">25</option>
                             <option value="50" selected>50</option>
                             <option value="100">100</option>
@@ -696,17 +701,17 @@
                             <option value="1000">1000</option>
                         </select>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        RANKING
-                        <select id="rank-mode" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Ranking
+                        <select id="rank-mode" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus">
                             <option value="auto" selected>Auto</option>
                             <option value="fast">Fast</option>
                             <option value="full">Full</option>
                         </select>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        CONTEXT LINES
-                        <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container" title="Lines of code shown either side of each match">
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Context lines
+                        <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus" title="Lines of code shown either side of each match">
                             <option value="0" selected>Match only</option>
                             <option value="1">±1 line</option>
                             <option value="2">±2 lines</option>
@@ -715,15 +720,15 @@
                             <option value="5">±5 lines</option>
                         </select>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        SEARCH ONLY IN
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Search only in
                         <input type="text" id="include-filter" placeholder="src/**/*.rs, lib/**" autocomplete="off"
-                            class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                            class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        SKIP PATHS
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Skip paths
                         <input type="text" id="exclude-filter" placeholder="**/test/**, **/vendor/**" autocomplete="off"
-                            class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                            class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     </label>
                 </div>
                 <div class="flex flex-wrap items-center justify-between gap-2">

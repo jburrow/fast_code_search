@@ -311,10 +311,10 @@ function pathMatchRuns(path, byteRanges) {
     return runs;
 }
 
-/** Header of the Files group: "1 PATH MATCHES" / "12 PATHS MATCH". */
+/** Header of the Files group: "1 path matches" / "12 paths match". */
 function fileMatchesLabel(total) {
     const n = Number(total).toLocaleString('en-US');
-    return total === 1 ? `${n} PATH MATCHES` : `${n} PATHS MATCH`;
+    return total === 1 ? `${n} path matches` : `${n} paths match`;
 }
 
 // ---------- Query syntax (mirrors src/search/query_syntax.rs) ----------
@@ -494,27 +494,27 @@ function resultsCountLabel(data, n) {
     const label = contentCountLabel(data, n);
     if (!files) return label;
     // Path matches sit above the content results; count them too, or
-    // "1 RESULT" over a box of two files reads as wrong.
-    const f = `${Number(files).toLocaleString('en-US')} FILE${files !== 1 ? 'S' : ''}`;
+    // "1 result" over a box of two files reads as wrong.
+    const f = `${Number(files).toLocaleString('en-US')} file${files !== 1 ? 's' : ''}`;
     return { text: `${f} · ${label.text}`, title: label.title };
 }
 
 function contentCountLabel(data, n) {
     const num = (k) => Number(k).toLocaleString('en-US');
-    const plural = (k) => `${num(k)} RESULT${k !== 1 ? 'S' : ''}`;
+    const plural = (k) => `${num(k)} result${k !== 1 ? 's' : ''}`;
     if (typeof data.total_matches === 'number') {
         return n < data.total_matches
-            ? { text: `${num(n)} OF ${plural(data.total_matches)}`, title: 'Use LOAD MORE to fetch the next page' }
+            ? { text: `${num(n)} of ${plural(data.total_matches)}`, title: 'Load more fetches the next page' }
             : { text: plural(n), title: '' };
     }
     if (data.truncated_by_budget) {
         return {
-            text: `${num(n)}+ RESULTS`,
-            title: 'The search stopped at its match limit or time limit, so the total is unknown. LOAD MORE runs it again with a higher limit.',
+            text: `${num(n)}+ results`,
+            title: 'The search stopped at its match limit or time limit, so the total is unknown. Load more runs it again with a higher limit.',
         };
     }
     return data.has_more
-        ? { text: `${num(n)}+ RESULTS`, title: 'More results are available' }
+        ? { text: `${num(n)}+ results`, title: 'More results are available' }
         : { text: plural(n), title: '' };
 }
 
@@ -566,7 +566,7 @@ function searchMetaLabel(data, durationMs, ignoresCase) {
     if (searched < total) {
         return {
             text: `Searched ${num(searched)} of ${num(total)} files · ${time}`,
-            title: 'Fast ranking only opened the most likely files. SEARCH MORE FILES opens more of them; Ranking: Full under FILTER opens them all.',
+            title: 'Fast ranking only opened the most likely files. Search more files opens more of them; Ranking: Full under Filter opens them all.',
         };
     }
     return {
@@ -591,7 +591,7 @@ function moreFilesRequest(data) {
     const n = Math.min(total, allowed);
     return {
         maxFiles: n,
-        label: n === total ? 'SEARCH ALL FILES' : `SEARCH ${n.toLocaleString('en-US')} FILES`,
+        label: n === total ? 'Search all files' : `Search ${n.toLocaleString('en-US')} files`,
     };
 }
 
