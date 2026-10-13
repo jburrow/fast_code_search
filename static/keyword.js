@@ -792,17 +792,23 @@ function renderFileLineHtml(html, lineNum, highlightLine) {
  * the container. Only ±FILE_VIEW_WINDOW lines around the target are laid
  * out; "Show more" controls extend the window in either direction.
  */
-async function populateFileView(container, filePath, highlightLine, matcher, signal) {
-    const response = await fetch(
-        `${API_BASE}/api/file?file=${encodeURIComponent(filePath)}`,
-        signal ? { signal } : {}
-    );
-    if (!response.ok) {
-        const text = await response.text();
-        const statusMessages = { 404: 'File not found', 403: 'Access denied', 503: 'Server busy' };
-        throw new Error(statusMessages[response.status] || text || response.statusText);
+async function populateFileView(container, filePath, highlightLine, matcher, signal, opts = {}) {
+    let data = _fileContentCache.get(filePath);
+    if (!data) {
+        const response = await fetch(
+            `${API_BASE}/api/file?file=${encodeURIComponent(filePath)}`,
+            signal ? { signal } : {}
+        );
+        if (!response.ok) {
+            const text = await response.text();
+            const statusMessages = { 404: 'File not found', 403: 'Access denied', 503: 'Server busy' };
+            throw new Error(statusMessages[response.status] || text || response.statusText);
+        }
+        data = await response.json();
+        if (_fileContentCache.size >= FILE_CACHE_MAX) _fileContentCache.delete(_fileContentCache.keys().next().value);
+        _fileContentCache.set(filePath, data);
     }
-    const data = await response.json();
+    if (signal && signal.aborted) return;
     const lang = hljsLangForPath(filePath);
     const lines = highlightLines(data.content, lang);
     const total = lines.length;
@@ -812,7 +818,7 @@ async function populateFileView(container, filePath, highlightLine, matcher, sig
 
     container.innerHTML =
         `<div class="file-meta">${Number(data.line_count || total).toLocaleString()} lines · ${formatBytes(data.size_bytes || 0)}` +
-            `<span class="file-meta-hint">${DEFN_KEY_LABEL}-click a name for its definition · double-click for more</span></div>` +
+            (opts.hint === false ? '' : `<span class="file-meta-hint">${DEFN_KEY_LABEL}-click a name for its definition · double-click for more</span>`) + `</div>` +
         `<div class="file-code" data-lang="${lang}">` +
             `<div class="file-more" data-side="above"></div>` +
             `<div class="file-lines"></div>` +
@@ -824,7 +830,7 @@ async function populateFileView(container, filePath, highlightLine, matcher, sig
 
     const renderRange = (a, b) => {
         const holder = document.createElement('div');
-        holder.innerHTML = lines.slice(a - 1, b).map((html, i) => renderFileLineHtml(html, a + i, target)).join('');
+        holder.innerHTML = lines.slice(a - 1, b).map((html, i) => renderFileLineHtml(html, a + i, highlightLine > 0 ? target : 0)).join('');
         if (matcher) holder.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
         return holder;
     };
@@ -880,14 +886,15 @@ let _ctxTooltip = null;
 let _ctxHideTimer = null;
 let _ctxFetchController = null;
 let _ctxHoverTimer = null;
-// Cache of /api/context responses keyed by `${filePath}::${lineNumber}` so
-// sweeping the cursor over results doesn't re-fetch the same windows. It is
-// dropped whenever the index may have changed (see invalidateContextCache),
-// so a preview never shows lines from before a re-index.
-const _ctxContextCache = new Map();
+// Cache of /api/file responses keyed by path, so hovering the same file
+// again (or opening it after previewing it) doesn't re-fetch it. Kept small,
+// and dropped whenever the index may have changed (see
+// invalidateContextCache), so a view never shows lines from before a re-index.
+const _fileContentCache = new Map();
+const FILE_CACHE_MAX = 8;
 
 function invalidateContextCache() {
-    _ctxContextCache.clear();
+    _fileContentCache.clear();
 }
 
 function getOrCreateTooltip() {
@@ -948,49 +955,11 @@ window.addEventListener('resize', () => {
     if (isContextTooltipVisible()) hideContextTooltipImmediately();
 });
 
-// The hover preview is as tall as the window, so it fetches enough lines
-// above and below the match to fill it (a fixed ±12 left most of the panel
-// empty, and a file row, previewed from line 1, showed just 13 lines).
-
 /**
- * Render the /api/context window. The lines are highlighted together with
- * the file's language (not highlightAuto per line, which ran every grammar
- * on every line) and the query terms are marked afterwards.
- */
-function renderContextBody(data, highlightLine, lang, moreBelow) {
-    const start = data.start_line || 1;
-    const lines = highlightSnippetLines(data.lines || [], lang);
-    const rows = lines.map((html, i) => {
-        const ln = start + i;
-        const isMatch = ln === highlightLine;
-        return `<div class="file-line${isMatch ? ' file-line-highlight' : ''}">` +
-            `<span class="file-line-num">${ln}</span>` +
-            `<span class="file-line-content">${html}</span>` +
-            `</div>`;
-    }).join('');
-    const more = moreBelow
-        ? `<div class="file-more"><span class="file-meta-hint" style="float:none">More below. Click the open icon to see the whole file.</span></div>`
-        : '';
-    return `<div class="ctx-file-body">${rows}${more}</div>`;
-}
-
-/** Scroll the preview so the matched line sits in the middle of it. */
-function centerContextMatch(tooltip) {
-    const body = tooltip.querySelector('.ctx-file-body');
-    const hit = body && body.querySelector('.file-line-highlight');
-    if (!hit) return;
-    body.scrollTop = Math.max(0, hit.offsetTop - body.offsetTop - (body.clientHeight - hit.offsetHeight) / 2);
-}
-
-function highlightContextTooltip(tooltip) {
-    const matcher = _currentMatcher || currentQueryMatcher();
-    if (!matcher) return;
-    tooltip.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
-}
-
-/**
- * Hover preview of `filePath` around `lineNumber`. A file row (`wholeFile`)
- * previews the top of the file with no line marked: line 1 is not a match.
+ * The hover preview: the whole file, scrollable, opened at the hit (a file
+ * row opens at the top with no line marked), with buttons to step through
+ * the query's matches. It used to fetch ±12 lines around the hit, so it
+ * could not scroll, and wheeling over it scrolled the page and closed it.
  */
 async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = false) {
     clearTimeout(_ctxHideTimer);
@@ -999,46 +968,59 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
     const signal = _ctxFetchController.signal;
 
     const tooltip = getOrCreateTooltip();
-    const lang = hljsLangForPath(filePath);
-    const headerHtml = `<div class="ctx-header">${escapeHtml(filePath)}${wholeFile ? '' : ` : ${lineNumber}`}</div>`;
-    const context = previewContextLines(window.innerHeight);
-    const cacheKey = `${filePath}::${lineNumber}::${context}`;
-    const markLine = wholeFile ? 0 : lineNumber;
-    // A full window ending below the match means the file may go on.
-    const render = (data) => {
-        const last = (data.start_line || 1) + (data.lines || []).length - 1;
-        tooltip.innerHTML = headerHtml + renderContextBody(data, markLine, lang, last >= lineNumber + context);
-        highlightContextTooltip(tooltip);
-        positionTooltip(tooltip, resultItem);
-        centerContextMatch(tooltip);
-    };
-
-    // Cache hit: render immediately, no fetch.
-    const cached = _ctxContextCache.get(cacheKey);
-    if (cached) {
-        tooltip.style.display = 'flex';
-        render(cached);
-        return;
-    }
-
-    tooltip.innerHTML = headerHtml + `<div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
+    tooltip.innerHTML = `
+        <div class="ctx-header">
+            <span class="ctx-path">${escapeHtml(filePath)}${wholeFile ? '' : ` : ${lineNumber}`}</span>
+            <span class="ctx-nav" hidden>
+                <button type="button" data-step="-1" title="Previous match" aria-label="Previous match">↑</button>
+                <span class="ctx-nav-pos"></span>
+                <button type="button" data-step="1" title="Next match" aria-label="Next match">↓</button>
+            </span>
+            <button type="button" class="ctx-open" title="Open in the file viewer">Open</button>
+        </div>
+        <div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
+    tooltip.querySelector('.ctx-open').addEventListener('click', () => showFileModal(filePath, lineNumber));
     positionTooltip(tooltip, resultItem);
     tooltip.style.display = 'flex';
 
+    const body = tooltip.querySelector('.ctx-file-body');
     try {
-        // Use the lightweight /api/context endpoint (a small window) instead of
-        // fetching and highlighting the ENTIRE file on every hover.
-        const url = `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=${context}`;
-        const resp = await fetch(url, { signal });
-        if (!resp.ok) throw new Error(await readErrorBody(resp));
-        const data = await resp.json();
+        await populateFileView(body, filePath, wholeFile ? 0 : lineNumber,
+            _currentMatcher || currentQueryMatcher(), signal, { hint: false });
         if (signal.aborted) return;
-        _ctxContextCache.set(cacheKey, data);
-        render(data);
+        wireContextNav(tooltip, body, wholeFile ? 0 : lineNumber);
     } catch (e) {
         if (e.name === 'AbortError') return;
-        if (_ctxTooltip) _ctxTooltip.style.display = 'none';
+        body.innerHTML = `<div class="error-message">${escapeHtml(e.message)}</div>`;
     }
+}
+
+/** "↑ 3 of 12 ↓": step the preview through the lines the query matches. */
+function wireContextNav(tooltip, body, startLine) {
+    const nav = tooltip.querySelector('.ctx-nav');
+    const pos = tooltip.querySelector('.ctx-nav-pos');
+    const hits = () => [...body.querySelectorAll('.file-line')].filter(l => l.querySelector('mark.highlight'));
+    let lines = hits();
+    if (!lines.length) return;
+    let current = Math.max(0, lines.findIndex(l => l.id === `file-line-${startLine}`));
+    const show = (i, scroll) => {
+        lines = hits(); // "Show more" may have added lines
+        current = (i + lines.length) % lines.length;
+        lines.forEach(l => l.classList.remove('ctx-current'));
+        const line = lines[current];
+        line.classList.add('ctx-current');
+        pos.textContent = `${current + 1} of ${lines.length}`;
+        if (scroll) {
+            body.scrollTop += line.getBoundingClientRect().top - body.getBoundingClientRect().top
+                - body.clientHeight / 2 + line.offsetHeight / 2;
+        }
+    };
+    nav.hidden = false;
+    show(current, false);
+    nav.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-step]');
+        if (btn) show(current + Number(btn.dataset.step), true);
+    });
 }
 
 function positionTooltip(tooltip, anchor) {

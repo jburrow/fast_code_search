@@ -842,17 +842,6 @@ function regexErrorSuggestions(pattern) {
 }
 
 /**
- * Lines either side of the line the hover preview asks /api/context for:
- * enough to fill a preview as tall as the window (about 20px a line), from
- * the top of a file or with the match in the middle, plus some to scroll.
- * The server allows at most 200.
- */
-function previewContextLines(viewportHeight) {
-    const fit = Math.ceil((Number(viewportHeight) || 800) / 20);
-    return Math.max(12, Math.min(200, fit));
-}
-
-/**
  * A path-filter box's text as the API's `;`-separated list. The box also
  * takes commas, except inside `{…}` where a comma is glob alternation
  * (`*.{rs,toml}`). Only the web UI accepts commas; the API, CLI and MCP keep
@@ -918,6 +907,5 @@ if (typeof module !== 'undefined' && module.exports) {
         noResultSuggestions,
         regexErrorSuggestions,
         pathFilterParam,
-        previewContextLines,
     };
 }

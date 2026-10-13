@@ -627,9 +627,3 @@ test('resultsCountLabel: path matches are counted next to content results', () =
     assert.equal(H.resultsCountLabel(data, 1).text, '2 FILES · 1 RESULT');
     assert.equal(H.resultsCountLabel({ total_matches: 3, files: [] }, 3).text, '3 RESULTS');
 });
-
-test('previewContextLines: fills a window-tall preview, within the server cap', () => {
-    assert.equal(H.previewContextLines(900), 45);
-    assert.equal(H.previewContextLines(100), 12);
-    assert.equal(H.previewContextLines(10000), 200);
-});

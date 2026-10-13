@@ -75,17 +75,34 @@
             box-shadow: 4px 4px 0 #000;
         }
         .ctx-header {
-            padding: 0.35rem 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.3rem 0.5rem 0.3rem 0.75rem;
             background: #dedac6;
             border-bottom: 1px solid #000;
             font-size: 0.72rem;
             color: #494831;
             font-family: 'JetBrains Mono', monospace;
+            flex-shrink: 0;
         }
+        .ctx-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ctx-nav { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+        .ctx-nav[hidden] { display: none; }
+        .ctx-header button {
+            background: #fff; border: 1px solid #000; cursor: pointer;
+            font: inherit; color: #1d1c0f; padding: 0.05rem 0.45rem;
+        }
+        .ctx-header button:hover, .ctx-header button:focus-visible { background: #fff900; outline: none; }
+        /* The whole file scrolls inside the preview; the wheel never reaches
+           the page behind it (which used to scroll and close the preview). */
         .ctx-file-body {
-            overflow-y: auto;
+            overflow: auto;
+            overscroll-behavior: contain;
             flex: 1;
+            min-height: 0;
         }
+        .ctx-current { box-shadow: inset 3px 0 0 #646100; background: #fffbc2; }
         .ctx-loading {
             padding: 1rem;
             color: #5f5d48;

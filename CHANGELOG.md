@@ -29,11 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The INDEX page's sample files are shown relative to the indexed folder.
 
 ### Fixed
-- Web UI: the hover preview fills its panel. It fetched 12 lines either
-  side of the line, so a file row in the FILES box (previewed from line 1)
-  showed 13 lines in a window-tall panel. It now fetches enough to fill the
-  panel and scroll, centres the matched line, notes when the file goes on,
-  and no longer marks line 1 as the match for a file row.
+- Web UI: the hover preview shows the whole file and scrolls. It used to
+  fetch 12 lines either side of the hit, so a FILES-box row (previewed from
+  line 1) showed 13 lines in a window-tall panel, and the mouse wheel
+  scrolled the page behind it, which closed it. It now opens at the hit
+  (or the top of the file, with no line marked, for a file row), scrolls
+  inside itself, has ↑/↓ buttons to step through the query's matches in the
+  file, and an Open button for the file viewer. Recently viewed files are
+  cached, so hovering again or opening the file doesn't re-fetch it.
 
 ## [0.15.2] - 2026-10-13
 
