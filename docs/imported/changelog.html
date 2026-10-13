@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-bba40793.js";
+            window.path_to_searchindex_js = "../searchindex-31c291e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -194,12 +194,49 @@ limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
 skipped, then LOAD MORE to the end. Every match must be shown exactly
 once.</li>
 </ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>Web UI: file names are never re-cased. The dependency explorer’s pane
+title, extension badges and the compact search box in the header showed
+them in capitals; they now show as written.</li>
+<li>Web UI: one FILTER button (the duplicate in the results bar is gone). It
+shows how many path filters are set, the results bar lists them with an
+× to remove each, and the panel has <em>Clear path filters</em>. The boxes are
+now called SEARCH ONLY IN and SKIP PATHS and take <code>,</code> as well as <code>;</code>
+(a comma inside <code>{…}</code> is still glob alternation). The API, CLI and MCP
+still separate patterns with <code>;</code> only.</li>
+<li>Web UI: the results count includes path matches (“2 FILES · 1 RESULT”),
+the per-hit ranking score moved to the line number’s tooltip, and the
+dependency badge reads “imported by N” instead of “N deps”.</li>
+<li>Web UI: the indexing bar no longer flashes on every page load (it moved
+the search box), the focus hint says Ctrl+K or ⌘K to match the platform,
+and MAPPED is gone from the header stats (it read 0 B until searches ran).</li>
+<li>Web UI: the SEMANTIC page served by the keyword server says semantic
+search runs as a separate server, instead of claiming the keyword server
+is down (it probed a hard-coded port 8080).</li>
+<li>The INDEX page’s sample files are shown relative to the indexed folder.</li>
+<li>Web UI internals: all six pages share one header (<code>static/shell.js</code>) and
+one stylesheet of design tokens (<code>static/app.css</code>); every colour, shadow
+and font is a token, Tailwind’s colours point at the same tokens, and a
+test fails on hard-coded colours. This is groundwork for themes and
+should look the same, apart from the navigation links on the non-search
+pages now matching the search page. The semantic pages use the same SVG
+icons as the rest, so the 3.9 MB icon font is gone.</li>
+</ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
 <li>LOAD MORE past 1000 results repeated some results and skipped others on
 broad searches, because each deeper page ranked a different sample of
 the matches. Every page that ends at result 1000 or later now ranks the
 same sample, so the pages fit together.</li>
+<li>Web UI: the hover preview shows the whole file and scrolls. It used to
+fetch 12 lines either side of the hit, so a FILES-box row (previewed from
+line 1) showed 13 lines in a window-tall panel, and the mouse wheel
+scrolled the page behind it, which closed it. It now opens at the hit
+(or the top of the file, with no line marked, for a file row), scrolls
+inside itself, has ↑/↓ buttons to step through the query’s matches in the
+file, and an Open button for the file viewer. Recently viewed files are
+cached, so hovering again or opening the file doesn’t re-fetch it.</li>
 </ul>
 <h2 id="0152---2026-10-13"><a class="header" href="#0152---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2">0.15.2</a> - 2026-10-13</a></h2>
 <p><strong>Search works differently in this release.</strong> Plain-text search is now a
@@ -230,7 +267,7 @@ request may ask for, and <code>max_page_offset</code> (default 100000, 0 = no li
 sets how deep a client may page. Responses report the cap as
 <code>max_files_allowed</code> when one is set.</li>
 </ul>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
 <li><strong>Plain-text search is a literal, like <code>rg -F</code>.</strong> Several words are one
 phrase: <code>fn main</code> finds lines holding <code>fn main</code>, not every line holding
@@ -356,7 +393,7 @@ literally or escaped. The regex docs gained examples and pitfalls.</li>
 <li>rustls 0.23.36 -&gt; 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
 messages accepted across encryption-level boundaries).</li>
 </ul>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li>
 <p>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
@@ -474,7 +511,7 @@ recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
 slow. CI runs it and the documentation site shows the result alongside
 the latency and ranking-quality figures, with two new book pages.</li>
 </ul>
-<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
 <ul>
 <li>Ranking: single-term lines of a multi-term query are capped per file and
 the files holding the phrase are scanned first, so the match budget can
@@ -516,7 +553,7 @@ reference, moved out of the README.</li>
 <li>Release pages carry an install table, checksum instructions and a
 first-run line alongside the changelog section.</li>
 </ul>
-<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
+<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
 <ul>
 <li>README rewritten as a landing page that leads with how results are
 ranked; benchmark figures are from the latest CI run and link to it.</li>
@@ -532,7 +569,7 @@ moved under <code>docs/internal/</code>.</li>
 built-in runner over <code>static/tests</code>) and fails if the committed
 <code>tailwind.css</code> does not match the markup.</li>
 </ul>
-<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
+<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
 <ul>
 <li>Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
 icon font (which stays only for the semantic pages); result groups are
@@ -569,7 +606,7 @@ HTTP client).</li>
 </ul>
 <p>Fixes from the 2026-09-06 engine and UI review
 (<code>docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md</code>).</p>
-<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
+<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
 <ul>
 <li>Line-mode regex patterns are matched in one pass per file (compiled with
 <code>(?mR)</code>, one hit per line, per-line semantics for <code>^</code>, <code>$</code>, <code>\s</code> and CRLF
@@ -763,7 +800,7 @@ and the standard <code>grpc.health.v1</code> service.</li>
 <li>gRPC <code>SearchRequest.offset</code> / <code>rank</code> / <code>deadline_ms</code>; results carry
 <code>dependency_count</code>.</li>
 </ul>
-<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
+<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
 <ul>
 <li>Build: the semantic engine is behind the <code>semantic</code> Cargo feature (off by
 default; <code>ml-models</code> implies it), release binaries use thin LTO and are
@@ -869,7 +906,7 @@ refresh, dependency-edge removal) instead of leaving stale entries until restart
 <li>Keyboard navigation in results (<code>j</code>/<code>k</code>/arrows to move, Enter to open, <code>/</code> to focus).</li>
 <li>Per-result copy-path button.</li>
 </ul>
-<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
+<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
 <ul>
 <li>API errors are now consistent JSON (<code>{ "error": … }</code>); 503s include <code>Retry-After</code>.</li>
 <li>Static assets use compile-time content hashes for ETags and honor <code>If-None-Match</code>
@@ -908,7 +945,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Dependency popover and tooltip interactions in the web UI to improve code navigation context.</li>
 <li>Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.</li>
 </ul>
-<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
+<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
 <ul>
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
@@ -923,7 +960,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
 <h2 id="074---2026-03-20"><a class="header" href="#074---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.3...v0.7.4">0.7.4</a> - 2026-03-20</a></h2>
-<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
+<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
 <ul>
 <li>New UI theme for the keyword search interface with improved layout and styling.</li>
 </ul>
@@ -932,7 +969,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li>New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.</li>
 </ul>
-<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
+<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
 <ul>
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
@@ -947,7 +984,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).</li>
 <li>New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.</li>
 </ul>
-<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
+<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
 <ul>
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
@@ -968,7 +1005,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>URL state encoding for semantic search UI; refactored shared helpers into <code>common.js</code> (#93).</li>
 <li>VS Code configuration and tasks for Rust development.</li>
 </ul>
-<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
+<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
 <ul>
 <li>Refactor code structure for improved readability and maintainability.</li>
 </ul>
@@ -978,7 +1015,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li><strong>GitHub Pages site</strong> (<code>docs/site/</code>): A static project site deployed to <code>gh-pages</code> on every push to <code>main</code> via a new <code>pages.yml</code> workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from <code>dev/bench/</code> pushed by <code>github-action-benchmark</code>), Codecov coverage badge, dynamically-rendered changelog (from <code>changelog.json</code> generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses <code>clean-exclude: dev/</code> to preserve benchmark data, and both <code>pages.yml</code> and <code>benchmark.yml</code> share a <code>gh-pages-deploy</code> concurrency group to prevent simultaneous pushes.</li>
 </ul>
 <h2 id="069---2026-02-28"><a class="header" href="#069---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.8...v0.6.9">0.6.9</a> - 2026-02-28</a></h2>
-<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
+<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
 <ul>
 <li>Version bump and release.</li>
 </ul>
@@ -1109,7 +1146,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
 <h2 id="055---2026-02-26"><a class="header" href="#055---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5">0.5.5</a> - 2026-02-26</a></h2>
-<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
+<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
 <ul>
 <li>Maintenance release: version/changelog update only; no functional code changes.</li>
 </ul>
@@ -1173,7 +1210,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
+<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
 <ul>
 <li>Semantic search vector index now uses HNSW instead of linear search</li>
 <li>Updated documentation with HNSW configuration and tuning guide</li>
@@ -1206,7 +1243,7 @@ are serialised.</li>
 <p><strong>Semantic model download verification</strong>: Optional SHA256 verification via <code>FCS_MODEL_SHA256</code> or <code>FCS_MODEL_SHA256_&lt;MODEL&gt;</code></p>
 </li>
 </ul>
-<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
+<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
 <ul>
 <li>Tracing subscriber upgraded from simple <code>FmtSubscriber</code> to layered <code>Registry</code> (fmt + OTel)</li>
 <li><code>tracing-subscriber</code> now uses <code>registry</code> feature alongside <code>env-filter</code></li>
@@ -1247,7 +1284,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
+<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
 <ul>
 <li>Symbol extractor now handles C/C++ function declarators correctly (name is in <code>declarator</code> field, not <code>name</code>)</li>
 </ul>
@@ -1282,7 +1319,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
+<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
 <ul>
 <li>Search methods now use file metadata ranking instead of early termination for large candidate sets</li>
 <li><code>search_regex()</code> and <code>search_symbols()</code> also use fast ranking for consistency</li>
@@ -1340,7 +1377,7 @@ are serialised.</li>
 <p><strong>Symbols-only search mode</strong>: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via <code>symbols=true</code> query parameter in REST API or <code>symbols_only=true</code> in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.</p>
 </li>
 </ul>
-<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
+<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
@@ -1363,7 +1400,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="022---2026-02-01"><a class="header" href="#022---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.1...v0.2.2">0.2.2</a> - 2026-02-01</a></h2>
-<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
+<h3 id="changed-21"><a class="header" href="#changed-21">Changed</a></h3>
 <ul>
 <li><strong>Improved indexing log readability</strong>: The background indexing completion message now formats large numbers with underscore separators (e.g., <code>89_210</code>), rounds <code>files_per_sec</code> to whole numbers, and removes redundant raw byte values.</li>
 </ul>

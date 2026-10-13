@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-bba40793.js";
+            window.path_to_searchindex_js = "../searchindex-31c291e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -191,7 +191,10 @@ the binary.</p>
 <li>Type and press Enter (or wait: the page searches as you type after a short
 pause). <code>Ctrl</code>/<code>Cmd</code>+<code>K</code> focuses the box from anywhere; <code>/</code> does too.</li>
 <li><strong>REGEX</strong>, <strong>SYMBOLS</strong> and <strong>REFERENCES</strong> switch modes; <strong>FILTER</strong> opens
-page size, ranking mode, context lines and include/exclude globs.</li>
+page size, ranking mode, context lines and the path filters (<strong>SEARCH ONLY
+IN</strong> and <strong>SKIP PATHS</strong>: globs separated by <code>,</code> or <code>;</code>). While a path
+filter is set, FILTER shows a count and the summary line shows each filter
+with an × to remove it. Path filters are remembered between visits.</li>
 <li><strong>MATCH CASE</strong> (<code>Aa</code>) matches upper and lower case exactly, in every mode;
 off, case is ignored in plain text and regex alike. The summary line
 says which applied (“ignoring case” or “matching case”).</li>
@@ -210,7 +213,8 @@ as many as the server allows).</li>
 the results, so typing or pasting <code>src/web/api.rs</code> (or just <code>api.rs</code>)
 finds the file even when no line mentions it. File names rank first;
 click a path to open the file. Five show at first, <strong>Show more</strong> lists
-up to fifty. Text and regex searches only.</li>
+up to fifty. Text and regex searches only. The count above the results
+includes them (“2 FILES · 1 RESULT”).</li>
 <li>The URL carries the query and modes, so a link reproduces a search; Back
 returns to the previous one.</li>
 </ul>

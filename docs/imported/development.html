@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-bba40793.js";
+            window.path_to_searchindex_js = "../searchindex-31c291e1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -440,6 +440,22 @@ import-resolution rule in <code>src/dependencies/mod.rs</code> if the language h
 <li>Update <code>src/server/service.rs</code> to implement new endpoints</li>
 <li>Update example client in <code>examples/client.rs</code></li>
 </ol>
+<h3 id="changing-the-web-ui"><a class="header" href="#changing-the-web-ui">Changing the web UI</a></h3>
+<p>The pages in <code>static/</code> are embedded in the server binary, so rebuild the
+server to see a change.</p>
+<ul>
+<li><strong>Header and navigation:</strong> <code>static/shell.js</code> draws the header, the icon
+sprite and the phone tab bar on every page. A page passes its own header
+extras (stats, the compact search box) in <code>&lt;template id="app-header-extra"&gt;</code>.</li>
+<li><strong>Colours, shadows and fonts</strong> are design tokens (<code>var(--accent)</code>,
+<code>var(--shadow)</code>, …) defined once in <code>static/app.css</code>. Never write a colour
+anywhere else: <code>static/tests/tokens.test.js</code> fails on a hex or <code>rgb()</code>
+value outside <code>app.css</code>, and on a <code>var(--…)</code> that isn’t defined.</li>
+<li><strong>Tailwind</strong> colour names in <code>tailwind.config.js</code> point at the same tokens.
+After changing classes or the config, run <code>npm run build:css</code> and commit
+<code>static/tailwind.css</code> (CI checks it is up to date).</li>
+<li>Run the JavaScript tests with <code>node --test static/tests/*.test.js</code>.</li>
+</ul>
 <h3 id="performance-optimization-checklist"><a class="header" href="#performance-optimization-checklist">Performance Optimization Checklist</a></h3>
 <ul>
 <li><input disabled="" type="checkbox"> Profile with <code>cargo flamegraph</code></li>
