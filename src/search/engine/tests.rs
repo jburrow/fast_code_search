@@ -2872,6 +2872,29 @@ fn test_filename_hit_obeys_case_and_word() {
     assert_eq!(n("word:yes widget"), 1);
 }
 
+/// Whole word as ripgrep's `-w`: a match rejected for touching a word
+/// character does not hide an overlapping one, and combining marks are
+/// word characters (found by the backtest's generated queries).
+#[test]
+fn test_whole_word_overlaps_and_combining_marks() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[(
+            "w.txt",
+            "field}}}\nx\u{bb}\u{bb}\u{bb}\n\u{0938}\u{0947}\u{092a}\u{094d}\u{091f}\u{0947}\u{092e}\nTie\u{0302}\u{0323}t\"\n",
+        )],
+    );
+    let n = |q: &str| review_text(&e, q, SearchLimits::new(10)).0.len();
+    assert_eq!(n("word:yes case:yes }}"), 1);
+    assert_eq!(n("word:yes }}"), 1);
+    assert_eq!(n("word:yes \u{bb}\u{bb}"), 1);
+    // The virama before `ट` and the accents before `t` are word characters.
+    assert_eq!(n("word:yes \u{091f}\u{0947}\u{092e}"), 0);
+    assert_eq!(n("word:yes t\""), 0);
+    assert_eq!(n("t\""), 1);
+}
+
 /// Lowercasing turns a word-final `Σ` into `ς` and any other into `σ`, so
 /// the query `ΟΣ` (lowercased `ος`) missed `ΟΣΑ` (indexed as `οσα`).
 #[test]

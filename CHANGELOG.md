@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
   skipped, then LOAD MORE to the end. Every match must be shown exactly
   once.
+- The ripgrep backtest makes up queries from the corpus (`--generate N
+  --seed S`), checks them against `rg -F` and shrinks any that differ to
+  the smallest form. CI runs 500 per run.
 - Capped results say which limit cut them. Search responses carry
   `limits_hit` (`max_files`, `match_budget`, `per_file_cap`, `timeout`,
   each with a sentence for people); gRPC sends the names in the
@@ -81,6 +84,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Files changed while the initial index was being built could be indexed
   with old content, or stay indexed after being deleted or moved. Content
   that is no longer on disk is now never merged into the index.
+- Whole-word search now uses the same word characters as ripgrep's `-w`
+  (Unicode `\w`): combining marks such as Indic vowel signs and decomposed
+  accents count as part of a word, so `word:yes` no longer matches inside
+  Hindi, Malayalam or Telugu words.
+- Whole-word search with MATCH CASE no longer misses a match that overlaps
+  a rejected one (`}}` at the end of `field}}}`), and the same on the
+  Unicode case-folding path.
 
 ## [0.15.2] - 2026-10-13
 

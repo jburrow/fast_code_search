@@ -140,6 +140,26 @@ q = "word:yes self"
 [[query]]
 q = "case:yes word:yes Ok"
 
+[[query]]
+q = "word:yes case:yes }}"
+why = "found by --generate: in `field}}}` the first `}}` touches `d`; the next one starts one byte on, not after it"
+
+[[query]]
+q = "word:yes »»"
+why = "the same overlap on the Unicode case-folding path"
+
+[[query]]
+q = "word:yes .\""
+why = "found by --generate: a combining mark (the Malayalam virama) is a word character in \\w, so `.` after it is not a word start"
+
+[[query]]
+q = "word:yes टेम"
+why = "found by --generate: a Devanagari virama before the match is a word character"
+
+[[query]]
+q = "word:yes t\""
+why = "found by --generate: a decomposed accent before `t` is a word character"
+
 # ---------------------------------------------------------------- Unicode
 
 [[query]]

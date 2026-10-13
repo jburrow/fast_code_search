@@ -8,6 +8,14 @@
 //! **extra**. Any difference fails the run unless the query is marked
 //! `known` with the reason.
 //!
+//! With `--generate N`, N more queries are made up from the corpus itself
+//! (identifiers, substrings, whole lines, punctuation and non-ASCII text,
+//! in random case, some with MATCH CASE and whole word set), seeded by
+//! `--seed` so a run can be repeated. Each is compared with `rg -F` the
+//! same way; a query that differs is shrunk (characters dropped from either
+//! end while it still differs) and the report gives the smallest form as a
+//! `[[query]]` block to add to the query set.
+//!
 //!     cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
 //!         tests/fixtures/backtest [--set benches/rg_backtest.toml] [--markdown FILE] \
 //!         [--json FILE] [--only SUBSTRING] [--samples 5]
@@ -58,8 +66,8 @@ use fast_code_search::search::engine::{
 };
 use fast_code_search::search::regex_search::needs_multiline;
 use fast_code_search::search::{
-    parse_query, FileDiscoveryConfig, FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile,
-    SearchEngine,
+    parse_query, FileDiscoveryConfig, FileDiscoveryIterator, ParsedQuery, PartialIndexedFile,
+    PreIndexedFile, SearchEngine,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -105,6 +113,13 @@ struct Args {
     /// The ripgrep binary.
     #[arg(long, default_value = "rg")]
     rg: String,
+    /// Also make up this many text queries from the corpus and check them
+    /// against `rg -F` (no paging checks).
+    #[arg(long, default_value_t = 0)]
+    generate: usize,
+    /// Seed for `--generate`.
+    #[arg(long, default_value_t = 1)]
+    seed: u64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -131,6 +146,60 @@ struct Query {
     /// What the query exercises (kept in the report).
     #[serde(default)]
     why: String,
+    /// Match case, as the API's `case` parameter sets it (overrides
+    /// `case:` in `q`). A text query only.
+    #[serde(default)]
+    case: Option<bool>,
+    /// Whole word, as the API's `word` parameter sets it. A text query only.
+    #[serde(default)]
+    word: Option<bool>,
+    /// Made up by `--generate`.
+    #[serde(skip)]
+    generated: bool,
+}
+
+impl Query {
+    /// The query as the engine sees it: parsed, with `case` / `word` on top
+    /// (as `SearchRequest` applies the API's parameters).
+    fn parsed(&self) -> ParsedQuery {
+        let mut p = parse_query(&self.q);
+        if let Some(c) = self.case {
+            p.options.case_sensitive = c;
+        }
+        if let Some(w) = self.word {
+            p.options.whole_word = w;
+        }
+        p
+    }
+
+    /// `case` / `word` for the report.
+    fn flags(&self) -> String {
+        let mut f = Vec::new();
+        if self.case == Some(true) {
+            f.push("case");
+        }
+        if self.word == Some(true) {
+            f.push("word");
+        }
+        f.join(", ")
+    }
+
+    /// A `[[query]]` block for the query set.
+    fn toml(&self) -> String {
+        let mut t = format!("[[query]]\nq = {}\n", toml_str(&self.q));
+        if let Some(c) = self.case {
+            t += &format!("case = {c}\n");
+        }
+        if let Some(w) = self.word {
+            t += &format!("word = {w}\n");
+        }
+        t += "why = \"found by --generate\"\n";
+        t
+    }
+}
+
+fn toml_str(s: &str) -> String {
+    toml::Value::String(s.to_string()).to_string()
 }
 
 fn default_mode() -> String {
@@ -247,7 +316,7 @@ fn run_ranked(
     rank: RankMode,
 ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
     Ok(match q.mode.as_str() {
-        "text" => engine.search_parsed(&parse_query(&q.q), "", "", limits, rank)?,
+        "text" => engine.search_parsed(&q.parsed(), "", "", limits, rank)?,
         "regex" => engine.search_regex_with_limits(&q.q, "", "", limits, rank)?,
         other => bail!("unknown mode {other:?}"),
     })
@@ -498,6 +567,20 @@ fn count(h: &Hits) -> usize {
     h.values().map(BTreeSet::len).sum()
 }
 
+/// The content of the file shown as `file`.
+fn read_display(c: &Corpus, file: &str) -> Option<String> {
+    // Display paths start with the root's own name.
+    let (root_name, rel) = file.split_once('/').unwrap_or(("", file));
+    c.roots
+        .iter()
+        .find(|r| {
+            r.file_name()
+                .is_some_and(|n| n.to_string_lossy() == root_name)
+        })
+        .and_then(|r| std::fs::read(r.join(rel)).ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
 /// The text of `file:line`, for the report.
 fn line_text(
     c: &Corpus,
@@ -506,21 +589,8 @@ fn line_text(
     line: usize,
 ) -> String {
     let lines = cache.entry(file.to_string()).or_insert_with(|| {
-        // Display paths start with the root's own name.
-        let (root_name, rel) = file.split_once('/').unwrap_or(("", file));
-        c.roots
-            .iter()
-            .find(|r| {
-                r.file_name()
-                    .is_some_and(|n| n.to_string_lossy() == root_name)
-            })
-            .and_then(|r| std::fs::read(r.join(rel)).ok())
-            .map(|b| {
-                String::from_utf8_lossy(&b)
-                    .lines()
-                    .map(str::to_string)
-                    .collect()
-            })
+        read_display(c, file)
+            .map(|t| t.lines().map(str::to_string).collect())
             .unwrap_or_default()
     });
     let t = lines
@@ -558,7 +628,7 @@ fn compare_regex(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome>
 }
 
 fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> {
-    let parsed = parse_query(&q.q);
+    let parsed = q.parsed();
     if (!parsed.include_globs.is_empty() || !parsed.exclude_globs.is_empty()) && q.globs.is_empty()
     {
         bail!("query {:?} uses file:/lang: but gives no rg `globs`", q.q);
@@ -588,6 +658,168 @@ fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> 
     })
 }
 
+/// Whether `needle` is searched for exactly as written: no operators, no
+/// trimming, one line.
+fn usable_needle(needle: &str) -> bool {
+    if needle.chars().count() < 2
+        || needle.trim() != needle
+        || needle.contains(['\n', '\r'])
+        || needle.contains('\u{FFFD}')
+    {
+        return false;
+    }
+    let p = parse_query(needle);
+    p.text == needle
+        && p.include_globs.is_empty()
+        && p.exclude_globs.is_empty()
+        && !p.options.case_sensitive
+        && !p.options.whole_word
+}
+
+/// `n` text queries made up from the corpus, the same for the same seed.
+fn generate(c: &Corpus, n: usize, seed: u64) -> Vec<Query> {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut files: Vec<&String> = c.indexed.iter().collect();
+    files.sort();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut attempts = 0;
+    while out.len() < n && attempts < n * 100 && !files.is_empty() {
+        attempts += 1;
+        let file = files[rng.random_range(0..files.len())];
+        let Some(text) = read_display(c, file) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        if lines.is_empty() {
+            continue;
+        }
+        let line = lines[rng.random_range(0..lines.len())].trim();
+        let chars: Vec<char> = line.chars().collect();
+        let window = |rng: &mut StdRng, at: usize, max: usize| -> String {
+            let len = rng.random_range(2..=max.max(2));
+            chars[at.min(chars.len())..(at + len).min(chars.len())]
+                .iter()
+                .collect()
+        };
+        let (kind, needle) = match rng.random_range(0..5) {
+            0 => {
+                let words: Vec<&str> = line
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .filter(|w| !w.is_empty())
+                    .collect();
+                if words.is_empty() {
+                    continue;
+                }
+                (
+                    "identifier",
+                    words[rng.random_range(0..words.len())].to_string(),
+                )
+            }
+            1 => {
+                let at = rng.random_range(0..chars.len());
+                ("substring", window(&mut rng, at, 16))
+            }
+            2 => (
+                "line",
+                chars.iter().take(60).collect::<String>().trim().to_string(),
+            ),
+            3 => {
+                let punct: Vec<usize> = (0..chars.len())
+                    .filter(|&i| chars[i].is_ascii_punctuation())
+                    .collect();
+                if punct.is_empty() {
+                    continue;
+                }
+                let at = punct[rng.random_range(0..punct.len())];
+                ("punctuation", window(&mut rng, at.saturating_sub(1), 5))
+            }
+            _ => {
+                let wide: Vec<usize> = (0..chars.len()).filter(|&i| !chars[i].is_ascii()).collect();
+                if wide.is_empty() {
+                    continue;
+                }
+                let at = wide[rng.random_range(0..wide.len())];
+                let back = rng.random_range(0..3);
+                ("non-ASCII", window(&mut rng, at.saturating_sub(back), 6))
+            }
+        };
+        let needle = match rng.random_range(0..4) {
+            0 => needle.to_uppercase(),
+            1 => needle.to_lowercase(),
+            2 => needle
+                .chars()
+                .map(|ch| {
+                    if ch.is_lowercase() {
+                        ch.to_uppercase().next().unwrap_or(ch)
+                    } else {
+                        ch.to_lowercase().next().unwrap_or(ch)
+                    }
+                })
+                .collect(),
+            _ => needle,
+        };
+        if !usable_needle(&needle) {
+            continue;
+        }
+        let case = rng.random_bool(0.3).then_some(true);
+        let word = rng.random_bool(0.3).then_some(true);
+        if !seen.insert((needle.clone(), case, word)) {
+            continue;
+        }
+        out.push(Query {
+            q: needle,
+            mode: default_mode(),
+            globs: Vec::new(),
+            known: None,
+            why: format!("generated {kind} (seed {seed})"),
+            case,
+            word,
+            generated: true,
+        });
+    }
+    out
+}
+
+/// Whether fcs and rg disagree on `q`.
+fn differs(c: &Corpus, rg: &str, q: &Query) -> Result<bool> {
+    let (fcs, _) = fcs_hits(&c.engine, q)?;
+    let out = compare_text(c, rg, q, &fcs)?;
+    Ok(!out.missing.is_empty() || !out.extra.is_empty())
+}
+
+/// The shortest form of a differing generated query that still differs:
+/// characters dropped from either end, one at a time.
+fn shrink(c: &Corpus, rg: &str, q: &Query) -> Result<Query> {
+    let mut best = q.clone();
+    for _ in 0..64 {
+        let chars: Vec<char> = best.q.chars().collect();
+        let mut next = None;
+        for cand in [
+            chars[1..].iter().collect::<String>(),
+            chars[..chars.len() - 1].iter().collect::<String>(),
+        ] {
+            if !usable_needle(&cand) {
+                continue;
+            }
+            let trial = Query {
+                q: cand,
+                ..best.clone()
+            };
+            if differs(c, rg, &trial)? {
+                next = Some(trial);
+                break;
+            }
+        }
+        match next {
+            Some(n) => best = n,
+            None => break,
+        }
+    }
+    Ok(best)
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let set: QuerySet = toml::from_str(
@@ -612,13 +844,21 @@ fn main() -> Result<()> {
         started.elapsed().as_secs_f64()
     );
 
+    let mut queries = set.query.clone();
+    if args.generate > 0 {
+        let made = generate(&corpus, args.generate, args.seed);
+        eprintln!("generated {} queries (seed {})", made.len(), args.seed);
+        queries.extend(made);
+    }
     let mut rows = Vec::new();
     let mut cache = HashMap::new();
-    for q in &set.query {
-        if args
-            .only
-            .as_ref()
-            .is_some_and(|o| !q.q.contains(o.as_str()))
+    let mut shrunk = Vec::new();
+    for q in &queries {
+        if !q.generated
+            && args
+                .only
+                .as_ref()
+                .is_some_and(|o| !q.q.contains(o.as_str()))
         {
             continue;
         }
@@ -627,14 +867,19 @@ fn main() -> Result<()> {
             "regex" => compare_regex(&corpus, &args.rg, q, &fcs)?,
             _ => compare_text(&corpus, &args.rg, q, &fcs)?,
         };
-        let paging = match repeat_problem(&corpus.engine, q)? {
-            Some(p) => Some(p),
-            None if args.check_paging => paging_problem(&corpus.engine, q)?,
-            None => None,
+        // Generated queries check the line sets only.
+        let paging = if q.generated {
+            None
+        } else {
+            match repeat_problem(&corpus.engine, q)? {
+                Some(p) => Some(p),
+                None if args.check_paging => paging_problem(&corpus.engine, q)?,
+                None => None,
+            }
         };
         let paging = match paging {
             Some(p) => Some(p),
-            None if args.check_defaults => {
+            None if args.check_defaults && !q.generated => {
                 let mut found = None;
                 for rank in [RankMode::Auto, RankMode::Fast] {
                     found = defaults_problem(&corpus.engine, q, rank, args.defaults_max_hits)?;
@@ -647,6 +892,9 @@ fn main() -> Result<()> {
             None => None,
         };
         let differs = !out.missing.is_empty() || !out.extra.is_empty() || paging.is_some();
+        if differs && q.generated {
+            shrunk.push(shrink(&corpus, &args.rg, q)?);
+        }
         let status = match (differs, q.known.is_some()) {
             (false, false) => "pass",
             (false, true) => "pass (known no longer differs)",
@@ -671,11 +919,16 @@ fn main() -> Result<()> {
             extra_count: out.extra.len(),
             filename_hits,
             known: q.known.clone(),
-            note: [paging.as_deref().unwrap_or(""), &q.why, &out.note]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("; "),
+            note: [
+                paging.as_deref().unwrap_or(""),
+                &q.flags(),
+                &q.why,
+                &out.note,
+            ]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("; "),
         });
     }
 
@@ -753,6 +1006,17 @@ fn main() -> Result<()> {
                 writeln!(md, "```")?;
             }
         }
+    }
+    if !shrunk.is_empty() {
+        writeln!(md)?;
+        writeln!(
+            md,
+            "### Generated queries that differ, shrunk\n\nAdd these to the query set once fixed:\n\n```toml"
+        )?;
+        for q in &shrunk {
+            writeln!(md, "{}", q.toml())?;
+        }
+        writeln!(md, "```")?;
     }
     eprint!("{md}");
     if let Some(p) = &args.markdown {

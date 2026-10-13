@@ -29,6 +29,31 @@ engine and Unicode case folding, so any difference is a real difference.
 See [Matching compared with grep and ripgrep](../reference/matching.md) for
 where fcs, ripgrep, grep and git grep behave differently, and why.
 
+## Generated queries
+
+The fixed set holds the cases someone thought of. `--generate N` adds N
+queries made up from the corpus itself: identifiers, substrings, whole
+lines, punctuation runs and non-ASCII text, each in random case, some with
+MATCH CASE and whole word set. Each runs through fcs and through `rg -F`
+(with `-i` and `-w` as set) and the lines must match. A query that differs
+is shrunk, dropping characters from either end while it still differs, and
+the report ends with the smallest forms as `[[query]]` blocks to add to
+`benches/rg_backtest.toml` with the fix.
+
+CI generates 500 per run: with a fixed seed on pull requests, and a new
+seed on every push to `main` and once a week, so the set keeps exploring.
+Rerun a failure locally with the seed from the report:
+
+```sh
+cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --generate 500 --seed SEED
+```
+
+Its first runs found two whole-word bugs, both now fixed and in the query
+set: a combining mark (an Indic vowel sign, a decomposed accent) was not
+counted as a word character, and with MATCH CASE a match rejected by the
+whole-word test skipped the overlapping one after it (`}}` in `field}}}`).
+
 ## How a query is translated
 
 | fcs query | ripgrep run | Compared how |
