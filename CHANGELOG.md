@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The ripgrep backtest's `--check-defaults` (on in CI) walks every query
+  the way a web UI user pages through it under the server's default
+  limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
+  skipped, then LOAD MORE to the end. Every match must be shown exactly
+  once.
+
+### Fixed
+- LOAD MORE past 1000 results repeated some results and skipped others on
+  broad searches, because each deeper page ranked a different sample of
+  the matches. Every page that ends at result 1000 or later now ranks the
+  same sample, so the pages fit together.
+
 ## [0.15.2] - 2026-10-13
 
 **Search works differently in this release.** Plain-text search is now a

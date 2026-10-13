@@ -67,10 +67,13 @@ These follow from fcs being a code search server rather than a line filter.
   fetches the whole list again at the bigger size, up to 1000 results, so
   every match ends up shown exactly once. Results already on screen can
   move when it does. Past 1000 results it fetches the next page instead.
-  An API client asking for `offset` pages of a search that hit its budget
-  can see a result repeated or skipped between pages. Asking again from
-  offset 0 with a larger `max` avoids that. Paging stops at offset 100,000
-  by default (`max_page_offset`).
+  Every page that ends at result 1000 or later ranks the same sample (a
+  budget of 100,000 matches), so those pages fit together with no repeats
+  or gaps. Shorter pages use a smaller budget, so an API client asking for
+  `offset` pages below 1000 of a search that hit its budget can see a
+  result repeated or skipped between pages. Asking again from offset 0
+  with a larger `max` avoids that. Paging stops at offset 100,000 by
+  default (`max_page_offset`).
 - **Non-UTF-8 files are converted.** Files in Latin-1, Windows-1252,
   Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
   (`transcode_non_utf8`, on by default). ripgrep only does this for UTF-16

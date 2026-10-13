@@ -1807,6 +1807,18 @@ fn test_search_limits_offset_budget() {
     assert!(shallow.match_budget > base.match_budget);
     assert!(shallow.match_budget <= SearchLimits::MAX_DERIVED_BUDGET);
 
+    // Lists ending at 1000 or deeper share one budget and per-document cap,
+    // so offset pages past the API's 1000-result list rank the same sample.
+    let list = SearchLimits::new(1000);
+    for page in [
+        SearchLimits::new(50).with_offset(950),
+        SearchLimits::new(50).with_offset(1000),
+        SearchLimits::new(50).with_offset(40_000),
+    ] {
+        assert_eq!(page.match_budget, list.match_budget);
+        assert_eq!(page.doc_cap(), list.doc_cap());
+    }
+
     // An explicit override is still allowed to exceed the derived ceiling.
     let unbounded = SearchLimits::new(50).with_match_budget(usize::MAX);
     assert_eq!(unbounded.match_budget, usize::MAX);
