@@ -3782,6 +3782,69 @@ fn test_watcher_skips_excluded_directories_and_follows_new_ones() -> Result<()> 
 
 /// A small Python package: api -> service <-> util (a cycle), and tests
 /// importing api and util.
+/// A path typed into search finds the file: `files=N` adds path matches,
+/// apart from the (unchanged) content results; MCP lists them first.
+#[tokio::test]
+async fn test_search_finds_files_by_path() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let get = |q: &'static str| {
+        let base = base.clone();
+        async move {
+            reqwest::Client::new()
+                .get(format!("{base}/api/search"))
+                .query(&[("q", q), ("files", "10")])
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await
+        }
+    };
+
+    let search = get("pkg/api.py").await?;
+    assert_eq!(search["total_files"], 1, "{search}");
+    let file = &search["files"][0];
+    let path = file["file_path"].as_str().unwrap();
+    assert!(path.ends_with("pkg/api.py"), "{search}");
+    let range = file["match_ranges"][0].as_array().unwrap();
+    assert_eq!(
+        &path[range[0].as_u64().unwrap() as usize..range[1].as_u64().unwrap() as usize],
+        "pkg/api.py"
+    );
+    // No line mentions the path, so content results stay empty.
+    assert_eq!(search["results"].as_array().unwrap().len(), 0, "{search}");
+
+    // File names rank above directories; both `test_api.py` and `api.py`.
+    let search = get("api").await?;
+    let paths: Vec<&str> = search["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["file_path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths.len(), 2, "{search}");
+    assert!(paths[0].ends_with("pkg/api.py"), "{paths:?}");
+    assert!(paths[1].ends_with("tests/test_api.py"), "{paths:?}");
+
+    // Not asked for: no `files` key, so existing clients see no change.
+    let plain: serde_json::Value = reqwest::get(format!("{base}/api/search?q=api"))
+        .await?
+        .json()
+        .await?;
+    assert!(plain.get("files").is_none(), "{plain}");
+    assert!(plain.get("total_files").is_none(), "{plain}");
+
+    let (err, text) = mcp_tool(
+        &base,
+        "search_code",
+        serde_json::json!({"query": "pkg/util.py"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.starts_with("Files whose path matches (1):"), "{text}");
+    assert!(text.contains("No content matches"), "{text}");
+    Ok(())
+}
+
 async fn setup_graph_server() -> Result<(String, TempDir)> {
     let temp_dir = TempDir::new()?;
     let files = [

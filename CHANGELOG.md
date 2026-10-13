@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Search finds files by path. Typing or pasting a path (`src/web/api.rs`,
+  `api.rs`, an absolute path, Windows `\` separators) lists the matching
+  files in a **FILES** box above the results in the web UI, first in MCP
+  `search_code`, and above the hits in `fcs` on a terminal. File names rank
+  above directories. Content results are unchanged. API: `files=N` on
+  `/api/search` adds `files` and `total_files` to the response.
+
 ## [0.15.1] - 2026-10-13
 
 Same changes as 0.15.0, with the version number set correctly. The v0.15.0

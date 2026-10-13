@@ -208,6 +208,8 @@ pub struct SearchRequest {
     pub exclude: String,
     pub rank: Rank,
     pub timeout_ms: u64,
+    /// Files whose path matches to list too (0 = none).
+    pub files: usize,
 }
 
 impl SearchRequest {
@@ -231,6 +233,7 @@ impl SearchRequest {
             exclude: args.excludes.join(";"),
             rank: args.rank,
             timeout_ms: args.timeout_ms,
+            files: 0,
         }
     }
 
@@ -268,6 +271,9 @@ impl SearchRequest {
         }
         if self.timeout_ms > 0 {
             p.push(("timeout_ms", self.timeout_ms.to_string()));
+        }
+        if self.files > 0 {
+            p.push(("files", self.files.to_string()));
         }
         p
     }
@@ -600,8 +606,31 @@ impl Session {
         };
         let results = crate::web::results_to_json(&engine, matches, req.context);
         let total_results = results.len();
+        let (files, total_files) = if req.files > 0 && req.offset == 0 && req.mode == Mode::Text {
+            let pattern = crate::search::regex_pattern_with_case(&req.query, req.case);
+            let query = if req.regex {
+                crate::search::PathQuery::Regex(&pattern)
+            } else {
+                crate::search::PathQuery::Terms(&parsed)
+            };
+            let found = engine.search_paths(
+                query,
+                &req.include,
+                &req.exclude,
+                req.files.min(crate::web::MAX_FILE_MATCHES),
+                None,
+            )?;
+            (
+                crate::web::file_matches_to_json(found.matches),
+                Some(found.total),
+            )
+        } else {
+            (Vec::new(), None)
+        };
         Ok(SearchResponse {
             results,
+            files,
+            total_files,
             index: None,
             query: req.query.clone(),
             total_results,
@@ -740,9 +769,14 @@ fn run(cli: Cli) -> Result<i32> {
         Command::Refs(a) => (a, Mode::References),
         Command::Symbols(a) => (a, Mode::Symbols),
     };
-    let req = SearchRequest::from_args(&args, mode);
+    let mut req = SearchRequest::from_args(&args, mode);
     if req.query.trim().is_empty() {
         bail!("empty query");
+    }
+    // On a terminal, files whose path matches are listed above the hits;
+    // piped output stays grep-shaped.
+    if session.format == Format::Grouped && !session.output.files_with_matches {
+        req.files = GROUPED_FILE_MATCHES;
     }
     let resp = session.search(&req)?;
     let mapper = session.path_mapper();
@@ -775,8 +809,15 @@ fn run(cli: Cli) -> Result<i32> {
     {
         session.note(&note);
     }
-    Ok(if resp.results.is_empty() { 1 } else { 0 })
+    Ok(if resp.results.is_empty() && resp.files.is_empty() {
+        1
+    } else {
+        0
+    })
 }
+
+/// Path matches listed above the hits in grouped output.
+const GROUPED_FILE_MATCHES: usize = 5;
 
 #[cfg(test)]
 mod tests {

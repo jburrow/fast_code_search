@@ -138,7 +138,15 @@ pub struct SearchQuery {
     /// Whole-word matching (overrides `word:` in the query).
     #[serde(default)]
     word: Option<bool>,
+    /// Also return up to this many files whose *path* matches the query, in
+    /// `files` (0 = none, the default; at most 100). Only on the first page
+    /// (`offset=0`) of a text or regex search.
+    #[serde(default)]
+    files: usize,
 }
+
+/// Most path matches one request may ask for.
+pub const MAX_FILE_MATCHES: usize = 100;
 
 fn default_max_results() -> usize {
     50
@@ -200,10 +208,27 @@ pub struct SearchResultJson {
     pub context_start_line: Option<usize>,
 }
 
+/// A file whose path matched the query (the `files` parameter of `/api/search`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileMatchJson {
+    /// The path as results show it.
+    pub file_path: String,
+    pub score: f64,
+    /// `[start, end)` byte offsets of `file_path` that matched.
+    pub match_ranges: Vec<[usize; 2]>,
+}
+
 /// Search response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub results: Vec<SearchResultJson>,
+    /// Files whose path matches the query, best first (only when asked for
+    /// with `files`). Separate from `results`, which are content hits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileMatchJson>,
+    /// How many files' paths matched in all (only when `files` was asked for).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_files: Option<usize>,
     /// How current the index is, so clients can warn that recent writes
     /// may be missing when no file watcher is running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -431,6 +456,8 @@ pub async fn search_handler(
     if query.is_empty() {
         return Ok(Json(SearchResponse {
             results: vec![],
+            files: vec![],
+            total_files: None,
             index: None,
             query: String::new(),
             total_results: 0,
@@ -491,6 +518,9 @@ pub async fn search_handler(
         )));
     }
     let context_lines = params.context.min(MAX_CONTEXT_LINES);
+    let file_limit = params.files.min(MAX_FILE_MATCHES);
+    let pattern_for_paths =
+        crate::search::regex_pattern_with_case(&query, case_override).into_owned();
 
     // Parse ranking mode
     let rank_mode = match params.rank.to_lowercase().as_str() {
@@ -601,6 +631,28 @@ pub async fn search_handler(
         // re-read when many hits come from one file).
         let results = results_to_json(&engine, matches, context_lines);
 
+        // Path matches: a separate pass over the indexed paths, first page only.
+        let (files, total_files) = if file_limit > 0 && offset == 0 && !symbols_only && !references
+        {
+            let path_query = if is_regex {
+                crate::search::PathQuery::Regex(&pattern_for_paths)
+            } else {
+                crate::search::PathQuery::Terms(&parsed)
+            };
+            let found = engine
+                .search_paths(
+                    path_query,
+                    &include_patterns,
+                    &exclude_patterns,
+                    file_limit,
+                    Some(std::time::Instant::now() + timeout),
+                )
+                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+            (file_matches_to_json(found.matches), Some(found.total))
+        } else {
+            (Vec::new(), None)
+        };
+
         let total_results = results.len();
         let has_more = match ranking_info.total_matches {
             Some(total) => offset + total_results < total,
@@ -610,6 +662,8 @@ pub async fn search_handler(
 
         Ok(Json(SearchResponse {
             results,
+            files,
+            total_files,
             index: Some(engine.freshness()),
             query,
             total_results,
@@ -640,6 +694,18 @@ pub async fn search_handler(
         }
     }
     outcome
+}
+
+/// Turn path matches into the API's shape.
+pub fn file_matches_to_json(matches: Vec<crate::search::PathMatch>) -> Vec<FileMatchJson> {
+    matches
+        .into_iter()
+        .map(|m| FileMatchJson {
+            file_path: m.file_path,
+            score: m.score,
+            match_ranges: m.ranges.into_iter().map(|(s, e)| [s, e]).collect(),
+        })
+        .collect()
 }
 
 /// Turn engine matches into the API's result shape, attaching `context_lines`

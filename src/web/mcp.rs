@@ -245,7 +245,8 @@ fn tool_definitions() -> Value {
              holding the whole phrase rank first), \"exact phrase\", -term, file:PATTERN, \
              lang:rust, case:yes, word:yes. mode: text (default), regex (a Rust regex matched \
              per line), symbols (definitions only) or references (call sites and type mentions \
-             of an identifier). Returns path:line:column with the matching line."
+             of an identifier). Returns path:line:column with the matching line; in text and \
+             regex mode, files whose path matches the query (e.g. a pasted path) are listed first."
                 .to_string(),
             json!({
                 "type": "object",
@@ -398,6 +399,9 @@ fn limit(asked: Option<usize>, default: usize, max: usize) -> usize {
 
 // ------------------------------------------------------------- search_code
 
+/// Path matches listed above `search_code`'s content hits.
+const MCP_FILE_MATCHES: usize = 5;
+
 #[derive(serde::Deserialize)]
 struct SearchArgs {
     query: String,
@@ -438,11 +442,39 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         "symbols": symbols,
         "references": references,
         "context": context,
+        "files": MCP_FILE_MATCHES,
     }))?;
     let Json(resp) = api::search_handler(State(state.clone()), q).await?;
     let mut out = String::new();
+    // Files whose path matches come first: an agent pasting a path wants
+    // the file, not lines that happen to mention it.
+    if !resp.files.is_empty() {
+        let total = resp.total_files.unwrap_or(resp.files.len());
+        let _ = writeln!(
+            out,
+            "Files whose path matches ({total}{}):",
+            if total > resp.files.len() {
+                format!(", showing {}", resp.files.len())
+            } else {
+                String::new()
+            }
+        );
+        for f in &resp.files {
+            let _ = writeln!(out, "{}", f.file_path);
+        }
+        out.push('\n');
+    }
     if resp.results.is_empty() {
-        let _ = writeln!(out, "No matches for {:?} ({mode} search).", resp.query);
+        let _ = writeln!(
+            out,
+            "No {}matches for {:?} ({mode} search).",
+            if resp.files.is_empty() {
+                ""
+            } else {
+                "content "
+            },
+            resp.query
+        );
         push_freshness_note(&mut out, resp.index.as_ref());
         return Ok(out);
     }

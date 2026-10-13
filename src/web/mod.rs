@@ -5,7 +5,10 @@ mod graph;
 mod mcp;
 pub mod metrics;
 
-pub use api::{results_to_json, ErrorResponse, SearchResponse, SearchResultJson};
+pub use api::{
+    file_matches_to_json, results_to_json, ErrorResponse, FileMatchJson, SearchResponse,
+    SearchResultJson, MAX_FILE_MATCHES,
+};
 
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
 use axum::{

@@ -45,6 +45,17 @@ These follow from fcs being a code search server rather than a line filter.
 - **File names match too.** A text search also lists files whose *name*
   matches, as a hit without a line number. grep has no equivalent, so the
   backtest leaves these out of the comparison.
+- **Paths match, separately.** When asked (`files=N` on `/api/search`, the
+  web UI's **FILES** box, `fcs` on a terminal, MCP `search_code`), the files
+  whose *path* matches are returned apart from the content results, which
+  do not change. Every term must appear in the path as results show it,
+  case-insensitively unless `case:yes`; `\` counts as `/`; `word:yes`,
+  `-term`, `file:`, `lang:` and include/exclude globs apply as they do to
+  content. A term holding a `/` also matches the file's absolute path, so a
+  pasted `/home/me/repo/src/main.rs` works, but only when the match reaches
+  past the indexed folder (`/home/` alone lists nothing). A regex is
+  matched against the shown path. This is closest to `rg --files | rg
+  PATTERN`; it is not part of the backtest, which compares content only.
 - **One result per line.** A line with several matches is one result. For a
   multi-line match, the result is the line where it starts. ripgrep counts
   lines the same way (`rg -c`).
