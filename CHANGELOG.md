@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The ripgrep backtest's `--check-defaults` (on in CI) walks every query
+  the way a web UI user pages through it under the server's default
+  limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
+  skipped, then LOAD MORE to the end. Every match must be shown exactly
+  once.
+
 ### Changed
 - Web UI: file names are never re-cased. The dependency explorer's pane
   title, extension badges and the compact search box in the header showed
@@ -36,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   icons as the rest, so the 3.9 MB icon font is gone.
 
 ### Fixed
+- LOAD MORE past 1000 results repeated some results and skipped others on
+  broad searches, because each deeper page ranked a different sample of
+  the matches. Every page that ends at result 1000 or later now ranks the
+  same sample, so the pages fit together.
 - Web UI: the hover preview shows the whole file and scrolls. It used to
   fetch 12 lines either side of the hit, so a FILES-box row (previewed from
   line 1) showed 13 lines in a window-tall panel, and the mouse wheel
