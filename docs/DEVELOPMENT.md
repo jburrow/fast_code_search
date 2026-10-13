@@ -315,6 +315,11 @@ server to see a change.
 - **Tailwind** colour names in `tailwind.config.js` point at the same tokens.
   After changing classes or the config, run `npm run build:css` and commit
   `static/tailwind.css` (CI checks it is up to date).
+- **Code:** `static/code-view.js` is the one code viewer (the file viewer,
+  the hover preview and the dependency explorer's source pane): line
+  numbers, highlighting, a window of lines with "Show more", and the ruler
+  of hits beside the scrollbar. Its pure parts are in
+  `static/lib/keyword-helpers.js` with tests.
 - Run the JavaScript tests with `node --test static/tests/*.test.js`.
 
 ### Performance Optimization Checklist

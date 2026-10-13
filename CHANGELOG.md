@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Web UI: the file viewer, the hover preview and the dependency explorer's
+  source pane mark every hit in the whole file in a strip beside the
+  scrollbar (query matches; import lines in the explorer). Click the strip
+  to jump to the nearest one, including lines not laid out yet (#141). The
+  preview's ↑/↓ now step through every match in the file, not only the
+  lines on screen.
 - Web UI themes: Bold (the existing look, still the default), Corporate and
   Corporate dark. On a first visit the UI asks which to use, previewing each
   live; the palette button in the header (replacing the `?` link, which
@@ -22,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once.
 
 ### Changed
+- Web UI: denser results, about twice as many hits per screen. A hit is its
+  code with the line number in a gutter instead of a header row above it;
+  the kind shows as a small tag on definitions and references; the line
+  number opens the file there (and previews it on hover), the file name
+  opens the file, and copy and the explorer link show on hover. Language
+  and dependency badges are quiet outlines, and on a phone they hide so the
+  file name isn't cut off.
+- Web UI: one code viewer for the file viewer, the hover preview and the
+  dependency explorer, so line numbers, highlighting and "Show more" look
+  and work the same in each.
 - Web UI: one rule for labels and buttons. Labels are written in sentence
   case and the theme decides whether they show in capitals (Bold does), so
   buttons, toggles and headings on every page now look alike. The search
