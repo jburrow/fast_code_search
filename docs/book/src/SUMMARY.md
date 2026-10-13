@@ -24,6 +24,7 @@
 - [API and configuration](imported/api.md)
 - [Query syntax](reference/query-syntax.md)
 - [Matching compared with grep and ripgrep](reference/matching.md)
+- [Dependency graph support](reference/graph-support.md)
 - [`fcs` command line](reference/cli-help.md)
 - [Server command line](reference/server-help.md)
 - [Configuration template](reference/config-template.md)

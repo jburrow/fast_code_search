@@ -9,6 +9,32 @@ backtest](../benchmarks/correctness.md) checks this on every engine change.
 It runs a fixed set of searches through both tools and fails on any line one
 finds and the other does not.
 
+## Every search, as ripgrep would run it
+
+The contract in one table: for each kind of fcs search, the ripgrep run
+that finds the same lines. "Same lines" is what the backtest checks; fcs
+then ranks them and may cap how many it reads (see *Ranked, and capped*
+below, and `limits_hit` in every response).
+
+| fcs search | Same lines as | Checked by |
+|---|---|---|
+| `foo bar` (plain text) | `rg -F -i 'foo bar'` | backtest, generated queries |
+| `foo case:yes` (or MATCH CASE, `fcs -s`) | `rg -F 'foo'` | backtest, generated queries |
+| `foo word:yes` (or `fcs -w`) | `rg -F -i -w 'foo'` | backtest, generated queries |
+| `foo case:yes word:yes` | `rg -F -w 'foo'` | backtest, generated queries |
+| Regex on the API or `fcs -e` | `rg 'PATTERN'` (`rg -U` when it mentions `\n`) | backtest |
+| Regex with `case=false`, `(?i)` or `fcs -e -i` | `rg -i 'PATTERN'` | backtest |
+| `lang:rust foo` | `rg -F -i -t rust 'foo'` | backtest (with `globs`) |
+| `file:*.py foo` / `-file:tests foo` | `rg -F -i -g '*.py' 'foo'` / `-g '!tests'`; a bare word such as `file:parser` matches anywhere in the path, which `-g` has no exact form for | backtest (with `globs`) |
+| A text search's filename hits (no line number) | none; closest is `rg --files \| rg -i 'foo'` | not compared |
+| Path matches (`files=N`, the FILES box) | none; closest is `rg --files \| rg -i` with every word required | unit tests |
+| Symbols (SYMBOLS, `fcs symbols`) | none: definitions come from tree-sitter, not from text | engine tests |
+| References (REFERENCES, `fcs refs`) | none: call sites come from tree-sitter, not from text | engine tests |
+
+`fcs` on the command line, the web UI, the API, gRPC and MCP all run one
+shared request path, and a test runs the same searches through web, gRPC
+and offline `fcs` and requires identical hits (`tests/frontend_parity.rs`).
+
 ## Where fcs agrees with ripgrep and differs from grep and git grep
 
 | Behaviour | fcs | ripgrep | GNU grep | git grep |
@@ -60,7 +86,10 @@ These follow from fcs being a code search server rather than a line filter.
   order. To keep a broad search fast, a request reads a bounded number of
   matches: by default 100 from one file on the first page, and a budget of
   about eight times the requested page. When either limit is reached, the
-  total is shown as "N+" rather than as a count. When a query could be in
+  total is shown as "N+" rather than as a count, and the response names
+  the limit (`limits_hit`: `match_budget`, `per_file_cap`, `timeout` or
+  `max_files`; `fcs` prints it, MCP adds a "Results capped" line, gRPC
+  sends an `fcs-limits-hit` header). When a query could be in
   more than 5,000 files, Auto ranking opens only the 2,000 most likely
   (`fast_rank_files`); the header then says "Searched 2,000 of N files"
   and SEARCH ALL FILES opens the rest (up to `max_fast_rank_files`). LOAD MORE in the web UI
