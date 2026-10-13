@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-31c291e1.js";
+            window.path_to_searchindex_js = "searchindex-dd1d82c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -2750,24 +2750,39 @@ current without a rebuild.</p>
 <p>On Linux one inotify watch is installed per directory that survives the
 exclude patterns, so <code>node_modules</code>, <code>target</code> and <code>.git/objects</code> cost no
 watches at all; new directories get watches when they appear. macOS
-(FSEvents) and Windows watch each root recursively. Events are coalesced
-for the debounce interval (two seconds) and queued; the queue is bounded,
-and if it ever fills, events are dropped with a warning and the sibling
-check below heals what it can.</p>
+(FSEvents) and Windows watch each root recursively.</p>
+<p>Events are treated as <strong>hints</strong>, not facts. An event only says which
+paths may have changed; when the batch is applied, each path is checked
+against the disk: a file is indexed or dropped, and a directory is
+reconciled (new or changed files indexed, files that are gone removed).
+Backends merge, reorder and lose events, so nothing depends on the kind
+of an event or on matching the two halves of a rename. Events are
+gathered until there has been a quiet gap of 200 ms (at most two
+seconds), then applied as one batch.</p>
+<p>When events are known to be lost (the OS reports an overflow, or the
+bounded queue fills up), the watched roots are reconciled with the disk
+instead. Reconciling skips files whose size and modification time match
+what was indexed, so it costs a walk and a stat per file, not a rebuild.</p>
+<h2 id="changes-during-the-initial-build"><a class="header" href="#changes-during-the-initial-build">Changes during the initial build</a></h2>
+<p>Files are read outside the write lock, so a file can be edited, renamed
+or deleted between being read by the initial build and being merged into
+the index. Before a batch is merged each file is checked again: content
+that is no longer on disk is never installed, a deleted file is skipped,
+and a rewritten one is read again.</p>
 <h2 id="applying-a-batch"><a class="header" href="#applying-a-batch">Applying a batch</a></h2>
 <p>A batch is applied under one write lock in three phases:</p>
 <ol>
 <li><strong>Deletes and renames-away</strong> are collected and removed with a single
 pass over every posting list.</li>
-<li><strong>Modified and created paths</strong> are planned (directories expanded to
-their eligible files; vanished or newly ineligible paths dropped), then
+<li><strong>Modified and created paths</strong> are planned (directories reconciled
+as above; vanished or newly ineligible paths dropped), then
 re-indexed together: their old postings stripped in one pass, the files
 read and parsed in parallel, and installed under their existing ids so
 nothing else has to be renumbered. Edges <em>into</em> a modified file are
 kept; a file that was deleted and comes back regains its dependents.</li>
-<li><strong>Sibling check.</strong> Some backends drop the delete half of a rename; the
-parent directories of every changed path are checked and entries whose
-file is gone are removed.</li>
+<li><strong>Sibling check.</strong> As a last safety net, the parent directories of
+every changed path are checked and entries whose file is gone are
+removed.</li>
 </ol>
 <p>Between batches searches run normally; a search that arrives while the
 lock is held gets a 503 with <code>Retry-After: 1</code>, which <code>fcs</code> and the web UI
@@ -2776,6 +2791,16 @@ retry on their own.</p>
 <p>After <code>save_after_updates</code> file changes the index is saved; it is also
 saved on shutdown when anything changed since the last save, so an edit
 made a second before Ctrl+C is on disk when the server starts again.</p>
+<h2 id="how-this-is-tested"><a class="header" href="#how-this-is-tested">How this is tested</a></h2>
+<p><code>tests/watch_harness.rs</code> runs the server’s own watch loop over a
+generated Python and TypeScript tree, changes it the way people and tools
+do (edits, editor-style atomic saves, renames across directories,
+directory renames and deletes, moves into excluded directories, bursts of
+dozens of changes, changes during the initial build), then compares the
+live index with a fresh index of the same disk: the file set, every hit
+for every vocabulary word, symbol definitions and dependency edges. The
+random sequences print their seed; replay one with
+<code>FCS_WATCH_SEED=&lt;seed&gt; cargo test --test watch_harness</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="persistence"><a class="header" href="#persistence">Persistence</a></h1>
 <p>A saved index turns a restart into a load of a few seconds. The
@@ -3439,6 +3464,15 @@ test fails on hard-coded colours. This is groundwork for themes and
 should look the same, apart from the navigation links on the non-search
 pages now matching the search page. The semantic pages use the same SVG
 icons as the rest, so the 3.9 MB icon font is gone.</li>
+<li>A burst of file changes is applied once the tree has been quiet for
+200 ms (at most two seconds), instead of after a fixed two-second
+debounce, so edits show up in search sooner.</li>
+<li>The web API, the gRPC service and offline <code>fcs</code> now run every search
+through one shared request path (<code>search::request</code>): the same default
+page size, caps, deadline and offset limit, and the same dispatch to
+the engine. Offline <code>fcs</code> now enforces <code>server.max_page_offset</code> like the
+server does. A new test checks that all three return the same hits in
+the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
@@ -3454,6 +3488,16 @@ scrolled the page behind it, which closed it. It now opens at the hit
 inside itself, has ↑/↓ buttons to step through the query’s matches in the
 file, and an Open button for the file viewer. Recently viewed files are
 cached, so hovering again or opening the file doesn’t re-fetch it.</li>
+<li>File watching no longer leaves deleted files in the index. Moving a file
+into a directory and deleting that directory soon after left the file’s
+old name indexed forever, because the two events were merged into one
+that named only the directory. Watch events are now hints: every path an
+event names is checked against the disk, directories are reconciled, and
+when events are lost (an OS queue overflow) the watched folders are
+reconciled instead.</li>
+<li>Files changed while the initial index was being built could be indexed
+with old content, or stay indexed after being deleted or moved. Content
+that is no longer on disk is now never merged into the index.</li>
 </ul>
 <h2 id="0152---2026-10-13"><a class="header" href="#0152---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2">0.15.2</a> - 2026-10-13</a></h2>
 <p><strong>Search works differently in this release.</strong> Plain-text search is now a

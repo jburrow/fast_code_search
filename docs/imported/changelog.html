@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-31c291e1.js";
+            window.path_to_searchindex_js = "../searchindex-dd1d82c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -222,6 +222,15 @@ test fails on hard-coded colours. This is groundwork for themes and
 should look the same, apart from the navigation links on the non-search
 pages now matching the search page. The semantic pages use the same SVG
 icons as the rest, so the 3.9 MB icon font is gone.</li>
+<li>A burst of file changes is applied once the tree has been quiet for
+200 ms (at most two seconds), instead of after a fixed two-second
+debounce, so edits show up in search sooner.</li>
+<li>The web API, the gRPC service and offline <code>fcs</code> now run every search
+through one shared request path (<code>search::request</code>): the same default
+page size, caps, deadline and offset limit, and the same dispatch to
+the engine. Offline <code>fcs</code> now enforces <code>server.max_page_offset</code> like the
+server does. A new test checks that all three return the same hits in
+the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
@@ -237,6 +246,16 @@ scrolled the page behind it, which closed it. It now opens at the hit
 inside itself, has ↑/↓ buttons to step through the query’s matches in the
 file, and an Open button for the file viewer. Recently viewed files are
 cached, so hovering again or opening the file doesn’t re-fetch it.</li>
+<li>File watching no longer leaves deleted files in the index. Moving a file
+into a directory and deleting that directory soon after left the file’s
+old name indexed forever, because the two events were merged into one
+that named only the directory. Watch events are now hints: every path an
+event names is checked against the disk, directories are reconciled, and
+when events are lost (an OS queue overflow) the watched folders are
+reconciled instead.</li>
+<li>Files changed while the initial index was being built could be indexed
+with old content, or stay indexed after being deleted or moved. Content
+that is no longer on disk is now never merged into the index.</li>
 </ul>
 <h2 id="0152---2026-10-13"><a class="header" href="#0152---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2">0.15.2</a> - 2026-10-13</a></h2>
 <p><strong>Search works differently in this release.</strong> Plain-text search is now a
