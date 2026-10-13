@@ -40,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
   `components/Button`) now link to the file they name, including settings
   inherited through `extends`. They were treated as npm packages, so repos
-  that rely on aliases had few edges. `import x = require('./x')` is also
-  picked up now.
+  that rely on aliases had few edges. Imports of a workspace package by its
+  package.json `name` (`@acme/shared`) now link to that package's entry
+  point, and `import x = require('./x')` is picked up.
 - Web UI: search result context and hover previews are syntax-highlighted in
   one pass, so doc comments and other multi-line comments are shown as
   comments instead of having their words coloured as code (also when the

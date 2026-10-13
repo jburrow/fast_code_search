@@ -36,6 +36,18 @@ pub struct DependencyIndex {
     rust_crate_names: std::sync::RwLock<FxHashMap<PathBuf, Option<String>>>,
     /// tsconfig.json / jsconfig.json `baseUrl` and `paths`, read on demand.
     js_configs: std::sync::RwLock<JsConfigCache>,
+    /// Workspace packages: `name` of each indexed package.json -> the
+    /// package. Built on first use; `None` until then.
+    js_packages: std::sync::RwLock<Option<std::sync::Arc<FxHashMap<String, JsPackage>>>>,
+}
+
+/// A package.json in the index, for imports of a workspace package by name.
+#[derive(Debug)]
+struct JsPackage {
+    dir: PathBuf,
+    /// Entry points it declares (`types`, `source`, `module`, `main`, and
+    /// `exports["."]`), relative to `dir`, in the order they are tried.
+    entries: Vec<String>,
 }
 
 /// Module resolution settings from the nearest tsconfig.json or
@@ -284,6 +296,9 @@ impl DependencyIndex {
             // An edited config can change any directory's resolution
             // (through `extends`), so start over.
             *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
+        }
+        if stored_path.file_name().is_some_and(|n| n == "package.json") {
+            *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
         }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
@@ -647,8 +662,101 @@ impl DependencyIndex {
             return None;
         }
         // Bare package specifiers (`react`, `lodash/merge`, `@scope/pkg`) are
-        // external: never guess a same-named local file.
-        None
+        // external unless an indexed package.json carries that name (a
+        // workspace package): never guess a same-named local file.
+        self.resolve_js_workspace(spec)
+    }
+
+    /// `@acme/shared` or `@acme/shared/sub` where some indexed package.json
+    /// is named `@acme/shared`: its declared entry points, then `src/index`
+    /// and `index` (a subpath: `src/sub`, then `sub`).
+    fn resolve_js_workspace(&self, spec: &str) -> Option<PathBuf> {
+        // The name is `@scope/pkg` or `pkg`; anything after it is a subpath.
+        let skip = usize::from(spec.starts_with('@'));
+        let name_len = spec
+            .match_indices('/')
+            .nth(skip)
+            .map_or(spec.len(), |(i, _)| i);
+        let sub = spec.get(name_len + 1..).filter(|s| !s.is_empty());
+        self.resolve_js_package(&spec[..name_len], sub)
+    }
+
+    fn resolve_js_package(&self, name: &str, sub: Option<&str>) -> Option<PathBuf> {
+        let packages = self.js_packages();
+        let package = packages.get(name)?;
+        match sub {
+            Some(sub) => self
+                .js_candidates(&package.dir.join("src").join(sub))
+                .or_else(|| self.js_candidates(&package.dir.join(sub))),
+            None => package
+                .entries
+                .iter()
+                .find_map(|entry| self.js_candidates(&package.dir.join(entry)))
+                .or_else(|| self.js_candidates(&package.dir.join("src").join("index")))
+                .or_else(|| self.js_candidates(&package.dir.join("index"))),
+        }
+    }
+
+    /// Indexed package.json files by package name (read once, rebuilt after
+    /// a package.json is registered).
+    fn js_packages(&self) -> std::sync::Arc<FxHashMap<String, JsPackage>> {
+        if let Some(packages) = self
+            .js_packages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return packages.clone();
+        }
+        let mut packages = FxHashMap::default();
+        for manifest in self
+            .filename_to_paths
+            .get("package.json")
+            .into_iter()
+            .flatten()
+        {
+            let Some(value) = std::fs::read_to_string(manifest)
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            else {
+                continue;
+            };
+            let (Some(name), Some(dir)) = (
+                value.get("name").and_then(|n| n.as_str()),
+                manifest.parent(),
+            ) else {
+                continue;
+            };
+            let mut entries: Vec<String> = ["types", "typings", "source", "module", "main"]
+                .iter()
+                .filter_map(|field| value.get(*field)?.as_str().map(String::from))
+                .collect();
+            let dot = match value.get("exports") {
+                Some(serde_json::Value::Object(o)) => o.get(".").or(Some(&value["exports"])),
+                other => other,
+            };
+            match dot {
+                Some(serde_json::Value::String(s)) => entries.push(s.clone()),
+                Some(serde_json::Value::Object(o)) => {
+                    for condition in ["types", "source", "import", "require", "default"] {
+                        if let Some(s) = o.get(condition).and_then(|v| v.as_str()) {
+                            entries.push(s.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            packages.insert(
+                name.to_string(),
+                JsPackage {
+                    dir: dir.to_path_buf(),
+                    entries,
+                },
+            );
+        }
+        let packages = std::sync::Arc::new(packages);
+        *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = Some(packages.clone());
+        packages
     }
 
     /// Resolve a non-relative specifier through `paths` (exact pattern
@@ -868,6 +976,7 @@ impl DependencyIndex {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
+        *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Canonical path a file id is registered under.
@@ -1206,6 +1315,52 @@ mod tests {
             id_of(&temp, &idx, "libs/ui/src/plain.ts")
         );
         assert_eq!(r("libs/ui/src/card.tsx", "@acme/shared"), None);
+    }
+
+    /// Workspace packages imported by their package.json `name`: declared
+    /// entry points (`.js` swapped to `.ts`), `src/index` fallback, subpaths.
+    #[test]
+    fn test_resolve_js_workspace_packages() {
+        let (temp, idx) = setup(&[
+            ("package.json", r#"{"name": "root", "private": true}"#),
+            (
+                "packages/shared/package.json",
+                r#"{"name": "@acme/shared", "main": "dist/index.js"}"#,
+            ),
+            ("packages/shared/src/index.ts", ""),
+            ("packages/shared/src/money.ts", ""),
+            (
+                "packages/utils/package.json",
+                r#"{"name": "utils", "exports": {".": {"types": "./lib/main.ts"}}}"#,
+            ),
+            ("packages/utils/lib/main.ts", ""),
+            ("packages/utils/lib/strings.ts", ""),
+            ("apps/web/src/main.ts", ""),
+        ]);
+        let from = temp
+            .path()
+            .join("apps/web/src/main.ts")
+            .canonicalize()
+            .unwrap();
+        let r = |spec: &str| {
+            idx.resolve_import_path(&from, spec)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("@acme/shared"),
+            id_of(&temp, &idx, "packages/shared/src/index.ts")
+        );
+        assert_eq!(
+            r("@acme/shared/money"),
+            id_of(&temp, &idx, "packages/shared/src/money.ts")
+        );
+        assert_eq!(r("utils"), id_of(&temp, &idx, "packages/utils/lib/main.ts"));
+        assert_eq!(
+            r("utils/lib/strings"),
+            id_of(&temp, &idx, "packages/utils/lib/strings.ts")
+        );
+        assert_eq!(r("@acme/other"), None);
+        assert_eq!(r("react"), None);
     }
 
     #[test]

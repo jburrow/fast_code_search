@@ -89,10 +89,13 @@ with each extension, `index.*` and the `.js` to `.ts` swap. Non-relative
 imports go through the `paths` and `baseUrl` of the nearest `tsconfig.json`
 (or `jsconfig.json`), following relative `extends`, the way `tsc` does.
 An `@/` or `~/` import with no `paths` entry is tried under the package's
-`src/` and then its root. Anything else counts as an npm package and is
-marked external, which includes workspace packages imported by their
-package name (`@acme/shared`) unless `paths` maps them. The graph is built
-when files are indexed, so re-index after changing `paths`.
+`src/` and then its root. A package name that matches the `name` of an
+indexed `package.json` (a workspace package such as `@acme/shared`)
+resolves to that package's declared entry point (`types`, `source`,
+`module`, `main` or `exports`), then `src/index`, and a subpath
+(`@acme/shared/money`) to `src/money` or `money` under it. Anything else
+counts as an npm package and is marked external. The graph is built when
+files are indexed, so re-index after changing `paths` or package names.
 
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 
