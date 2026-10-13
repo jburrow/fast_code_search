@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-76fe965e.js";
+            window.path_to_searchindex_js = "../searchindex-dfdd8ac4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -185,7 +185,13 @@
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
+<h2 id="0152---2026-10-13"><a class="header" href="#0152---2026-10-13"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2">0.15.2</a> - 2026-10-13</a></h2>
+<p><strong>Search works differently in this release.</strong> Plain-text search is now a
+literal, like <code>rg -F</code>: several words are one phrase, quotes and a leading
+<code>-</code> are part of the text, and the <code>-term</code> exclusion and quoted phrases are
+gone. In the web UI, a regex ignores case unless MATCH CASE is on. See
+<em>Changed</em> below before upgrading scripts or saved queries.</p>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
 <li>Search finds files by path. Typing or pasting a path (<code>src/web/api.rs</code>,
