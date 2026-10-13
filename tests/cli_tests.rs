@@ -300,7 +300,15 @@ fn check_compares_generated_queries_with_ripgrep() -> Result<()> {
     std::fs::write(root.join("notes.txt"), "Gaſt, 300 \u{212A}, 5 µs\n")?;
     let out = fcs()
         .current_dir(temp.path())
-        .args(["check", "proj", "--no-graph", "--queries", "30", "--seed", "1"])
+        .args([
+            "check",
+            "proj",
+            "--no-graph",
+            "--queries",
+            "30",
+            "--seed",
+            "1",
+        ])
         .output()?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{stdout}");
