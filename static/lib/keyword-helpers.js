@@ -440,13 +440,15 @@ function compileRustRegex(pattern) {
 function buildQueryMatcher(query, opts = {}) {
     if (!query) return null;
     if (opts.regex) {
-        const re = compileRustRegex(query);
+        // MATCH CASE off sends the server `case=false`, i.e. `(?i)`.
+        const re = compileRustRegex(opts.caseSensitive === false ? `(?i)${query}` : query);
         return re ? { re } : null;
     }
     // A references query is one identifier, matched exactly and case-sensitively.
     const parsed = opts.references
         ? { terms: [query.trim()], caseSensitive: true, wholeWord: true }
         : parseQueryTerms(query);
+    if (opts.caseSensitive) parsed.caseSensitive = true;
     const terms = parsed.terms.filter(Boolean);
     if (!terms.length) return null;
     let src = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
@@ -532,16 +534,19 @@ function formatDurationMs(ms) {
 }
 
 /**
- * The muted text beside the count. Normally just the time ("36 ms"): the
- * ranking mode and candidate-file count are internals, so they live in the
- * tooltip. The one case worth showing is fast ranking skipping files, since
- * results may then be missing ("Searched 2,000 of 12,000 files · 36 ms").
+ * The muted text beside the count: the time and whether case was ignored
+ * ("36 ms · ignoring case"). The ranking mode and candidate-file count are
+ * internals, so they live in the tooltip. The one case worth showing is fast
+ * ranking skipping files, since results may then be missing ("Searched 2,000
+ * of 12,000 files · 36 ms · ignoring case").
  * @param {object} data search response
  * @param {number} durationMs
+ * @param {boolean} [ignoresCase] omitted = say nothing about case
  * @returns {{text: string, title: string}}
  */
-function searchMetaLabel(data, durationMs) {
-    const time = formatDurationMs(durationMs);
+function searchMetaLabel(data, durationMs, ignoresCase) {
+    const caseNote = ignoresCase === undefined ? '' : (ignoresCase ? ' · ignoring case' : ' · matching case');
+    const time = formatDurationMs(durationMs) + caseNote;
     const total = data.total_candidates;
     if (typeof total !== 'number') return { text: time, title: '' };
     const searched = typeof data.candidates_searched === 'number' ? data.candidates_searched : total;
@@ -549,13 +554,58 @@ function searchMetaLabel(data, durationMs) {
     if (searched < total) {
         return {
             text: `Searched ${num(searched)} of ${num(total)} files · ${time}`,
-            title: 'Fast ranking only opened the most likely files. Set Ranking to Full under FILTER to search them all.',
+            title: 'Fast ranking only opened the most likely files. SEARCH MORE FILES opens more of them; Ranking: Full under FILTER opens them all.',
         };
     }
     return {
         text: time,
         title: `${num(total)} file${total !== 1 ? 's' : ''} could contain the query`,
     };
+}
+
+/**
+ * What SEARCH MORE FILES asks for when fast ranking skipped files: every
+ * candidate, or as many as the server allows (`max_files_allowed`). Null
+ * when nothing was skipped or the server's limit is already reached.
+ * @param {object} data search response
+ * @returns {{maxFiles: number, label: string}|null}
+ */
+function moreFilesRequest(data) {
+    const total = data?.total_candidates;
+    const searched = data?.candidates_searched;
+    if (typeof total !== 'number' || typeof searched !== 'number' || searched >= total) return null;
+    const allowed = typeof data.max_files_allowed === 'number' ? data.max_files_allowed : Infinity;
+    if (searched >= allowed) return null;
+    const n = Math.min(total, allowed);
+    return {
+        maxFiles: n,
+        label: n === total ? 'SEARCH ALL FILES' : `SEARCH ${n.toLocaleString('en-US')} FILES`,
+    };
+}
+
+/**
+ * The `case` parameter for a search: 'true' with MATCH CASE on; with it
+ * off, 'false' for a regex (the server matches a regex's case by default)
+ * and null otherwise (plain text ignores case unless the query says
+ * `case:yes`; references are always exact).
+ * @param {{matchCase?: boolean, isRegex?: boolean, symbolsOnly?: boolean, isReferences?: boolean}} s
+ * @returns {'true'|'false'|null}
+ */
+function searchCaseParam(s) {
+    if (s.matchCase) return 'true';
+    if (s.isRegex && !s.symbolsOnly && !s.isReferences) return 'false';
+    return null;
+}
+
+/**
+ * Does this search ignore case? For the results header, so it is always
+ * clear which way case went.
+ * @param {{query: string, matchCase?: boolean, isRegex?: boolean, isReferences?: boolean}} s
+ */
+function searchIgnoresCase(s) {
+    if (s.matchCase || s.isReferences) return false;
+    if (s.isRegex) return true;
+    return !parseQueryTerms(s.query).caseSensitive;
 }
 
 /** "just now", "6 min ago", "2 h 5 min ago", "3 days ago". */
@@ -737,9 +787,10 @@ function looksLikeRegex(query) {
  * find something.
  * @param {string} query
  * @param {boolean} isRegex
+ * @param {boolean} [matchCase] MATCH CASE on (default true: suggest ignoring case)
  * @returns {Array<{label: string, query: string, regex: boolean}>}
  */
-function noResultSuggestions(query, isRegex) {
+function noResultSuggestions(query, isRegex, matchCase = true) {
     const q = String(query || '').trim();
     if (!q) return [];
     const out = [];
@@ -755,7 +806,8 @@ function noResultSuggestions(query, isRegex) {
         return out;
     }
     const relaxed = relaxRegexSpacing(q);
-    const caseable = /[A-Za-z]/.test(q) && !regexIgnoresCase(q);
+    // With MATCH CASE off the regex already ignores case.
+    const caseable = matchCase && /[A-Za-z]/.test(q) && !regexIgnoresCase(q);
     if (relaxed) add('Flexible spacing', relaxed, true);
     if (caseable) add('Ignore case', `(?i)${q}`, true);
     if (relaxed && caseable) add('Flexible spacing, ignore case', `(?i)${relaxed}`, true);
@@ -799,6 +851,9 @@ if (typeof module !== 'undefined' && module.exports) {
         isYesToken,
         tokenizeQuery,
         parseQueryTerms,
+        moreFilesRequest,
+        searchCaseParam,
+        searchIgnoresCase,
         compileRustRegex,
         buildQueryMatcher,
         matcherRanges,

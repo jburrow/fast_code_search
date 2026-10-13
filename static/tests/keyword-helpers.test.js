@@ -548,3 +548,53 @@ test('rankDefinitions: exact name only, same file first, deduplicated', () => {
     assert.deepEqual(H.rankDefinitions([], 'x', 'a.rs'), []);
     assert.equal(H.definitionQuery('foo'), 'word:yes case:yes foo');
 });
+
+// ---------- case and more files ----------
+
+test('searchCaseParam: MATCH CASE means the same in every mode', () => {
+    assert.equal(H.searchCaseParam({ matchCase: true }), 'true');
+    assert.equal(H.searchCaseParam({ matchCase: true, isRegex: true }), 'true');
+    assert.equal(H.searchCaseParam({ matchCase: false, isRegex: true }), 'false');
+    // plain text leaves case:yes in the query in charge
+    assert.equal(H.searchCaseParam({ matchCase: false }), null);
+    assert.equal(H.searchCaseParam({ matchCase: false, isReferences: true }), null);
+});
+
+test('searchIgnoresCase and the results header say which way case went', () => {
+    assert.equal(H.searchIgnoresCase({ query: 'foo' }), true);
+    assert.equal(H.searchIgnoresCase({ query: 'foo case:yes' }), false);
+    assert.equal(H.searchIgnoresCase({ query: 'foo', matchCase: true }), false);
+    assert.equal(H.searchIgnoresCase({ query: 'fo+', isRegex: true }), true);
+    assert.equal(H.searchIgnoresCase({ query: 'Foo', isReferences: true }), false);
+    const data = { total_candidates: 10 };
+    assert.equal(H.searchMetaLabel(data, 36, true).text, '36 ms · ignoring case');
+    assert.equal(H.searchMetaLabel(data, 36, false).text, '36 ms · matching case');
+    assert.equal(H.searchMetaLabel(data, 36).text, '36 ms');
+});
+
+test('buildQueryMatcher follows MATCH CASE', () => {
+    const r = (text, q, opts) => H.matcherRanges(text, H.buildQueryMatcher(q, opts));
+    assert.deepEqual(r('Foo foo', 'foo', { caseSensitive: true }), [[4, 7]]);
+    assert.deepEqual(r('Foo foo', 'foo', {}), [[0, 3], [4, 7]]);
+    assert.deepEqual(r('Foo foo', 'foo', { regex: true, caseSensitive: false }), [[0, 3], [4, 7]]);
+    assert.deepEqual(r('Foo foo', 'foo', { regex: true, caseSensitive: true }), [[4, 7]]);
+});
+
+test('moreFilesRequest: every candidate, or as many as the server allows', () => {
+    assert.equal(H.moreFilesRequest({ total_candidates: 100, candidates_searched: 100 }), null);
+    assert.equal(H.moreFilesRequest({}), null);
+    assert.deepEqual(H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 2000 }),
+        { maxFiles: 12000, label: 'SEARCH ALL FILES' });
+    assert.deepEqual(
+        H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 2000, max_files_allowed: 5000 }),
+        { maxFiles: 5000, label: 'SEARCH 5,000 FILES' });
+    assert.equal(
+        H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 5000, max_files_allowed: 5000 }),
+        null);
+});
+
+test('noResultSuggestions: no "ignore case" when the regex already ignores it', () => {
+    const labels = (q, mc) => H.noResultSuggestions(q, true, mc).map(s => s.label);
+    assert.ok(labels('Foo', true).includes('Ignore case'));
+    assert.ok(!labels('Foo', false).includes('Ignore case'));
+});

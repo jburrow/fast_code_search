@@ -13,6 +13,7 @@ const excludeFilterInput = document.getElementById('exclude-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const referencesModeCheckbox = document.getElementById('references-mode');
+const caseModeCheckbox = document.getElementById('case-mode');
 const rankModeSelect = document.getElementById('rank-mode');
 const contextLinesSelect = document.getElementById('context-lines');
 const resultsContainer = document.getElementById('results');
@@ -20,6 +21,7 @@ const fileMatchesSection = document.getElementById('file-matches');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
 const searchMetaEl = document.getElementById('search-meta');
+const moreFilesBtn = document.getElementById('more-files-btn');
 const searchHistoryDropdown = document.getElementById('search-history-dropdown');
 
 // Stats elements
@@ -60,6 +62,7 @@ function saveSettingsToStorage() {
             regex: regexModeCheckbox?.checked || false,
             symbols: symbolsModeCheckbox?.checked || false,
             references: referencesModeCheckbox?.checked || false,
+            matchCase: caseModeCheckbox?.checked || false,
         };
         localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings));
     } catch (_) { /* storage unavailable */ }
@@ -82,6 +85,7 @@ function loadSettingsFromStorage() {
         if (regexModeCheckbox) regexModeCheckbox.checked = s.regex === true;
         if (symbolsModeCheckbox) symbolsModeCheckbox.checked = s.symbols === true;
         if (referencesModeCheckbox) referencesModeCheckbox.checked = s.references === true;
+        if (caseModeCheckbox) caseModeCheckbox.checked = s.matchCase === true;
     } catch (_) { /* ignore parse errors */ }
     syncToggleVisuals();
 }
@@ -137,7 +141,7 @@ function modeCheckboxes() {
  * or a click always looks the way it behaves.
  */
 function syncToggleVisuals() {
-    modeCheckboxes().forEach(cb => {
+    [...modeCheckboxes(), caseModeCheckbox].filter(Boolean).forEach(cb => {
         const label = cb.closest('label');
         if (label) label.classList.toggle('toggle-on', cb.checked);
     });
@@ -230,6 +234,7 @@ function applyUrlState(params, opts = {}) {
     mode(regexModeCheckbox, 'regex');
     mode(symbolsModeCheckbox, 'symbols');
     mode(referencesModeCheckbox, 'references');
+    mode(caseModeCheckbox, 'case');
     syncToggleVisuals();
 
     // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
@@ -261,6 +266,7 @@ function currentUrlParams() {
     if (regexModeCheckbox?.checked) params.set('regex', 'true');
     if (symbolsModeCheckbox?.checked) params.set('symbols', 'true');
     if (referencesModeCheckbox?.checked) params.set('references', 'true');
+    if (caseModeCheckbox?.checked) params.set('case', 'true');
 
     const rank = rankModeSelect?.value || 'auto';
     if (rank !== 'auto') params.set('rank', rank);
@@ -311,7 +317,7 @@ const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     resultsContainerId: 'results',
     searchSectionId: 'search-section',
-    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'regex-mode', 'symbols-mode', 'references-mode', 'rank-mode', 'context-lines'],
+    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'case-mode', 'regex-mode', 'symbols-mode', 'references-mode', 'rank-mode', 'context-lines'],
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
@@ -664,6 +670,7 @@ function currentQueryMatcher() {
     return buildQueryMatcher(query, {
         regex: regexModeCheckbox?.checked || false,
         references: referencesModeCheckbox?.checked || false,
+        caseSensitive: caseModeCheckbox?.checked || false,
     });
 }
 
@@ -1039,6 +1046,13 @@ function buildSearchParams(s) {
     else if (s.isRegex) params.set('regex', 'true');
     if (s.rankMode !== 'auto') params.set('rank', s.rankMode);
     if (s.contextLines > 0) params.set('context', String(s.contextLines));
+    // MATCH CASE means the same in every mode. Off, plain text needs nothing
+    // (it ignores case unless the query says case:yes) but a regex, which
+    // the server matches case-sensitively by default, is sent case=false.
+    const caseParam = searchCaseParam(s);
+    if (caseParam !== null) params.set('case', caseParam);
+    // More candidate files than fast ranking opens by default.
+    if (s.maxFiles) params.set('max_files', String(s.maxFiles));
     // Files whose path matches (text and regex searches only).
     if (!s.isReferences && !s.symbolsOnly) params.set('files', String(FILE_MATCHES_FETCH));
     return params;
@@ -1094,7 +1108,8 @@ async function fetchSearchPage(params, signal, onRetry) {
 
 /**
  * Run the search for the current form state.
- * @param {{trigger?: 'input'|'submit'|'option'|'history'}} [opts]
+ * @param {{trigger?: 'input'|'submit'|'option'|'history', maxFiles?: number}} [opts]
+ *   `maxFiles` asks fast ranking to open that many files (SEARCH MORE FILES).
  *   `trigger` decides how the URL/history is written (see writeUrlState);
  *   'history' means the URL already holds this state (popstate, initial load).
  */
@@ -1121,6 +1136,8 @@ async function performSearch(opts = {}) {
         isRegex: regexModeCheckbox?.checked || false,
         symbolsOnly: symbolsModeCheckbox?.checked || false,
         isReferences: referencesModeCheckbox?.checked || false,
+        matchCase: caseModeCheckbox?.checked || false,
+        maxFiles: opts.maxFiles || null,
         rankMode: rankModeSelect?.value || 'auto',
         contextLines: currentContextLines(),
         results: [],
@@ -1234,10 +1251,11 @@ async function showNoResultSuggestions(search) {
     const box = document.getElementById('search-suggestions');
     if (!box) return;
     const signal = _searchAbort?.signal;
-    const candidates = noResultSuggestions(search.query, search.isRegex);
+    const candidates = noResultSuggestions(search.query, search.isRegex, search.matchCase);
+    const caseTip = search.matchCase ? 'MATCH CASE is on. ' : '';
     const tips = search.isRegex
-        ? `<p class="suggestion-hint">Regex is case-sensitive and matches one line at a time. ${REGEX_HELP_LINK}</p>`
-        : '';
+        ? `<p class="suggestion-hint">${caseTip}Regex matches one line at a time. ${REGEX_HELP_LINK}</p>`
+        : (caseTip ? `<p class="suggestion-hint">${caseTip}</p>` : '');
     if (candidates.length === 0) {
         box.innerHTML = tips;
         bindRegexHelpLinks(box);
@@ -1380,9 +1398,18 @@ function renderSearch(search, durationMs, opts = {}) {
     const label = resultsCountLabel(data, search.results.length);
     resultsCount.textContent = label.text;
     resultsCount.title = label.title;
-    const meta = searchMetaLabel(data, durationMs);
+    const meta = searchMetaLabel(data, durationMs, searchIgnoresCase(search));
     searchMetaEl.textContent = meta.text;
     searchMetaEl.title = meta.title;
+    const more = moreFilesRequest(data);
+    if (moreFilesBtn) {
+        moreFilesBtn.style.display = more ? '' : 'none';
+        moreFilesBtn.textContent = more ? more.label : '';
+        moreFilesBtn.title = more
+            ? `Open ${more.maxFiles.toLocaleString('en-US')} of the ${Number(data.total_candidates).toLocaleString('en-US')} files that could contain the query (slower)`
+            : '';
+        moreFilesBtn.onclick = more ? () => performSearch({ trigger: 'option', maxFiles: more.maxFiles }) : null;
+    }
     const freshnessEl = document.getElementById('index-freshness');
     const freshness = indexFreshnessLabel(data.index, Date.now());
     if (freshnessEl) {
@@ -1409,7 +1436,11 @@ function renderSearch(search, durationMs, opts = {}) {
     const groupedResults = groupResultsByFile(search.results);
     if (!opts.preserveSelection) _selectedGroupIndex = -1; // reset keyboard selection on each new search
     // Matcher for lines without server offsets (context lines, previews).
-    _currentMatcher = buildQueryMatcher(query, { regex: search.isRegex, references: search.isReferences });
+    _currentMatcher = buildQueryMatcher(query, {
+        regex: search.isRegex,
+        references: search.isReferences,
+        caseSensitive: search.matchCase,
+    });
 
     // Render on demand: the first RENDER_INITIAL_GROUPS groups now, the rest
     // in chunks of RENDER_CHUNK_GROUPS as the sentinel scrolls into view. A
@@ -2820,6 +2851,13 @@ document.addEventListener('click', (e) => {
 });
 
 maxResultsSelect.addEventListener('change', optionChanged);
+
+if (caseModeCheckbox) {
+    caseModeCheckbox.addEventListener('change', () => {
+        syncToggleVisuals();
+        optionChanged();
+    });
+}
 
 // The mode toggles are mutually exclusive: turning one on turns the others off.
 modeCheckboxes().forEach(cb => {
