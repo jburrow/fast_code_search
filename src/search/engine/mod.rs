@@ -1,5 +1,6 @@
 use crate::dependencies::DependencyIndex;
 use crate::index::{extract_unique_trigrams_lowercase, LazyFileStore, Trigram, TrigramIndex};
+use crate::search::fold::{ascii_fold_suffices, fold_char, fold_str};
 use crate::search::path_filter::PathFilter;
 use crate::search::query_syntax::{ParsedQuery, SearchOptions};
 use crate::search::ranking::{FileScoreWeights, RankingWeights};

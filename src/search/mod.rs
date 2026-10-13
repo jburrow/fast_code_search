@@ -1,6 +1,7 @@
 pub mod background_indexer;
 pub mod engine;
 pub mod file_discovery;
+pub mod fold;
 pub mod incremental;
 pub mod path_filter;
 pub mod query_syntax;

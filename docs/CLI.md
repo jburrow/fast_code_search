@@ -17,6 +17,7 @@ fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q <(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
+fcs check                        # compare fcs with ripgrep and the import resolvers on your code
 ```
 
 ## Design
@@ -140,6 +141,17 @@ off, so files written since then may be missing or out of date.` `-q` hides
 it, and `fcs status` always reports when the index last synced and whether
 watching is on. Restart the server to rescan, or set `watch = true` under
 `[indexer]`. See [API.md](API.md#index-freshness).
+
+## Checking fcs on your code
+
+`fcs check [PATH…]` indexes the folders (default: the configuration's
+`paths`, else the current folder) afresh in memory, compares 200 queries
+made up from the files with `rg -F`, and compares the import graph with
+grimp (Python) and TypeScript's resolver when they are installed. It prints
+a markdown report and exits 1 when a search differs from ripgrep. Options:
+`--queries N`, `--seed N` (repeat a run), `--rg PATH`, `--no-search`,
+`--no-graph`. It needs no server. See the book's
+[correctness page](book/src/benchmarks/correctness.md#on-your-own-code-fcs-check).
 
 ## Exit status
 

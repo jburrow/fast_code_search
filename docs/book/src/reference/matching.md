@@ -43,7 +43,7 @@ and offline `fcs` and requires identical hits (`tests/frontend_parity.rs`).
 | Byte order mark at the start of a file | ignored, so `^` matches line 1 | ignored (kept with `-E none`) | part of line 1, so `^` misses it | part of line 1, so `^` misses it |
 | `$` on a line ending in CRLF | matches before the `\r` | only with `--crlf` | no | no |
 | Pattern that mentions `\n` | runs over the whole file and reports the line where the match starts | needs `-U` | not supported | not supported |
-| Case-insensitive folding | Unicode simple case folding: `Σ`, `σ` and `ς` are the same letter; `ß` is not `ss` | the same | depends on the locale | depends on the locale |
+| Case-insensitive folding | Unicode simple case folding: `Σ`, `σ` and `ς` are the same letter, so are `s` and the long `ſ`, `k` and the Kelvin sign `K`, the micro sign `µ` and `μ`; `ß` is not `ss` and `İ` is not `i` | the same | depends on the locale | depends on the locale |
 | Hidden files (`.github/`, `.env.example`) | searched | skipped unless `--hidden` | searched | searched if tracked |
 | Files searched | the indexed tree, honouring `.gitignore` | the tree, honouring `.gitignore` | what you name | tracked files only |
 

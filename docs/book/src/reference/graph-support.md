@@ -84,15 +84,21 @@ wrongly:
 
 | Language | Oracle | Repository | Result |
 |---|---|---|---|
-| Python | [grimp](https://github.com/python-grimp/grimp) 3.17 (`scripts/graph-oracle/py.py`) | Django 5.2 | 3,041 of 3,041 edges, none extra |
-| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`scripts/graph-oracle/ts.mjs`) | Vite 6.3.5 | 92% of edges, 1 extra; 122 of the 129 misses are tsconfig `paths` (`~utils`, `vite/module-runner`) |
+| Python | [grimp](https://github.com/python-grimp/grimp) 3.17 (`src/check/oracle/py.py`) | Django 5.2 | 3,041 of 3,041 edges, none extra |
+| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`src/check/oracle/ts.mjs`) | Vite 6.3.5 | 92% of edges, 1 extra; 122 of the 129 misses are tsconfig `paths` (`~utils`, `vite/module-runner`) |
 
 CI runs both, and fails if a change misses or adds more edges than that.
 
 ```sh
-python3 scripts/graph-oracle/py.py bench-corpus/django > py.json
+python3 src/check/oracle/py.py bench-corpus/django > py.json
 cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
-(cd scripts/graph-oracle && npm ci)
-node scripts/graph-oracle/ts.mjs bench-corpus/vite > ts.json
+(cd scripts/graph-oracle && npm ci)   # pins TypeScript
+(cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) > ts.json
 cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
 ```
+
+To run the same comparison on your own code, use `fcs check` (see
+[Correctness against ripgrep](../benchmarks/correctness.md#on-your-own-code-fcs-check)).
+It runs whichever oracles are installed: Python's needs `pip install
+grimp`, TypeScript's needs `typescript` in the repository's
+`node_modules`.

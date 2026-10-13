@@ -286,3 +286,28 @@ fn help_and_usage_errors() {
     let (code, _, _) = run(&mut fcs());
     assert_eq!(code, 2, "no query is a usage error");
 }
+
+/// `fcs check` indexes a folder in memory and compares made-up queries with
+/// ripgrep (skipped with a note where rg is not installed): no server, no
+/// configuration, exit 0 when fcs agrees.
+#[test]
+fn check_compares_generated_queries_with_ripgrep() -> Result<()> {
+    let temp = TempDir::new()?;
+    let root = temp.path().join("proj");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(root.join("src/main.rs"), RUST_FILE)?;
+    std::fs::write(root.join("src/util.py"), PY_FILE)?;
+    std::fs::write(root.join("notes.txt"), "Gaſt, 300 \u{212A}, 5 µs\n")?;
+    let out = fcs()
+        .current_dir(temp.path())
+        .args(["check", "proj", "--no-graph", "--queries", "30", "--seed", "1"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.starts_with("# fcs check"), "{stdout}");
+    assert!(
+        stdout.contains("**0 differ** from `rg -F`") || stdout.contains("Skipped: ripgrep"),
+        "{stdout}"
+    );
+    Ok(())
+}

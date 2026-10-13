@@ -153,7 +153,7 @@ struct PathTerm {
 impl PathTerm {
     fn new(term: &str) -> Self {
         let text = term.replace('\\', "/");
-        let lower = text.to_lowercase();
+        let lower = fold_str(&text).into_owned();
         let has_sep = text.contains('/');
         Self {
             text,

@@ -5,7 +5,10 @@ set** from the trigram index, then reads only those files.
 
 ## Plain text
 
-The query is lowercased and split into overlapping three-byte windows;
+The query is case-folded (Unicode simple case folding, the fold ripgrep's
+`-i` uses, which is lowercase except for a few letters such as `ſ` and
+`µ`; the index stores folded text) and split into overlapping three-byte
+windows;
 `parse_query` yields `par`, `ars`, `rse`, `se_`, `e_q`, `_qu`, `que`,
 `uer`, `ery`. Each trigram has a posting list (a Roaring bitmap of file
 ids); intersecting them gives every file that could contain the query,

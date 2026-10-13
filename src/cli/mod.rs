@@ -36,7 +36,9 @@ pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 
 /// Subcommands `fcs` understands; anything else on the command line is a
 /// search query (see [`normalize_args`]).
-pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "mcp", "help"];
+pub const SUBCOMMANDS: &[&str] = &[
+    "search", "refs", "symbols", "status", "mcp", "check", "help",
+];
 
 #[derive(Parser, Debug)]
 #[command(
@@ -58,7 +60,8 @@ pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "mcp",
                   fcs -l TODO | xargs $EDITOR   files containing TODO\n  \
                   vim -q <(fcs --format vimgrep TODO)\n  \
                   fcs status                    is the server up, what does it hold\n  \
-                  fcs mcp                       MCP over stdio, for coding agents"
+                  fcs mcp                       MCP over stdio, for coding agents\n  \
+                  fcs check                     compare fcs with ripgrep and the import resolvers"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -82,6 +85,34 @@ pub enum Command {
     /// Serve MCP over stdio by relaying to the server's /mcp endpoint (for
     /// agents that launch a command rather than connect to a URL)
     Mcp,
+    /// Check fcs against independent tools on your own code: generated
+    /// queries against ripgrep, and the import graph against Python's and
+    /// TypeScript's own resolvers when they are installed
+    Check(CheckArgs),
+}
+
+/// `fcs check`.
+#[derive(Args, Debug, Clone)]
+pub struct CheckArgs {
+    /// Folders to check (default: the configuration's indexed paths, else
+    /// the current folder). They are indexed afresh, in memory.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
+    /// Queries made up from the files and compared with `rg -F`
+    #[arg(long, default_value_t = 200, value_name = "N")]
+    pub queries: usize,
+    /// Seed for the queries, to repeat a run (default: a fresh one)
+    #[arg(long, value_name = "N")]
+    pub seed: Option<u64>,
+    /// The ripgrep binary
+    #[arg(long, default_value = "rg", value_name = "PATH")]
+    pub rg: String,
+    /// Skip the search check
+    #[arg(long)]
+    pub no_search: bool,
+    /// Skip the dependency graph check
+    #[arg(long)]
+    pub no_graph: bool,
 }
 
 /// How to reach the index.
@@ -749,6 +780,33 @@ pub fn main_with_args(args: Vec<std::ffi::OsString>) -> i32 {
     }
 }
 
+/// `fcs check`: see [`crate::check::run_check`].
+fn check(session: &Session, args: &CheckArgs) -> Result<i32> {
+    let mut indexer = session
+        .config
+        .as_ref()
+        .map(|c| c.indexer.clone())
+        .unwrap_or_default();
+    if !args.paths.is_empty() {
+        indexer.paths = args
+            .paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+    } else if indexer.paths.is_empty() {
+        indexer.paths = vec![".".into()];
+    }
+    let opts = crate::check::CheckOptions {
+        queries: if args.no_search { 0 } else { args.queries },
+        seed: args.seed,
+        rg: args.rg.clone(),
+        graph: !args.no_graph,
+        ..Default::default()
+    };
+    let mut stdout = std::io::stdout().lock();
+    crate::check::run_check(&indexer, &opts, &mut stdout, &|m| session.note(m))
+}
+
 fn run(cli: Cli) -> Result<i32> {
     let session = Session::new(cli.conn, cli.output)?;
     let (args, mode) = match cli.command {
@@ -760,6 +818,7 @@ fn run(cli: Cli) -> Result<i32> {
             mcp::run(&session.server)?;
             return Ok(0);
         }
+        Command::Check(a) => return check(&session, &a),
         Command::Search(a) => (a, Mode::Text),
         Command::Refs(a) => (a, Mode::References),
         Command::Symbols(a) => (a, Mode::Symbols),

@@ -1,7 +1,12 @@
 // TypeScript's own answer to "what does each import resolve to?", for the
-// dependency-graph oracle (examples/graph_oracle.rs).
+// dependency-graph oracle (`fcs check` and examples/graph_oracle.rs).
 //
-//   node scripts/graph-oracle/ts.mjs ROOT > ts-edges.json
+//   node src/check/oracle/ts.mjs ROOT > ts-edges.json
+//
+// TypeScript itself is loaded from the working directory's node_modules,
+// else ROOT's (a TS repository usually has it; scripts/graph-oracle/ pins
+// one for CI: run from there). `fcs check` runs this script with the repository as
+// the working directory and ROOT in $FCS_ORACLE_ROOT.
 //
 // For every JS/TS file under ROOT it lists the imports TypeScript sees
 // (ts.preProcessFile: import/export from, require, import(), import x =
@@ -13,10 +18,19 @@
 // with absolute paths; "files" are the files analysed.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import ts from "typescript";
 
-const root = fs.realpathSync(process.argv[2] ?? ".");
+const root = fs.realpathSync(process.argv[2] ?? process.env.FCS_ORACLE_ROOT ?? ".");
+const ts = (() => {
+  for (const base of [process.cwd(), root]) {
+    try {
+      return createRequire(path.join(base, "noop.js"))("typescript");
+    } catch {}
+  }
+  console.error("typescript is not installed here (npm install typescript)");
+  process.exit(3);
+})();
 const SKIP = new Set(["node_modules", ".git", "dist", "build", "target", "out", "coverage"]);
 const EXT = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
 

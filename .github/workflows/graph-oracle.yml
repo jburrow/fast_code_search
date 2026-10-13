@@ -1,7 +1,7 @@
 name: graph oracle
 
 # Does the dependency graph draw the edges the languages' own resolvers
-# draw? examples/graph_oracle.rs compares fcs's import graph with grimp on
+# draw? examples/graph_oracle.rs (the comparison `fcs check` runs) compares fcs's import graph with grimp on
 # Django and with TypeScript's resolveModuleName on Vite, and fails when a
 # change misses or adds more edges than the recorded baseline. Lower the
 # baselines when a fix closes a gap.
@@ -73,13 +73,13 @@ jobs:
 
       - name: Python (grimp on Django)
         run: |
-          python scripts/graph-oracle/py.py bench-corpus/django > py.json
+          python src/check/oracle/py.py bench-corpus/django > py.json
           ./target/release/examples/graph_oracle bench-corpus/django --oracle py.json --lang py \
             --max-missing 0 --max-extra 0 --markdown graph-py.md
 
       - name: TypeScript (resolveModuleName on Vite)
         run: |
-          node scripts/graph-oracle/ts.mjs bench-corpus/vite > ts.json
+          (cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) > ts.json
           ./target/release/examples/graph_oracle bench-corpus/vite --oracle ts.json --lang ts \
             --max-missing 129 --max-extra 1 --markdown graph-ts.md
 

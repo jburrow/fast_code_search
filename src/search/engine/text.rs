@@ -3,22 +3,16 @@
 use super::*;
 
 /// Case-insensitive substring search without heap allocation.
-/// Both `haystack` and `needle` are compared using ASCII case-insensitive matching.
-/// `needle` should already be lowercase for optimal performance.
-///
-/// Note: ASCII-only case folding. Non-ASCII characters (e.g., accented letters,
-/// CJK) are compared byte-for-byte without case folding. This is acceptable for
-/// code identifiers but won't handle natural language in comments.
+/// `needle_lower` must be folded ([`fold_str`]). An ASCII needle is compared
+/// byte by byte, ASCII-case-insensitively; otherwise (or when the haystack
+/// holds a `ſ` or Kelvin sign the needle could match) by Unicode simple
+/// case folding, as the trigram index folds content.
 #[inline]
 pub(super) fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;
     }
-    // Non-ASCII needle: use Unicode-aware folding so candidates surfaced by the
-    // (Unicode-lowercased) trigram index are not silently dropped here. The
-    // trigram index lowercases content with `to_lowercase()`, so verification
-    // must fold the same way for non-ASCII text (e.g. `über` vs `ÜBER`).
-    if !needle_lower.is_ascii() {
+    if !ascii_fold_suffices(haystack, needle_lower) {
         return unicode_ci_find(haystack, needle_lower).is_some();
     }
     let needle_len = needle_lower.len();
@@ -186,53 +180,28 @@ pub(super) fn find_char_boundary_ceil(s: &str, pos: usize) -> usize {
     p
 }
 
-/// Unicode-aware case-insensitive substring search.
+/// Case-insensitive substring search by Unicode simple case folding.
 ///
-/// `needle_lower` must already be Unicode-lowercased (as the query is). Folds
-/// each haystack char via `char::to_lowercase()` and matches against the needle,
-/// returning byte offsets into the ORIGINAL `haystack`. A match that would split
-/// a haystack char whose case-fold expands to multiple chars (e.g. `ß` → `ss`) is
-/// rejected so the returned offsets always fall on char boundaries. Only used on
-/// the rare non-ASCII path, so its O(n·m) cost is acceptable.
-pub(super) fn unicode_ci_find(haystack: &str, needle_lower: &str) -> Option<(usize, usize)> {
-    // The final sigma `ς` is the same letter as `σ` (lowercasing picks one by
-    // position in the word), so the two compare equal.
-    let fold = |c: char| if c == 'ς' { 'σ' } else { c };
-    let needle: Vec<char> = needle_lower.chars().map(fold).collect();
+/// `needle_folded` must already be folded ([`fold_str`]). Folds each
+/// haystack char with [`fold_char`] (one char to one char, as ripgrep's
+/// `-i` does) and returns byte offsets into the ORIGINAL `haystack`, which
+/// always fall on char boundaries. Used when the ASCII scan is not enough
+/// (see [`ascii_fold_suffices`]), so its O(n·m) cost is acceptable.
+pub(super) fn unicode_ci_find(haystack: &str, needle_folded: &str) -> Option<(usize, usize)> {
+    let needle: Vec<char> = needle_folded.chars().collect();
     if needle.is_empty() {
         return Some((0, 0));
     }
-    for (start, _) in haystack.char_indices() {
-        let mut ni = 0usize;
-        let mut byte_end = start;
-        let mut ok = true;
-        for c in haystack[start..].chars() {
-            if ni == needle.len() {
-                break;
-            }
-            for lc in c.to_lowercase() {
-                if ni == needle.len() {
-                    // c's fold extends past the needle end — would split a char.
-                    ok = false;
-                    break;
-                }
-                if fold(lc) != needle[ni] {
-                    ok = false;
-                    break;
-                }
-                ni += 1;
-            }
-            if !ok {
-                break;
-            }
-            byte_end += c.len_utf8();
-            if ni == needle.len() {
-                break;
+    'start: for (start, _) in haystack.char_indices() {
+        let mut end = start;
+        let mut chars = haystack[start..].chars();
+        for &n in &needle {
+            match chars.next() {
+                Some(c) if fold_char(c) == n => end += c.len_utf8(),
+                _ => continue 'start,
             }
         }
-        if ok && ni == needle.len() {
-            return Some((start, byte_end));
-        }
+        return Some((start, end));
     }
     None
 }
@@ -246,9 +215,9 @@ pub(super) fn find_match_position_case_insensitive(
     if needle_lower.is_empty() {
         return Some((0, 0));
     }
-    // Non-ASCII needle: Unicode-aware match returning original-string byte offsets
-    // (see contains_case_insensitive for the rationale).
-    if !needle_lower.is_ascii() {
+    // Unicode fold, returning original-string byte offsets (see
+    // contains_case_insensitive).
+    if !ascii_fold_suffices(haystack, needle_lower) {
         return unicode_ci_find(haystack, needle_lower);
     }
     let needle_len = needle_lower.len();
@@ -548,7 +517,7 @@ pub(super) fn line_hits<'a>(
                 &mut hits,
             );
         }
-    } else if needle_lower.is_ascii() {
+    } else if ascii_fold_suffices(content, needle_lower) {
         let nb = needle_lower.as_bytes();
         let (first, first_upper) = (nb[0], nb[0].to_ascii_uppercase());
         for pos in memchr::memchr2_iter(first, first_upper, bytes) {
@@ -616,7 +585,7 @@ impl TermSet {
 
     pub(super) fn from_parsed(parsed: &ParsedQuery) -> Self {
         Self {
-            term: (parsed.text.clone(), parsed.text.to_lowercase()),
+            term: (parsed.text.clone(), fold_str(&parsed.text).into_owned()),
             opts: parsed.options,
         }
     }

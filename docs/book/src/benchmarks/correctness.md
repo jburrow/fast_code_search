@@ -54,6 +54,40 @@ set: a combining mark (an Indic vowel sign, a decomposed accent) was not
 counted as a word character, and with MATCH CASE a match rejected by the
 whole-word test skipped the overlapping one after it (`}}` in `field}}}`).
 
+## On your own code: `fcs check`
+
+The backtest and the graph oracles run on pinned open-source trees. `fcs check` runs the same
+checks on the folders you index, so a gap that only your code exposes
+shows up too:
+
+```sh
+fcs check                      # the configuration's paths, else the current folder
+fcs check ~/src/app --seed 42  # one folder; repeat a run with its seed
+```
+
+It indexes the folders afresh, in memory, with your configuration's
+settings, then:
+
+1. makes up 200 queries from your files (`--queries N`) and compares each
+   with `rg -F`, as above; any query that differs is shrunk and reported
+   with the lines only one side found;
+2. compares the import graph with grimp for Python and with TypeScript's
+   own resolver for JavaScript and TypeScript, when those are installed
+   (`pip install grimp`; `typescript` in the repository's `node_modules`),
+   grouping the missed edges by the kind of import. See
+   [Dependency graph support](../reference/graph-support.md) for which
+   misses are known gaps.
+
+The report is markdown on stdout, progress on stderr. The exit status is 1
+when a search differs from ripgrep: that is a bug, please report it with the
+shrunk query. Graph differences are reported but do not fail the run.
+`--no-search` and `--no-graph` skip either half.
+
+Its first run, on Django, found a real bug: case-insensitive search did not
+fold the long `ſ` to `s` (or the micro sign `µ` to `μ`) as ripgrep does.
+Search now uses Unicode simple case folding throughout (`src/search/fold.rs`,
+checked against regex-syntax's tables for every character).
+
 ## How a query is translated
 
 | fcs query | ripgrep run | Compared how |
