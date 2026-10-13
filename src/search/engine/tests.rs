@@ -3079,3 +3079,176 @@ fn test_hidden_root_name_ignored_with_multiple_roots() {
     assert_eq!(engine.make_display_path(&files[0]), "alpha/utils.rs");
     assert_eq!(engine.make_display_path(&files[1]), "beta/utils.rs");
 }
+
+/// A repo-like tree under a root named `repo`, indexed with that root.
+fn path_search_engine() -> (TempDir, SearchEngine) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().join("repo");
+    for (rel, body) in [
+        ("src/web/api.rs", "pub fn search_handler() {}\n"),
+        ("src/web/mod.rs", "mod api;\n"),
+        ("src/cli/api_client.rs", "fn call() {}\n"),
+        ("docs/api.md", "# The API\n"),
+        ("tests/web_api_tests.rs", "#[test] fn t() {}\n"),
+    ] {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, body).unwrap();
+    }
+    let root = root.canonicalize().unwrap();
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&root);
+    for rel in [
+        "src/web/api.rs",
+        "src/web/mod.rs",
+        "src/cli/api_client.rs",
+        "docs/api.md",
+        "tests/web_api_tests.rs",
+    ] {
+        engine.index_file(root.join(rel)).unwrap();
+    }
+    engine.finalize();
+    (temp_dir, engine)
+}
+
+fn path_hits(engine: &SearchEngine, q: &str) -> Vec<String> {
+    let parsed = crate::search::parse_query(q);
+    engine
+        .search_paths(PathQuery::Terms(&parsed), "", "", 50, None)
+        .unwrap()
+        .matches
+        .into_iter()
+        .map(|m| m.file_path)
+        .collect()
+}
+
+#[test]
+fn path_search_finds_a_typed_path() {
+    let (_t, engine) = path_search_engine();
+    assert_eq!(
+        path_hits(&engine, "src/web/api.rs"),
+        ["repo/src/web/api.rs"]
+    );
+    // Root-qualified, partial and Windows-style paths too.
+    assert_eq!(
+        path_hits(&engine, "repo/src/web/api.rs"),
+        ["repo/src/web/api.rs"]
+    );
+    assert_eq!(path_hits(&engine, "web/api.rs"), ["repo/src/web/api.rs"]);
+    assert_eq!(
+        path_hits(&engine, r"src\web\api.rs"),
+        ["repo/src/web/api.rs"]
+    );
+    // Content search is untouched: no line mentions the path.
+    assert!(engine.search("src/web/api.rs", 10).is_empty());
+}
+
+#[test]
+fn path_search_matches_a_pasted_absolute_path() {
+    let (t, engine) = path_search_engine();
+    let abs = t
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("repo/src/web/api.rs")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let parsed = crate::search::parse_query(&abs);
+    let found = engine
+        .search_paths(PathQuery::Terms(&parsed), "", "", 10, None)
+        .unwrap();
+    assert_eq!(found.total, 1);
+    let m = &found.matches[0];
+    assert_eq!(m.file_path, "repo/src/web/api.rs");
+    // The highlight covers the whole shown path.
+    assert_eq!(m.ranges, vec![(0, m.file_path.len())]);
+    // A prefix that stops above the indexed root matches nothing.
+    let above = t
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/")
+        + "/";
+    assert!(path_hits(&engine, &above).is_empty());
+}
+
+#[test]
+fn path_search_ranks_file_names_first() {
+    let (_t, engine) = path_search_engine();
+    let hits = path_hits(&engine, "api");
+    // Exact stem first (shorter path wins the tie), then a name prefix,
+    // then a name containing the term; `src/web/mod.rs` has no `api`.
+    assert_eq!(
+        hits,
+        [
+            "repo/docs/api.md",
+            "repo/src/web/api.rs",
+            "repo/src/cli/api_client.rs",
+            "repo/tests/web_api_tests.rs",
+        ]
+    );
+}
+
+#[test]
+fn path_search_honours_terms_filters_and_options() {
+    let (_t, engine) = path_search_engine();
+    // Every term must appear in the path.
+    assert_eq!(
+        path_hits(&engine, "web api"),
+        ["repo/src/web/api.rs", "repo/tests/web_api_tests.rs"]
+    );
+    // -term drops paths containing it; file:/lang: filter like content.
+    assert_eq!(
+        path_hits(&engine, "api -tests -cli -docs"),
+        ["repo/src/web/api.rs"]
+    );
+    assert_eq!(
+        path_hits(&engine, "api lang:markdown"),
+        ["repo/docs/api.md"]
+    );
+    assert_eq!(
+        path_hits(&engine, "api -file:tests"),
+        [
+            "repo/docs/api.md",
+            "repo/src/web/api.rs",
+            "repo/src/cli/api_client.rs",
+        ]
+    );
+    // case:yes and word:yes as for content.
+    assert!(path_hits(&engine, "API case:yes").is_empty());
+    assert_eq!(
+        path_hits(&engine, "api word:yes"),
+        ["repo/docs/api.md", "repo/src/web/api.rs"]
+    );
+    // Ranges are byte offsets into the shown path.
+    let parsed = crate::search::parse_query("web api");
+    let m = &engine
+        .search_paths(PathQuery::Terms(&parsed), "", "", 1, None)
+        .unwrap()
+        .matches[0];
+    assert_eq!(m.ranges, vec![(9, 12), (13, 16)]);
+}
+
+#[test]
+fn path_search_regex_and_limit() {
+    let (_t, engine) = path_search_engine();
+    let found = engine
+        .search_paths(PathQuery::Regex(r"web/\w+\.rs$"), "", "", 1, None)
+        .unwrap();
+    assert_eq!(found.total, 2);
+    assert_eq!(found.matches.len(), 1);
+    assert!(engine
+        .search_paths(PathQuery::Regex("("), "", "", 1, None)
+        .is_err());
+}
+
+#[test]
+fn path_search_hides_the_root_name_when_configured() {
+    let (_t, mut engine) = path_search_engine();
+    engine.show_root_name = false;
+    engine.compute_all_file_metadata();
+    // The root name is not part of what is shown, so it does not match.
+    assert!(path_hits(&engine, "repo").is_empty());
+    assert_eq!(path_hits(&engine, "src/web/api.rs"), ["src/web/api.rs"]);
+}

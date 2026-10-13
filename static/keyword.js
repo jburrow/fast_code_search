@@ -16,6 +16,7 @@ const referencesModeCheckbox = document.getElementById('references-mode');
 const rankModeSelect = document.getElementById('rank-mode');
 const contextLinesSelect = document.getElementById('context-lines');
 const resultsContainer = document.getElementById('results');
+const fileMatchesSection = document.getElementById('file-matches');
 const resultsHeader = document.getElementById('results-header');
 const resultsCount = document.getElementById('results-count');
 const searchMetaEl = document.getElementById('search-meta');
@@ -1038,6 +1039,8 @@ function buildSearchParams(s) {
     else if (s.isRegex) params.set('regex', 'true');
     if (s.rankMode !== 'auto') params.set('rank', s.rankMode);
     if (s.contextLines > 0) params.set('context', String(s.contextLines));
+    // Files whose path matches (text and regex searches only).
+    if (!s.isReferences && !s.symbolsOnly) params.set('files', String(FILE_MATCHES_FETCH));
     return params;
 }
 
@@ -1124,6 +1127,8 @@ async function performSearch(opts = {}) {
         last: null,
         loading: false,
     };
+
+    clearFileMatches();
 
     // Keep URL/history in sync so searches can be shared and navigated
     writeUrlState(trigger);
@@ -1386,11 +1391,16 @@ function renderSearch(search, durationMs, opts = {}) {
         freshnessEl.title = freshness ? freshness.title : '';
     }
 
+    renderFileMatches(data);
+
     if (search.results.length === 0) {
         resetRenderState();
         resultsContainer.removeAttribute('role');
         resultsContainer.removeAttribute('aria-label');
-        resultsContainer.innerHTML = `<div class="empty-state no-results"><p>No results found for "${escapeHtml(query)}"</p>`
+        const noHits = data.files && data.files.length
+            ? `No lines match "${escapeHtml(query)}"; the files above match by path.`
+            : `No results found for "${escapeHtml(query)}"`;
+        resultsContainer.innerHTML = `<div class="empty-state no-results"><p>${noHits}</p>`
             + '<div id="search-suggestions" class="search-suggestions" aria-live="polite"></div></div>';
         if (!search.symbolsOnly && !search.isReferences) showNoResultSuggestions(search);
         return;
@@ -1452,6 +1462,96 @@ function renderSearch(search, durationMs, opts = {}) {
 
     // Roving tabindex: the selected group (or the first) is the one Tab reaches.
     highlightSelectedGroup(getResultGroups(), { focus: false });
+}
+
+// ============================================
+// FILES WHOSE PATH MATCHES (above the content results)
+// ============================================
+
+/** Path matches asked of the server, and how many show before "Show all". */
+const FILE_MATCHES_FETCH = 50;
+const FILE_MATCHES_COLLAPSED = 5;
+
+/** File type icon based on extension. */
+function fileIconName(filePath) {
+    const ext = (filePath.split('.').pop() || '').toLowerCase();
+    if (ext === 'md') return 'description';
+    return ['yaml', 'yml', 'toml', 'json'].includes(ext) ? 'data_object' : 'code';
+}
+
+function clearFileMatches() {
+    if (!fileMatchesSection) return;
+    fileMatchesSection.style.display = 'none';
+    fileMatchesSection.innerHTML = '';
+}
+
+/**
+ * One path, its directory muted and the matched parts marked (a match that
+ * crosses into the file name stays one mark).
+ */
+function fileMatchPathHtml(path, ranges) {
+    let html = '';
+    let inMark = false;
+    for (const run of pathMatchRuns(path, ranges)) {
+        if (run.hit !== inMark) {
+            html += run.hit ? '<mark class="highlight">' : '</mark>';
+            inMark = run.hit;
+        }
+        const style = run.name ? 'color:#646100;font-weight:700' : 'color:#5f5d48';
+        html += `<span style="${style}">${escapeHtml(run.text)}</span>`;
+    }
+    return inMark ? html + '</mark>' : html;
+}
+
+/** The "Files" group: the response's path matches, or nothing. */
+function renderFileMatches(data) {
+    if (!fileMatchesSection) return;
+    const files = (data && data.files) || [];
+    if (!files.length) {
+        clearFileMatches();
+        return;
+    }
+    const total = typeof data.total_files === 'number' ? data.total_files : files.length;
+    const rows = files.map((f, i) => `
+        <li${i >= FILE_MATCHES_COLLAPSED ? ' class="file-match-extra" hidden' : ''}>
+            <button type="button" class="file-match-row" data-file-path="${escapeHtml(f.file_path)}"
+                title="Open ${escapeHtml(f.file_path)}"
+                style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 16px;background:none;border:none;border-top:1px solid #e3dec8;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px">
+                ${iconSvg(fileIconName(f.file_path), 16)}
+                <span class="truncate">${fileMatchPathHtml(f.file_path, f.match_ranges)}</span>
+            </button>
+        </li>`).join('');
+    const hiddenCount = Math.max(0, files.length - FILE_MATCHES_COLLAPSED);
+    const notFetched = total - files.length;
+    const footer = hiddenCount > 0
+        ? `<button type="button" class="file-matches-more load-more-btn" style="margin:8px 16px">SHOW ${hiddenCount} MORE</button>`
+        : '';
+    const narrow = notFetched > 0
+        ? `<p class="file-matches-narrow" ${hiddenCount > 0 ? 'hidden' : ''} style="margin:8px 16px;font-size:12px;color:#5f5d48">${notFetched.toLocaleString('en-US')} more not shown; add to the path to narrow it.</p>`
+        : '';
+    fileMatchesSection.innerHTML = `
+        <div class="bg-white border border-black overflow-hidden" style="box-shadow:2px 2px 0 #000;margin-bottom:16px">
+            <div class="border-b border-black px-4 py-2 flex items-center gap-2" style="background:#dedac6">
+                ${iconSvg('description', 16)}
+                <span class="font-label text-xs font-bold tracking-tight">FILES</span>
+                <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${fileMatchesLabel(total)}</span>
+            </div>
+            <ul style="list-style:none;margin:0;padding:0">${rows}</ul>
+            ${footer}${narrow}
+        </div>`;
+    fileMatchesSection.style.display = '';
+    fileMatchesSection.querySelectorAll('.file-match-row').forEach(btn => {
+        btn.addEventListener('click', () => showFileModal(btn.dataset.filePath, 1));
+    });
+    const more = fileMatchesSection.querySelector('.file-matches-more');
+    if (more) {
+        more.addEventListener('click', () => {
+            fileMatchesSection.querySelectorAll('.file-match-extra').forEach(li => { li.hidden = false; });
+            const note = fileMatchesSection.querySelector('.file-matches-narrow');
+            if (note) note.hidden = false;
+            more.remove();
+        });
+    }
 }
 
 // ============================================
@@ -1523,8 +1623,7 @@ function renderGroupHtml(group) {
     const fileName = pathParts.pop();
     const dirPath = pathParts.length ? pathParts.join('/') + '/' : '';
 
-    // File type icon based on extension
-    const fileIcon = ext === 'md' ? 'description' : (ext === 'yaml' || ext === 'yml' || ext === 'toml' || ext === 'json' ? 'data_object' : 'code');
+    const fileIcon = fileIconName(group.filePath);
 
     // Language badge style
     const langBadgeStyle = getLangBadgeStyle(langClass);

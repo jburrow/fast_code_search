@@ -18,6 +18,11 @@ the binary.
   highlighted from the server's match offsets. **Load more** pages through
   the rest; the summary line says how many matches exist and whether the
   scan was cut short by its budget.
+- Files whose *path* matches the query are listed in a **FILES** box above
+  the results, so typing or pasting `src/web/api.rs` (or just `api.rs`)
+  finds the file even when no line mentions it. File names rank first;
+  click a path to open the file. Five show at first, **Show more** lists
+  up to fifty. Text and regex searches only.
 - The URL carries the query and modes, so a link reproduces a search; Back
   returns to the previous one.
 

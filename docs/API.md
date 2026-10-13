@@ -45,6 +45,7 @@ when the request timeout is hit.
 | `rank` | auto | `auto`, `fast` (metadata-ranked sample, used above 5,000 candidates) or `full`. |
 | `context` | 0 | Context lines before and after each hit, 0–10. |
 | `timeout_ms` | 0 | Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server's request timeout). |
+| `files` | 0 | Also return up to this many files whose *path* matches `q`, 0–100, in `files` (first page of a text or regex search only). |
 
 Response:
 
@@ -80,6 +81,24 @@ truncated window of a long line, see `content_truncated`);
 the search ran to completion; otherwise `truncated_by_budget` is true and
 `has_more` means more may exist. `index` says how current the index is; see
 [Index freshness](#index-freshness).
+
+With `files=N`, two more fields list the files whose path matches, best
+first (file name hits above directory hits, then shorter paths). They are
+separate from `results`, which are unchanged:
+
+```json
+{
+  "files": [{ "file_path": "proj/src/web/api.rs", "score": 8.0, "match_ranges": [[5, 19]] }],
+  "total_files": 1
+}
+```
+
+`match_ranges` are `[start, end)` byte offsets into `file_path`, one per
+term. Every term must appear in the shown path (case-insensitive unless
+`case:yes`, `\` read as `/`); a term containing `/` may also match the
+absolute path, so a pasted absolute path finds its file. `-term`, `file:`,
+`lang:`, `include` and `exclude` filter as for content. See [how matching
+compares with grep and ripgrep](book/src/reference/matching.md).
 
 ### Index freshness
 
@@ -194,7 +213,7 @@ to the same endpoint (it finds the server like every `fcs` command:
 
 | Tool | Arguments | What it returns |
 |------|-----------|-----------------|
-| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 20, max 100), `context` (0–5) | `path:line:column: line` per hit, with the match count and whether more exist |
+| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 20, max 100), `context` (0–5) | `path:line:column: line` per hit, with the match count and whether more exist; in text and regex mode up to five files whose path matches are listed first |
 | `read_file` | `path`, `start_line`, `end_line` | Numbered lines, 200 by default and at most 1,000, with how to continue |
 | `file_dependencies` | `path`, `direction` (`in`, `out`, `both`), `depth` (1–4), `limit` | Files it imports and files importing it, by distance, with the line of each direct import |
 | `change_impact` | `paths` (one or more), `limit` | Every file that transitively imports any of them, nearest first, split into tests and other code |

@@ -15,12 +15,14 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 mod freshness;
+mod paths;
 mod persist;
 mod progress;
 mod query;
 mod text;
 
 pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness};
+pub use paths::{PathMatch, PathQuery, PathSearch};
 pub use progress::*;
 use text::*;
 

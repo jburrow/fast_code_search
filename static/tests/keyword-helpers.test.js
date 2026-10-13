@@ -9,6 +9,30 @@ const H = require(path.join(__dirname, '..', 'lib', 'keyword-helpers.js'));
 // file); they are tested here from there.
 const C = require(path.join(__dirname, '..', 'common.js'));
 
+// ---------- path matches ----------
+
+test('pathMatchRuns: marks the hit and splits off the file name', () => {
+    const runs = H.pathMatchRuns('src/web/api.rs', [[4, 14]]);
+    assert.deepEqual(runs, [
+        { text: 'src/', hit: false, name: false },
+        { text: 'web/', hit: true, name: false },
+        { text: 'api.rs', hit: true, name: true },
+    ]);
+    assert.equal(runs.map(r => r.text).join(''), 'src/web/api.rs');
+});
+
+test('pathMatchRuns: byte ranges past multibyte characters', () => {
+    // 'é' is 2 bytes: "café/" is 6 bytes, so "api" is bytes 6..9.
+    const runs = H.pathMatchRuns('café/api.rs', [[6, 9]]);
+    assert.deepEqual(runs.filter(r => r.hit).map(r => r.text), ['api']);
+    assert.deepEqual(H.pathMatchRuns('a.rs', []), [{ text: 'a.rs', hit: false, name: true }]);
+});
+
+test('fileMatchesLabel: singular and plural', () => {
+    assert.equal(H.fileMatchesLabel(1), '1 PATH MATCHES');
+    assert.equal(H.fileMatchesLabel(1200), '1,200 PATHS MATCH');
+});
+
 // ---------- byte offsets ----------
 
 test('byteRangeToCharRange: ASCII is the identity', () => {

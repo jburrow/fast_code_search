@@ -91,6 +91,10 @@ fast_code_search/src/search/engine/mod.rs
   601 [def]: pub struct SearchEngine {
 ```
 
+On a terminal, up to five files whose *path* matches the query are listed
+first, under `Files (N paths match)`, so `fcs src/web/api.rs` finds the
+file even when no line mentions it. Piped and `-l` output leave them out.
+
 vimgrep (piped): `path:line:col:text`, column 1-based; with `-C`, context
 lines use `-` as the separator and `--` ends each block, as `grep -C` does.
 
@@ -139,7 +143,7 @@ watching is on. Restart the server to rescan, or set `watch = true` under
 
 | Code | Meaning |
 |---|---|
-| 0 | At least one match was printed. |
+| 0 | At least one match (or, on a terminal, a matching path) was printed. |
 | 1 | The search ran and found nothing. |
 | 2 | Error: bad arguments, invalid regex, server error, no server and no index. |
 

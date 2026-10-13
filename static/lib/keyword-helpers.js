@@ -283,6 +283,40 @@ function mergeRanges(ranges) {
     return out;
 }
 
+// ---------- Path matches (the "Files" group) ----------
+
+/**
+ * Split a path into runs for display: `hit` marks the server's matched byte
+ * ranges (`match_ranges` of a path match), `name` the file name part.
+ * @param {string} path
+ * @param {Array<[number, number]>} byteRanges
+ * @returns {Array<{text: string, hit: boolean, name: boolean}>}
+ */
+function pathMatchRuns(path, byteRanges) {
+    const hits = mergeRanges((byteRanges || []).map(r => byteRangeToCharRange(path, r[0], r[1])));
+    const nameStart = path.lastIndexOf('/') + 1;
+    const cuts = new Set([0, path.length, nameStart]);
+    for (const [s, e] of hits) { cuts.add(s); cuts.add(e); }
+    const points = [...cuts].filter(i => i >= 0 && i <= path.length).sort((a, b) => a - b);
+    const runs = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+        const [s, e] = [points[i], points[i + 1]];
+        if (e <= s) continue;
+        runs.push({
+            text: path.slice(s, e),
+            hit: hits.some(([hs, he]) => s >= hs && e <= he),
+            name: s >= nameStart,
+        });
+    }
+    return runs;
+}
+
+/** Header of the Files group: "1 PATH MATCHES" / "12 PATHS MATCH". */
+function fileMatchesLabel(total) {
+    const n = Number(total).toLocaleString('en-US');
+    return total === 1 ? `${n} PATH MATCHES` : `${n} PATHS MATCH`;
+}
+
 // ---------- Query syntax (mirrors src/search/query_syntax.rs) ----------
 
 function isYesToken(v) {
@@ -795,6 +829,8 @@ if (typeof module !== 'undefined' && module.exports) {
         contrastRatio,
         byteRangeToCharRange,
         mergeRanges,
+        pathMatchRuns,
+        fileMatchesLabel,
         isYesToken,
         tokenizeQuery,
         tokenNegates,
