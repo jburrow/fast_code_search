@@ -11,7 +11,10 @@ the binary.
 - Type and press Enter (or wait: the page searches as you type after a short
   pause). `Ctrl`/`Cmd`+`K` focuses the box from anywhere; `/` does too.
 - **REGEX**, **SYMBOLS** and **REFERENCES** switch modes; **FILTER** opens
-  page size, ranking mode, context lines and include/exclude globs.
+  page size, ranking mode, context lines and the path filters (**SEARCH ONLY
+  IN** and **SKIP PATHS**: globs separated by `,` or `;`). While a path
+  filter is set, FILTER shows a count and the summary line shows each filter
+  with an × to remove it. Path filters are remembered between visits.
 - **MATCH CASE** (`Aa`) matches upper and lower case exactly, in every mode;
   off, case is ignored in plain text and regex alike. The summary line
   says which applied ("ignoring case" or "matching case").
@@ -30,7 +33,8 @@ the binary.
   the results, so typing or pasting `src/web/api.rs` (or just `api.rs`)
   finds the file even when no line mentions it. File names rank first;
   click a path to open the file. Five show at first, **Show more** lists
-  up to fifty. Text and regex searches only.
+  up to fifty. Text and regex searches only. The count above the results
+  includes them ("2 FILES · 1 RESULT").
 - The URL carries the query and modes, so a link reproduces a search; Back
   returns to the previous one.
 

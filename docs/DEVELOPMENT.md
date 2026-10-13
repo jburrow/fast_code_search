@@ -287,6 +287,23 @@ cargo build
 3. Update `src/server/service.rs` to implement new endpoints
 4. Update example client in `examples/client.rs`
 
+### Changing the web UI
+
+The pages in `static/` are embedded in the server binary, so rebuild the
+server to see a change.
+
+- **Header and navigation:** `static/shell.js` draws the header, the icon
+  sprite and the phone tab bar on every page. A page passes its own header
+  extras (stats, the compact search box) in `<template id="app-header-extra">`.
+- **Colours, shadows and fonts** are design tokens (`var(--accent)`,
+  `var(--shadow)`, …) defined once in `static/app.css`. Never write a colour
+  anywhere else: `static/tests/tokens.test.js` fails on a hex or `rgb()`
+  value outside `app.css`, and on a `var(--…)` that isn't defined.
+- **Tailwind** colour names in `tailwind.config.js` point at the same tokens.
+  After changing classes or the config, run `npm run build:css` and commit
+  `static/tailwind.css` (CI checks it is up to date).
+- Run the JavaScript tests with `node --test static/tests/*.test.js`.
+
 ### Performance Optimization Checklist
 
 - [ ] Profile with `cargo flamegraph`

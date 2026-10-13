@@ -5,26 +5,16 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Documentation — Fast Code Search</title>
     <link rel="stylesheet" href="/tailwind.css"/>
+    <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
     <style>
         /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
-        .icon { display: inline-block; fill: currentColor; vertical-align: middle; flex-shrink: 0; }
-        body {
-            background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
-        }
-        :root {
-            --bg-primary: #fefae4; --bg-secondary: #f2eed9; --bg-tertiary: #ece9d4;
-            --text-primary: #1d1c0f; --text-secondary: #494831; --text-muted: #7a785f;
-            --accent: #646100; --accent-hover: #4b4900; --success: #1e6868; --warning: #6a6707;
-            --error: #ba1a1a; --border: #cbc8aa; --code-bg: #f8f4df; --code-text: #1d1c0f;
-            --color-path: #646100; --color-deps: #1e6868;
-        }
-        .docs-content { border-radius: 0 !important; border-color: #000 !important; box-shadow: 2px 2px 0 #000; }
+        .docs-content { border-radius: 0 !important; border-color: var(--ink) !important; box-shadow: var(--shadow-sm); }
         .docs-content code { border-radius: 0 !important; }
-        .docs-content pre { border-radius: 0 !important; border: 1px solid #cbc8aa; }
+        .docs-content pre { border-radius: 0 !important; border: 1px solid var(--border); }
         .badge { border-radius: 0 !important; }
         .docs-content {
-            background: var(--bg-secondary);
+            background: var(--surface-2);
             border-radius: 4px;
             padding: 2rem 2.5rem;
             margin-top: 1rem;
@@ -39,7 +29,7 @@
             font-weight: 700;
             margin-bottom: 1.5rem;
             padding-bottom: 0.75rem;
-            border-bottom: 2px solid var(--accent);
+            border-bottom: 2px solid var(--accent-ink);
             letter-spacing: -0.02em;
         }
 
@@ -48,7 +38,7 @@
             font-weight: 700;
             margin-top: 2rem;
             margin-bottom: 0.75rem;
-            color: var(--text-primary);
+            color: var(--text);
             letter-spacing: -0.01em;
         }
 
@@ -57,7 +47,7 @@
             font-weight: 600;
             margin-top: 1.5rem;
             margin-bottom: 0.5rem;
-            color: var(--text-secondary);
+            color: var(--text-2);
             text-transform: uppercase;
             letter-spacing: 0.04em;
             font-size: 0.8rem;
@@ -65,13 +55,13 @@
 
         .docs-content p {
             margin-bottom: 1rem;
-            color: var(--text-secondary);
+            color: var(--text-2);
             line-height: 1.65;
         }
 
         .docs-content code {
-            background: var(--code-bg);
-            color: var(--code-text);
+            background: var(--surface-1);
+            color: var(--text);
             padding: 0.1rem 0.375rem;
             border-radius: 3px;
             font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
@@ -79,7 +69,7 @@
         }
 
         .docs-content pre {
-            background: var(--code-bg);
+            background: var(--surface-1);
             padding: 1rem 1.25rem;
             border-radius: 4px;
             overflow-x: auto;
@@ -89,7 +79,7 @@
         .docs-content pre code {
             background: none;
             padding: 0;
-            color: var(--code-text);
+            color: var(--text);
         }
 
         .docs-content ul,
@@ -100,7 +90,7 @@
 
         .docs-content li {
             margin-bottom: 0.4rem;
-            color: var(--text-secondary);
+            color: var(--text-2);
         }
 
         .docs-content table {
@@ -118,16 +108,16 @@
         }
 
         .docs-content th {
-            background: var(--bg-tertiary);
+            background: var(--surface-3);
             font-weight: 700;
             font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            color: var(--text-muted);
+            color: var(--text-4);
         }
 
         .docs-content td {
-            background: var(--bg-primary);
+            background: var(--page);
         }
 
         .badge {
@@ -141,21 +131,21 @@
         }
 
         .badge-fast {
-            background: color-mix(in srgb, var(--success) 15%, transparent);
-            color: var(--success);
-            border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+            background: color-mix(in srgb, var(--info) 15%, transparent);
+            color: var(--info);
+            border: 1px solid color-mix(in srgb, var(--info) 35%, transparent);
         }
 
         .badge-full {
-            background: color-mix(in srgb, var(--color-path) 12%, transparent);
-            color: var(--color-path);
-            border: 1px solid color-mix(in srgb, var(--color-path) 35%, transparent);
+            background: color-mix(in srgb, var(--accent-ink) 12%, transparent);
+            color: var(--accent-ink);
+            border: 1px solid color-mix(in srgb, var(--accent-ink) 35%, transparent);
         }
 
         .badge-auto {
-            background: color-mix(in srgb, var(--warning) 12%, transparent);
-            color: var(--warning);
-            border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+            background: color-mix(in srgb, var(--warn) 12%, transparent);
+            color: var(--warn);
+            border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
         }
 
         .nav-links {
@@ -165,7 +155,7 @@
         }
 
         .nav-links a {
-            color: var(--accent);
+            color: var(--accent-ink);
             text-decoration: none;
             font-weight: 500;
         }
@@ -178,31 +168,9 @@
 
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
-    <!-- Inline SVG icon sprite (Material Design icon paths, Apache-2.0); referenced
-         with <svg class="icon"><use href="#i-name"/></svg>. Replaces the 3.9 MB icon font. -->
-    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-        <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
-        <symbol id="i-help-outline" viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></symbol>
-        <symbol id="i-analytics" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></symbol>
-        <symbol id="i-account-tree" viewBox="0 0 24 24"><path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z"/></symbol>
-        <symbol id="i-description" viewBox="0 0 24 24"><path d="M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></symbol>
-        <symbol id="i-auto-awesome" viewBox="0 0 24 24"><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></symbol>
-    </svg>
 
-    <!-- ===== TOP NAV ===== -->
-    <header class="bg-white font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
-        <div class="flex items-center gap-6">
-            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
-            <nav class="hidden md:flex items-center gap-0 h-14">
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/">SEARCH</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/graph.html">GRAPH</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
-                <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/docs.html">DOCS</a>
-            </nav>
-        </div>
-        <a href="/docs.html" class="text-outline hover:text-black transition-colors flex items-center" title="Documentation" aria-label="Documentation"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-help-outline"/></svg></a>
-    </header>
+    <!-- Shared header, icon sprite and phone tab bar (shell.js) -->
+    <script src="/shell.js" data-page="docs"></script>
 
     <main class="max-w-[1440px] mx-auto p-6">
         <div class="docs-content">
@@ -704,14 +672,6 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
         </div>
     </main>
 
-    <!-- Mobile bottom nav -->
-    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-search"/></svg><span>Search</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-auto-awesome"/></svg><span>Semantic</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/graph.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-account-tree"/></svg><span>Graph</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-analytics"/></svg><span>Index</span></a>
-        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/docs.html"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-description"/></svg><span>Docs</span></a>
-    </nav>
 </body>
 
 </html>
