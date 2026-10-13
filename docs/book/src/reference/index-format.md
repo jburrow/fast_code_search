@@ -38,7 +38,7 @@ live ids on load, so ids stay stable across restarts.
   process. A crash leaves the previous index intact.
 - **Detects drift.** Each file's mtime and size at read time are stored;
   on load a file whose stat differs is re-read.
-- **Pinned.** `tests/fixtures/index-v7.fcsidx` is compared byte for byte
+- **Pinned.** `tests/fixtures/index-v8.fcsidx` is compared byte for byte
   in the test suite; a deliberate format change bumps the magic and
   regenerates the fixture (`FCS_WRITE_GOLDEN=1 cargo test golden`).
 - **Older formats** are rejected with a message asking for a rebuild;

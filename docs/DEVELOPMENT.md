@@ -206,7 +206,7 @@ cargo +nightly udeps
    a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
    back to back. Save streams bitmaps from the live map; load memory-maps the
    file, checks bounds and checksum, and deserializes bitmaps in parallel from
-   the mapping. `tests/fixtures/index-v7.fcsidx` pins the format byte for
+   the mapping. `tests/fixtures/index-v8.fcsidx` pins the format byte for
    byte; regenerate it with `FCS_WRITE_GOLDEN=1 cargo test golden` after a
    deliberate format change (and bump the version).
 

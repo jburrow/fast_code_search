@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `fcs check [PATH…]`: checks fcs on your own code. It indexes the folders
+  in memory, compares queries made up from the files with `rg -F` (exit 1
+  on any difference, with each differing query shrunk), and compares the
+  import graph with grimp (Python) and TypeScript's own resolver when they
+  are installed. The graph oracles' scripts moved to `src/check/oracle/`.
 - Web UI: the file viewer, the hover preview and the dependency explorer's
   source pane mark every hit in the whole file in a strip beside the
   scrollbar (query matches; import lines in the explorer). Click the strip
@@ -96,6 +101,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Case-insensitive search now folds case exactly as ripgrep's `-i` does
+  (Unicode simple case folding): `s` finds the long `ſ`, `k` the Kelvin
+  sign, `μ` the micro sign `µ`, and the Greek symbol forms (`ϐ`, `ϑ`, …)
+  their letters. The index stores folded text, so the on-disk index format
+  is now version 8 and an existing index is rebuilt once on upgrade. Found
+  by `fcs check` on Django.
 - LOAD MORE past 1000 results repeated some results and skipped others on
   broad searches, because each deeper page ranked a different sample of
   the matches. Every page that ends at result 1000 or later now ranks the

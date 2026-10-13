@@ -233,7 +233,8 @@ fn bincode_opts() -> impl Options {
 
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
-    pub const CURRENT_VERSION: u32 = 7;
+    /// 8: trigrams are Unicode simple case folded (`search::fold`).
+    pub const CURRENT_VERSION: u32 = 8;
 
     /// Create a new persisted index from the current state
     #[allow(clippy::too_many_arguments)]
@@ -918,7 +919,7 @@ mod tests {
     }
 
     fn golden_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v7.fcsidx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v8.fcsidx")
     }
 
     /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
@@ -935,7 +936,7 @@ mod tests {
         if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
             std::fs::write(golden_path(), &bytes).unwrap();
         }
-        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v7.fcsidx");
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v8.fcsidx");
         assert_eq!(&bytes[..8], INDEX_MAGIC);
         assert!(
             bytes == golden,

@@ -63,43 +63,21 @@ impl SearchEngine {
         if query.trim().is_empty() {
             return (Vec::new(), SearchRankingInfo::empty(rank_mode));
         }
-        let query_lower = query.to_lowercase();
+        let query_lower = fold_str(query).into_owned();
         let candidate_docs = self.text_candidates(&query_lower);
         self.run_text_query(query, &query_lower, &candidate_docs, limits, rank_mode)
     }
 
-    /// Candidate documents for a plain-text query. Queries shorter than 3
-    /// bytes produce no trigrams; fall back to all documents so short terms
-    /// like `_` or `__` still return results.
+    /// Candidate documents for a plain-text query (folded here too, so a
+    /// caller holding a lowercased string gets the index's spelling).
+    /// Queries shorter than 3 bytes produce no trigrams; fall back to all
+    /// documents so short terms like `_` or `__` still return results.
     pub(super) fn text_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
-        if query_lower.contains(['σ', 'ς']) {
-            return self.sigma_safe_candidates(query_lower);
-        }
-        if query_lower.len() >= 3 {
-            Cow::Owned(self.trigram_index.search(query_lower))
+        let folded = fold_str(query_lower);
+        if folded.len() >= 3 {
+            Cow::Owned(self.trigram_index.search(&folded))
         } else {
             self.trigram_index.all_documents()
-        }
-    }
-
-    /// Candidates for lowercased text holding a Greek sigma. Lowercasing is
-    /// context-sensitive for it (`str::to_lowercase` turns a word-final `Σ`
-    /// into `ς`, any other into `σ`), so the indexed content and the query
-    /// may spell the same letter differently: the query `ΟΣ` lowercases to
-    /// `ος` while `ΟΣΑ` is indexed as `οσα`. Only the text between sigmas is
-    /// required; verification folds `ς` and `σ` together.
-    fn sigma_safe_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
-        let mut acc: Option<roaring::RoaringBitmap> = None;
-        for part in query_lower.split(['σ', 'ς']).filter(|p| p.len() >= 3) {
-            let docs = self.trigram_index.search(part);
-            acc = Some(match acc {
-                Some(a) => a & docs,
-                None => docs,
-            });
-        }
-        match acc {
-            Some(docs) => Cow::Owned(docs),
-            None => self.trigram_index.all_documents(),
         }
     }
 
@@ -171,10 +149,7 @@ impl SearchEngine {
         // The index is lowercased, so candidate selection is
         // case-insensitive even for a case-sensitive search; verification
         // does the exact comparison.
-        let candidates = self.apply_path_filter(
-            self.text_candidates(&parsed.text.to_lowercase()),
-            &path_filter,
-        );
+        let candidates = self.apply_path_filter(self.text_candidates(&parsed.text), &path_filter);
         let terms = TermSet::from_parsed(parsed);
         Ok(self.run_terms(&terms, &candidates, limits, rank_mode))
     }
@@ -194,7 +169,7 @@ impl SearchEngine {
             return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
         }
         let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
-        let query_lower = query.to_lowercase();
+        let query_lower = fold_str(query).into_owned();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         let opts = parsed.options;
 
@@ -209,7 +184,7 @@ impl SearchEngine {
                 (true, true) => name == query,
                 (true, false) => name.contains(query),
                 (false, true) => {
-                    name.eq_ignore_ascii_case(query) || name.to_lowercase() == query_lower
+                    name.eq_ignore_ascii_case(query) || *fold_str(name) == *query_lower
                 }
                 (false, false) => contains_case_insensitive(name, &query_lower),
             }
@@ -224,7 +199,7 @@ impl SearchEngine {
                     .iter()
                     .filter(|s| name_matches(&s.name))
                     .map(|s| {
-                        let lower = s.name.to_lowercase();
+                        let lower = fold_str(&s.name).into_owned();
                         let name_factor = if lower == query_lower {
                             w.symbol_exact_name
                         } else if lower.starts_with(&query_lower) {
@@ -564,7 +539,7 @@ impl SearchEngine {
             return Ok((Vec::new(), SearchRankingInfo::empty(rank_mode)));
         }
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
-        let query_lower = query.to_lowercase();
+        let query_lower = fold_str(query).into_owned();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         Ok(self.run_text_query(query, &query_lower, &candidates, limits, rank_mode))
     }
@@ -650,7 +625,7 @@ impl SearchEngine {
             let mut group_docs = roaring::RoaringBitmap::new();
             for literal in group {
                 // Trigram index stores lowercased content.
-                group_docs |= &*self.text_candidates(&literal.to_lowercase());
+                group_docs |= &*self.text_candidates(literal);
             }
             result = Some(match result {
                 Some(acc) => acc & group_docs,
@@ -764,7 +739,7 @@ impl SearchEngine {
             return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
         }
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
-        let query_lower = query.to_lowercase();
+        let query_lower = fold_str(query).into_owned();
         let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
         Ok(self.run_candidates(
             &candidates,
@@ -823,8 +798,7 @@ impl SearchEngine {
         };
         // The identifier's text must occur in the file, so the trigram index
         // narrows the candidates before any reference list is scanned.
-        let candidates =
-            self.apply_path_filter(self.text_candidates(&name.to_lowercase()), &path_filter);
+        let candidates = self.apply_path_filter(self.text_candidates(name), &path_filter);
         self.run_candidates(
             &candidates,
             RankMode::Full,
@@ -942,7 +916,7 @@ impl SearchEngine {
                 (true, true) => name == original_query,
                 (true, false) => name.contains(original_query),
                 (false, true) => {
-                    name.eq_ignore_ascii_case(original_query) || name.to_lowercase() == query_lower
+                    name.eq_ignore_ascii_case(original_query) || *fold_str(name) == *query_lower
                 }
                 (false, false) => contains_case_insensitive(name, query_lower),
             }
@@ -1019,7 +993,7 @@ impl SearchEngine {
                     Some(pos) => pos,
                     None => {
                         // Try to find the symbol name instead
-                        let name_lower = symbol.name.to_lowercase();
+                        let name_lower = fold_str(&symbol.name).into_owned();
                         find_match_position_case_insensitive(line, &name_lower).unwrap_or((0, 0))
                     }
                 };
@@ -1038,7 +1012,7 @@ impl SearchEngine {
             // exact > prefix > substring, and definitions of types/functions
             // slightly above variables/constants with the same match quality.
             let w = &RankingWeights::DEFAULT;
-            let name_lower = symbol.name.to_lowercase();
+            let name_lower = fold_str(&symbol.name).into_owned();
             let name_factor = if name_lower == query_lower {
                 w.symbol_exact_name
             } else if name_lower.starts_with(query_lower) {
@@ -1393,7 +1367,10 @@ impl SearchEngine {
 
         // Every hit line, in document order (the ASCII case-insensitive
         // scan when no option is set).
-        let all_hits = if !opts.case_sensitive && !opts.whole_word && query_lower.is_ascii() {
+        let all_hits = if !opts.case_sensitive
+            && !opts.whole_word
+            && ascii_fold_suffices(&content, query_lower)
+        {
             ascii_ci_line_hits(&content, query_lower)
         } else {
             line_hits(&content, original_query, query_lower, opts)

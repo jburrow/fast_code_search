@@ -1,7 +1,7 @@
 """grimp's answer to "which modules does each Python module import?", for
-the dependency-graph oracle (examples/graph_oracle.rs).
+the dependency-graph oracle (`fcs check`, examples/graph_oracle.rs).
 
-    python3 scripts/graph-oracle/py.py ROOT > py-edges.json
+    python3 src/check/oracle/py.py ROOT > py-edges.json
 
 Every package directly under ROOT (or ROOT/src) is handed to grimp, which
 parses the imports statically, the way Python would resolve them with ROOT
@@ -36,7 +36,9 @@ def module_file(base, module):
 
 
 def main():
-    root = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else ".")
+    root = os.path.realpath(
+        sys.argv[1] if len(sys.argv) > 1 else os.environ.get("FCS_ORACLE_ROOT", ".")
+    )
     files, edges = [], []
     for base in (root, os.path.join(root, "src")):
         if not os.path.isdir(base):

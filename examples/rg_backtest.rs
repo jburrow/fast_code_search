@@ -60,21 +60,19 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use fast_code_search::config::IndexerConfig;
+use fast_code_search::check::search::{
+    count, flatten, generate, line_text, rg_hits, shrink, Hits, RgFlags, TextQuery,
+};
+use fast_code_search::check::Corpus;
 use fast_code_search::search::engine::{
     RankMode, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
 };
 use fast_code_search::search::regex_search::needs_multiline;
-use fast_code_search::search::{
-    parse_query, FileDiscoveryConfig, FileDiscoveryIterator, ParsedQuery, PartialIndexedFile,
-    PreIndexedFile, SearchEngine,
-};
-use rayon::prelude::*;
+use fast_code_search::search::{parse_query, ParsedQuery, SearchEngine};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -183,31 +181,11 @@ impl Query {
         }
         f.join(", ")
     }
-
-    /// A `[[query]]` block for the query set.
-    fn toml(&self) -> String {
-        let mut t = format!("[[query]]\nq = {}\n", toml_str(&self.q));
-        if let Some(c) = self.case {
-            t += &format!("case = {c}\n");
-        }
-        if let Some(w) = self.word {
-            t += &format!("word = {w}\n");
-        }
-        t += "why = \"found by --generate\"\n";
-        t
-    }
-}
-
-fn toml_str(s: &str) -> String {
-    toml::Value::String(s.to_string()).to_string()
 }
 
 fn default_mode() -> String {
     "text".to_string()
 }
-
-/// display path -> 1-based line numbers.
-type Hits = BTreeMap<String, BTreeSet<usize>>;
 
 #[derive(Serialize)]
 struct Row {
@@ -223,60 +201,6 @@ struct Row {
     filename_hits: usize,
     known: Option<String>,
     note: String,
-}
-
-struct Corpus {
-    engine: SearchEngine,
-    roots: Vec<PathBuf>,
-    /// Display paths of every indexed file.
-    indexed: HashSet<String>,
-}
-
-fn build(roots: &[PathBuf]) -> Result<Corpus> {
-    let root_strs: Vec<String> = roots
-        .iter()
-        .map(|r| r.to_string_lossy().into_owned())
-        .collect();
-    let config = IndexerConfig {
-        paths: root_strs.clone(),
-        ..Default::default()
-    };
-    let discovery = FileDiscoveryConfig {
-        paths: root_strs,
-        exclude_patterns: config.exclude_patterns.clone(),
-        include_extensions: config.include_extensions.clone(),
-        max_file_size: Some(config.max_file_size),
-        respect_gitignore: config.respect_gitignore,
-        ..Default::default()
-    };
-    let files: Vec<PathBuf> = FileDiscoveryIterator::new(&discovery).collect();
-    let mut engine = SearchEngine::new();
-    for r in roots {
-        engine.add_root_path(r);
-    }
-    let mut indexed_paths = Vec::new();
-    for chunk in files.chunks(500) {
-        let pre: Vec<PreIndexedFile> = chunk
-            .par_iter()
-            .filter_map(|p| {
-                PartialIndexedFile::process(p, config.transcode_non_utf8, config.max_file_size)
-                    .map(|(partial, _)| PreIndexedFile::from_partial(partial, true))
-            })
-            .collect();
-        indexed_paths.extend(pre.iter().map(|p| p.path.clone()));
-        engine.index_batch(pre);
-    }
-    engine.resolve_imports();
-    engine.finalize();
-    let indexed = indexed_paths
-        .iter()
-        .map(|p| engine.make_display_path(&p.canonicalize().unwrap_or_else(|_| p.clone())))
-        .collect();
-    Ok(Corpus {
-        engine,
-        roots: roots.to_vec(),
-        indexed,
-    })
 }
 
 /// fcs hits for `q`, every one of them; filename hits counted apart.
@@ -482,125 +406,6 @@ fn defaults_problem(
     Ok(Some(format!("defaults ({label}): {}", problems.join(", "))))
 }
 
-#[derive(Default, Clone, Copy)]
-struct RgFlags {
-    fixed: bool,
-    ignore_case: bool,
-    word: bool,
-    multiline: bool,
-}
-
-/// rg hits for one pattern: the start line of every match, per file,
-/// restricted to the files fcs indexed.
-fn rg_hits(c: &Corpus, rg: &str, pattern: &str, f: RgFlags, globs: &[String]) -> Result<Hits> {
-    let mut hits = Hits::new();
-    for root in &c.roots {
-        let mut cmd = Command::new(rg);
-        cmd.current_dir(root)
-            .args(["--json", "--no-config", "-uu", "--crlf", "--no-messages"]);
-        if f.fixed {
-            cmd.arg("-F");
-        }
-        if f.ignore_case {
-            cmd.arg("-i");
-        }
-        if f.word {
-            cmd.arg("-w");
-        }
-        if f.multiline {
-            cmd.arg("-U");
-        }
-        for g in globs {
-            cmd.args(["-g", g]);
-        }
-        cmd.args(["-e", pattern, "--", "."]);
-        let out = cmd
-            .output()
-            .with_context(|| format!("running {rg} (is ripgrep installed?)"))?;
-        // 0 = matches, 1 = none, 2 = error (unreadable files are fine:
-        // --no-messages, and only indexed files count anyway).
-        if out.status.code() == Some(2) && out.stdout.is_empty() {
-            bail!(
-                "rg failed for {pattern:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-        for line in out.stdout.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_slice(line)?;
-            if v["type"] != "match" {
-                continue;
-            }
-            let d = &v["data"];
-            let Some(rel) = d["path"]["text"].as_str() else {
-                continue; // non-UTF-8 path
-            };
-            let rel = rel.strip_prefix("./").unwrap_or(rel);
-            let path = root.join(rel);
-            let display = c.engine.make_display_path(&path);
-            if !c.indexed.contains(&display) {
-                continue;
-            }
-            let first = d["line_number"].as_u64().unwrap_or(0) as usize;
-            let text = d["lines"]["text"].as_str().unwrap_or("");
-            let set = hits.entry(display).or_default();
-            for sm in d["submatches"].as_array().into_iter().flatten() {
-                let start = sm["start"].as_u64().unwrap_or(0) as usize;
-                let before = text.get(..start).unwrap_or("");
-                set.insert(first + before.bytes().filter(|&b| b == b'\n').count());
-            }
-        }
-    }
-    hits.retain(|_, v| !v.is_empty());
-    Ok(hits)
-}
-
-fn flatten(h: &Hits) -> BTreeSet<(String, usize)> {
-    h.iter()
-        .flat_map(|(f, ls)| ls.iter().map(move |l| (f.clone(), *l)))
-        .collect()
-}
-
-fn count(h: &Hits) -> usize {
-    h.values().map(BTreeSet::len).sum()
-}
-
-/// The content of the file shown as `file`.
-fn read_display(c: &Corpus, file: &str) -> Option<String> {
-    // Display paths start with the root's own name.
-    let (root_name, rel) = file.split_once('/').unwrap_or(("", file));
-    c.roots
-        .iter()
-        .find(|r| {
-            r.file_name()
-                .is_some_and(|n| n.to_string_lossy() == root_name)
-        })
-        .and_then(|r| std::fs::read(r.join(rel)).ok())
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-}
-
-/// The text of `file:line`, for the report.
-fn line_text(
-    c: &Corpus,
-    cache: &mut HashMap<String, Vec<String>>,
-    file: &str,
-    line: usize,
-) -> String {
-    let lines = cache.entry(file.to_string()).or_insert_with(|| {
-        read_display(c, file)
-            .map(|t| t.lines().map(str::to_string).collect())
-            .unwrap_or_default()
-    });
-    let t = lines
-        .get(line.wrapping_sub(1))
-        .map(|s| s.trim())
-        .unwrap_or("");
-    let t: String = t.chars().take(120).collect();
-    format!("{file}:{line}: {t}")
-}
-
 struct Outcome {
     expected: Hits,
     missing: BTreeSet<(String, usize)>,
@@ -658,168 +463,6 @@ fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> 
     })
 }
 
-/// Whether `needle` is searched for exactly as written: no operators, no
-/// trimming, one line.
-fn usable_needle(needle: &str) -> bool {
-    if needle.chars().count() < 2
-        || needle.trim() != needle
-        || needle.contains(['\n', '\r'])
-        || needle.contains('\u{FFFD}')
-    {
-        return false;
-    }
-    let p = parse_query(needle);
-    p.text == needle
-        && p.include_globs.is_empty()
-        && p.exclude_globs.is_empty()
-        && !p.options.case_sensitive
-        && !p.options.whole_word
-}
-
-/// `n` text queries made up from the corpus, the same for the same seed.
-fn generate(c: &Corpus, n: usize, seed: u64) -> Vec<Query> {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut files: Vec<&String> = c.indexed.iter().collect();
-    files.sort();
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    let mut attempts = 0;
-    while out.len() < n && attempts < n * 100 && !files.is_empty() {
-        attempts += 1;
-        let file = files[rng.random_range(0..files.len())];
-        let Some(text) = read_display(c, file) else {
-            continue;
-        };
-        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-        if lines.is_empty() {
-            continue;
-        }
-        let line = lines[rng.random_range(0..lines.len())].trim();
-        let chars: Vec<char> = line.chars().collect();
-        let window = |rng: &mut StdRng, at: usize, max: usize| -> String {
-            let len = rng.random_range(2..=max.max(2));
-            chars[at.min(chars.len())..(at + len).min(chars.len())]
-                .iter()
-                .collect()
-        };
-        let (kind, needle) = match rng.random_range(0..5) {
-            0 => {
-                let words: Vec<&str> = line
-                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                    .filter(|w| !w.is_empty())
-                    .collect();
-                if words.is_empty() {
-                    continue;
-                }
-                (
-                    "identifier",
-                    words[rng.random_range(0..words.len())].to_string(),
-                )
-            }
-            1 => {
-                let at = rng.random_range(0..chars.len());
-                ("substring", window(&mut rng, at, 16))
-            }
-            2 => (
-                "line",
-                chars.iter().take(60).collect::<String>().trim().to_string(),
-            ),
-            3 => {
-                let punct: Vec<usize> = (0..chars.len())
-                    .filter(|&i| chars[i].is_ascii_punctuation())
-                    .collect();
-                if punct.is_empty() {
-                    continue;
-                }
-                let at = punct[rng.random_range(0..punct.len())];
-                ("punctuation", window(&mut rng, at.saturating_sub(1), 5))
-            }
-            _ => {
-                let wide: Vec<usize> = (0..chars.len()).filter(|&i| !chars[i].is_ascii()).collect();
-                if wide.is_empty() {
-                    continue;
-                }
-                let at = wide[rng.random_range(0..wide.len())];
-                let back = rng.random_range(0..3);
-                ("non-ASCII", window(&mut rng, at.saturating_sub(back), 6))
-            }
-        };
-        let needle = match rng.random_range(0..4) {
-            0 => needle.to_uppercase(),
-            1 => needle.to_lowercase(),
-            2 => needle
-                .chars()
-                .map(|ch| {
-                    if ch.is_lowercase() {
-                        ch.to_uppercase().next().unwrap_or(ch)
-                    } else {
-                        ch.to_lowercase().next().unwrap_or(ch)
-                    }
-                })
-                .collect(),
-            _ => needle,
-        };
-        if !usable_needle(&needle) {
-            continue;
-        }
-        let case = rng.random_bool(0.3).then_some(true);
-        let word = rng.random_bool(0.3).then_some(true);
-        if !seen.insert((needle.clone(), case, word)) {
-            continue;
-        }
-        out.push(Query {
-            q: needle,
-            mode: default_mode(),
-            globs: Vec::new(),
-            known: None,
-            why: format!("generated {kind} (seed {seed})"),
-            case,
-            word,
-            generated: true,
-        });
-    }
-    out
-}
-
-/// Whether fcs and rg disagree on `q`.
-fn differs(c: &Corpus, rg: &str, q: &Query) -> Result<bool> {
-    let (fcs, _) = fcs_hits(&c.engine, q)?;
-    let out = compare_text(c, rg, q, &fcs)?;
-    Ok(!out.missing.is_empty() || !out.extra.is_empty())
-}
-
-/// The shortest form of a differing generated query that still differs:
-/// characters dropped from either end, one at a time.
-fn shrink(c: &Corpus, rg: &str, q: &Query) -> Result<Query> {
-    let mut best = q.clone();
-    for _ in 0..64 {
-        let chars: Vec<char> = best.q.chars().collect();
-        let mut next = None;
-        for cand in [
-            chars[1..].iter().collect::<String>(),
-            chars[..chars.len() - 1].iter().collect::<String>(),
-        ] {
-            if !usable_needle(&cand) {
-                continue;
-            }
-            let trial = Query {
-                q: cand,
-                ..best.clone()
-            };
-            if differs(c, rg, &trial)? {
-                next = Some(trial);
-                break;
-            }
-        }
-        match next {
-            Some(n) => best = n,
-            None => break,
-        }
-    }
-    Ok(best)
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
     let set: QuerySet = toml::from_str(
@@ -836,7 +479,7 @@ fn main() -> Result<()> {
         })
         .collect::<Result<_>>()?;
     let started = std::time::Instant::now();
-    let corpus = build(&roots)?;
+    let corpus = Corpus::build_default(&roots)?;
     eprintln!(
         "indexed {} files from {} trees in {:.1} s",
         corpus.indexed.len(),
@@ -846,7 +489,19 @@ fn main() -> Result<()> {
 
     let mut queries = set.query.clone();
     if args.generate > 0 {
-        let made = generate(&corpus, args.generate, args.seed);
+        let made: Vec<Query> = generate(&corpus, args.generate, args.seed)
+            .into_iter()
+            .map(|t| Query {
+                q: t.q,
+                mode: default_mode(),
+                globs: Vec::new(),
+                known: None,
+                why: t.why,
+                case: t.case,
+                word: t.word,
+                generated: true,
+            })
+            .collect();
         eprintln!("generated {} queries (seed {})", made.len(), args.seed);
         queries.extend(made);
     }
@@ -893,7 +548,13 @@ fn main() -> Result<()> {
         };
         let differs = !out.missing.is_empty() || !out.extra.is_empty() || paging.is_some();
         if differs && q.generated {
-            shrunk.push(shrink(&corpus, &args.rg, q)?);
+            let t = TextQuery {
+                q: q.q.clone(),
+                case: q.case,
+                word: q.word,
+                why: q.why.clone(),
+            };
+            shrunk.push(shrink(&corpus, &args.rg, &t)?);
         }
         let status = match (differs, q.known.is_some()) {
             (false, false) => "pass",
