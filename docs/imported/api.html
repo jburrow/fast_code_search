@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f6001629.js";
+            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -233,6 +233,7 @@ when the request timeout is hit.</p>
 <tr><td><code>rank</code></td><td>auto</td><td><code>auto</code>, <code>fast</code> (metadata-ranked sample, used above 5,000 candidates) or <code>full</code>.</td></tr>
 <tr><td><code>context</code></td><td>0</td><td>Context lines before and after each hit, 0–10.</td></tr>
 <tr><td><code>timeout_ms</code></td><td>0</td><td>Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server’s request timeout).</td></tr>
+<tr><td><code>files</code></td><td>0</td><td>Also return up to this many files whose <em>path</em> matches <code>q</code>, 0–100, in <code>files</code> (first page of a text or regex search only).</td></tr>
 </tbody>
 </table>
 </div>
@@ -267,6 +268,20 @@ truncated window of a long line, see <code>content_truncated</code>);
 the search ran to completion; otherwise <code>truncated_by_budget</code> is true and
 <code>has_more</code> means more may exist. <code>index</code> says how current the index is; see
 <a href="#index-freshness">Index freshness</a>.</p>
+<p>With <code>files=N</code>, two more fields list the files whose path matches, best
+first (file name hits above directory hits, then shorter paths). They are
+separate from <code>results</code>, which are unchanged:</p>
+<pre><code class="language-json">{
+  "files": [{ "file_path": "proj/src/web/api.rs", "score": 8.0, "match_ranges": [[5, 19]] }],
+  "total_files": 1
+}
+</code></pre>
+<p><code>match_ranges</code> are <code>[start, end)</code> byte offsets into <code>file_path</code>, one per
+term. Every term must appear in the shown path (case-insensitive unless
+<code>case:yes</code>, <code>\</code> read as <code>/</code>); a term containing <code>/</code> may also match the
+absolute path, so a pasted absolute path finds its file. <code>-term</code>, <code>file:</code>,
+<code>lang:</code>, <code>include</code> and <code>exclude</code> filter as for content. See <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/matching.md">how matching
+compares with grep and ripgrep</a>.</p>
 <h3 id="index-freshness"><a class="header" href="#index-freshness">Index freshness</a></h3>
 <p>With <code>watch = false</code> (the default), the server indexes the tree when it
 starts and does not see files written afterwards. Search then misses text
@@ -394,7 +409,7 @@ to the same endpoint (it finds the server like every <code>fcs</code> command:
 <tr><th>Tool</th><th>Arguments</th><th>What it returns</th></tr>
 </thead>
 <tbody>
-<tr><td><code>search_code</code></td><td><code>query</code> (the <a href="#query-syntax">query syntax</a>), <code>mode</code> (<code>text</code>, <code>regex</code>, <code>symbols</code>, <code>references</code>), <code>include</code> / <code>exclude</code> globs, <code>limit</code> (default 20, max 100), <code>context</code> (0–5)</td><td><code>path:line:column: line</code> per hit, with the match count and whether more exist</td></tr>
+<tr><td><code>search_code</code></td><td><code>query</code> (the <a href="#query-syntax">query syntax</a>), <code>mode</code> (<code>text</code>, <code>regex</code>, <code>symbols</code>, <code>references</code>), <code>include</code> / <code>exclude</code> globs, <code>limit</code> (default 20, max 100), <code>context</code> (0–5)</td><td><code>path:line:column: line</code> per hit, with the match count and whether more exist; in text and regex mode up to five files whose path matches are listed first</td></tr>
 <tr><td><code>read_file</code></td><td><code>path</code>, <code>start_line</code>, <code>end_line</code></td><td>Numbered lines, 200 by default and at most 1,000, with how to continue</td></tr>
 <tr><td><code>file_dependencies</code></td><td><code>path</code>, <code>direction</code> (<code>in</code>, <code>out</code>, <code>both</code>), <code>depth</code> (1–4), <code>limit</code></td><td>Files it imports and files importing it, by distance, with the line of each direct import</td></tr>
 <tr><td><code>change_impact</code></td><td><code>paths</code> (one or more), <code>limit</code></td><td>Every file that transitively imports any of them, nearest first, split into tests and other code</td></tr>

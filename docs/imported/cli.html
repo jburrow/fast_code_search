@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f6001629.js";
+            window.path_to_searchindex_js = "../searchindex-9fc1d3d4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -262,6 +262,9 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
   664: impl SearchEngine {
   601 [def]: pub struct SearchEngine {
 </code></pre>
+<p>On a terminal, up to five files whose <em>path</em> matches the query are listed
+first, under <code>Files (N paths match)</code>, so <code>fcs src/web/api.rs</code> finds the
+file even when no line mentions it. Piped and <code>-l</code> output leave them out.</p>
 <p>vimgrep (piped): <code>path:line:col:text</code>, column 1-based; with <code>-C</code>, context
 lines use <code>-</code> as the separator and <code>--</code> ends each block, as <code>grep -C</code> does.</p>
 <p>JSON: the object <code>/api/search</code> returns (<code>results</code>, <code>total_results</code>,
@@ -303,7 +306,7 @@ watching is on. Restart the server to rescan, or set <code>watch = true</code> u
 <tr><th>Code</th><th>Meaning</th></tr>
 </thead>
 <tbody>
-<tr><td>0</td><td>At least one match was printed.</td></tr>
+<tr><td>0</td><td>At least one match (or, on a terminal, a matching path) was printed.</td></tr>
 <tr><td>1</td><td>The search ran and found nothing.</td></tr>
 <tr><td>2</td><td>Error: bad arguments, invalid regex, server error, no server and no index.</td></tr>
 </tbody>
