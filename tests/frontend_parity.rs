@@ -244,13 +244,15 @@ fn cli_hits(config: &str, c: &Case) -> Vec<Hit> {
 async fn web_grpc_and_offline_cli_agree() -> Result<()> {
     let temp = TempDir::new()?;
     let root = temp.path().join("proj");
-    let mut engine = SearchEngine::new();
-    engine.add_root_path(&root);
     for (rel, text) in FILES {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap())?;
         std::fs::write(&path, text)?;
     }
+    // The root must exist before it is registered: it is canonicalized
+    // (macOS temp dirs live behind the /var -> /private/var symlink).
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&root);
     for (rel, _) in FILES {
         engine.index_file(root.join(rel))?;
     }
