@@ -437,6 +437,10 @@ pub struct PartialIndexedFile {
     pub mtime: u64,
     /// Size in bytes of the file *as read*.
     pub size: u64,
+    /// Full-precision modification time of the file *as read*, used to tell
+    /// whether the file changed between the read and the merge (`mtime` is
+    /// whole seconds, too coarse for that).
+    pub modified: Option<std::time::SystemTime>,
 }
 
 impl PartialIndexedFile {
@@ -473,6 +477,7 @@ impl PartialIndexedFile {
         // content's identity, not the on-disk state at save time.
         let size = metadata.len();
         let mtime = crate::index::persistence::mtime_secs_of(&metadata);
+        let modified = metadata.modified().ok();
 
         let raw_bytes = std::fs::read(path).ok()?;
         // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
@@ -553,6 +558,7 @@ impl PartialIndexedFile {
                 tree_sitter_safe,
                 mtime,
                 size,
+                modified,
             },
             transcoded,
         ))
@@ -576,6 +582,9 @@ pub struct PreIndexedFile {
     pub mtime: u64,
     /// Size in bytes of the content that was indexed
     pub size: u64,
+    /// Full-precision modification time of the content that was indexed
+    /// (see [`PartialIndexedFile::modified`]).
+    pub modified: Option<std::time::SystemTime>,
 }
 
 impl PreIndexedFile {
@@ -634,6 +643,16 @@ impl PreIndexedFile {
             references,
             mtime: partial.mtime,
             size: partial.size,
+            modified: partial.modified,
+        }
+    }
+
+    /// Is the file on disk still the content this was built from? False if
+    /// it was deleted or rewritten since it was read.
+    fn still_on_disk(&self) -> bool {
+        match std::fs::metadata(&self.path) {
+            Ok(meta) => meta.len() == self.size && meta.modified().ok() == self.modified,
+            Err(_) => false,
         }
     }
 }
@@ -972,7 +991,38 @@ impl SearchEngine {
     /// Index a batch of pre-processed files.
     /// This is the merge step after parallel processing - only this needs the write lock.
     /// Returns the number of files successfully indexed.
+    ///
+    /// Files are read outside the write lock, so by the time a batch is
+    /// merged a file may have been deleted or rewritten, and the watcher may
+    /// already have applied that change. Content that is no longer on disk
+    /// is never installed: deleted files are dropped and rewritten ones are
+    /// read again here.
     pub fn index_batch(&mut self, batch: Vec<PreIndexedFile>) -> usize {
+        let (batch, changed): (Vec<_>, Vec<_>) =
+            batch.into_iter().partition(PreIndexedFile::still_on_disk);
+        let reread: Vec<PathBuf> = changed
+            .into_iter()
+            .map(|pre| pre.path)
+            .filter(|p| p.is_file())
+            .collect();
+        let mut count = self.merge_batch(batch);
+        if !reread.is_empty() {
+            // Read under the lock, so nothing the watcher does can slip in
+            // between; a file that changes yet again is merged as read.
+            let transcode = self.transcode_non_utf8;
+            let max_size = self.max_file_size;
+            let symbols = self.enable_symbols;
+            let fresh: Vec<PreIndexedFile> = reread
+                .par_iter()
+                .filter_map(|p| PartialIndexedFile::process(p, transcode, max_size))
+                .map(|(partial, _)| PreIndexedFile::from_partial(partial, symbols))
+                .collect();
+            count += self.merge_batch(fresh);
+        }
+        count
+    }
+
+    fn merge_batch(&mut self, batch: Vec<PreIndexedFile>) -> usize {
         let mut count = 0;
         self.generation += 1;
 

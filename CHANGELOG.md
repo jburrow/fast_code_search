@@ -19,6 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broad searches, because each deeper page ranked a different sample of
   the matches. Every page that ends at result 1000 or later now ranks the
   same sample, so the pages fit together.
+- File watching no longer leaves deleted files in the index. Moving a file
+  into a directory and deleting that directory soon after left the file's
+  old name indexed forever, because the two events were merged into one
+  that named only the directory. Watch events are now hints: every path an
+  event names is checked against the disk, directories are reconciled, and
+  when events are lost (an OS queue overflow) the watched folders are
+  reconciled instead.
+- Files changed while the initial index was being built could be indexed
+  with old content, or stay indexed after being deleted or moved. Content
+  that is no longer on disk is now never merged into the index.
+
+### Changed
+- A burst of file changes is applied once the tree has been quiet for
+  200 ms (at most two seconds), instead of after a fixed two-second
+  debounce, so edits show up in search sooner.
 
 ## [0.15.2] - 2026-10-13
 

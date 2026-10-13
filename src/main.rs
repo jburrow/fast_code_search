@@ -3,9 +3,8 @@ use clap::Parser;
 use fast_code_search::config::Config;
 use fast_code_search::diagnostics;
 use fast_code_search::search::{
-    apply_changes, create_progress_broadcaster, run_background_indexer,
-    save_after_watcher_shutdown, save_on_watcher_update, BackgroundIndexerConfig, FileWatcher,
-    IndexingProgress, ProgressBroadcaster, SharedIndexingProgress, WatcherConfig,
+    create_progress_broadcaster, run_background_indexer, watch_loop, BackgroundIndexerConfig,
+    IndexingProgress, ProgressBroadcaster, SharedIndexingProgress, WatchLoopConfig,
 };
 use fast_code_search::server;
 use fast_code_search::telemetry;
@@ -314,116 +313,36 @@ async fn main() -> Result<()> {
 
     // Start file watcher for incremental re-indexing if configured
     if config.indexer.watch {
-        let watch_engine = shared_engine.clone();
-        let watch_paths: Vec<std::path::PathBuf> = config
-            .indexer
-            .paths
-            .iter()
-            .map(std::path::PathBuf::from)
-            .collect();
-        let watch_exclude = config.indexer.exclude_patterns.clone();
-        let watch_indexer_config = config.indexer.clone();
+        let watch_cfg = WatchLoopConfig {
+            indexer: config.indexer.clone(),
+            engine: shared_engine.clone(),
+            shutdown: shutdown.clone(),
+            batch_window: watch_loop::DEFAULT_BATCH_WINDOW,
+        };
         info!("Starting file watcher for incremental indexing");
 
-        let watch_shutdown = shutdown.clone();
         // Same 8 MB stack as the rayon workers: update_file runs tree-sitter on
         // this thread, and a stack overflow is an abort, not a panic.
         let watcher_thread = std::thread::Builder::new()
             .name("file-watcher".into())
             .stack_size(8 * 1024 * 1024);
-        let spawned = watcher_thread.spawn(move || {
-            let watcher_config = WatcherConfig {
-                paths: watch_paths,
-                exclude_patterns: watch_exclude,
-                ..WatcherConfig::default()
-            };
-            match FileWatcher::new(watcher_config) {
-                Ok(mut watcher) => {
-                    info!("File watcher started");
-                    with_engine_write(&watch_engine, |engine| engine.watching = true);
-                    let mut watcher_updates_total: usize = 0;
-                    loop {
-                        if watch_shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                            info!("File watcher stopping for shutdown");
-                            with_engine_write(&watch_engine, |engine| engine.watching = false);
-                            save_after_watcher_shutdown(
-                                &watch_indexer_config,
-                                &watch_engine,
-                                watcher_updates_total,
-                            );
-                            break;
-                        }
-                        if let Some(first) = watcher.recv_timeout(std::time::Duration::from_secs(1))
-                        {
-                            // Gather the rest of the burst (branch switch, formatter
-                            // run, generated files) for a short window so it is
-                            // applied under ONE write lock with one posting scan.
-                            let mut changes = vec![first];
-                            let deadline = std::time::Instant::now()
-                                + std::time::Duration::from_millis(WATCH_BATCH_WINDOW_MS);
-                            loop {
-                                let remaining =
-                                    deadline.saturating_duration_since(std::time::Instant::now());
-                                if remaining.is_zero() {
-                                    break;
-                                }
-                                match watcher.recv_timeout(remaining) {
-                                    Some(c) => changes.push(c),
-                                    None => break,
-                                }
-                            }
-                            tracing::debug!(
-                                count = changes.len(),
-                                "Applying file changes to index"
-                            );
-                            // New directories need their own watches on
-                            // platforms that watch per directory.
-                            for change in &changes {
-                                if let fast_code_search::search::FileChange::Modified(p)
-                                | fast_code_search::search::FileChange::Renamed {
-                                    to: p, ..
-                                } = change
-                                {
-                                    if p.is_dir() {
-                                        watcher.ensure_watched(p);
-                                    }
-                                }
-                            }
-                            let outcome = with_engine_write(&watch_engine, |engine| {
-                                apply_changes(engine, &changes, &watch_indexer_config)
-                            });
-                            if let Some(outcome) = outcome.filter(|o| o.changed()) {
-                                tracing::debug!(
-                                    events = changes.len(),
-                                    indexed = outcome.indexed,
-                                    removed = outcome.removed,
-                                    "File changes applied"
-                                );
-                                watcher_updates_total += outcome.indexed + outcome.removed;
-                                if save_on_watcher_update(
-                                    &watch_indexer_config,
-                                    &watch_engine,
-                                    watcher_updates_total,
-                                ) {
-                                    watcher_updates_total = 0;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Failed to start file watcher");
-                    tracing::warn!(
-                        "File watching is disabled — the server will not detect file changes \
+        let spawned =
+            watcher_thread.spawn(
+                move || match watch_loop::start_watcher(&watch_cfg.indexer) {
+                    Ok(watcher) => watch_loop::run(watcher, watch_cfg),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to start file watcher");
+                        tracing::warn!(
+                            "File watching is disabled — the server will not detect file changes \
                         automatically. For large codebases (600k+ files) the default OS inotify \
                         limit is often too low. Fix on Linux: \
                         sudo sysctl -w fs.inotify.max_user_watches=524288 \
                         (add to /etc/sysctl.conf to persist). \
                         To silence this warning, set `watch = false` in your config."
-                    );
-                }
-            }
-        });
+                        );
+                    }
+                },
+            );
         match spawned {
             Ok(h) => watcher_handle = Some(h),
             Err(e) => tracing::error!(error = %e, "Failed to spawn file watcher thread"),
@@ -516,31 +435,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Run `f` under the engine write lock from the watcher thread.
-///
-/// Recovers from a poisoned lock (a panic elsewhere must not disable the
-/// watcher forever) and catches panics inside `f` so one pathological file
-/// cannot poison the lock for every search. Returns `None` if `f` panicked.
-fn with_engine_write<F, R>(
-    engine: &std::sync::Arc<std::sync::RwLock<fast_code_search::search::SearchEngine>>,
-    f: F,
-) -> Option<R>
-where
-    F: FnOnce(&mut fast_code_search::search::SearchEngine) -> R,
-{
-    let mut guard = engine.write().unwrap_or_else(|poisoned| {
-        tracing::error!("Search engine lock was poisoned; recovering in file watcher");
-        poisoned.into_inner()
-    });
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut guard))) {
-        Ok(result) => Some(result),
-        Err(_) => {
-            tracing::error!("File watcher update panicked; the change was skipped");
-            None
-        }
-    }
-}
-
 /// Resolve when SIGINT (Ctrl+C) or, on Unix, SIGTERM is received.
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -587,11 +481,6 @@ async fn wait_for_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
         }
     }
 }
-
-/// How long the watcher keeps collecting events after the first one before
-/// applying the batch. The debouncer already coalesces per-file noise; this
-/// window groups *different* files touched by one operation.
-const WATCH_BATCH_WINDOW_MS: u64 = 200;
 
 /// Load the config and apply CLI overrides. Returns the config, a
 /// description of where it came from, and validation warnings, for the

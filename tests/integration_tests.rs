@@ -2774,7 +2774,6 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
     let mut engine = SearchEngine::new();
     let watcher = FileWatcher::new(WatcherConfig {
         paths: vec![root.clone()],
-        debounce_duration: Duration::from_millis(150),
         exclude_patterns: Vec::new(),
     })?;
 
@@ -3729,7 +3728,6 @@ fn test_watcher_skips_excluded_directories_and_follows_new_ones() -> Result<()> 
     std::fs::create_dir_all(root.join("node_modules/pkg"))?;
     let mut watcher = FileWatcher::new(WatcherConfig {
         paths: vec![root.clone()],
-        debounce_duration: Duration::from_millis(150),
         exclude_patterns: vec!["**/node_modules/**".to_string()],
     })?;
     std::thread::sleep(Duration::from_millis(200));

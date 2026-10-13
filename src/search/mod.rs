@@ -6,6 +6,7 @@ pub mod path_filter;
 pub mod query_syntax;
 pub mod ranking;
 pub mod regex_search;
+pub mod watch_loop;
 pub mod watcher;
 
 pub use background_indexer::{
@@ -27,4 +28,5 @@ pub use path_filter::PathFilter;
 pub use query_syntax::{parse as parse_query, ParsedQuery, SearchOptions};
 pub use ranking::{FileScoreWeights, RankingWeights};
 pub use regex_search::{pattern_with_case as regex_pattern_with_case, RegexAnalysis};
+pub use watch_loop::WatchLoopConfig;
 pub use watcher::{FileChange, FileWatcher, WatcherConfig};
