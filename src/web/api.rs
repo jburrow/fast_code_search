@@ -208,7 +208,7 @@ pub struct SearchResultJson {
     pub context_start_line: Option<usize>,
 }
 
-/// A file whose path matched the query (see `files` on [`SearchQuery`]).
+/// A file whose path matched the query (the `files` parameter of `/api/search`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMatchJson {
     /// The path as results show it.
