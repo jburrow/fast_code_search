@@ -1406,57 +1406,58 @@ impl SearchEngine {
         let mut symbol_maps: Option<SymbolLineMaps<'_>> = None;
 
         // Per-hit body. Returns false to stop.
-        let mut emit = |line_num: usize, line: &str, match_start: usize, match_end: usize| -> bool {
-            if !run.take_doc_match(matches.len()) {
-                return false;
-            }
-            let path_ref = display_path.get_or_insert_with(|| {
-                let raw = file.path.to_string_lossy().into_owned();
-                let path_bytes = raw.as_bytes();
-                is_src_lib = contains_bytes(path_bytes, b"/src/")
-                    || contains_bytes(path_bytes, b"\\src\\")
-                    || contains_bytes(path_bytes, b"/lib/")
-                    || contains_bytes(path_bytes, b"\\lib\\");
-                is_test_path = crate::search::ranking::is_test_or_example_path(&raw);
-                self.display_path_for(doc_id, &file.path)
-            });
-            let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
+        let mut emit =
+            |line_num: usize, line: &str, match_start: usize, match_end: usize| -> bool {
+                if !run.take_doc_match(matches.len()) {
+                    return false;
+                }
+                let path_ref = display_path.get_or_insert_with(|| {
+                    let raw = file.path.to_string_lossy().into_owned();
+                    let path_bytes = raw.as_bytes();
+                    is_src_lib = contains_bytes(path_bytes, b"/src/")
+                        || contains_bytes(path_bytes, b"\\src\\")
+                        || contains_bytes(path_bytes, b"/lib/")
+                        || contains_bytes(path_bytes, b"\\lib\\");
+                    is_test_path = crate::search::ranking::is_test_or_example_path(&raw);
+                    self.display_path_for(doc_id, &file.path)
+                });
+                let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
 
-            let is_symbol_def = maps.is_definition_line(line_num);
-            let score = calculate_score_inline(
-                line,
-                original_query,
-                query_lower,
-                is_symbol_def,
-                is_src_lib,
-                is_test_path,
-                dependency_boost,
-            );
-            let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
-                names
-                    .iter()
-                    .any(|n| contains_case_insensitive(n, query_lower))
-            });
+                let is_symbol_def = maps.is_definition_line(line_num);
+                let score = calculate_score_inline(
+                    line,
+                    original_query,
+                    query_lower,
+                    is_symbol_def,
+                    is_src_lib,
+                    is_test_path,
+                    dependency_boost,
+                );
+                let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
+                    names
+                        .iter()
+                        .any(|n| contains_case_insensitive(n, query_lower))
+                });
 
-            let truncated = truncate_around_match(line, match_start, match_end);
-            matches.push(SearchMatch {
-                file_id: doc_id,
-                file_path: path_ref.clone(),
-                line_number: line_num + 1, // 1-based line numbers
-                content: truncated.content,
-                match_start: truncated.match_start,
-                match_end: truncated.match_end,
-                content_truncated: truncated.was_truncated,
-                line_match_start: match_start,
-                line_match_end: match_end,
-                match_column: char_column(line, match_start),
-                score,
-                is_symbol,
-                is_reference: false,
-                dependency_count,
-            });
-            true
-        };
+                let truncated = truncate_around_match(line, match_start, match_end);
+                matches.push(SearchMatch {
+                    file_id: doc_id,
+                    file_path: path_ref.clone(),
+                    line_number: line_num + 1, // 1-based line numbers
+                    content: truncated.content,
+                    match_start: truncated.match_start,
+                    match_end: truncated.match_end,
+                    content_truncated: truncated.was_truncated,
+                    line_match_start: match_start,
+                    line_match_end: match_end,
+                    match_column: char_column(line, match_start),
+                    score,
+                    is_symbol,
+                    is_reference: false,
+                    dependency_count,
+                });
+                true
+            };
 
         for hit in all_hits {
             if !emit(hit.line_num, hit.line, hit.start, hit.end) {

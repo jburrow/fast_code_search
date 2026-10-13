@@ -35,11 +35,11 @@ the code would:
 |--------|--------|
 | The line **defines** the symbol (tree-sitter, 12 languages) | 3× |
 | The file is **imported by** other files (resolved import graph) | `1 + 0.5·log10(dependents)` |
-| The line holds the **whole phrase** you typed, or **every term** | a tier above all other lines |
 | Exact case, match at the start of the line, file under `src/` or `lib/` | 2× / 1.5× / 1.5× |
 | Test and example paths | demoted |
 
-So `fn main` returns `fn main()` lines first, `Widget` returns the type's definition
+Matching follows ripgrep (`rg -F -i`), checked against it on every change, so
+`fn main` finds the phrase and returns `fn main()` definitions first, `Widget` returns the type's definition
 before its two hundred uses, and a widely imported module outranks a scratch file
 that happens to mention the same word. `refs NAME` flips it around: every call site
 and type mention of an identifier, across languages. The weights live in one file,
@@ -140,8 +140,10 @@ cover Rust, Python and JavaScript/TypeScript; search covers every language.
   importers, what a change to it could reach (and which tests), the import
   chain between two files, and a folder map with cycles marked, beside the
   source. The same queries are under `/api/graph/`.
-- **Query syntax** shared by the CLI, UI and API: `"exact phrase"`, `-term`,
-  `file:src/`, `lang:rust`, `case:yes`, `word:yes`; regex with literal
+- **Query syntax** shared by the CLI, UI and API: literal text like `rg -F`
+  (several words are one phrase), narrowed by `file:src/`, `lang:rust`,
+  `case:yes`, `word:yes`; a MATCH CASE toggle that means the same in every
+  mode; regex with literal
   pre-filtering through the trigram index, a cheat-sheet and suggestions
   when a pattern finds nothing; symbols-only and references modes.
 - **Live index.** A file watcher applies edits, renames and deletes in place; a

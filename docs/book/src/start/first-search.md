@@ -39,7 +39,7 @@ changed while the server was down.
 From another terminal:
 
 ```bash
-fcs 'fn main'                 # lines holding both words; the phrase ranks first
+fcs 'fn main'                 # lines holding the phrase, like rg -F -i
 fcs symbols SearchEngine      # definitions only
 fcs refs SearchEngine         # call sites and type mentions
 fcs -e 'fn\s+\w+\(' -g '*.rs' # a regex, Rust files only

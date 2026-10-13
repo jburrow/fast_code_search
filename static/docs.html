@@ -218,19 +218,18 @@
             <p>Searches for exact text matches across all indexed files. Uses trigram indexing for fast candidate
                 filtering.</p>
             <ul>
-                <li>ASCII case-insensitive matching (<code>case:yes</code> or <code>case=true</code> for
-                    case-sensitive)</li>
+                <li>Case-insensitive matching; the <strong>MATCH CASE</strong> toggle (or
+                    <code>case:yes</code>, <code>case=true</code>) matches case exactly. In the web UI
+                    the toggle applies to regex too, and the results header says which applied.</li>
                 <li>Supports glob-based path filtering</li>
                 <li>Can filter to symbol definitions only (plus filename matches)</li>
                 <li>The web UI only submits queries of at least 3 characters (a trigram needs three);
                     the API accepts shorter queries but has to scan candidates without the index</li>
             </ul>
-            <p>A query with several words, e.g. <code>fn main</code>, is several <em>terms</em>: a file
-                must contain all of them (AND at file level). Within the results a line containing the
-                words as one phrase (<code>fn main()</code>) ranks first, then lines containing every
-                term, then lines with fewer of them, with every term highlighted; files containing
-                the phrase are always among those read. To match the words only as one exact
-                phrase, quote them: <code>"fn main"</code>.</p>
+            <p>The query is searched for as written, like <code>rg -F</code>: <code>fn main</code> is
+                the phrase <code>fn main</code>, and quotes and a leading <code>-</code> are part of
+                the text (<code>"fn main"</code> finds the words with their quotes, <code>-Wall</code>
+                finds <code>-Wall</code>). Only the operators below are not text.</p>
 
             <h3>Command line</h3>
             <p>The <code>fcs</code> client (built with the server) runs the same searches from a
@@ -259,9 +258,10 @@
             </table>
             <p>Things that catch people out:</p>
             <ul>
-                <li><strong>Regex is case-sensitive.</strong> Plain search ignores case, regex does not:
-                    <code>true</code> does not find <code>True</code>. Start the pattern with <code>(?i)</code>
-                    to ignore case.</li>
+                <li><strong>Case.</strong> In the web UI a regex ignores case unless MATCH CASE is on,
+                    like plain search. On the API and in <code>fcs -e</code> a regex matches case (as in
+                    ripgrep) unless it starts with <code>(?i)</code> or the request says
+                    <code>case=false</code>.</li>
                 <li><strong>Some characters are syntax.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> have a
                     meaning; put <code>\</code> before one to match it literally (<code>\{</code>, <code>\.</code>,
                     <code>\(</code>). An unescaped <code>{</code> at the start of a pattern is an error
@@ -323,7 +323,8 @@
                 <tr>
                     <td><span class="badge badge-fast">Fast</span></td>
                     <td>⚡</td>
-                    <td>Ranks by file metadata, reads top 2000 files only</td>
+                    <td>Ranks by file metadata, reads the top 2000 files only (<code>fast_rank_files</code>;
+                        SEARCH ALL FILES or <code>max_files</code> asks for more)</td>
                     <td>>5,000 candidates (Auto) or explicit</td>
                 </tr>
                 <tr>
@@ -406,6 +407,14 @@
                     <td>Case-sensitive matching; overrides <code>case:</code> in the query. A regex is
                         case-sensitive unless it starts with <code>(?i)</code>; <code>case=false</code>
                         adds that flag for you.</td>
+                </tr>
+                <tr>
+                    <td><code>max_files</code></td>
+                    <td>integer</td>
+                    <td>2000</td>
+                    <td>Candidate files fast ranking opens (server default <code>fast_rank_files</code>;
+                        capped by <code>max_fast_rank_files</code>, reported as
+                        <code>max_files_allowed</code>)</td>
                 </tr>
                 <tr>
                     <td><code>word</code></td>
@@ -528,17 +537,12 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                 <code>offset + total_results &lt; total_matches</code>.</p>
 
             <h2 id="query-syntax">Query Syntax</h2>
-            <p>Plain-text queries (not <code>regex=true</code>) understand a few operators, in
-                the style of Zoekt / Sourcegraph. Anything else is a search term. Several terms must
-                all appear in a file (AND at file level); lines that match more of the terms rank
-                first, and every term is highlighted. Use a quoted phrase for an exact sequence of
-                words.</p>
+            <p>Plain-text queries (not <code>regex=true</code>) are a literal, like <code>rg -F</code>:
+                several words are one phrase, and quotes and a leading <code>-</code> are part of the
+                text. A few operators, whole words with an argument, narrow the search instead; to
+                search for operator-looking text such as <code>file:x</code>, use a regex.</p>
             <table>
                 <tr><th>Syntax</th><th>Meaning</th></tr>
-                <tr><td><code>"exact phrase"</code></td><td>One term containing spaces, matched literally
-                    (<code>"fn main"</code> finds <code>fn main</code>, not <code>fn range</code>). Quotes that
-                    do not wrap a whole word are searched for as written: <code>{ "success": True</code></td></tr>
-                <tr><td><code>-term</code></td><td>Drop files that contain <code>term</code></td></tr>
                 <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td>
                     <td>Only / never paths matching PATTERN (a bare word matches anywhere in the path; globs and <code>/</code> are used as written)</td></tr>
                 <tr><td><code>lang:rust</code> / <code>-lang:py</code></td><td>Only / never files of that language (name or extension)</td></tr>
@@ -546,6 +550,11 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                 <tr><td><code>word:yes</code></td><td>Whole-word matching (also the <code>word=true</code> parameter)</td></tr>
             </table>
             <pre><code>curl "http://localhost:8080/api/search?q=parse%20lang:rust%20-file:test%20word:yes"</code></pre>
+            <p>Searching more files: when a query could be in more than 5,000 files, Auto ranking
+                opens the 2,000 most likely (<code>fast_rank_files</code> in the configuration). The
+                response says so (<code>candidates_searched</code> &lt; <code>total_candidates</code>);
+                <code>max_files=N</code> opens more, up to <code>max_fast_rank_files</code>. Paging goes
+                up to <code>offset=100000</code> (<code>max_page_offset</code>).</p>
 
             <h2>Path Filter Patterns</h2>
             <p>Use glob patterns to filter which files are searched:</p>

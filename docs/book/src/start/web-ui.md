@@ -12,12 +12,20 @@ the binary.
   pause). `Ctrl`/`Cmd`+`K` focuses the box from anywhere; `/` does too.
 - **REGEX**, **SYMBOLS** and **REFERENCES** switch modes; **FILTER** opens
   page size, ranking mode, context lines and include/exclude globs.
-- The [query syntax](../reference/query-syntax.md) works in the box:
-  `"exact phrase"`, `-term`, `file:src/`, `lang:rust`, `case:yes`.
+- **MATCH CASE** (`Aa`) matches upper and lower case exactly, in every mode;
+  off, case is ignored in plain text and regex alike. The summary line
+  says which applied ("ignoring case" or "matching case").
+- What you type is searched for as written, like `rg -F`: several words are
+  one phrase, and quotes and a leading `-` are part of the text. The
+  [operators](../reference/query-syntax.md) `file:src/`, `lang:rust`,
+  `case:yes` and `word:yes` narrow it.
 - Results are grouped by file, best hit first, with every query term
   highlighted from the server's match offsets. **Load more** pages through
   the rest; the summary line says how many matches exist and whether the
-  scan was cut short by its budget.
+  scan was cut short by its budget. When a query could be in thousands of
+  files, fast ranking opens only the most likely 2,000; the summary says
+  "Searched 2,000 of N files" and **SEARCH ALL FILES** opens the rest (or
+  as many as the server allows).
 - Files whose *path* matches the query are listed in a **FILES** box above
   the results, so typing or pasting `src/web/api.rs` (or just `api.rs`)
   finds the file even when no line mentions it. File names rank first;

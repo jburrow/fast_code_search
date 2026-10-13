@@ -14,6 +14,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `search_code`, and above the hits in `fcs` on a terminal. File names rank
   above directories. Content results are unchanged. API: `files=N` on
   `/api/search` adds `files` and `total_files` to the response.
+- Web UI: **MATCH CASE** toggle. It means the same in every mode: off,
+  upper and lower case are the same in plain text and regex alike; on,
+  they are matched exactly. The results header says which applied
+  ("ignoring case" or "matching case"). MCP `search_code` takes
+  `case_sensitive`.
+- Web UI: **SEARCH ALL FILES**. When a query could be in more than 5,000
+  files, fast ranking opens only the 2,000 most likely ("Searched 2,000 of
+  N files"); the button opens the rest. API: `max_files` on `/api/search`,
+  `fcs --max-files`.
+- Configuration: `fast_rank_files` (default 2000) sets how many files fast
+  ranking opens, `max_fast_rank_files` (default 0, no limit) caps what a
+  request may ask for, and `max_page_offset` (default 100000, 0 = no limit)
+  sets how deep a client may page. Responses report the cap as
+  `max_files_allowed` when one is set.
+
+### Changed
+- **Plain-text search is a literal, like `rg -F`.** Several words are one
+  phrase: `fn main` finds lines holding `fn main`, not every line holding
+  `fn` or `main` in files that contain both. Quotes and a leading `-` are
+  part of the text: `"fn main"` finds the words with their quotes and
+  `-Wall` finds `-Wall`. The `-term` exclusion and quoted phrases are gone;
+  `file:`, `-file:`, `lang:`, `-lang:`, `case:` and `word:` still work. On
+  the command line, put a query starting with `-` after `--`.
+- Paging is no longer refused past offset 10,000: the limit is
+  `max_page_offset` (100,000 by default), and a deep page gets a match
+  budget that reaches it.
+- Web UI: with MATCH CASE off a regex ignores case, like plain search. The
+  API and `fcs -e` keep matching a regex's case by default, as ripgrep does.
+- The search row stacks below 1024 px wide so the input keeps its room.
 
 ## [0.15.1] - 2026-10-13
 

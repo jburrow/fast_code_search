@@ -124,9 +124,8 @@ impl SearchLimits {
     /// Never budget fewer matches than this, so tiny pages still rank well.
     const MIN_BUDGET: usize = 512;
     /// Ceiling on the ranking headroom derived from page size and offset.
-    /// A deeper page still gets enough budget to reach it (see
-    /// [`Self::derived_budget`]); an explicit [`Self::with_match_budget`]
-    /// may exceed it (benchmarks, tests).
+    /// A deeper page still gets enough budget to reach it; an explicit
+    /// [`Self::with_match_budget`] may exceed it (benchmarks, tests).
     pub const MAX_DERIVED_BUDGET: usize = 100_000;
     /// Files fast ranking opens by default.
     pub const DEFAULT_MAX_FILES: usize = 2000;

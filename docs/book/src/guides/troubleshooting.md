@@ -8,8 +8,10 @@
 | A file you edited is not found | Watcher off, or the inotify limit was hit | Set `watch = true`; on Linux check the log for "Failed to watch" and raise `fs.inotify.max_user_watches` |
 | Files from an excluded directory still appear | Rules changed while the server ran | Restart; reconciliation drops files the current rules exclude |
 | Results stop at "50+ (scan budget reached)" | Broad query, budget hit | Narrow with `file:`, `lang:` or a longer literal; use Load more / `--offset` for the next page |
-| `fn main` returns lines without `main` | Older version | Since 0.12 lines with the phrase rank first; upgrade |
-| A regex finds nothing that plain search finds | Regex is case-sensitive, and `{ ( .` are syntax | Start with `(?i)`, escape special characters with `\`, use `\s*` for spacing; the web UI's suggestions under an empty result do this for you |
+| `fn main` returns lines without `main` | Older version | Since 0.16 several words are one phrase; upgrade |
+| `fn main` misses `fn  main` or `fn\tmain` | Plain text is a literal, spacing included | Use a regex: `fn\s+main` |
+| "Searched 2,000 of N files" | Fast ranking opened only the most likely files | Click SEARCH ALL FILES (`max_files` on the API, `fcs --max-files`); raise `fast_rank_files` to change the default |
+| A regex finds nothing that plain search finds | `{ ( .` are syntax; outside the web UI a regex is also case-sensitive | Escape special characters with `\`, use `\s*` for spacing, start with `(?i)` (or `fcs -e -i`); the web UI's suggestions under an empty result do this for you |
 | A regex is slow | No required literal, so every file is scanned | Anchor it with a literal (`fn\s+main` rather than `\w+\s+\w+`) |
 | `references` finds nothing for a name | Language without call-site capture, or the index predates extraction changes | Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction |
 | `gRPC API NOT started` / `Web UI ... NOT started` at startup | Port already in use by another instance (perhaps started by hand) | The server keeps running on the other API; `ss -ltnp \| grep :PORT` finds the holder. Stop it, change `address` / `web_address`, or set `enable_grpc = false` |

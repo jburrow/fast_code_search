@@ -20,7 +20,8 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 | Limit | Value | Where |
 |---|---|---|
 | Page size | 1–1,000 | `max` |
-| Offset | ≤ 10,000 | `offset`; deeper pages are refused |
+| Offset | ≤ `max_page_offset` (100,000) | `offset`; deeper pages are refused |
+| Files opened by fast ranking | `fast_rank_files` (2,000), up to `max_fast_rank_files` on request | `max_files` |
 | Match budget | derived from page size and offset, capped | stops the scan; reported as `truncated_by_budget` |
 | Deadline | `timeout_ms` or just under `request_timeout_secs` | the scan stops on its own even if the HTTP response was abandoned |
 | Context lines | ≤ 10 per hit (`/api/context`: ≤ 200) | `context` |

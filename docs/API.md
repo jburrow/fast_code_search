@@ -35,14 +35,15 @@ when the request timeout is hit.
 |-----------|---------|-------------|
 | `q` | required | Query. Plain text understands the [query syntax](#query-syntax); with `regex=true` it is a regular expression. |
 | `max` | 50 | Page size, 1–1000 (`0` = default). |
-| `offset` | 0 | Hits to skip; ordering is deterministic, so `offset=max` is page two. At most 10,000. |
+| `offset` | 0 | Hits to skip; ordering is deterministic, so `offset=max` is page two. At most `max_page_offset` (100,000 by default). |
 | `regex` | false | Treat `q` as a regex (Rust `regex` syntax, matched one line at a time unless the pattern mentions `\n` or sets `(?s)`). |
 | `symbols` | false | Definitions only (functions, types, classes, …) plus filename matches. |
 | `references` | false | Uses of the identifier in `q`: call sites and type mentions. Cannot be combined with `regex` or `symbols` (400). |
-| `case` | — | `true` / `false` overrides `case:` in the query. A regex is case-sensitive by default; `case=false` adds `(?i)`. |
+| `case` | — | `true` / `false` overrides `case:` in the query. Plain text ignores case by default; a regex is case-sensitive by default and `case=false` adds `(?i)`. |
 | `word` | — | `true` for whole-word matching. |
 | `include` / `exclude` | — | Semicolon-separated path globs (`src/**/*.rs;lib/**`). |
 | `rank` | auto | `auto`, `fast` (metadata-ranked sample, used above 5,000 candidates) or `full`. |
+| `max_files` | `fast_rank_files` (2000) | Files a fast-ranked search opens. Capped by `max_fast_rank_files`, reported in `max_files_allowed` when the server sets one. When `candidates_searched` < `total_candidates`, ask again with `max_files=total_candidates` to search the rest. |
 | `context` | 0 | Context lines before and after each hit, 0–10. |
 | `timeout_ms` | 0 | Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server's request timeout). |
 | `files` | 0 | Also return up to this many files whose *path* matches `q`, 0–100, in `files` (first page of a text or regex search only). |
@@ -94,10 +95,11 @@ separate from `results`, which are unchanged:
 ```
 
 `match_ranges` are `[start, end)` byte offsets into `file_path`, one per
-term. Every term must appear in the shown path (case-insensitive unless
-`case:yes`, `\` read as `/`); a term containing `/` may also match the
-absolute path, so a pasted absolute path finds its file. `-term`, `file:`,
-`lang:`, `include` and `exclude` filter as for content. See [how matching
+word of the query (path matching splits it on spaces). Every word must
+appear in the shown path (case-insensitive unless `case:yes`, `\` read as
+`/`); a word containing `/` may also match the absolute path, so a pasted
+absolute path finds its file. `file:`, `lang:`, `include` and `exclude`
+filter as for content. See [how matching
 compares with grep and ripgrep](book/src/reference/matching.md).
 
 ### Index freshness
@@ -136,13 +138,13 @@ after an agent writes a file) is tracked in
 
 ### Query syntax
 
-Plain-text queries (not `regex=true`):
+Plain-text queries (not `regex=true`) are a literal, like `rg -F`: the
+query minus its operators is searched for as written.
 
 | Syntax | Meaning |
 |--------|---------|
-| `fn main` | Several terms: a file must contain every term. Lines holding the phrase rank first, then lines holding every term, then the rest. |
-| `"exact phrase"` | One term containing spaces. Quotes that do not wrap a whole word are part of the term: `{ "success": True` searches for `"success":` with its quotes. |
-| `-term` | Drop files that contain `term` (only before a letter, `_` or a quote, so `->` and `-1` are ordinary terms). |
+| `fn main` | The phrase `fn main`, exactly one space. Several words are one phrase. |
+| `"fn main"`, `-Wall` | Quotes and a leading `-` are part of the text. |
 | `file:PATTERN` / `-file:PATTERN` | Only / never paths matching the glob; a bare word matches anywhere in the path, `src/` means everything under `src`. |
 | `lang:rust` / `-lang:py` | Only / never files of that language. |
 | `case:yes` | Case-sensitive. |
@@ -160,12 +162,11 @@ Each hit's score combines the match with structural signals (weights in
 | Match at the start of the line | 1.5× |
 | File under `src/` or `lib/` | 1.5× |
 | Files that import this file | `1 + 0.5·log10(dependents)` |
-| Line holds the whole phrase / every term | tier above all other lines |
 | Long line | inverse-length damping |
 | Test or example path (fast mode) | 0.7× |
 
-Within a tier, hits are interleaved by file (every file's best hit first)
-so one file cannot fill a page.
+Hits are interleaved by file (every file's best hit first) so one file
+cannot fill a page.
 
 ### Import graph
 
@@ -246,7 +247,8 @@ streams `SearchResult` messages with the same fields and modes as REST
 standard `grpc.health.v1` service is served too. A minimal client:
 [`examples/client.rs`](../examples/client.rs) (`cargo run --example client`).
 
-Limits match REST: `offset` ≤ 10,000, the search semaphore is shared with
+Limits match REST: `offset` ≤ `max_page_offset`, fast ranking opens
+`fast_rank_files`, the search semaphore is shared with
 the REST side, and every search runs under a deadline derived from the
 request timeout.
 
@@ -288,6 +290,9 @@ web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED
 request_timeout_secs = 30         # searches get an engine deadline just under this
+fast_rank_files = 2000            # files fast ranking opens by default (0 = all)
+max_fast_rank_files = 0           # most a request may ask for with max_files (0 = no limit)
+max_page_offset = 100000          # deepest offset a client may page to (0 = no limit)
 cors_origins = []                 # e.g. ["https://ide.example.com"]; empty = same-origin only
 
 [indexer]

@@ -10,7 +10,7 @@ The narrative guide is [Command-line client](../imported/cli.md).
 ```text
 Search the code index kept by a running fast_code_search server.
 
-`fcs QUERY` is `fcs search QUERY`. The query syntax is the web UI's: several words must all appear in a file (lines with the phrase rank first), "quoted phrase", -term, file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes.
+`fcs QUERY` is `fcs search QUERY`. The query is the web UI's: literal text, like rg -F (several words are one phrase; quotes and a leading - are text), plus file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes. Put a query starting with - after --.
 
 Exit status: 0 = matches found, 1 = no matches, 2 = error.
 
@@ -73,7 +73,8 @@ Options:
           Print version
 
 Examples:
-  fcs 'fn main'                 lines holding both words, phrase first
+  fcs 'fn main'                 lines holding the phrase
+  fcs -- -Wall                  a query starting with -
   fcs -e 'fn\s+\w+\(' -g '*.rs'  regex, Rust files only
   fcs refs SearchEngine         call sites and type mentions
   fcs symbols parse_query       definitions only
@@ -92,7 +93,7 @@ Usage: fcs search [OPTIONS] <QUERY>...
 
 Arguments:
   <QUERY>...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -102,7 +103,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -164,6 +165,9 @@ Options:
 
       --json
           Shorthand for --format json
+
+      --max-files <N>
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -193,7 +197,7 @@ Usage: fcs refs [OPTIONS] <QUERY>...
 
 Arguments:
   <QUERY>...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -203,7 +207,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -265,6 +269,9 @@ Options:
 
       --json
           Shorthand for --format json
+
+      --max-files <N>
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line
@@ -294,7 +301,7 @@ Usage: fcs symbols [OPTIONS] <QUERY>...
 
 Arguments:
   <QUERY>...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -304,7 +311,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -366,6 +373,9 @@ Options:
 
       --json
           Shorthand for --format json
+
+      --max-files <N>
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
   -l, --files-with-matches
           Print only the files that match, one per line

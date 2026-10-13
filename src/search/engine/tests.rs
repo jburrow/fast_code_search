@@ -1363,8 +1363,14 @@ fn test_fast_ranking_opens_max_files() {
         ..SearchSettings::default()
     };
     assert_eq!(searched(settings.apply(SearchLimits::new(100), None)), 10);
-    assert_eq!(searched(settings.apply(SearchLimits::new(100), Some(15))), 15);
-    assert_eq!(searched(settings.apply(SearchLimits::new(100), Some(1000))), 20);
+    assert_eq!(
+        searched(settings.apply(SearchLimits::new(100), Some(15))),
+        15
+    );
+    assert_eq!(
+        searched(settings.apply(SearchLimits::new(100), Some(1000))),
+        20
+    );
     let unlimited = SearchSettings::default();
     assert_eq!(unlimited.fast_rank_files_for(Some(50_000)), 50_000);
     assert_eq!(unlimited.fast_rank_files_for(None), 2000);
@@ -2102,7 +2108,12 @@ fn test_several_words_are_one_phrase() {
             .unwrap();
         let mut found: Vec<(String, usize)> = hits
             .iter()
-            .map(|h| (h.file_path.rsplit('/').next().unwrap().to_string(), h.line_number))
+            .map(|h| {
+                (
+                    h.file_path.rsplit('/').next().unwrap().to_string(),
+                    h.line_number,
+                )
+            })
             .collect();
         found.sort();
         (found, info)

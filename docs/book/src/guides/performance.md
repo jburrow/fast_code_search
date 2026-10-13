@@ -35,8 +35,10 @@ and restrict `include_extensions`.
   and rarer the trigrams, the smaller the candidate set. Short queries
   (under three characters) have no trigrams and scan everything.
 - **Fast versus full ranking.** Above 5,000 candidates the engine reads only
-  the top 2,000 by file metadata (`rank=auto`); `rank=full` reads them all.
-  Files containing a multi-term query's phrase are always among those read.
+  the top 2,000 by file metadata (`rank=auto`; `fast_rank_files` in the
+  configuration); `rank=full` reads them all. The web UI's SEARCH ALL FILES
+  (`max_files` on the API, `fcs --max-files`) opens more for one search, up
+  to `max_fast_rank_files`.
 - **Budget and deadline.** Every search stops at a match budget and at a
   deadline derived from `request_timeout_secs` (or a smaller `timeout_ms`),
   reporting `truncated_by_budget` when it did. Narrow the query (`file:`,

@@ -6,18 +6,37 @@ parameter of the API. It applies to plain-text queries; with `regex=true`
 results compare with grep, ripgrep and git grep, see [Matching compared
 with grep and ripgrep](matching.md).
 
+The text you type is searched for as written, like `rg -F`. The operators
+below are the only exceptions; everything else, spaces, quotes and dashes
+included, is part of the text.
+
 | Write | To get |
 |---|---|
-| `fn main` | Files containing **every** term. Lines holding the phrase `fn main` rank first, then lines holding both terms, then the rest. |
-| `"fn main"` | One term: the exact phrase, spaces included. A quote opens a phrase only when it wraps a whole word; other quotes are searched for as written, so `{ "success": True` finds that text with its quotes. |
-| `-tests` | Drop files that contain `tests`. Only a `-` before a letter, `_` or quote negates, so `->`, `-1` and `--flag` are ordinary terms. |
+| `fn main` | Lines holding the phrase `fn main`, with exactly one space. Several words are one phrase. |
+| `"fn main"` | Lines holding `"fn main"` with its quotes. Quotes are text: `{ "success": True` finds that text as written. |
+| `-Wall` | Lines holding `-Wall`. A leading `-` is text too (`->`, `-1`, `--flag`). On the command line put such a query after `--`: `fcs -- -Wall`. |
 | `file:src/` | Only paths under a `src` directory. A bare word matches anywhere in the path (`file:parser`); globs are used as written (`file:*.rs`, `file:crates/**/tests/**`). |
 | `-file:vendor` | Never paths matching the pattern. |
 | `lang:rust`, `-lang:py` | Only / never files of that language (by extension: `rs`/`rust`, `py`/`python`, `ts`, `js`, `go`, `java`, …). |
 | `case:yes` | Match case exactly (the default is case-insensitive). |
 | `word:yes` | Whole words only. |
 
-Operators can be combined: `Widget file:src/ -lang:ts -tests case:yes`.
+Operators can be combined: `Widget file:src/ -lang:ts case:yes`. They are
+whole words with an argument: `file:` alone, or `url=file:x`, is text.
+Operators between words join the words with one space, so `fn file:src/
+main` searches for `fn main` under `src/`. The ends of the query are
+trimmed; spaces inside it are kept. To search for operator-looking text
+such as `file:x`, use a regex.
+
+## Case
+
+Plain text ignores case unless the query says `case:yes`. A regex matches
+case unless it starts with `(?i)` or the request says to ignore it. The
+web UI's **MATCH CASE** toggle (`case` on the API, `fcs -s` / `-i`, MCP
+`case_sensitive`) sets it for every mode: off, upper and lower case are
+the same in plain text and regex alike; on, they are matched exactly. The
+results header always says which applied ("ignoring case" or "matching
+case").
 
 ## Modes
 
@@ -37,9 +56,9 @@ References are exact and case-sensitive on the identifier; `file:` and
   with no required literal of three or more characters scans every file.
 - `^` and `$` anchor at line boundaries (CRLF included); `\s` does not
   cross a line break unless the pattern is a multi-line one.
-- A regex is case-sensitive, unlike plain search: `true` does not find
-  `True`. `(?i)` makes the pattern case-insensitive; `case=false` on the
-  API adds it for you.
+- On the API and `fcs -e`, a regex is case-sensitive unless it starts
+  with `(?i)` or the request says `case=false` (`fcs -e -i`). In the web
+  UI it follows MATCH CASE, like plain search.
 - `{ } ( ) [ ] . * + ? | ^ $ \` are syntax; escape one with `\` to match
   it (`\{`, `\.`). For code exactly as written, search without regex.
 - Spaces are exact: `\{ "a"` misses `{"a"`. Use `\s*` for any amount of

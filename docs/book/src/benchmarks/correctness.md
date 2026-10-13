@@ -33,12 +33,10 @@ where fcs, ripgrep, grep and git grep behave differently, and why.
 
 | fcs query | ripgrep run | Compared how |
 |---|---|---|
-| One term (`Runtime`) | `rg -F -i -e Runtime` | the same lines exactly |
+| Text (`Runtime`, `fn main`, `"x":`, `-Wall`) | `rg -F -i -e TEXT`, the text as typed minus operators | the same lines exactly |
 | `case:yes` | drops `-i` | the same lines exactly |
 | `word:yes` | adds `-w` | the same lines exactly |
-| Several terms (`fn main`) | one `rg -F` run per term | the files must be those holding every term; every line holding all terms must be reported; every reported line must hold at least one term (fcs keeps only a few single-term lines per file by design) |
-| `-term` | an rg run for `term`, then those files are removed | as above |
-| `file:` / `lang:` | the query's own `globs` (`-g`) | as above |
+| `file:` / `lang:` | the query's own `globs` (`-g`) | the same lines exactly |
 | Regex | `rg -e PATTERN`, plus `-U` when the pattern spans lines | the line where each match starts |
 
 rg always runs with `--no-config -uu --crlf`, one tree at a time. Only files
@@ -65,10 +63,10 @@ differences. File-name hits have no rg counterpart and are left out.
   changed mid-pattern, word boundaries next to punctuation, and matches that
   start on a newline.
 
-The query set, `benches/rg_backtest.toml`, has 124 queries. Each one says
+The query set, `benches/rg_backtest.toml`, has 126 queries. Each one says
 what it exercises (`why`). They cover literals, short terms, quotes, case
-and whole-word options, Unicode, path and language filters, several terms,
-negation and regex.
+and whole-word options, Unicode, path and language filters, phrases,
+leading dashes and regex.
 
 ## Beyond matching
 

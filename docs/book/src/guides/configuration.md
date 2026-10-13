@@ -118,6 +118,9 @@ web_address = "0.0.0.0:8080"
 cors_origins = ["https://ide.example.com"]   # only if a page on another origin calls the API
 max_concurrent_searches = 64
 request_timeout_secs = 30
+fast_rank_files = 2000      # files fast ranking opens when a query could be in over 5,000 (0 = all)
+max_fast_rank_files = 0     # most a request may ask for (SEARCH ALL FILES, max_files); 0 = no limit
+max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
 ```
 
 See [Deployment](../imported/deployment.md) for a reverse-proxy example and
