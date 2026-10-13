@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   should look the same, apart from the navigation links on the non-search
   pages now matching the search page. The semantic pages use the same SVG
   icons as the rest, so the 3.9 MB icon font is gone.
+- A burst of file changes is applied once the tree has been quiet for
+  200 ms (at most two seconds), instead of after a fixed two-second
+  debounce, so edits show up in search sooner.
+- The web API, the gRPC service and offline `fcs` now run every search
+  through one shared request path (`search::request`): the same default
+  page size, caps, deadline and offset limit, and the same dispatch to
+  the engine. Offline `fcs` now enforces `server.max_page_offset` like the
+  server does. A new test checks that all three return the same hits in
+  the same order.
 
 ### Fixed
 - LOAD MORE past 1000 results repeated some results and skipped others on
@@ -55,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside itself, has ↑/↓ buttons to step through the query's matches in the
   file, and an Open button for the file viewer. Recently viewed files are
   cached, so hovering again or opening the file doesn't re-fetch it.
+- File watching no longer leaves deleted files in the index. Moving a file
+  into a directory and deleting that directory soon after left the file's
+  old name indexed forever, because the two events were merged into one
+  that named only the directory. Watch events are now hints: every path an
+  event names is checked against the disk, directories are reconciled, and
+  when events are lost (an OS queue overflow) the watched folders are
+  reconciled instead.
+- Files changed while the initial index was being built could be indexed
+  with old content, or stay indexed after being deleted or moved. Content
+  that is no longer on disk is now never merged into the index.
 
 ## [0.15.2] - 2026-10-13
 

@@ -24,6 +24,20 @@ impl SearchEngine {
         self.indexed_meta[idx] = (mtime, size);
     }
 
+    /// Does `path` (the file indexed as `id`) still have the size and mtime
+    /// it had when it was indexed?
+    pub fn is_unchanged_on_disk(&self, id: u32, path: &std::path::Path) -> bool {
+        let Some(&(mtime, size)) = self.indexed_meta.get(id as usize) else {
+            return false;
+        };
+        match std::fs::metadata(path) {
+            Ok(meta) => {
+                meta.len() == size && crate::index::persistence::mtime_secs_of(&meta) == mtime
+            }
+            Err(_) => false,
+        }
+    }
+
     /// After reload, the persisted (mtime, size) of each still-valid file is
     /// the identity of the content whose trigrams were restored; carry it
     /// forward so the next save does not re-stat.

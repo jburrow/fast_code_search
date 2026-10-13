@@ -539,7 +539,7 @@ impl Session {
     /// Load the persisted index in-process and run the same engine calls
     /// the server does. Read-only: nothing is saved back.
     fn search_offline(&self, req: &SearchRequest) -> Result<SearchResponse> {
-        use crate::search::{RankMode, SearchEngine, SearchLimits};
+        use crate::search::{RankMode, SearchEngine};
 
         let path = self.index_path().ok_or_else(|| {
             anyhow!(
@@ -580,72 +580,49 @@ impl Session {
             }
         ));
 
-        let mut parsed = crate::search::parse_query(&req.query);
-        if let Some(c) = req.case {
-            parsed.options.case_sensitive = c;
-        }
-        if let Some(w) = req.word {
-            parsed.options.whole_word = w;
-        }
+        let mode = match req.mode {
+            Mode::References => crate::search::SearchMode::References,
+            Mode::Symbols => crate::search::SearchMode::Symbols,
+            Mode::Text if req.regex => crate::search::SearchMode::Regex,
+            Mode::Text => crate::search::SearchMode::Text,
+        };
+        let request = crate::search::SearchRequest {
+            query: req.query.clone(),
+            mode,
+            case_sensitive: req.case,
+            whole_word: req.word,
+            include: req.include.clone(),
+            exclude: req.exclude.clone(),
+            max_results: req.max,
+            offset: req.offset,
+            rank: match req.rank {
+                Rank::Auto => RankMode::Auto,
+                Rank::Fast => RankMode::Fast,
+                Rank::Full => RankMode::Full,
+            },
+            timeout: (req.timeout_ms > 0).then(|| Duration::from_millis(req.timeout_ms)),
+            max_files: req.max_files,
+            path_matches: req.files,
+        };
         let settings = self
             .config
             .as_ref()
             .map(|c| crate::search::SearchSettings::from_config(&c.server))
             .unwrap_or_default();
-        let mut limits = settings.apply(
-            SearchLimits::new(req.max).with_offset(req.offset),
-            req.max_files,
-        );
-        if req.timeout_ms > 0 {
-            limits = limits.with_timeout(Duration::from_millis(req.timeout_ms.min(30_000)));
-        }
-        let rank_mode = match req.rank {
-            Rank::Auto => RankMode::Auto,
-            Rank::Fast => RankMode::Fast,
-            Rank::Full => RankMode::Full,
-        };
+        let limits = request.limits(&settings, None).map_err(|e| anyhow!(e))?;
         let search_started = std::time::Instant::now();
-        let (matches, info) = match req.mode {
-            Mode::References => {
-                engine.search_references_parsed(&parsed, &req.include, &req.exclude, limits)?
-            }
-            Mode::Symbols => {
-                engine.search_symbols_parsed(&parsed, &req.include, &req.exclude, limits)?
-            }
-            Mode::Text if req.regex => engine.search_regex_with_limits(
-                &crate::search::regex_pattern_with_case(&req.query, req.case),
-                &req.include,
-                &req.exclude,
-                limits,
-                rank_mode,
-            )?,
-            Mode::Text => {
-                engine.search_parsed(&parsed, &req.include, &req.exclude, limits, rank_mode)?
-            }
-        };
-        let results = crate::web::results_to_json(&engine, matches, req.context);
-        let total_results = results.len();
-        let (files, total_files) = if req.files > 0 && req.offset == 0 && req.mode == Mode::Text {
-            let pattern = crate::search::regex_pattern_with_case(&req.query, req.case);
-            let query = if req.regex {
-                crate::search::PathQuery::Regex(&pattern)
-            } else {
-                crate::search::PathQuery::Terms(&parsed)
-            };
-            let found = engine.search_paths(
-                query,
-                &req.include,
-                &req.exclude,
-                req.files.min(crate::web::MAX_FILE_MATCHES),
-                None,
-            )?;
-            (
+        let outcome = engine.run(&request, limits).map_err(|e| anyhow!(e))?;
+        let has_more = outcome.has_more(req.offset);
+        let info = outcome.info;
+        let (files, total_files) = match outcome.paths {
+            Some(found) => (
                 crate::web::file_matches_to_json(found.matches),
                 Some(found.total),
-            )
-        } else {
-            (Vec::new(), None)
+            ),
+            None => (Vec::new(), None),
         };
+        let results = crate::web::results_to_json(&engine, outcome.matches, req.context);
+        let total_results = results.len();
         Ok(SearchResponse {
             results,
             files,
@@ -653,10 +630,7 @@ impl Session {
             index: None,
             query: req.query.clone(),
             total_results,
-            has_more: match info.total_matches {
-                Some(t) => req.offset + total_results < t,
-                None => true,
-            },
+            has_more,
             offset: req.offset,
             total_matches: info.total_matches,
             truncated_by_budget: info.truncated_by_budget,
