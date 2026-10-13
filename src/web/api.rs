@@ -1492,9 +1492,16 @@ pub async fn diagnostics_handler(
                 .unwrap_or_default()
         };
         let sample_count_actual = sample_count.min(live_ids.len());
+        // Shown as in search results (relative to the indexed folder), not as
+        // absolute paths on the server's disk.
         let sample_files: Vec<String> = live_ids
             .choose_multiple(&mut rng, sample_count_actual)
-            .map(|&id| path_of(id))
+            .map(|&id| {
+                engine
+                    .display_path(id)
+                    .map(|p| p.into_owned())
+                    .unwrap_or_else(|| path_of(id))
+            })
             .collect();
         // Small pool for the self-tests below (they pick from it at random).
         let all_file_paths: Vec<(u32, String)> = live_ids

@@ -14,11 +14,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped, then LOAD MORE to the end. Every match must be shown exactly
   once.
 
+### Changed
+- Web UI: file names are never re-cased. The dependency explorer's pane
+  title, extension badges and the compact search box in the header showed
+  them in capitals; they now show as written.
+- Web UI: one FILTER button (the duplicate in the results bar is gone). It
+  shows how many path filters are set, the results bar lists them with an
+  × to remove each, and the panel has *Clear path filters*. The boxes are
+  now called SEARCH ONLY IN and SKIP PATHS and take `,` as well as `;`
+  (a comma inside `{…}` is still glob alternation). The API, CLI and MCP
+  still separate patterns with `;` only.
+- Web UI: the results count includes path matches ("2 FILES · 1 RESULT"),
+  the per-hit ranking score moved to the line number's tooltip, and the
+  dependency badge reads "imported by N" instead of "N deps".
+- Web UI: the indexing bar no longer flashes on every page load (it moved
+  the search box), the focus hint says Ctrl+K or ⌘K to match the platform,
+  and MAPPED is gone from the header stats (it read 0 B until searches ran).
+- Web UI: the SEMANTIC page served by the keyword server says semantic
+  search runs as a separate server, instead of claiming the keyword server
+  is down (it probed a hard-coded port 8080).
+- The INDEX page's sample files are shown relative to the indexed folder.
+- Web UI internals: all six pages share one header (`static/shell.js`) and
+  one stylesheet of design tokens (`static/app.css`); every colour, shadow
+  and font is a token, Tailwind's colours point at the same tokens, and a
+  test fails on hard-coded colours. This is groundwork for themes and
+  should look the same, apart from the navigation links on the non-search
+  pages now matching the search page. The semantic pages use the same SVG
+  icons as the rest, so the 3.9 MB icon font is gone.
+- A burst of file changes is applied once the tree has been quiet for
+  200 ms (at most two seconds), instead of after a fixed two-second
+  debounce, so edits show up in search sooner.
+
 ### Fixed
 - LOAD MORE past 1000 results repeated some results and skipped others on
   broad searches, because each deeper page ranked a different sample of
   the matches. Every page that ends at result 1000 or later now ranks the
   same sample, so the pages fit together.
+- Web UI: the hover preview shows the whole file and scrolls. It used to
+  fetch 12 lines either side of the hit, so a FILES-box row (previewed from
+  line 1) showed 13 lines in a window-tall panel, and the mouse wheel
+  scrolled the page behind it, which closed it. It now opens at the hit
+  (or the top of the file, with no line marked, for a file row), scrolls
+  inside itself, has ↑/↓ buttons to step through the query's matches in the
+  file, and an Open button for the file viewer. Recently viewed files are
+  cached, so hovering again or opening the file doesn't re-fetch it.
 - File watching no longer leaves deleted files in the index. Moving a file
   into a directory and deleting that directory soon after left the file's
   old name indexed forever, because the two events were merged into one
@@ -29,11 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Files changed while the initial index was being built could be indexed
   with old content, or stay indexed after being deleted or moved. Content
   that is no longer on disk is now never merged into the index.
-
-### Changed
-- A burst of file changes is applied once the tree has been quiet for
-  200 ms (at most two seconds), instead of after a fixed two-second
-  debounce, so edits show up in search sooner.
 
 ## [0.15.2] - 2026-10-13
 

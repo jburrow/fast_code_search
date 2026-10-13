@@ -5,28 +5,10 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Semantic Diagnostics — Fast Code Search</title>
     <link rel="stylesheet" href="/tailwind.css"/>
+    <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
-    <link rel="stylesheet" href="/material-symbols.css"/>
     <style>
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-            font-family: 'Material Symbols Outlined'; font-style: normal; line-height: 1;
-            letter-spacing: normal; text-transform: none; display: inline-block;
-            white-space: nowrap; overflow-wrap: normal; direction: ltr;
-            -webkit-font-smoothing: antialiased; vertical-align: middle;
-        }
-        body {
-            background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
-        }
-        :root {
-            --bg-primary: #fefae4; --bg-secondary: #f2eed9; --bg-tertiary: #ece9d4;
-            --text-primary: #1d1c0f; --text-secondary: #494831; --text-muted: #7a785f;
-            --accent: #646100; --accent-hover: #4b4900; --success: #1e6868; --warning: #6a6707;
-            --error: #ba1a1a; --border: #cbc8aa; --code-bg: #f8f4df; --code-text: #1d1c0f;
-            --color-path: #646100; --color-deps: #1e6868;
-            --shadow: rgba(29,28,15,0.08); --shadow-lg: rgba(29,28,15,0.16);
-        }
-        .card { border-radius: 0 !important; box-shadow: 2px 2px 0 rgba(0,0,0,0.12); }
+        .card { border-radius: 0 !important; box-shadow: var(--shadow-soft); }
         .stat-item { border-radius: 0 !important; }
         .test-results { border-radius: 0 !important; }
         .sample-files { border-radius: 0 !important; }
@@ -35,17 +17,16 @@
         .model-info { border-radius: 0 !important; }
         .chunk-item { border-radius: 0 !important; }
         .card h3 { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
-        .semantic-badge { background: #a9efed; border: 1px solid #1e6868; padding: 0.15rem 0.5rem; font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #004f4e; border-radius: 0 !important; }
         .refresh-btn {
-            background: #fff900 !important; color: #000 !important;
-            border: 1px solid #000 !important; border-radius: 0 !important;
+            background: var(--accent) !important; color: var(--ink) !important;
+            border: 1px solid var(--ink) !important; border-radius: 0 !important;
             padding: 0.5rem 1rem; cursor: pointer; font-size: 0.78rem;
             font-family: 'JetBrains Mono', monospace; font-weight: 700;
             text-transform: uppercase; letter-spacing: 0.05em;
             display: flex; align-items: center; gap: 0.5rem; margin-left: auto;
             transition: background 0.1s, color 0.1s;
         }
-        .refresh-btn:hover { background: #000 !important; color: #fff900 !important; }
+        .refresh-btn:hover { background: var(--ink) !important; color: var(--accent) !important; }
         .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .refresh-btn.loading::after {
             content: ''; width: 14px; height: 14px;
@@ -75,7 +56,7 @@
         }
 
         .back-link {
-            color: var(--accent);
+            color: var(--accent-ink);
             text-decoration: none;
             display: flex;
             align-items: center;
@@ -83,7 +64,7 @@
         }
 
         .back-link:hover {
-            color: var(--accent-hover);
+            color: var(--accent-ink-2);
         }
 
         .status-banner {
@@ -96,18 +77,18 @@
         }
 
         .status-banner.healthy {
-            background: color-mix(in srgb, var(--success) 10%, transparent);
-            border: 1px solid var(--success);
+            background: color-mix(in srgb, var(--info) 10%, transparent);
+            border: 1px solid var(--info);
         }
 
         .status-banner.degraded {
-            background: color-mix(in srgb, var(--warning) 10%, transparent);
-            border: 1px solid var(--warning);
+            background: color-mix(in srgb, var(--warn) 10%, transparent);
+            border: 1px solid var(--warn);
         }
 
         .status-banner.unhealthy {
-            background: color-mix(in srgb, var(--error) 10%, transparent);
-            border: 1px solid var(--error);
+            background: color-mix(in srgb, var(--danger) 10%, transparent);
+            border: 1px solid var(--danger);
         }
 
         .status-icon {
@@ -120,14 +101,14 @@
         }
 
         .status-text p {
-            color: var(--text-secondary);
+            color: var(--text-2);
             font-size: 0.875rem;
         }
 
         .refresh-btn {
             margin-left: auto;
             padding: 0.5rem 1rem;
-            background: var(--accent);
+            background: var(--accent-ink);
             color: white;
             border: none;
             border-radius: 4px;
@@ -140,7 +121,7 @@
         }
 
         .refresh-btn:hover {
-            background: var(--accent-hover);
+            background: var(--accent-ink-2);
         }
 
         .refresh-btn:disabled {
@@ -158,11 +139,6 @@
             animation: spin 0.8s linear infinite;
         }
 
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
 
         .cards-grid {
             display: grid;
@@ -172,7 +148,7 @@
         }
 
         .card {
-            background: var(--bg-secondary);
+            background: var(--surface-2);
             border: 1px solid var(--border);
             border-radius: 4px;
             padding: 1rem;
@@ -180,7 +156,7 @@
 
         .card h3 {
             font-size: 1rem;
-            color: var(--text-secondary);
+            color: var(--text-2);
             margin-bottom: 1rem;
             display: flex;
             align-items: center;
@@ -194,7 +170,7 @@
         }
 
         .stat-item {
-            background: var(--bg-primary);
+            background: var(--page);
             padding: 0.75rem;
             border-radius: 4px;
         }
@@ -202,19 +178,19 @@
         .stat-item .value {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--accent);
+            color: var(--accent-ink);
             font-variant-numeric: tabular-nums;
         }
 
         .stat-item .label {
             font-size: 0.7rem;
-            color: var(--text-muted);
+            color: var(--text-4);
             text-transform: uppercase;
             letter-spacing: 0.06em;
         }
 
         .model-info {
-            background: var(--bg-primary);
+            background: var(--page);
             border-radius: 4px;
             padding: 1rem;
         }
@@ -231,20 +207,20 @@
         }
 
         .model-label {
-            color: var(--text-secondary);
+            color: var(--text-2);
         }
 
         .model-value {
-            color: var(--text-primary);
+            color: var(--text);
             font-family: 'JetBrains Mono', 'Fira Code', monospace;
         }
 
         .model-value.success {
-            color: var(--success);
+            color: var(--info);
         }
 
         .model-value.error {
-            color: var(--error);
+            color: var(--danger);
         }
 
         .chunk-breakdown {
@@ -254,7 +230,7 @@
         }
 
         .chunk-item {
-            background: var(--bg-primary);
+            background: var(--page);
             padding: 0.75rem;
             border-radius: 4px;
             text-align: center;
@@ -263,17 +239,17 @@
         .chunk-item .value {
             font-size: 1.25rem;
             font-weight: 600;
-            color: var(--accent);
+            color: var(--accent-ink);
         }
 
         .chunk-item .label {
             font-size: 0.7rem;
-            color: var(--text-muted);
+            color: var(--text-4);
             text-transform: uppercase;
         }
 
         .test-results {
-            background: var(--bg-secondary);
+            background: var(--surface-2);
             border: 1px solid var(--border);
             border-radius: 4px;
             overflow: hidden;
@@ -301,11 +277,11 @@
         }
 
         .test-summary .passed {
-            color: var(--success);
+            color: var(--info);
         }
 
         .test-summary .failed {
-            color: var(--error);
+            color: var(--danger);
         }
 
         .test-list {
@@ -330,11 +306,11 @@
         }
 
         .test-icon.pass {
-            color: var(--success);
+            color: var(--info);
         }
 
         .test-icon.fail {
-            color: var(--error);
+            color: var(--danger);
         }
 
         .test-content {
@@ -348,28 +324,28 @@
 
         .test-message {
             font-size: 0.875rem;
-            color: var(--text-secondary);
+            color: var(--text-2);
             margin-top: 0.25rem;
         }
 
         .test-details {
             font-size: 0.75rem;
-            color: var(--text-muted);
+            color: var(--text-4);
             margin-top: 0.25rem;
             font-family: 'JetBrains Mono', 'Fira Code', monospace;
-            background: var(--bg-primary);
+            background: var(--page);
             padding: 0.5rem;
             border-radius: 4px;
         }
 
         .test-duration {
             font-size: 0.75rem;
-            color: var(--text-muted);
+            color: var(--text-4);
             white-space: nowrap;
         }
 
         .sample-files {
-            background: var(--bg-primary);
+            background: var(--page);
             border-radius: 4px;
             padding: 0.5rem;
             max-height: 150px;
@@ -380,7 +356,7 @@
 
         .sample-file {
             padding: 0.25rem 0;
-            color: var(--text-secondary);
+            color: var(--text-2);
             word-break: break-all;
         }
 
@@ -389,7 +365,7 @@
             flex-wrap: wrap;
             gap: 1rem;
             font-size: 0.75rem;
-            color: var(--text-muted);
+            color: var(--text-4);
             margin-top: 1rem;
             padding-top: 1rem;
             border-top: 1px solid var(--border);
@@ -398,58 +374,30 @@
         .loading-state {
             text-align: center;
             padding: 3rem;
-            color: var(--text-secondary);
+            color: var(--text-2);
         }
 
         .error-state {
             text-align: center;
             padding: 3rem;
-            color: var(--error);
-        }
-
-        .semantic-badge {
-            background: linear-gradient(135deg, #89b4fa, #cba6f7);
-            color: var(--bg-primary);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            margin-left: 0.5rem;
+            color: var(--danger);
         }
     </style>
 </head>
 
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
-    <header class="bg-white font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
-        <div class="flex items-center gap-6">
-            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
-            <nav class="hidden md:flex items-center gap-0 h-14">
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/">SEARCH</a>
-                <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/graph.html">GRAPH</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/docs.html">DOCS</a>
-            </nav>
-        </div>
-        <a href="/docs.html" class="material-symbols-outlined text-outline hover:text-black transition-colors" style="font-size:20px" title="Documentation">help_outline</a>
-    </header>
+    <!-- Shared header, icon sprite and phone tab bar (shell.js) -->
+    <script src="/shell.js" data-page="semantic"></script>
 
     <main class="max-w-[1440px] mx-auto p-6">
         <div id="content">
-            <div style="text-align:center;padding:3rem;font-family:'JetBrains Mono',monospace;font-size:0.85rem;color:#7a785f;">
+            <div style="text-align:center;padding:3rem;font-family:'JetBrains Mono',monospace;font-size:0.85rem;color:var(--text-4);">
                 Loading diagnostics...
             </div>
         </div>
     </main>
 
-    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/"><span class="material-symbols-outlined" style="font-size:20px">search</span><span>Search</span></a>
-        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/semantic.html"><span class="material-symbols-outlined" style="font-size:20px;font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24">auto_awesome</span><span>Semantic</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/graph.html"><span class="material-symbols-outlined" style="font-size:20px">account_tree</span><span>Graph</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html"><span class="material-symbols-outlined" style="font-size:20px">analytics</span><span>Index</span></a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html"><span class="material-symbols-outlined" style="font-size:20px">description</span><span>Docs</span></a>
-    </nav>
 
     <script>
         let isLoading = false;

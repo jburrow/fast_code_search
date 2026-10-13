@@ -140,7 +140,7 @@ function drawGraph(cols, opts) {
     const sc = Math.max(opts.minScale || 0.8, Math.min(1, (wrap.clientWidth - 8) / L.width));
     const svg = el('svg', { width: Math.round(L.width * sc), height: Math.round(L.height * sc), viewBox: `0 0 ${L.width} ${L.height}`, role: 'group', 'aria-label': opts.aria });
     const defs = el('defs', {}, svg);
-    [['dep', 'var(--dep)'], ['rdep', 'var(--rdep)'], ['cyc', 'var(--warn)'], ['n', 'var(--line-strong)']].forEach(([id, c]) => {
+    [['dep', 'var(--dep)'], ['rdep', 'var(--rdep)'], ['cyc', 'var(--danger)'], ['n', 'var(--text-4)']].forEach(([id, c]) => {
         const m = el('marker', { id: 'ar-' + id, viewBox: '0 0 8 8', refX: 7, refY: 4, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
         el('path', { d: 'M0,0 L8,4 L0,8 z', fill: c }, m);
     });
@@ -432,7 +432,7 @@ async function renderSource(p, { line = null, importOf = null } = {}) {
         ]);
     } catch (e) {
         if (seq !== sourceSeq) return;
-        head.innerHTML = `<div class="p">${esc(p)}</div><div class="m" style="color:var(--warn)">${esc(e.message)}</div>`;
+        head.innerHTML = `<div class="p">${esc(p)}</div><div class="m" style="color:var(--danger)">${esc(e.message)}</div>`;
         code.innerHTML = '';
         return;
     }
@@ -572,7 +572,15 @@ function shownFiles() {
 function renderChrome(summary) {
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.mode === S.mode)));
     const title = { hood: 'Neighbourhood', impact: 'Impact of a change', path: 'Import chain', map: 'Module map' }[S.mode];
-    $('#graphTitle').textContent = title + (S.mode === 'map' ? ' · folders' : S.center ? ' · ' + S.center : '');
+    // The pane label is uppercase; the path is shown exactly as named.
+    const titleEl = $('#graphTitle');
+    titleEl.textContent = title + (S.mode === 'map' ? ' · folders' : S.center ? ' · ' : '');
+    if (S.mode !== 'map' && S.center) {
+        const path = document.createElement('span');
+        path.className = 'as-typed';
+        path.textContent = S.center;
+        titleEl.appendChild(path);
+    }
     const recent = S.hist.slice(-4);
     let search = '';
     const files = shownFiles();
@@ -587,8 +595,8 @@ function renderChrome(summary) {
     $('#sub').innerHTML = `<button class="btn" id="backBtn" ${S.hist.length ? '' : 'disabled'} aria-label="Back">← Back</button>
         <nav class="crumbs" aria-label="History">${recent.map(p => `<button data-go="${esc(p)}" title="${esc(p)}">${esc(base(p))}</button><i>›</i>`).join('')}${S.center ? `<span class="cur">${esc(base(S.center))}</span>` : ''}</nav>${summary}${search}`;
     $('#legend').innerHTML = S.mode === 'map'
-        ? `<span><i class="sw" style="border-color:var(--dep)"></i>folder imports folder (thicker = more imports)</span><span><i class="sw" style="border-color:var(--warn)"></i>import cycle</span><span>↓ imported by · ↑ imports</span>`
-        : `<span><i class="sw" style="border-color:var(--dep)"></i>imports (upstream)</span><span><i class="sw" style="border-color:var(--rdep)"></i>imported by (downstream)</span><span><i class="sw" style="border-color:var(--warn)"></i>cycle</span>${S.containment ? '<span><i class="sw" style="border-color:var(--line-strong);border-top-style:dotted"></i><code>mod</code> declaration</span>' : ''}<span>dashed box = test file · ↓ imported by · ↑ imports</span>`;
+        ? `<span><i class="sw" style="border-color:var(--dep)"></i>folder imports folder (thicker = more imports)</span><span><i class="sw" style="border-color:var(--danger)"></i>import cycle</span><span>↓ imported by · ↑ imports</span>`
+        : `<span><i class="sw" style="border-color:var(--dep)"></i>imports (upstream)</span><span><i class="sw" style="border-color:var(--rdep)"></i>imported by (downstream)</span><span><i class="sw" style="border-color:var(--danger)"></i>cycle</span>${S.containment ? '<span><i class="sw" style="border-color:var(--text-4);border-top-style:dotted"></i><code>mod</code> declaration</span>' : ''}<span>dashed box = test file · ↓ imported by · ↑ imports</span>`;
     syncUrl();
 }
 

@@ -488,6 +488,18 @@ function matcherRanges(text, matcher) {
  * @returns {{text: string, title: string}}
  */
 function resultsCountLabel(data, n) {
+    const files = Array.isArray(data.files) && data.files.length
+        ? (typeof data.total_files === 'number' ? data.total_files : data.files.length)
+        : 0;
+    const label = contentCountLabel(data, n);
+    if (!files) return label;
+    // Path matches sit above the content results; count them too, or
+    // "1 RESULT" over a box of two files reads as wrong.
+    const f = `${Number(files).toLocaleString('en-US')} FILE${files !== 1 ? 'S' : ''}`;
+    return { text: `${f} · ${label.text}`, title: label.title };
+}
+
+function contentCountLabel(data, n) {
     const num = (k) => Number(k).toLocaleString('en-US');
     const plural = (k) => `${num(k)} RESULT${k !== 1 ? 'S' : ''}`;
     if (typeof data.total_matches === 'number') {
@@ -829,6 +841,23 @@ function regexErrorSuggestions(pattern) {
     return out;
 }
 
+/**
+ * A path-filter box's text as the API's `;`-separated list. The box also
+ * takes commas, except inside `{…}` where a comma is glob alternation
+ * (`*.{rs,toml}`). Only the web UI accepts commas; the API, CLI and MCP keep
+ * `;`, so a comma there stays literal as in ripgrep's -g.
+ */
+function pathFilterParam(text) {
+    let depth = 0;
+    let out = '';
+    for (const ch of String(text || '')) {
+        if (ch === '{') depth++;
+        else if (ch === '}' && depth > 0) depth--;
+        out += ch === ',' && depth === 0 ? ';' : ch;
+    }
+    return out.split(';').map(s => s.trim()).filter(Boolean).join(';');
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         MAX_RESULTS_LIMIT,
@@ -877,5 +906,6 @@ if (typeof module !== 'undefined' && module.exports) {
         looksLikeRegex,
         noResultSuggestions,
         regexErrorSuggestions,
+        pathFilterParam,
     };
 }
