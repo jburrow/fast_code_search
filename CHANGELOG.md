@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Web UI: file names are never re-cased. The dependency explorer's pane
+  title, extension badges and the compact search box in the header showed
+  them in capitals; they now show as written.
+- Web UI: one FILTER button (the duplicate in the results bar is gone). It
+  shows how many path filters are set, the results bar lists them with an
+  × to remove each, and the panel has *Clear path filters*. The boxes are
+  now called SEARCH ONLY IN and SKIP PATHS and take `,` as well as `;`
+  (a comma inside `{…}` is still glob alternation). The API, CLI and MCP
+  still separate patterns with `;` only.
+- Web UI: the results count includes path matches ("2 FILES · 1 RESULT"),
+  the per-hit ranking score moved to the line number's tooltip, and the
+  dependency badge reads "imported by N" instead of "N deps".
+- Web UI: the indexing bar no longer flashes on every page load (it moved
+  the search box), the focus hint says Ctrl+K or ⌘K to match the platform,
+  and MAPPED is gone from the header stats (it read 0 B until searches ran).
+- Web UI: the SEMANTIC page served by the keyword server says semantic
+  search runs as a separate server, instead of claiming the keyword server
+  is down (it probed a hard-coded port 8080).
+- The INDEX page's sample files are shown relative to the indexed folder.
+
+### Fixed
+- Web UI: the hover preview fills its panel. It fetched 12 lines either
+  side of the line, so a file row in the FILES box (previewed from line 1)
+  showed 13 lines in a window-tall panel. It now fetches enough to fill the
+  panel and scroll, centres the matched line, notes when the file goes on,
+  and no longer marks line 1 as the match for a file row.
+
 ## [0.15.2] - 2026-10-13
 
 **Search works differently in this release.** Plain-text search is now a

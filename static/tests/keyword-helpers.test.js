@@ -598,3 +598,38 @@ test('noResultSuggestions: no "ignore case" when the regex already ignores it', 
     assert.ok(labels('Foo', true).includes('Ignore case'));
     assert.ok(!labels('Foo', false).includes('Ignore case'));
 });
+
+// ---------- path filter boxes ----------
+
+test('pathFilterParam: commas and semicolons both separate patterns', () => {
+    assert.equal(H.pathFilterParam('src/**, lib/**'), 'src/**;lib/**');
+    assert.equal(H.pathFilterParam('src/**;lib/** ; '), 'src/**;lib/**');
+    assert.equal(H.pathFilterParam('  '), '');
+});
+
+test('pathFilterParam: a comma inside braces is glob alternation', () => {
+    assert.equal(H.pathFilterParam('**/*.{rs,toml}, docs/**'), '**/*.{rs,toml};docs/**');
+});
+
+// ---------- file names are never re-cased ----------
+
+test('fileExtension: the extension exactly as written', () => {
+    assert.equal(C.fileExtension('src/web/api.rs'), 'rs');
+    assert.equal(C.fileExtension('docs/README.MD'), 'MD');
+    assert.equal(C.fileExtension('.github/workflows/ci.yml'), 'yml');
+    assert.equal(C.fileExtension('Makefile'), '');
+    assert.equal(C.fileExtension('src.d/Dockerfile'), '');
+    assert.equal(C.fileExtension('.gitignore'), '');
+});
+
+test('resultsCountLabel: path matches are counted next to content results', () => {
+    const data = { total_matches: 1, files: [{ file_path: 'a' }, { file_path: 'b' }], total_files: 2 };
+    assert.equal(H.resultsCountLabel(data, 1).text, '2 FILES · 1 RESULT');
+    assert.equal(H.resultsCountLabel({ total_matches: 3, files: [] }, 3).text, '3 RESULTS');
+});
+
+test('previewContextLines: fills a window-tall preview, within the server cap', () => {
+    assert.equal(H.previewContextLines(900), 45);
+    assert.equal(H.previewContextLines(100), 12);
+    assert.equal(H.previewContextLines(10000), 200);
+});

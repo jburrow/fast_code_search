@@ -26,7 +26,6 @@ const searchHistoryDropdown = document.getElementById('search-history-dropdown')
 
 // Stats elements
 const statFiles = document.getElementById('stat-files');
-const statSize = document.getElementById('stat-size');
 const statTrigrams = document.getElementById('stat-trigrams');
 const statDeps = document.getElementById('stat-deps');
 
@@ -145,6 +144,50 @@ function syncToggleVisuals() {
         const label = cb.closest('label');
         if (label) label.classList.toggle('toggle-on', cb.checked);
     });
+    syncFilterIndicators();
+}
+
+/**
+ * Keep path filters visible wherever they apply: a count on the FILTER
+ * button, a pill per filter in the results bar (each with ×), and the
+ * panel's "Clear path filters". Filters persist in storage, so without
+ * this a filter set last week silently narrows today's results.
+ */
+function syncFilterIndicators() {
+    const fields = [
+        [includeFilterInput, 'Only in'],
+        [excludeFilterInput, 'Skipping'],
+    ].filter(([input]) => input && input.value.trim());
+
+    const count = document.getElementById('filter-count');
+    if (count) {
+        count.textContent = String(fields.length);
+        count.hidden = fields.length === 0;
+    }
+    const toggle = document.getElementById('filter-toggle-btn');
+    if (toggle) {
+        toggle.title = fields.length
+            ? `Filter and ranking options (${fields.length} path filter${fields.length === 1 ? '' : 's'} on)`
+            : 'Show filter and ranking options';
+    }
+    const clear = document.getElementById('clear-filters-btn');
+    if (clear) clear.hidden = fields.length === 0;
+
+    const pills = document.getElementById('active-filters');
+    if (!pills) return;
+    pills.hidden = fields.length === 0;
+    pills.innerHTML = fields.map(([input, label]) => `
+        <span class="active-filter" title="${escapeHtml(label)}: ${escapeHtml(input.value.trim())}">
+            <span>${escapeHtml(label)}: ${escapeHtml(input.value.trim())}</span>
+            <button type="button" data-clear="${escapeHtml(input.id)}" aria-label="Remove the ${escapeHtml(label.toLowerCase())} filter">×</button>
+        </span>`).join('');
+}
+
+/** Empty the given path-filter inputs and search again. */
+function clearPathFilters(inputs) {
+    inputs.filter(Boolean).forEach(input => { input.value = ''; });
+    syncFilterIndicators();
+    optionChanged();
 }
 
 // ============================================
@@ -244,6 +287,11 @@ function applyUrlState(params, opts = {}) {
     if (hasAdvanced) {
         const filterPanel = document.getElementById('filter-panel');
         if (filterPanel) filterPanel.classList.add('open');
+        const toggle = document.getElementById('filter-toggle-btn');
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', 'true');
+            toggle.classList.add('toggle-on');
+        }
     }
 }
 
@@ -489,6 +537,8 @@ const progressWS = new ProgressWebSocket({
 });
 
 let _progressHideTimer = null;
+/** Whether this page saw the index being built (so "complete" is news). */
+let _sawIndexing = false;
 // Fingerprint of the index as last reported over the WebSocket; a change
 // means files were added, removed or re-indexed.
 let _lastIndexSignature = null;
@@ -513,8 +563,14 @@ function updateProgressUI(status) {
 
     // Show the panel while indexing. On 'completed', keep it visible briefly then
     // hide it — a permanent 100% "Complete" bar otherwise reads as "stuck". 'idle'
-    // hides immediately.
-    if (isCompleted) {
+    // hides immediately. An index that was already complete when the page
+    // opened shows no bar at all: flashing it for a few seconds pushed the
+    // search box down and then pulled it back up under the cursor.
+    if (!isCompleted && !isIdle) _sawIndexing = true;
+    if (isCompleted && !_sawIndexing) {
+        clearTimeout(_progressHideTimer);
+        toggleElement('progress-panel', false, 'flex');
+    } else if (isCompleted) {
         toggleElement('progress-panel', true, 'flex');
         clearTimeout(_progressHideTimer);
         _progressHideTimer = setTimeout(
@@ -892,15 +948,16 @@ window.addEventListener('resize', () => {
     if (isContextTooltipVisible()) hideContextTooltipImmediately();
 });
 
-// Lines of context shown above/below the match in the hover preview.
-const CTX_TOOLTIP_CONTEXT = 12;
+// The hover preview is as tall as the window, so it fetches enough lines
+// above and below the match to fill it (a fixed ±12 left most of the panel
+// empty, and a file row, previewed from line 1, showed just 13 lines).
 
 /**
  * Render the /api/context window. The lines are highlighted together with
  * the file's language (not highlightAuto per line, which ran every grammar
  * on every line) and the query terms are marked afterwards.
  */
-function renderContextBody(data, highlightLine, lang) {
+function renderContextBody(data, highlightLine, lang, moreBelow) {
     const start = data.start_line || 1;
     const lines = highlightSnippetLines(data.lines || [], lang);
     const rows = lines.map((html, i) => {
@@ -911,7 +968,18 @@ function renderContextBody(data, highlightLine, lang) {
             `<span class="file-line-content">${html}</span>` +
             `</div>`;
     }).join('');
-    return `<div class="ctx-file-body">${rows}</div>`;
+    const more = moreBelow
+        ? `<div class="file-more"><span class="file-meta-hint" style="float:none">More below. Click the open icon to see the whole file.</span></div>`
+        : '';
+    return `<div class="ctx-file-body">${rows}${more}</div>`;
+}
+
+/** Scroll the preview so the matched line sits in the middle of it. */
+function centerContextMatch(tooltip) {
+    const body = tooltip.querySelector('.ctx-file-body');
+    const hit = body && body.querySelector('.file-line-highlight');
+    if (!hit) return;
+    body.scrollTop = Math.max(0, hit.offsetTop - body.offsetTop - (body.clientHeight - hit.offsetHeight) / 2);
 }
 
 function highlightContextTooltip(tooltip) {
@@ -920,7 +988,11 @@ function highlightContextTooltip(tooltip) {
     tooltip.querySelectorAll('.file-line-content').forEach(span => highlightTermsIn(span, matcher));
 }
 
-async function showContextTooltip(resultItem, filePath, lineNumber) {
+/**
+ * Hover preview of `filePath` around `lineNumber`. A file row (`wholeFile`)
+ * previews the top of the file with no line marked: line 1 is not a match.
+ */
+async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = false) {
     clearTimeout(_ctxHideTimer);
     if (_ctxFetchController) _ctxFetchController.abort();
     _ctxFetchController = new AbortController();
@@ -928,16 +1000,24 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
 
     const tooltip = getOrCreateTooltip();
     const lang = hljsLangForPath(filePath);
-    const headerHtml = `<div class="ctx-header">${escapeHtml(filePath)} : ${lineNumber}</div>`;
-    const cacheKey = `${filePath}::${lineNumber}`;
+    const headerHtml = `<div class="ctx-header">${escapeHtml(filePath)}${wholeFile ? '' : ` : ${lineNumber}`}</div>`;
+    const context = previewContextLines(window.innerHeight);
+    const cacheKey = `${filePath}::${lineNumber}::${context}`;
+    const markLine = wholeFile ? 0 : lineNumber;
+    // A full window ending below the match means the file may go on.
+    const render = (data) => {
+        const last = (data.start_line || 1) + (data.lines || []).length - 1;
+        tooltip.innerHTML = headerHtml + renderContextBody(data, markLine, lang, last >= lineNumber + context);
+        highlightContextTooltip(tooltip);
+        positionTooltip(tooltip, resultItem);
+        centerContextMatch(tooltip);
+    };
 
     // Cache hit: render immediately, no fetch.
     const cached = _ctxContextCache.get(cacheKey);
     if (cached) {
-        tooltip.innerHTML = headerHtml + renderContextBody(cached, lineNumber, lang);
         tooltip.style.display = 'flex';
-        highlightContextTooltip(tooltip);
-        positionTooltip(tooltip, resultItem);
+        render(cached);
         return;
     }
 
@@ -948,15 +1028,13 @@ async function showContextTooltip(resultItem, filePath, lineNumber) {
     try {
         // Use the lightweight /api/context endpoint (a small window) instead of
         // fetching and highlighting the ENTIRE file on every hover.
-        const url = `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=${CTX_TOOLTIP_CONTEXT}`;
+        const url = `${API_BASE}/api/context?file=${encodeURIComponent(filePath)}&line=${lineNumber}&context=${context}`;
         const resp = await fetch(url, { signal });
         if (!resp.ok) throw new Error(await readErrorBody(resp));
         const data = await resp.json();
         if (signal.aborted) return;
         _ctxContextCache.set(cacheKey, data);
-        tooltip.innerHTML = headerHtml + renderContextBody(data, lineNumber, lang);
-        highlightContextTooltip(tooltip);
-        positionTooltip(tooltip, resultItem);
+        render(data);
     } catch (e) {
         if (e.name === 'AbortError') return;
         if (_ctxTooltip) _ctxTooltip.style.display = 'none';
@@ -1037,8 +1115,10 @@ let _currentSearch = null;
 /** Build the /api/search query string for the current form state. */
 function buildSearchParams(s) {
     const params = new URLSearchParams({ q: s.query, max: String(s.maxResults) });
-    if (s.includeFilter) params.set('include', s.includeFilter);
-    if (s.excludeFilter) params.set('exclude', s.excludeFilter);
+    const include = pathFilterParam(s.includeFilter);
+    const exclude = pathFilterParam(s.excludeFilter);
+    if (include) params.set('include', include);
+    if (exclude) params.set('exclude', exclude);
     // The three modes are mutually exclusive in the UI (the server lets
     // references and symbols silently win over regex).
     if (s.isReferences) params.set('references', 'true');
@@ -1567,6 +1647,7 @@ function renderFileMatches(data) {
                     style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
                     data-file-path="${escapeHtml(f.file_path)}"
                     data-line-number="1"
+                    data-whole-file="true"
                     aria-label="View full file"
                     title="View full file">${iconSvg('open_in_new', 18)}</button>
             </div>
@@ -1668,7 +1749,7 @@ function renderGroupHtml(group) {
     const firstHit = group.hits[0];
     const depCount = Math.max(...group.hits.map(hit => hit.dependency_count || 0));
     const lang = hljsLangForPath(group.filePath);
-    const ext = (group.filePath.split('.').pop() || '').toLowerCase();
+    const ext = fileExtension(group.filePath);
     const langClass = langClassForPath(group.filePath);
 
     // Split path into directory + filename for display
@@ -1685,7 +1766,7 @@ function renderGroupHtml(group) {
     const depBadge = depCount > 0
         ? `<button type="button" class="deps-badge" style="cursor:pointer;padding:2px 6px;background:#ebe77f;color:#000;font-size:10px;font-family:'JetBrains Mono',monospace;border:1px solid rgba(0,0,0,0.2)"
             aria-label="${depCount} dependents; show files that import this file"
-            data-file-path="${escapeHtml(group.filePath)}">${depCount} deps</button>`
+            data-file-path="${escapeHtml(group.filePath)}" title="Files that import this one">imported by ${depCount}</button>`
         : '';
 
     // A filename hit has line_number 0: the viewer opens at line 1 for it.
@@ -1742,15 +1823,12 @@ function renderGroupHtml(group) {
             <div style="${hitContainerStyle}">
                 <div class="px-4 py-1.5 flex justify-between items-center" style="background:#f8f4df;border-bottom:1px solid #e3dec8">
                     <div class="flex items-center gap-2 min-w-0">
-                        <span class="font-label text-xs" style="color:#5f5d48;flex-shrink:0">${lineLabel}</span>
+                        <span class="font-label text-xs" style="color:#5f5d48;flex-shrink:0;cursor:help"
+                            title="Ranking score ${result.score.toFixed(2)} (higher ranks first)&#10;&#10;Score = base × multipliers&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)">${lineLabel}</span>
                         <span style="${typeBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${matchType.text}</span>
                         ${truncatedBadge}
                     </div>
                     <div class="flex items-center gap-3 flex-shrink-0">
-                        <span style="cursor:help;font-family:'JetBrains Mono',monospace;font-size:10px;color:#5f5d48;text-transform:uppercase"
-                            title="Score = base × multipliers&#10;&#10;• Exact case match: 2×&#10;• Symbol definition: 3×&#10;• In /src/ or /lib/: 1.5×&#10;• Match at start of line: 1.5×&#10;• Shorter lines preferred (log scale, min 0.3×)&#10;• Dependency boost: 1 + 0.5·log10(import count)&#10;&#10;Higher scores rank first.">
-                            ${result.score.toFixed(2)}
-                        </span>
                         <button type="button" class="view-file-btn hover:text-primary transition-colors"
                             style="cursor:pointer;color:#5f5d48;background:none;border:none;padding:0;display:flex"
                             data-file-path="${escapeHtml(result.file_path)}"
@@ -1778,7 +1856,7 @@ function renderGroupHtml(group) {
                     <span style="padding:2px 6px;background:#e6e2cc;border:1px solid #cbc8aa;color:#494831;font-size:10px;font-family:'JetBrains Mono',monospace">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
-                    ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;text-transform:uppercase">${escapeHtml(ext)}</span>` : ''}
+                    ${ext ? `<span style="${langBadgeStyle};padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace">${escapeHtml(ext)}</span>` : ''}
                     ${depBadge}
                     ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link hover:text-primary transition-colors"
                         style="color:#5f5d48;display:flex"
@@ -1844,13 +1922,14 @@ function wireResultGroups(root) {
     root.querySelectorAll('.view-file-btn').forEach(btn => {
         const filePath = btn.dataset.filePath;
         const lineNumber = parseInt(btn.dataset.lineNumber, 10) || 1;
+        const wholeFile = btn.dataset.wholeFile === 'true';
         btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
         // Hover-intent delay: only fetch a preview if the cursor lingers ~200ms,
         // so sweeping down a results list doesn't fire a burst of requests.
         btn.addEventListener('mouseenter', () => {
             clearTimeout(_ctxHoverTimer);
             _ctxHoverTimer = setTimeout(
-                () => showContextTooltip(btn, filePath, lineNumber),
+                () => showContextTooltip(btn, filePath, lineNumber, wholeFile),
                 200
             );
         });
@@ -2870,11 +2949,21 @@ modeCheckboxes().forEach(cb => {
 if (rankModeSelect) rankModeSelect.addEventListener('change', optionChanged);
 if (contextLinesSelect) contextLinesSelect.addEventListener('change', optionChanged);
 
+document.getElementById('active-filters')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-clear]');
+    if (btn) clearPathFilters([document.getElementById(btn.dataset.clear)]);
+});
+document.getElementById('clear-filters-btn')?.addEventListener('click', () => {
+    clearPathFilters([includeFilterInput, excludeFilterInput]);
+});
+
 if (includeFilterInput) {
+    includeFilterInput.addEventListener('input', syncFilterIndicators);
     includeFilterInput.addEventListener('input', debouncedSearch);
     includeFilterInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') optionChanged(); });
 }
 if (excludeFilterInput) {
+    excludeFilterInput.addEventListener('input', syncFilterIndicators);
     excludeFilterInput.addEventListener('input', debouncedSearch);
     excludeFilterInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') optionChanged(); });
 }

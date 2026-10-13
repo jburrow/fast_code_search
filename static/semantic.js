@@ -133,19 +133,44 @@ async function checkBackendHealth() {
     // Older binaries omit server_type — treat as semantic when health is ok.
     semanticAvailable = healthOk && currentServerType !== 'keyword';
 
+    const onKeywordServer = healthOk && currentServerType === 'keyword';
     if (!semanticAvailable) {
         searchReadiness.setOffline(true);
+        if (onKeywordServer) showSemanticNotHere();
     }
 
-    // Check keyword backend at its default port for the status badge
-    let keywordUp = false;
-    try {
-        const resp = await fetch(`http://${hostname}:8080/api/health`, { signal: AbortSignal.timeout(2000) });
-        keywordUp = resp.ok;
-    } catch (e) { /* offline */ }
+    // The keyword server is this one when it served the page; otherwise probe
+    // it at its default port for the status badge.
+    let keywordUp = onKeywordServer;
+    if (!onKeywordServer) {
+        try {
+            const resp = await fetch(`http://${hostname}:8080/api/health`, { signal: AbortSignal.timeout(2000) });
+            keywordUp = resp.ok;
+        } catch (e) { /* offline */ }
+    }
 
     const onSemanticServer = currentServerType === 'semantic' || currentServerType === null;
     renderBackendStatus(keywordUp, healthOk, onSemanticServer);
+    // The card in the results already explains it; a banner would repeat it.
+    if (onKeywordServer) document.getElementById('backend-banner').style.display = 'none';
+}
+
+/**
+ * On the keyword server this page can't search: say so, rather than the
+ * generic "server not running" card (the server is running, it just isn't
+ * the semantic one).
+ */
+function showSemanticNotHere() {
+    if (!resultsContainer) return;
+    const semanticUrl = `http://${window.location.hostname}:${window.SEMANTIC_PORT || 8081}/semantic.html`;
+    resultsContainer.innerHTML = `
+        <div class="server-offline-state no-results" style="background:#fff;border:1px solid #000;box-shadow:2px 2px 0 #000">
+            <p style="font-weight:700;color:#1d1c0f;margin-bottom:0.5rem">Semantic search isn't running on this server</p>
+            <p>This is the keyword search server. Semantic search is a separate server,
+            <code>fast_code_search_semantic</code>, usually on port ${escapeHtml(String(window.SEMANTIC_PORT || 8081))}.</p>
+            <p style="margin-top:0.75rem"><a href="${escapeHtml(semanticUrl)}" style="text-decoration:underline">Open it there</a>
+            · <a href="/" style="text-decoration:underline">Back to search</a></p>
+        </div>`;
 }
 
 /**
@@ -347,10 +372,10 @@ function displayResults(results, query, latency) {
 
 function createGroupedResultCard(group) {
     const firstResult = group.hits[0];
-    const ext = (group.filePath.split('.').pop() || '').toLowerCase();
+    const ext = fileExtension(group.filePath);
     const langClass = langClassForPath(group.filePath);
     const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
-    const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${ext}</span>` : '';
+    const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${escapeHtml(ext)}</span>` : '';
 
     const lastSlash = group.filePath.lastIndexOf('/');
     const fileDir = lastSlash >= 0 ? group.filePath.slice(0, lastSlash + 1) : '';
@@ -395,10 +420,10 @@ function createSemanticHitCard(result, addTopBorder) {
     else if (result.chunk_type === 'module')   { chunkLabel = 'MODULE';   chunkClass = 'result-badge chunk-module'; }
 
     // Language badge (uses shared langClassForPath from common.js)
-    const ext = (result.file_path.split('.').pop() || '').toLowerCase();
+    const ext = fileExtension(result.file_path);
     const langClass = langClassForPath(result.file_path);
     const langStyle = langClass ? `background:var(--lang-${langClass},#e2e0d5);` : '';
-    const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${ext}</span>` : '';
+    const langBadge = langClass ? `<span class="lang-badge" style="${langStyle}">${escapeHtml(ext)}</span>` : '';
 
     const codeWithLines = formatCodeWithLineNumbers(result.content, result.start_line);
     const wrapperStyle = addTopBorder ? 'border-top:1px solid var(--border);' : '';
@@ -410,7 +435,7 @@ function createSemanticHitCard(result, addTopBorder) {
                     <div class="result-meta">
                         ${langBadge}
                         <span class="${chunkClass}">${chunkLabel}</span>
-                        ${result.symbol_name ? `<span class="result-badge" style="background:#ebe77f;border-color:#646100;color:#1e1d00">${escapeHtml(result.symbol_name)}</span>` : ''}
+                        ${result.symbol_name ? `<span class="result-badge" style="background:#ebe77f;border-color:#646100;color:#1e1d00;text-transform:none">${escapeHtml(result.symbol_name)}</span>` : ''}
                         <span style="font-size:0.65rem;color:#7a785f;font-family:'JetBrains Mono',monospace">L${result.start_line}–${result.end_line}</span>
                     </div>
                 </div>
@@ -545,6 +570,7 @@ loadStateFromUrl(URL_FIELDS, () => {
 // Inputs start enabled (optimistic) — health check disables them only on failure.
 checkBackendHealth().then(() => {
     progressWS.start();
-    loadStats();
+    // Another server's /api/stats has no chunk counts: leave the stats at "-".
+    if (semanticAvailable) loadStats();
     runInitialSearchFromUrl();
 });

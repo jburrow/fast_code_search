@@ -55,6 +55,8 @@
         .pane:last-child { border-right: 0; }
         .pane-h { padding: 8px 12px; border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: flex; gap: 8px; align-items: center; background: var(--surface); min-width: 0; }
         .pane-h span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* Never re-case a file name: paths inside uppercase labels keep their case. */
+        .as-typed { text-transform: none; letter-spacing: normal; }
 
         .filter { margin: 8px; padding: 5px 8px; border: 1px solid var(--line-strong); background: var(--node); font-family: var(--font-mono); font-size: 12px; }
         .files { overflow: auto; flex: 1; padding-bottom: 8px; }

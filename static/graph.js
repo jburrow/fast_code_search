@@ -572,7 +572,15 @@ function shownFiles() {
 function renderChrome(summary) {
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.mode === S.mode)));
     const title = { hood: 'Neighbourhood', impact: 'Impact of a change', path: 'Import chain', map: 'Module map' }[S.mode];
-    $('#graphTitle').textContent = title + (S.mode === 'map' ? ' · folders' : S.center ? ' · ' + S.center : '');
+    // The pane label is uppercase; the path is shown exactly as named.
+    const titleEl = $('#graphTitle');
+    titleEl.textContent = title + (S.mode === 'map' ? ' · folders' : S.center ? ' · ' : '');
+    if (S.mode !== 'map' && S.center) {
+        const path = document.createElement('span');
+        path.className = 'as-typed';
+        path.textContent = S.center;
+        titleEl.appendChild(path);
+    }
     const recent = S.hist.slice(-4);
     let search = '';
     const files = shownFiles();

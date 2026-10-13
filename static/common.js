@@ -615,6 +615,17 @@ function syncUrlFromState(fields) {
 }
 
 /**
+ * The extension of a path's file name exactly as written ("rs", "YML"), or ''
+ * when the name has none ("Makefile", ".gitignore"). File names are never
+ * re-cased for display; lower-case it yourself only for lookups.
+ */
+function fileExtension(filePath) {
+    const name = String(filePath || '').split(/[\\/]/).pop();
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? name.slice(dot + 1) : '';
+}
+
+/**
  * Map a file path's extension to a CSS class suffix for language badge colouring.
  * Used by both keyword and semantic search result rendering.
  * Returns null for unknown/generic extensions.
@@ -768,5 +779,6 @@ if (typeof module !== 'undefined' && module.exports) {
         loadStateFromUrl,
         syncUrlFromState,
         langClassForPath,
+        fileExtension,
     };
 }

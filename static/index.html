@@ -481,6 +481,16 @@
             #mode-toggle-group { flex-wrap: wrap; flex-shrink: 1; }
             #mode-toggle-group > * { flex-grow: 1; justify-content: center; border-bottom: 1px solid #000; margin-bottom: -1px; }
         }
+        /* FILTER toggle: number of path filters set */
+        .filter-count { min-width: 1.1rem; padding: 0 0.3rem; background: #000; color: #fff900; font-size: 0.65rem; line-height: 1.1rem; text-align: center; }
+        .filter-toggle.toggle-on { background: #fff900; color: #000; }
+        /* Results bar: the path filters these results went through */
+        .active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
+        .active-filters[hidden] { display: none; }
+        .active-filter { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 28rem; padding: 0.05rem 0.2rem 0.05rem 0.45rem; background: #fff; border: 1px solid #000; }
+        .active-filter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .active-filter button { background: none; border: none; cursor: pointer; padding: 0 0.25rem; font: inherit; font-weight: 700; }
+        .active-filter button:hover { background: #fff900; }
         /* Filter panel */
         #filter-panel { display: none; }
         #filter-panel.open { display: block; }
@@ -548,11 +558,8 @@
             border: none;
             outline: none;
             background: transparent;
-            font-family: 'Space Grotesk', sans-serif;
+            font-family: 'JetBrains Mono', monospace;
             font-size: 0.78rem;
-            font-weight: 500;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
             color: #1d1c0f;
             padding: 0 0.4rem;
             width: 120px;
@@ -630,7 +637,6 @@
         <div id="header-stats" class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
             <span title="Total number of source files in the index">FILES: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
             <span title="Total size of all indexed file content">CONTENT: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
-            <span title="File content currently mapped into memory by searches (grows as files are read, not the index size)">MAPPED: <span id="stat-size" class="text-on-surface font-bold">-</span></span>
             <span title="Number of unique 3-character sequences">TRIGRAMS: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
             <span title="Number of import/dependency edges used to boost relevance scoring">DEPS: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
         </div>
@@ -672,7 +678,7 @@
                     <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
                         class="w-full bg-surface-container-lowest border border-black pl-12 pr-4 lg:pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
                     <div class="absolute inset-y-0 right-4 flex items-center gap-2">
-                        <span class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden lg:inline">CMD+K</span>
+                        <span id="focus-shortcut" class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden lg:inline" title="Focus the search box">CTRL+K</span>
                     </div>
                     <!-- Search history dropdown -->
                     <div id="search-history-dropdown" style="display:none" class="absolute top-full left-0 right-0 z-50 bg-white border border-black border-t-0 shadow-md max-h-64 overflow-y-auto"></div>
@@ -710,11 +716,12 @@
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-link"/></svg>
                         <span>REFERENCES</span>
                     </label>
-                    <!-- Always-visible FILTER toggle so filters can be set BEFORE the
-                         first search (the one in the results bar only appears after a search). -->
-                    <button type="button" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold" title="Show filter and ranking options">
+                    <!-- The one FILTER toggle. Its count shows how many path filters
+                         are set, so a filter left on is never invisible. -->
+                    <button type="button" id="filter-toggle-btn" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold" title="Show filter and ranking options" aria-expanded="false" aria-controls="filter-panel">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg>
                         <span>FILTER</span>
+                        <span id="filter-count" class="filter-count" hidden></span>
                     </button>
                 </div>
                 <!-- Execute button -->
@@ -765,11 +772,8 @@
                     <button type="button" id="more-files-btn" class="font-label text-xs font-bold underline hover:text-black" style="display: none;"></button>
                     <span id="index-freshness" class="font-label text-xs text-outline" style="display: none;"></span>
                 </div>
-                <div class="flex gap-3">
-                    <button id="filter-toggle-btn" class="filter-toggle flex items-center gap-1 font-label text-xs text-outline hover:text-black transition-colors">
-                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg> FILTER
-                    </button>
-                </div>
+                <!-- Which path filters these results went through (keyword.js) -->
+                <div id="active-filters" class="active-filters" hidden></div>
             </div>
 
             <!-- Filter panel (hidden by default) -->
@@ -806,17 +810,20 @@
                         </select>
                     </label>
                     <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        INCLUDE (GLOB)
-                        <input type="text" id="include-filter" placeholder="src/**/*.rs;lib/**" autocomplete="off"
+                        SEARCH ONLY IN
+                        <input type="text" id="include-filter" placeholder="src/**/*.rs, lib/**" autocomplete="off"
                             class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
                     </label>
                     <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        EXCLUDE (GLOB)
-                        <input type="text" id="exclude-filter" placeholder="**/test/**;**/vendor/**" autocomplete="off"
+                        SKIP PATHS
+                        <input type="text" id="exclude-filter" placeholder="**/test/**, **/vendor/**" autocomplete="off"
                             class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
                     </label>
                 </div>
-                <p class="text-[10px] font-label text-outline">Glob patterns (separated by <code class="bg-surface-container-highest px-1">;</code>) matched against workspace-relative paths. Use <code class="bg-surface-container-highest px-1">**</code> for recursive directories.</p>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <p class="text-[10px] font-label text-outline">Glob patterns, separated by <code class="bg-surface-container-highest px-1">,</code> or <code class="bg-surface-container-highest px-1">;</code>, matched against paths relative to the indexed folder. Use <code class="bg-surface-container-highest px-1">**</code> for any depth of folders.</p>
+                    <button type="button" id="clear-filters-btn" class="font-label text-xs font-bold underline hover:text-black" hidden>Clear path filters</button>
+                </div>
             </div>
 
             <!-- Keep for advanced-options querySelector compat (hidden) -->
@@ -871,10 +878,16 @@
         // one in the toggle group and the one in the results bar).
         document.querySelectorAll('.filter-toggle').forEach((btn) => {
             btn.addEventListener('click', () => {
-                document.getElementById('filter-panel')?.classList.toggle('open');
+                const open = document.getElementById('filter-panel')?.classList.toggle('open');
+                btn.setAttribute('aria-expanded', String(!!open));
+                btn.classList.toggle('toggle-on', !!open);
             });
         });
-        // CMD+K shortcut
+        // Ctrl+K (Cmd+K on a Mac) focuses the search box; the hint names the right key.
+        if (/Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || '')) {
+            const hint = document.getElementById('focus-shortcut');
+            if (hint) hint.textContent = '⌘K';
+        }
         document.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
