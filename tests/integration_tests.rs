@@ -3579,7 +3579,7 @@ async fn test_http_search_rejects_deep_offset() -> Result<()> {
 
     let resp = client
         .get(format!("{}/api/search", ctx.http_url))
-        .query(&[("q", "find_me_in_search"), ("offset", "10001")])
+        .query(&[("q", "find_me_in_search"), ("offset", "100001")])
         .send()
         .await?;
     assert_eq!(resp.status(), 400);
@@ -3589,13 +3589,16 @@ async fn test_http_search_rejects_deep_offset() -> Result<()> {
         "expected an offset error, got {body}"
     );
 
-    // The boundary itself is accepted.
-    let resp = client
-        .get(format!("{}/api/search", ctx.http_url))
-        .query(&[("q", "find_me_in_search"), ("offset", "10000")])
-        .send()
-        .await?;
-    assert_eq!(resp.status(), 200);
+    // The boundary itself is accepted, and so is paging past 10000 (bug
+    // report: the old limit).
+    for offset in ["100000", "10001"] {
+        let resp = client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(&[("q", "find_me_in_search"), ("offset", offset)])
+            .send()
+            .await?;
+        assert_eq!(resp.status(), 200, "offset {offset}");
+    }
     Ok(())
 }
 
@@ -3621,7 +3624,7 @@ async fn test_grpc_search_rejects_deep_offset() -> Result<()> {
         .search(SearchRequest {
             query: "find_me_in_search".to_string(),
             max_results: 10,
-            offset: 10_001,
+            offset: 100_001,
             ..Default::default()
         })
         .await

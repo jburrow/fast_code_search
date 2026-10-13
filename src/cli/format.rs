@@ -264,6 +264,7 @@ pub fn response_from(query: &str, results: Vec<SearchResultJson>) -> SearchRespo
         rank_mode: None,
         total_candidates: None,
         candidates_searched: None,
+        max_files_allowed: None,
     }
 }
 

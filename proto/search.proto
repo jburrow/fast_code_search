@@ -22,10 +22,10 @@ message SearchRequest {
   bool references = 12;               // Return the references (call sites, type mentions) of the identifier in query
 }
 
-// Plain-text queries understand: file:PAT, -file:PAT, lang:NAME, -lang:NAME,
-// case:yes, word:yes, -term (exclude files containing term), "quoted phrase",
-// and several terms (all must appear in a file). Regex queries are passed
-// through untouched.
+// A plain-text query is a literal, like `rg -F`: several words are one
+// phrase, and quotes and a leading - are part of the text. It understands the
+// operators file:PAT, -file:PAT, lang:NAME, -lang:NAME, case:yes and word:yes.
+// Regex queries are passed through untouched.
 
 message SearchResult {
   string file_path = 1;

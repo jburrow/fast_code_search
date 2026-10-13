@@ -436,6 +436,7 @@ async fn main() -> Result<()> {
         &config.indexer,
         search_permits.clone(),
         request_timeout,
+        fast_code_search::search::SearchSettings::from_config(&config.server),
     );
 
     let persistence = match config.indexer.index_path.as_deref() {

@@ -128,6 +128,22 @@ pub struct ServerConfig {
     #[serde(default = "default_request_timeout_secs")]
     pub request_timeout_secs: u64,
 
+    /// Candidate files a search opens under fast ranking (the best by file
+    /// metadata) unless the request asks for more. 0 = every candidate.
+    #[serde(default = "default_fast_rank_files")]
+    pub fast_rank_files: usize,
+
+    /// Most candidate files a request may ask fast ranking to open (the web
+    /// UI's SEARCH MORE FILES, `max_files` on `/api/search`). 0 = no limit.
+    #[serde(default)]
+    pub max_fast_rank_files: usize,
+
+    /// Deepest result offset a client may page to. Each page re-runs the
+    /// search with a budget covering the offset, so deep pages cost more.
+    /// 0 = no limit.
+    #[serde(default = "default_max_page_offset")]
+    pub max_page_offset: usize,
+
     /// Serve static UI files from this directory instead of the embedded assets.
     ///
     /// When set, the web server reads HTML/CSS/JS files directly from disk on
@@ -261,6 +277,14 @@ fn default_request_timeout_secs() -> u64 {
     30
 }
 
+fn default_fast_rank_files() -> usize {
+    crate::search::SearchLimits::DEFAULT_MAX_FILES
+}
+
+fn default_max_page_offset() -> usize {
+    crate::search::SearchSettings::DEFAULT_MAX_OFFSET
+}
+
 fn default_exclude_patterns() -> Vec<String> {
     vec![
         "**/node_modules/**".to_string(),
@@ -296,6 +320,9 @@ impl Default for ServerConfig {
             cors_origins: Vec::new(),
             max_concurrent_searches: default_max_concurrent_searches(),
             request_timeout_secs: default_request_timeout_secs(),
+            fast_rank_files: default_fast_rank_files(),
+            max_fast_rank_files: 0,
+            max_page_offset: default_max_page_offset(),
             static_dir: None,
         }
     }
@@ -636,6 +663,20 @@ max_concurrent_searches = 64
 
 # Per-request timeout (seconds) for both servers
 request_timeout_secs = 30
+
+# When a query could be in many files (over 5000), Auto ranking orders them
+# by file metadata and opens only the best ones. This is how many it opens
+# unless the request asks for more (0 = every candidate file).
+fast_rank_files = 2000
+
+# Most files a request may ask for (the web UI's SEARCH MORE FILES button,
+# `max_files` on /api/search). 0 = no limit; set one on a shared server.
+max_fast_rank_files = 0
+
+# Deepest result offset a client may page to (LOAD MORE past 1000 results,
+# `--offset`, `offset` on /api/search). Deep pages cost a scan of that many
+# matches. 0 = no limit.
+max_page_offset = 100000
 
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every

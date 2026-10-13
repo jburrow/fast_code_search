@@ -183,6 +183,10 @@ pub struct SearchArgs {
     /// Stop scanning after this many milliseconds and return the best so far
     #[arg(long, default_value_t = 0, value_name = "MS")]
     pub timeout_ms: u64,
+    /// Files fast ranking may open when a query could be in very many
+    /// (default: the server's fast_rank_files, 2000)
+    #[arg(long, value_name = "N")]
+    pub max_files: Option<usize>,
 }
 
 /// Search mode, chosen by the subcommand.
@@ -210,6 +214,8 @@ pub struct SearchRequest {
     pub timeout_ms: u64,
     /// Files whose path matches to list too (0 = none).
     pub files: usize,
+    /// Candidate files fast ranking may open (`None` = the server's default).
+    pub max_files: Option<usize>,
 }
 
 impl SearchRequest {
@@ -234,6 +240,7 @@ impl SearchRequest {
             rank: args.rank,
             timeout_ms: args.timeout_ms,
             files: 0,
+            max_files: args.max_files,
         }
     }
 
@@ -274,6 +281,9 @@ impl SearchRequest {
         }
         if self.files > 0 {
             p.push(("files", self.files.to_string()));
+        }
+        if let Some(n) = self.max_files {
+            p.push(("max_files", n.to_string()));
         }
         p
     }
@@ -576,7 +586,15 @@ impl Session {
         if let Some(w) = req.word {
             parsed.options.whole_word = w;
         }
-        let mut limits = SearchLimits::new(req.max).with_offset(req.offset);
+        let settings = self
+            .config
+            .as_ref()
+            .map(|c| crate::search::SearchSettings::from_config(&c.server))
+            .unwrap_or_default();
+        let mut limits = settings.apply(
+            SearchLimits::new(req.max).with_offset(req.offset),
+            req.max_files,
+        );
         if req.timeout_ms > 0 {
             limits = limits.with_timeout(Duration::from_millis(req.timeout_ms.min(30_000)));
         }
@@ -645,6 +663,7 @@ impl Session {
             rank_mode: Some(format!("{:?}", info.mode).to_lowercase()),
             total_candidates: Some(info.total_candidates),
             candidates_searched: Some(info.candidates_searched),
+            max_files_allowed: None,
         })
     }
 

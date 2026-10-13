@@ -1,5 +1,5 @@
 use crate::config::IndexerConfig;
-use crate::search::{RankMode, SearchEngine, SearchLimits};
+use crate::search::{RankMode, SearchEngine, SearchLimits, SearchSettings};
 use anyhow::Result;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -33,6 +33,8 @@ pub struct CodeSearchService {
     request_timeout: std::time::Duration,
     /// Only one `Index` RPC may run at a time.
     index_in_progress: Arc<tokio::sync::Mutex<()>>,
+    /// Fast-ranking file count and paging depth (`[server]` settings).
+    search_settings: SearchSettings,
 }
 
 impl CodeSearchService {
@@ -54,7 +56,14 @@ impl CodeSearchService {
             )),
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             index_in_progress: Arc::new(tokio::sync::Mutex::new(())),
+            search_settings: SearchSettings::default(),
         }
+    }
+
+    /// Apply the server's search settings (fast-ranking files, paging depth).
+    pub fn with_search_settings(mut self, settings: SearchSettings) -> Self {
+        self.search_settings = settings;
+        self
     }
 
     /// Share a search semaphore (with the REST router) and set the request
@@ -146,12 +155,9 @@ impl CodeSearch for CodeSearchService {
         let whole_word = req.whole_word;
         let rank_mode = RankMode::parse(&req.rank);
         let offset = req.offset.max(0) as usize;
-        if offset > SearchLimits::MAX_OFFSET {
-            return Err(Status::invalid_argument(format!(
-                "offset must be at most {}; narrow the query instead of paging deeper",
-                SearchLimits::MAX_OFFSET
-            )));
-        }
+        self.search_settings
+            .check_offset(offset)
+            .map_err(Status::invalid_argument)?;
         // Same deadline policy as /api/search: the client's deadline if
         // given, capped by (and otherwise just under) the request timeout.
         let default_timeout = self.request_timeout.mul_f32(0.9);
@@ -161,9 +167,12 @@ impl CodeSearch for CodeSearchService {
         } else {
             default_timeout
         };
-        let limits = SearchLimits::new(max_results)
-            .with_offset(offset)
-            .with_timeout(timeout);
+        let limits = self.search_settings.apply(
+            SearchLimits::new(max_results)
+                .with_offset(offset)
+                .with_timeout(timeout),
+            None,
+        );
         {
             let span = tracing::Span::current();
             span.record("query", query.as_str());
@@ -449,10 +458,12 @@ pub fn create_server_with_engine_config_limits(
     config: &IndexerConfig,
     search_permits: Arc<tokio::sync::Semaphore>,
     request_timeout: std::time::Duration,
+    search_settings: SearchSettings,
 ) -> CodeSearchServer<CodeSearchService> {
     CodeSearchServer::new(
         CodeSearchService::with_engine_config(engine, config)
-            .with_limits(search_permits, request_timeout),
+            .with_limits(search_permits, request_timeout)
+            .with_search_settings(search_settings),
     )
 }
 

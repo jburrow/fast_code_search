@@ -323,62 +323,40 @@ function isYesToken(v) {
     return ['yes', 'y', 'true', '1', 'on'].includes(String(v).toLowerCase());
 }
 
+const QUERY_OPERATORS = ['-file:', 'file:', '-lang:', 'lang:', 'case:', 'word:'];
+
 /**
- * Split on whitespace, keeping "quoted phrases" together (quotes removed).
- * Each token records where its first quote stood (`quoteAt`), which decides
- * whether a leading `-` negates and whether an operator prefix counts.
- * A `"` opens a phrase only at the start of a token, after a negating `-`
- * or right after an operator's colon, and the phrase ends at the next `"`
- * when whitespace or the end follows it; any other quote is an ordinary
- * character (`{ "success": True` keeps its quotes).
- * @returns {Array<{text: string, quoteAt: number|null}>}
+ * Split on whitespace, like src/search/query_syntax.rs. Each token keeps its
+ * `[start, end)` in the query, the operator prefix it starts with (`op`, or
+ * '') and that operator's argument (`arg`, null when there is none). An
+ * operator's argument may be quoted to hold spaces (`file:"my dir"`); any
+ * other quote is text.
+ * @returns {Array<{start: number, end: number, op: string, arg: string|null}>}
  */
 function tokenizeQuery(raw) {
-    const chars = Array.from(String(raw || ''));
+    const s = String(raw || '');
     const out = [];
-    let cur = '';
-    let quoteAt = null;
-    for (let i = 0; i < chars.length; i++) {
-        const c = chars[i];
-        if (c === '"' && phraseCanOpen(cur)) {
-            const end = chars.indexOf('"', i + 1);
-            const closes = end > i + 1 && (end + 1 === chars.length || /\s/.test(chars[end + 1]));
-            if (closes) {
-                if (quoteAt === null) quoteAt = cur.length;
-                cur += chars.slice(i + 1, end).join('');
-                i = end;
+    let i = 0;
+    while (i < s.length) {
+        if (/\s/.test(s[i])) { i++; continue; }
+        const start = i;
+        const op = QUERY_OPERATORS.find(o => s.startsWith(o, start)) || '';
+        const afterOp = start + op.length;
+        if (op && s[afterOp] === '"') {
+            const close = s.indexOf('"', afterOp + 1);
+            if (close > afterOp + 1 && (close + 1 === s.length || /\s/.test(s[close + 1]))) {
+                out.push({ start, end: close + 1, op, arg: s.slice(afterOp + 1, close) });
+                i = close + 1;
                 continue;
             }
         }
-        if (/\s/.test(c)) {
-            if (cur) {
-                out.push({ text: cur, quoteAt });
-                cur = '';
-            }
-            quoteAt = null;
-        } else {
-            cur += c;
-        }
+        let end = start;
+        while (end < s.length && !/\s/.test(s[end])) end++;
+        const arg = s.slice(afterOp, end);
+        out.push({ start, end, op, arg: op && arg ? arg : null });
+        i = end;
     }
-    if (cur) out.push({ text: cur, quoteAt });
     return out;
-}
-
-/** Can a phrase start after `cur`, the token text read so far? */
-function phraseCanOpen(cur) {
-    const op = cur.startsWith('-') ? cur.slice(1) : cur;
-    return op === '' || ['file:', 'lang:', 'case:', 'word:'].includes(op);
-}
-
-/**
- * Does a leading `-` negate this token? Only when a letter, `_` or a quote
- * follows it: `-Wall` and `-"a b"` negate, `->`, `-1.5` and `"-foo"` do not.
- */
-function tokenNegates(token) {
-    if (!token.text.startsWith('-')) return false;
-    if (token.quoteAt === 0) return false; // `"-foo"` is the literal term `-foo`
-    if (token.quoteAt === 1) return true;  // `-"a b"`
-    return /^[A-Za-z_]/.test(token.text.slice(1));
 }
 
 /** Language names the server knows (others are accepted when alphanumeric). */
@@ -394,46 +372,35 @@ function isKnownLang(name) {
 }
 
 /**
- * Parse a plain-text query exactly like src/search/query_syntax.rs:
- * whitespace-separated tokens, "quoted phrases" kept together (quotes
- * removed); `file:`/`lang:`/`-file:`/`-lang:` become path filters (dropped
- * here), `case:`/`word:` set options, `-term` excludes. A `-` negates only
- * before a letter, `_` or a quote, so `->`, `-1.5` and a lone `-` are
- * terms; a quoted token is literal (`"file:"` is the term `file:`) while a
- * quote after the colon still belongs to the operator (`file:"my dir"`).
- * An operator without an argument, or `lang:` with a name the server
- * rejects, is a plain term.
- * @returns {{terms: string[], excludeTerms: string[], caseSensitive: boolean, wholeWord: boolean}}
+ * Parse a plain-text query exactly like src/search/query_syntax.rs: the
+ * `file:`/`lang:`/`-file:`/`-lang:` filters are dropped here, `case:` and
+ * `word:` set options, and everything else is one literal, as typed
+ * (quotes and a leading `-` included). Runs of text separated by operators
+ * are joined by one space. An operator without an argument, or `lang:`
+ * with a name the server rejects, is text.
+ * @returns {{text: string, terms: string[], caseSensitive: boolean, wholeWord: boolean}}
  */
 function parseQueryTerms(raw) {
-    const terms = [];
-    const excludeTerms = [];
+    const s = String(raw || '');
+    const runs = [];
+    let runOpen = false;
     let caseSensitive = false;
     let wholeWord = false;
-
-    for (const token of tokenizeQuery(raw)) {
-        const negated = tokenNegates(token);
-        const body = negated ? token.text.slice(1) : token.text;
-        const quoteAt = negated && token.quoteAt !== null ? token.quoteAt - 1 : token.quoteAt;
-        // `prefix` is an operator only when no quote precedes its colon and
-        // an argument follows it.
-        const operator = (prefix) => {
-            if (!body.startsWith(prefix)) return null;
-            const arg = body.slice(prefix.length);
-            if (quoteAt !== null && quoteAt < prefix.length) return null;
-            return arg ? arg : null;
-        };
-        if (operator('file:') !== null) continue;
-        const lang = operator('lang:');
-        if (lang !== null && isKnownLang(lang)) continue;
-        const cs = operator('case:');
-        if (cs !== null) { caseSensitive = isYesToken(cs); continue; }
-        const ww = operator('word:');
-        if (ww !== null) { wholeWord = isYesToken(ww); continue; }
-        if (negated) excludeTerms.push(body);
-        else if (body) terms.push(body);
+    for (const t of tokenizeQuery(s)) {
+        let isOp = t.arg !== null;
+        if (isOp && (t.op === 'lang:' || t.op === '-lang:')) isOp = isKnownLang(t.arg);
+        if (isOp) {
+            if (t.op === 'case:') caseSensitive = isYesToken(t.arg);
+            if (t.op === 'word:') wholeWord = isYesToken(t.arg);
+            runOpen = false;
+            continue;
+        }
+        if (runOpen) runs[runs.length - 1][1] = t.end;
+        else runs.push([t.start, t.end]);
+        runOpen = true;
     }
-    return { terms, excludeTerms, caseSensitive, wholeWord };
+    const text = runs.map(([a, b]) => s.slice(a, b)).join(' ');
+    return { text, terms: text ? [text] : [], caseSensitive, wholeWord };
 }
 
 // ---------- Regex and term matching ----------
@@ -482,8 +449,6 @@ function buildQueryMatcher(query, opts = {}) {
         : parseQueryTerms(query);
     const terms = parsed.terms.filter(Boolean);
     if (!terms.length) return null;
-    // Longest first so "foobar" wins over "foo" in the alternation.
-    terms.sort((a, b) => b.length - a.length);
     let src = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     if (parsed.wholeWord) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`;
     try {
@@ -833,7 +798,6 @@ if (typeof module !== 'undefined' && module.exports) {
         fileMatchesLabel,
         isYesToken,
         tokenizeQuery,
-        tokenNegates,
         parseQueryTerms,
         compileRustRegex,
         buildQueryMatcher,

@@ -241,12 +241,13 @@ fn tool_definitions() -> Value {
             "search_code",
             "Search code",
             "Search the indexed code. Use instead of grep: it answers from an in-memory index. \
-             `query` takes the query syntax: several words must all appear in a file (lines \
-             holding the whole phrase rank first), \"exact phrase\", -term, file:PATTERN, \
+             In text mode `query` is a literal, like `rg -F`: several words are one phrase, and \
+             quotes and a leading - are part of the text. Operators: file:PATTERN, -file:PATTERN, \
              lang:rust, case:yes, word:yes. mode: text (default), regex (a Rust regex matched \
              per line), symbols (definitions only) or references (call sites and type mentions \
-             of an identifier). Returns path:line:column with the matching line; in text and \
-             regex mode, files whose path matches the query (e.g. a pasted path) are listed first."
+             of an identifier). Text ignores case and regex does not, unless case_sensitive is \
+             set. Returns path:line:column with the matching line; in text and regex mode, \
+             files whose path matches the query (e.g. a pasted path) are listed first."
                 .to_string(),
             json!({
                 "type": "object",
@@ -256,7 +257,8 @@ fn tool_definitions() -> Value {
                     "include": {"type": "string", "description": "Semicolon-separated path globs to search within, e.g. src/**/*.rs;lib/**"},
                     "exclude": {"type": "string", "description": "Semicolon-separated path globs to skip."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_LIMIT, "default": 20},
-                    "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "Lines of context around each match."}
+                    "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "Lines of context around each match."},
+                    "case_sensitive": {"type": "boolean", "description": "Match case exactly (true) or ignore it (false). Default: text ignores case, regex matches it."}
                 },
                 "required": ["query"]
             }),
@@ -414,6 +416,8 @@ struct SearchArgs {
     limit: Option<usize>,
     #[serde(default)]
     context: usize,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
 }
 
 async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
@@ -433,7 +437,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         }
     };
     let context = a.context.min(5);
-    let q = query(json!({
+    let mut params = json!({
         "q": a.query,
         "max": limit(a.limit, 20, MAX_SEARCH_LIMIT),
         "include": a.include,
@@ -443,7 +447,11 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         "references": references,
         "context": context,
         "files": MCP_FILE_MATCHES,
-    }))?;
+    });
+    if let Some(c) = a.case_sensitive {
+        params["case"] = json!(c);
+    }
+    let q = query(params)?;
     let Json(resp) = api::search_handler(State(state.clone()), q).await?;
     let mut out = String::new();
     // Files whose path matches come first: an agent pasting a path wants
