@@ -634,6 +634,7 @@ impl Session {
             offset: req.offset,
             total_matches: info.total_matches,
             truncated_by_budget: info.truncated_by_budget,
+            limits_hit: crate::web::LimitHitJson::all(&info),
             elapsed_ms: search_started.elapsed().as_secs_f64() * 1000.0,
             rank_mode: Some(format!("{:?}", info.mode).to_lowercase()),
             total_candidates: Some(info.total_candidates),
@@ -794,6 +795,10 @@ fn run(cli: Cli) -> Result<i32> {
     }
     if session.format == Format::Grouped && !session.output.quiet {
         eprintln!("{}", format::summary(&resp));
+    }
+    // A capped result must never pass for a complete one.
+    for hit in &resp.limits_hit {
+        session.note(&format!("results capped: {}", hit.detail));
     }
     // Without a file watcher the server misses writes after its last scan.
     if let Some(note) = resp

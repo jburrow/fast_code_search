@@ -69,6 +69,74 @@ pub struct SearchRankingInfo {
     /// Total matches found across all searched candidates (before paging),
     /// or `None` when the search was truncated by the budget.
     pub total_matches: Option<usize>,
+    /// Every limit that cut this search short, in [`SearchLimit`] order.
+    /// Empty when the results are complete.
+    pub limits_hit: Vec<SearchLimit>,
+}
+
+/// A limit that stopped a search before it saw everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SearchLimit {
+    /// Fast ranking opened only the best `max_files` candidate files
+    /// (`server.max_fast_rank_files`, the request's `max_files`). The total
+    /// counts matches in the files that were opened.
+    FileCap,
+    /// The match budget ran out: the results are the best of those seen.
+    MatchBudget,
+    /// A file had more matching lines than one file may contribute.
+    PerFileCap,
+    /// The deadline passed (the request's timeout, or the server's).
+    Deadline,
+}
+
+impl SearchLimit {
+    /// Stable name used by the web API, gRPC, `fcs --json` and MCP.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FileCap => "max_files",
+            Self::MatchBudget => "match_budget",
+            Self::PerFileCap => "per_file_cap",
+            Self::Deadline => "timeout",
+        }
+    }
+
+    /// Parse [`Self::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        [
+            Self::FileCap,
+            Self::MatchBudget,
+            Self::PerFileCap,
+            Self::Deadline,
+        ]
+        .into_iter()
+        .find(|l| l.as_str() == s)
+    }
+
+    /// One sentence for people, naming the limit and how to get past it.
+    pub fn describe(self, info: &SearchRankingInfo) -> String {
+        match self {
+            Self::FileCap => format!(
+                "searched the best {} of {} candidate files (max_files); narrow the query or raise the file limit to search more",
+                info.candidates_searched, info.total_candidates
+            ),
+            Self::MatchBudget => {
+                "stopped after collecting enough matches to rank (match budget); these are the best of those seen".to_string()
+            }
+            Self::PerFileCap => {
+                "at least one file had more matching lines than one file may show (per-file cap)".to_string()
+            }
+            Self::Deadline => {
+                "stopped at the time limit (timeout); results come from the files searched so far".to_string()
+            }
+        }
+    }
+}
+
+impl SearchRankingInfo {
+    /// Whether any limit cut the search short.
+    pub fn is_capped(&self) -> bool {
+        !self.limits_hit.is_empty()
+    }
 }
 
 impl SearchRankingInfo {
@@ -79,6 +147,7 @@ impl SearchRankingInfo {
             candidates_searched: 0,
             truncated_by_budget: false,
             total_matches: Some(0),
+            limits_hit: Vec::new(),
         }
     }
 }
@@ -88,7 +157,9 @@ impl SearchRankingInfo {
 /// `match_budget` caps the number of matches materialized across all
 /// documents (each costs a `String`); once it is exhausted no further
 /// documents are opened. `deadline` stops the scan at a wall-clock time.
-/// Both are reported through [`SearchRankingInfo::truncated_by_budget`].
+/// Both are reported through [`SearchRankingInfo::truncated_by_budget`], and
+/// every limit that cut a search is named in
+/// [`SearchRankingInfo::limits_hit`].
 #[derive(Debug, Clone, Copy)]
 pub struct SearchLimits {
     /// Page size.
@@ -299,7 +370,9 @@ impl SearchSettings {
 pub struct QueryRun {
     remaining: std::sync::atomic::AtomicUsize,
     deadline: Option<std::time::Instant>,
-    truncated: std::sync::atomic::AtomicBool,
+    /// [`QueryRun::CAP`], [`QueryRun::BUDGET`] and [`QueryRun::DEADLINE`]
+    /// bits for the limits that stopped this run.
+    truncated: std::sync::atomic::AtomicU8,
     /// Most hits one document may contribute. Grows with the page offset so
     /// "load more" can reach a busy file's later lines.
     per_doc_cap: usize,
@@ -310,7 +383,7 @@ impl QueryRun {
         Self {
             remaining: std::sync::atomic::AtomicUsize::new(limits.match_budget),
             deadline: limits.deadline,
-            truncated: std::sync::atomic::AtomicBool::new(false),
+            truncated: std::sync::atomic::AtomicU8::new(0),
             per_doc_cap: limits.doc_cap(),
         }
     }
@@ -321,8 +394,7 @@ impl QueryRun {
     /// silently leaves out the file's remaining lines.
     pub fn take_doc_match(&self, held: usize) -> bool {
         if held >= self.per_doc_cap {
-            self.truncated
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.mark(Self::CAP);
             return false;
         }
         self.take_match()
@@ -333,12 +405,12 @@ impl QueryRun {
     pub fn exhausted(&self) -> bool {
         use std::sync::atomic::Ordering::Relaxed;
         if self.remaining.load(Relaxed) == 0 {
-            self.truncated.store(true, Relaxed);
+            self.mark(Self::BUDGET);
             return true;
         }
         if let Some(d) = self.deadline {
             if std::time::Instant::now() >= d {
-                self.truncated.store(true, Relaxed);
+                self.mark(Self::DEADLINE);
                 return true;
             }
         }
@@ -352,7 +424,7 @@ impl QueryRun {
         let mut cur = self.remaining.load(Relaxed);
         loop {
             if cur == 0 {
-                self.truncated.store(true, Relaxed);
+                self.mark(Self::BUDGET);
                 return false;
             }
             match self
@@ -365,7 +437,17 @@ impl QueryRun {
         }
     }
 
-    fn was_truncated(&self) -> bool {
+    const CAP: u8 = 1;
+    const BUDGET: u8 = 2;
+    const DEADLINE: u8 = 4;
+
+    fn mark(&self, bit: u8) {
+        self.truncated
+            .fetch_or(bit, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The bits of the limits that stopped this run (0 = none).
+    fn stopped_by(&self) -> u8 {
         self.truncated.load(std::sync::atomic::Ordering::Relaxed)
     }
 }

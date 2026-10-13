@@ -260,6 +260,7 @@ pub fn response_from(query: &str, results: Vec<SearchResultJson>) -> SearchRespo
         offset: 0,
         total_matches: Some(n),
         truncated_by_budget: false,
+        limits_hit: Vec::new(),
         elapsed_ms: 0.0,
         rank_mode: None,
         total_candidates: None,

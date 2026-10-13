@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
   skipped, then LOAD MORE to the end. Every match must be shown exactly
   once.
+- Capped results say which limit cut them. Search responses carry
+  `limits_hit` (`max_files`, `match_budget`, `per_file_cap`, `timeout`,
+  each with a sentence for people); gRPC sends the names in the
+  `fcs-limits-hit` response header, `fcs` prints a "results capped" note
+  on stderr, MCP's `search_code` adds a "Results capped" line (also when
+  nothing was found), and the web UI names the limit in the count's
+  tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
 - Web UI: file names are never re-cased. The dependency explorer's pane

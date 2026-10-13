@@ -418,6 +418,26 @@ test('resultsCountLabel: unknown total shows N+', () => {
     assert.equal(H.resultsCountLabel({ has_more: false }, 3).text, '3 RESULTS');
 });
 
+test('resultsCountLabel: the tooltip names the limit the server hit', () => {
+    const data = {
+        truncated_by_budget: true,
+        has_more: true,
+        limits_hit: [
+            { limit: 'max_files', detail: 'searched the best 2 of 9 candidate files' },
+            { limit: 'timeout', detail: 'stopped at the time limit' },
+        ],
+    };
+    const label = H.resultsCountLabel(data, 10);
+    assert.match(label.title, /stopped at the time limit/);
+    assert.doesNotMatch(label.title, /candidate files/);
+    assert.equal(H.limitsHitDetail({}, ['timeout']), '');
+});
+
+test('searchMetaLabel: a time limit shows beside the time', () => {
+    const meta = H.searchMetaLabel({ limits_hit: [{ limit: 'timeout', detail: 'x' }] }, 80);
+    assert.equal(meta.text, '80 ms · stopped at time limit');
+});
+
 test('formatDurationMs: one decimal only under 10 ms', () => {
     assert.equal(H.formatDurationMs(42.34), '42 ms');
     assert.equal(H.formatDurationMs(4.25), '4.3 ms');

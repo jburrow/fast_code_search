@@ -248,6 +248,10 @@ pub struct SearchResponse {
     pub total_matches: Option<usize>,
     /// True when the match budget or deadline stopped the scan early.
     pub truncated_by_budget: bool,
+    /// Every limit that cut this search short, so a capped result never
+    /// passes for a complete one. Absent when nothing was cut.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits_hit: Vec<LimitHitJson>,
     /// Time taken by the search in milliseconds
     pub elapsed_ms: f64,
     /// Ranking mode used: "auto", "fast", or "full"
@@ -263,6 +267,27 @@ pub struct SearchResponse {
     /// when it sets a limit. A client may ask for up to this many.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_files_allowed: Option<usize>,
+}
+
+/// A limit that cut a search short.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct LimitHitJson {
+    /// `max_files`, `match_budget`, `per_file_cap` or `timeout`.
+    pub limit: String,
+    /// What it cut, for people.
+    pub detail: String,
+}
+
+impl LimitHitJson {
+    pub fn all(info: &crate::search::SearchRankingInfo) -> Vec<Self> {
+        info.limits_hit
+            .iter()
+            .map(|l| Self {
+                limit: l.as_str().to_string(),
+                detail: l.describe(info),
+            })
+            .collect()
+    }
 }
 
 /// Index stats response
@@ -470,6 +495,7 @@ pub async fn search_handler(
             offset: 0,
             total_matches: Some(0),
             truncated_by_budget: false,
+            limits_hit: Vec::new(),
             elapsed_ms: 0.0,
             rank_mode: None,
             total_candidates: None,
@@ -569,6 +595,7 @@ pub async fn search_handler(
             offset,
             total_matches: ranking_info.total_matches,
             truncated_by_budget: ranking_info.truncated_by_budget,
+            limits_hit: LimitHitJson::all(&ranking_info),
             elapsed_ms,
             rank_mode: Some(format!("{:?}", ranking_info.mode).to_lowercase()),
             total_candidates: Some(ranking_info.total_candidates),

@@ -1029,6 +1029,64 @@ fn test_match_budget_bounds_work_and_is_reported() {
     assert!(info.truncated_by_budget, "deadline must mark truncation");
 }
 
+/// Every capped result names the limit that cut it, and a complete one
+/// names none.
+#[test]
+fn test_limits_hit_name_each_limit() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut engine = SearchEngine::new();
+    for f in 0..20 {
+        let body: String = (0..30)
+            .map(|l| format!("let cap_needle_{l} = {f};\n"))
+            .collect();
+        let path = temp_dir.path().join(format!("c{f}.rs"));
+        fs::write(&path, body).unwrap();
+        engine.index_file(path).unwrap();
+    }
+    engine.finalize();
+    let run = |limits: SearchLimits, mode| {
+        engine
+            .search_ranked_with_limits("cap_needle", limits, mode)
+            .1
+    };
+    let unbounded = || SearchLimits::new(10).with_match_budget(usize::MAX);
+
+    let info = run(unbounded(), RankMode::Full);
+    assert!(info.limits_hit.is_empty(), "{info:?}");
+    assert_eq!(info.total_matches, Some(600));
+
+    let info = run(SearchLimits::new(10).with_match_budget(50), RankMode::Full);
+    assert_eq!(info.limits_hit, vec![SearchLimit::MatchBudget]);
+
+    let info = run(unbounded().with_per_doc_cap(5), RankMode::Full);
+    assert_eq!(info.limits_hit, vec![SearchLimit::PerFileCap]);
+    assert_eq!(info.total_matches, None);
+
+    // The file cap keeps the total exact for the files opened.
+    let info = run(unbounded().with_max_files(4), RankMode::Fast);
+    assert_eq!(info.limits_hit, vec![SearchLimit::FileCap]);
+    assert_eq!(info.total_matches, Some(120));
+    assert!(!info.truncated_by_budget);
+    assert!(SearchLimit::FileCap
+        .describe(&info)
+        .contains("best 4 of 20 candidate files"));
+
+    let info = run(
+        unbounded().with_deadline(std::time::Instant::now() - std::time::Duration::from_millis(1)),
+        RankMode::Full,
+    );
+    assert_eq!(info.limits_hit, vec![SearchLimit::Deadline]);
+
+    for l in [
+        SearchLimit::FileCap,
+        SearchLimit::MatchBudget,
+        SearchLimit::PerFileCap,
+        SearchLimit::Deadline,
+    ] {
+        assert_eq!(SearchLimit::parse(l.as_str()), Some(l));
+    }
+}
+
 /// Roadmap 3.6: ordering is deterministic under ties and paging with
 /// `offset` walks the same ordering without repeats or gaps.
 #[test]

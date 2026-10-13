@@ -483,6 +483,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
             },
             resp.query
         );
+        push_limits_note(&mut out, &resp.limits_hit);
         push_freshness_note(&mut out, resp.index.as_ref());
         return Ok(out);
     }
@@ -500,6 +501,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
             ""
         }
     );
+    push_limits_note(&mut out, &resp.limits_hit);
     for r in &resp.results {
         let kind = match r.match_type.as_ref() {
             "SYMBOL_DEFINITION" => "  [definition]",
@@ -544,6 +546,14 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
 
 /// When no watcher keeps the index current, say how old it is, so an agent
 /// that just wrote a file knows a miss may only mean "not indexed yet".
+/// Name every limit that cut the search, so an agent never mistakes a
+/// capped result for a complete one.
+fn push_limits_note(out: &mut String, hits: &[super::api::LimitHitJson]) {
+    for hit in hits {
+        let _ = writeln!(out, "Results capped ({}): {}.", hit.limit, hit.detail);
+    }
+}
+
 fn push_freshness_note(out: &mut String, index: Option<&crate::search::IndexFreshness>) {
     if let Some(note) = index.and_then(|f| f.note(crate::search::unix_now_ms())) {
         let _ = writeln!(
