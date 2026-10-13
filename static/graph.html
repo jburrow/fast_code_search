@@ -4,10 +4,12 @@
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Dependency Explorer — Fast Code Search</title>
+    <!-- Theme first, so the page paints in the right colours (theme.js) -->
+    <script src="/ui-config.js"></script>
+    <script src="/theme.js"></script>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
-    <link rel="stylesheet" href="/highlight-light.min.css">
     <style>
         /* Three panes under the app header: file picker | import graph | source.
            Stacks to one column on narrow screens. */
@@ -17,20 +19,19 @@
 
         .app { height: calc(100vh - 3.5rem); display: grid; grid-template-rows: auto auto 1fr; }
         .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 10px 16px; background: var(--surface-1); border-bottom: 1px solid var(--border); }
-        .bar h1 { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
-        .tabs { display: flex; border: 1px solid var(--ink); }
-        .tabs button { background: var(--surface); border: 0; border-right: 1px solid var(--border); padding: 5px 12px; font-family: var(--font-mono); font-size: 12px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.04em; }
+        .bar h1 { font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+        .tabs { display: flex; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+        .tabs button { background: var(--surface); color: var(--text); border: 0; border-radius: 0; border-right: 1px solid var(--border); padding: 5px 12px; font-family: var(--font-label); font-size: 12px; cursor: pointer; text-transform: var(--label-case); letter-spacing: 0.04em; }
         .tabs button:last-child { border-right: 0; }
-        .tabs button[aria-selected="true"] { background: var(--accent); font-weight: 700; }
-        .tabs button:hover:not([aria-selected="true"]) { background: var(--surface-2); }
+        .tabs button[aria-selected="true"] { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+        .tabs button:hover:not([aria-selected="true"]) { background: var(--hover); }
         .toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); cursor: pointer; }
         .toggle input { accent-color: var(--accent-ink); }
         .stats { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 
         .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--page); min-height: 42px; }
-        .btn { background: var(--surface); border: 1px solid var(--ink); padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: var(--font-mono); color: var(--text); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
-        .btn:hover { background: var(--accent); }
-        .btn:disabled { opacity: 0.45; cursor: default; background: var(--surface); }
+        /* Buttons are the shared .btn (app.css), a little smaller here. */
+        .sub .btn, .srchead .btn { padding: 3px 10px; font-size: 11px; box-shadow: none; text-decoration: none; }
         select.btn { padding-right: 24px; }
         .crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-family: var(--font-mono); font-size: 12px; min-width: 0; }
         .crumbs button { background: none; border: 0; padding: 2px 4px; cursor: pointer; color: var(--text-3); }
@@ -45,10 +46,9 @@
         .panes { display: grid; grid-template-columns: 260px minmax(0, 1fr) minmax(0, 0.9fr); min-height: 0; }
         .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
         .pane:last-child { border-right: 0; }
-        .pane-h { padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); display: flex; gap: 8px; align-items: center; background: var(--surface-1); min-width: 0; }
+        .pane-h { padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: var(--font-label); font-size: 11px; text-transform: var(--label-case); letter-spacing: 0.08em; color: var(--text-3); display: flex; gap: 8px; align-items: center; background: var(--surface-1); min-width: 0; }
         .pane-h span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        /* Never re-case a file name: paths inside uppercase labels keep their case. */
-        .as-typed { text-transform: none; letter-spacing: normal; }
+        /* Never re-case a file name: paths inside labels use .as-typed (app.css). */
 
         .filter { margin: 8px; padding: 5px 8px; border: 1px solid var(--text-4); background: var(--surface); font-family: var(--font-mono); font-size: 12px; }
         .files { overflow: auto; flex: 1; padding-bottom: 8px; }
@@ -87,7 +87,7 @@
         .gedge.mod { stroke-dasharray: 2 3; }
         .gedge.hl { stroke-width: 3; opacity: 1; }
         .ehit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
-        .collabel { font-family: var(--font-mono); font-size: 10.5px; fill: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; }
+        .collabel { font-family: var(--font-label); font-size: 10.5px; fill: var(--text-3); letter-spacing: 0.06em; text-transform: var(--label-case); }
         .empty { padding: 40px 20px; text-align: center; color: var(--text-3); }
         .empty.err { color: var(--danger); }
 
@@ -98,36 +98,28 @@
         .srchead .p { font-family: var(--font-mono); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
         .srchead .m { font-size: 12px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
         .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 11px; }
-        .chips em { font-style: normal; color: var(--text-3); margin-right: 2px; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+        .chips em { font-style: normal; color: var(--text-3); margin-right: 2px; font-family: var(--font-label); font-size: 10.5px; text-transform: var(--label-case); letter-spacing: 0.06em; }
         .chips .none { color: var(--text-3); }
-        .chip { border: 1px solid var(--rdep); color: var(--rdep); background: transparent; padding: 1px 7px; border-radius: 9999px; font-family: var(--font-mono); font-size: 11px; cursor: pointer; }
+        .chip { border: 1px solid var(--rdep); color: var(--rdep); background: transparent; padding: 1px 7px; border-radius: var(--radius); font-family: var(--font-mono); font-size: 11px; cursor: pointer; }
         .chip:hover { background: var(--info-wash); }
         .chip.out { border-color: var(--dep); color: var(--dep); }
         .chip.out:hover { background: var(--accent-faint); }
-        .code { flex: 1; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--surface); }
-        .ln { display: grid; grid-template-columns: 56px minmax(0, 1fr); }
-        .ln .n { text-align: right; padding-right: 10px; color: var(--text-3); user-select: none; font-variant-numeric: tabular-nums; border-right: 1px solid var(--border); }
-        .ln .c { padding-left: 10px; white-space: pre; }
-        .ln.imp { background: var(--accent-faint); }
-        .ln.imp .n { color: var(--accent-ink-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent-ink); }
-        .ln.ext { background: var(--surface-2); }
-        .ln.flash { animation: flash 1.2s ease-out; }
-        @keyframes flash { from { background: var(--accent-soft); } }
-        .go { margin-left: 10px; border: 1px solid var(--dep); color: var(--dep); background: var(--surface); font-size: 10.5px; padding: 0 6px; cursor: pointer; border-radius: 9999px; }
+        .code { flex: 1; min-height: 0; background: var(--surface); }
+        .code .file-code { font-size: 12px; }
+        .file-line.imp { background: var(--accent-faint); }
+        .file-line.imp .file-line-num { color: var(--accent-ink-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent-ink); }
+        .file-line.ext { background: var(--surface-2); }
+        .go { margin-left: 10px; border: 1px solid var(--dep); color: var(--dep); background: var(--surface); font-size: 10.5px; padding: 0 6px; cursor: pointer; border-radius: var(--radius); }
         .go:hover { background: var(--accent-soft); color: var(--text); }
         .go.mod { border-style: dashed; }
-        .extag { margin-left: 10px; color: var(--text-3); font-size: 10.5px; border: 1px solid var(--border); padding: 0 6px; border-radius: 9999px; }
-        .code .more-lines { display: block; width: 100%; padding: 4px; background: var(--surface-2); border: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; color: var(--text-3); cursor: pointer; }
-        .code .more-lines:hover { color: var(--text); background: var(--accent-faint); }
-
-        @media (prefers-reduced-motion: reduce) { .ln.flash { animation: none; } }
+        .extag { margin-left: 10px; color: var(--text-3); font-size: 10.5px; border: 1px solid var(--border); padding: 0 6px; border-radius: var(--radius); }
         @media (max-width: 900px) {
             .app { height: auto; }
             .panes { grid-template-columns: minmax(0, 1fr); }
             .pane { border-right: 0; border-bottom: 1px solid var(--border); }
             .pane.files-pane .files { max-height: 220px; }
             .graphwrap { height: 60vh; flex: none; }
-            .code { max-height: 70vh; }
+            .code { height: 70vh; flex: none; }
             .stats { margin-left: 0; width: 100%; }
         }
     </style>
@@ -178,6 +170,7 @@
     <script src="/common.js"></script>
     <script src="/lib/keyword-helpers.js"></script>
     <script src="/lib/graph-helpers.js"></script>
+    <script src="/code-view.js"></script>
     <script src="/graph.js"></script>
 </body>
 </html>

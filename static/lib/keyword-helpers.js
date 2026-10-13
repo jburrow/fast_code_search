@@ -311,10 +311,10 @@ function pathMatchRuns(path, byteRanges) {
     return runs;
 }
 
-/** Header of the Files group: "1 PATH MATCHES" / "12 PATHS MATCH". */
+/** Header of the Files group: "1 path matches" / "12 paths match". */
 function fileMatchesLabel(total) {
     const n = Number(total).toLocaleString('en-US');
-    return total === 1 ? `${n} PATH MATCHES` : `${n} PATHS MATCH`;
+    return total === 1 ? `${n} path matches` : `${n} paths match`;
 }
 
 // ---------- Query syntax (mirrors src/search/query_syntax.rs) ----------
@@ -476,6 +476,79 @@ function matcherRanges(text, matcher) {
     return out;
 }
 
+// ---------- Code viewer ----------
+
+/**
+ * The 1-based numbers of the lines in `text` that `matcher` matches, for the
+ * viewer's scrollbar marks and match stepping. Worked out from the file text,
+ * not the DOM, since the viewer lays out only a window of lines. Stops after
+ * `cap` lines so a huge file with a common term stays cheap.
+ * @returns {number[]} ascending
+ */
+function matchLineNumbers(text, matcher, cap = 10000) {
+    if (!matcher || !text) return [];
+    const re = matcher.re;
+    const out = [];
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length && out.length < cap; i++) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(lines[i])) !== null) {
+            if (m[0].length) { out.push(i + 1); break; }
+            re.lastIndex++;
+        }
+    }
+    re.lastIndex = 0;
+    return out;
+}
+
+/**
+ * Scrollbar marks for `lines` in a file of `total` lines: at most one per
+ * bucket (the ruler is only so many pixels tall), each with its position as
+ * a percentage of the file and the first line it stands for.
+ * @returns {{line: number, pct: number}[]}
+ */
+function rulerMarks(lines, total, buckets = 400) {
+    const out = [];
+    let last = -1;
+    const span = Math.max(1, total - 1);
+    for (const line of lines) {
+        const pct = ((line - 1) / span) * 100;
+        const bucket = Math.min(buckets - 1, Math.floor((pct / 100) * buckets));
+        if (bucket === last) continue;
+        last = bucket;
+        out.push({ line, pct: Math.round(pct * 100) / 100 });
+    }
+    return out;
+}
+
+/** The entry of ascending `lines` closest to `line` (null when empty). */
+function nearestLine(lines, line) {
+    if (!lines.length) return null;
+    let lo = 0;
+    let hi = lines.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (lines[mid] < line) lo = mid + 1; else hi = mid;
+    }
+    const after = lines[lo];
+    const before = lo > 0 ? lines[lo - 1] : after;
+    return line - before <= after - line ? before : after;
+}
+
+/**
+ * The lines to lay out so `line` is visible, given the window [from, to]
+ * already rendered: grow it by up to `step` lines when `line` is that close
+ * (like "Show more"), otherwise start a new window of `size` lines each side.
+ * @returns {{from: number, to: number, fresh: boolean}}
+ */
+function windowFor(line, from, to, total, size, step) {
+    if (line >= from && line <= to) return { from, to, fresh: false };
+    if (line < from && from - line <= step) return { from: Math.max(1, Math.min(line, from - step)), to, fresh: false };
+    if (line > to && line - to <= step) return { from, to: Math.min(total, Math.max(line, to + step)), fresh: false };
+    return { from: Math.max(1, line - size), to: Math.min(total, line + size), fresh: true };
+}
+
 // ---------- Results header ----------
 
 /**
@@ -494,30 +567,30 @@ function resultsCountLabel(data, n) {
     const label = contentCountLabel(data, n);
     if (!files) return label;
     // Path matches sit above the content results; count them too, or
-    // "1 RESULT" over a box of two files reads as wrong.
-    const f = `${Number(files).toLocaleString('en-US')} FILE${files !== 1 ? 'S' : ''}`;
+    // "1 result" over a box of two files reads as wrong.
+    const f = `${Number(files).toLocaleString('en-US')} file${files !== 1 ? 's' : ''}`;
     return { text: `${f} · ${label.text}`, title: label.title };
 }
 
 function contentCountLabel(data, n) {
     const num = (k) => Number(k).toLocaleString('en-US');
-    const plural = (k) => `${num(k)} RESULT${k !== 1 ? 'S' : ''}`;
+    const plural = (k) => `${num(k)} result${k !== 1 ? 's' : ''}`;
     if (typeof data.total_matches === 'number') {
         return n < data.total_matches
-            ? { text: `${num(n)} OF ${plural(data.total_matches)}`, title: 'Use LOAD MORE to fetch the next page' }
+            ? { text: `${num(n)} of ${plural(data.total_matches)}`, title: 'Load more fetches the next page' }
             : { text: plural(n), title: '' };
     }
     if (data.truncated_by_budget) {
         const why = limitsHitDetail(data, ['match_budget', 'per_file_cap', 'timeout']);
         return {
-            text: `${num(n)}+ RESULTS`,
+            text: `${num(n)}+ results`,
             title: why
-                ? `The total is unknown: ${why}. LOAD MORE runs it again with a higher limit.`
-                : 'The search stopped at its match limit or time limit, so the total is unknown. LOAD MORE runs it again with a higher limit.',
+                ? `The total is unknown: ${why}. Load more runs it again with a higher limit.`
+                : 'The search stopped at its match limit or time limit, so the total is unknown. Load more runs it again with a higher limit.',
         };
     }
     return data.has_more
-        ? { text: `${num(n)}+ RESULTS`, title: 'More results are available' }
+        ? { text: `${num(n)}+ results`, title: 'More results are available' }
         : { text: plural(n), title: '' };
 }
 
@@ -573,7 +646,7 @@ function formatDurationMs(ms) {
  */
 function searchMetaLabel(data, durationMs, ignoresCase) {
     const caseNote = ignoresCase === undefined ? '' : (ignoresCase ? ' · ignoring case' : ' · matching case');
-    // A time limit is the one cut LOAD MORE cannot undo, so it is shown.
+    // A time limit is the one cut Load more cannot undo, so it is shown.
     const timedOut = limitsHitDetail(data, ['timeout']) ? ' · stopped at time limit' : '';
     const time = formatDurationMs(durationMs) + caseNote + timedOut;
     const total = data.total_candidates;
@@ -583,7 +656,7 @@ function searchMetaLabel(data, durationMs, ignoresCase) {
     if (searched < total) {
         return {
             text: `Searched ${num(searched)} of ${num(total)} files · ${time}`,
-            title: 'Fast ranking only opened the most likely files. SEARCH MORE FILES opens more of them; Ranking: Full under FILTER opens them all.',
+            title: 'Fast ranking only opened the most likely files. Search more files opens more of them; Ranking: Full under Filter opens them all.',
         };
     }
     return {
@@ -608,7 +681,7 @@ function moreFilesRequest(data) {
     const n = Math.min(total, allowed);
     return {
         maxFiles: n,
-        label: n === total ? 'SEARCH ALL FILES' : `SEARCH ${n.toLocaleString('en-US')} FILES`,
+        label: n === total ? 'Search all files' : `Search ${n.toLocaleString('en-US')} files`,
     };
 }
 
@@ -903,6 +976,10 @@ if (typeof module !== 'undefined' && module.exports) {
         compileRustRegex,
         buildQueryMatcher,
         matcherRanges,
+        matchLineNumbers,
+        rulerMarks,
+        nearestLine,
+        windowFor,
         splitHighlightedHtml,
         snippetHighlightPrefix,
         fileViewHash,

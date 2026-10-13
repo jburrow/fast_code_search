@@ -29,8 +29,8 @@ test('pathMatchRuns: byte ranges past multibyte characters', () => {
 });
 
 test('fileMatchesLabel: singular and plural', () => {
-    assert.equal(H.fileMatchesLabel(1), '1 PATH MATCHES');
-    assert.equal(H.fileMatchesLabel(1200), '1,200 PATHS MATCH');
+    assert.equal(H.fileMatchesLabel(1), '1 path matches');
+    assert.equal(H.fileMatchesLabel(1200), '1,200 paths match');
 });
 
 // ---------- byte offsets ----------
@@ -405,17 +405,17 @@ test('loadMoreRequest: at the cap it falls back to offset paging', () => {
 });
 
 test('resultsCountLabel: complete scan shows the plain total', () => {
-    assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 1234).text, '1,234 RESULTS');
-    assert.equal(H.resultsCountLabel({ total_matches: 1 }, 1).text, '1 RESULT');
-    assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 100).text, '100 OF 1,234 RESULTS');
+    assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 1234).text, '1,234 results');
+    assert.equal(H.resultsCountLabel({ total_matches: 1 }, 1).text, '1 result');
+    assert.equal(H.resultsCountLabel({ total_matches: 1234 }, 100).text, '100 of 1,234 results');
 });
 
 test('resultsCountLabel: unknown total shows N+', () => {
     const budget = H.resultsCountLabel({ truncated_by_budget: true, has_more: true }, 1000);
-    assert.equal(budget.text, '1,000+ RESULTS');
+    assert.equal(budget.text, '1,000+ results');
     assert.match(budget.title, /total is unknown/);
-    assert.equal(H.resultsCountLabel({ has_more: true }, 50).text, '50+ RESULTS');
-    assert.equal(H.resultsCountLabel({ has_more: false }, 3).text, '3 RESULTS');
+    assert.equal(H.resultsCountLabel({ has_more: true }, 50).text, '50+ results');
+    assert.equal(H.resultsCountLabel({ has_more: false }, 3).text, '3 results');
 });
 
 test('resultsCountLabel: the tooltip names the limit the server hit', () => {
@@ -604,10 +604,10 @@ test('moreFilesRequest: every candidate, or as many as the server allows', () =>
     assert.equal(H.moreFilesRequest({ total_candidates: 100, candidates_searched: 100 }), null);
     assert.equal(H.moreFilesRequest({}), null);
     assert.deepEqual(H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 2000 }),
-        { maxFiles: 12000, label: 'SEARCH ALL FILES' });
+        { maxFiles: 12000, label: 'Search all files' });
     assert.deepEqual(
         H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 2000, max_files_allowed: 5000 }),
-        { maxFiles: 5000, label: 'SEARCH 5,000 FILES' });
+        { maxFiles: 5000, label: 'Search 5,000 files' });
     assert.equal(
         H.moreFilesRequest({ total_candidates: 12000, candidates_searched: 5000, max_files_allowed: 5000 }),
         null);
@@ -644,6 +644,43 @@ test('fileExtension: the extension exactly as written', () => {
 
 test('resultsCountLabel: path matches are counted next to content results', () => {
     const data = { total_matches: 1, files: [{ file_path: 'a' }, { file_path: 'b' }], total_files: 2 };
-    assert.equal(H.resultsCountLabel(data, 1).text, '2 FILES · 1 RESULT');
-    assert.equal(H.resultsCountLabel({ total_matches: 3, files: [] }, 3).text, '3 RESULTS');
+    assert.equal(H.resultsCountLabel(data, 1).text, '2 files · 1 result');
+    assert.equal(H.resultsCountLabel({ total_matches: 3, files: [] }, 3).text, '3 results');
+});
+
+// ---------- code viewer ----------
+
+test('matchLineNumbers: lines the query matches, from the text', () => {
+    const m = H.buildQueryMatcher('foo');
+    assert.deepEqual(H.matchLineNumbers('foo\nbar\nx FOO y\n\nfoofoo', m), [1, 3, 5]);
+    assert.deepEqual(H.matchLineNumbers('foo\nfoo\nfoo', m, 2), [1, 2]);
+    assert.deepEqual(H.matchLineNumbers('abc', null), []);
+    // A regex that can match empty only counts real matches.
+    assert.deepEqual(H.matchLineNumbers('a\n\nb', H.buildQueryMatcher('b*', { regex: true })), [3]);
+});
+
+test('rulerMarks: one mark per bucket, positioned by line', () => {
+    assert.deepEqual(H.rulerMarks([1, 51, 101], 101), [
+        { line: 1, pct: 0 }, { line: 51, pct: 50 }, { line: 101, pct: 100 },
+    ]);
+    // 10,000 hits in a long file collapse to at most `buckets` marks.
+    const lines = Array.from({ length: 10000 }, (_, i) => i + 1);
+    assert.equal(H.rulerMarks(lines, 10000, 400).length, 400);
+    assert.deepEqual(H.rulerMarks([1], 1), [{ line: 1, pct: 0 }]);
+});
+
+test('nearestLine: closest entry, ties go up the file', () => {
+    assert.equal(H.nearestLine([10, 20, 40], 1), 10);
+    assert.equal(H.nearestLine([10, 20, 40], 15), 10);
+    assert.equal(H.nearestLine([10, 20, 40], 31), 40);
+    assert.equal(H.nearestLine([10, 20, 40], 99), 40);
+    assert.equal(H.nearestLine([], 5), null);
+});
+
+test('windowFor: grow the window nearby, start a new one far away', () => {
+    assert.deepEqual(H.windowFor(50, 1, 100, 5000, 100, 100), { from: 1, to: 100, fresh: false });
+    assert.deepEqual(H.windowFor(150, 1, 100, 5000, 100, 100), { from: 1, to: 200, fresh: false });
+    assert.deepEqual(H.windowFor(350, 400, 600, 5000, 100, 100), { from: 300, to: 600, fresh: false });
+    assert.deepEqual(H.windowFor(4000, 1, 100, 5000, 100, 100), { from: 3900, to: 4100, fresh: true });
+    assert.deepEqual(H.windowFor(4990, 1, 100, 5000, 100, 100), { from: 4890, to: 5000, fresh: true });
 });

@@ -58,6 +58,15 @@ max_page_offset = 100000
 # binary; TOML has no "unset" value, so this one key stays commented out.
 # static_dir = "static"
 
+# Web UI theme for people who haven't picked one: "bold", "corporate" or
+# "corporate-dark". Each browser remembers its own choice.
+default_theme = "bold"
+
+# Ask people to pick a theme on their first visit. Set false on a shared
+# server to use default_theme without asking (they can still change it from
+# the palette button in the header).
+theme_picker = true
+
 [indexer]
 # Paths to index on startup
 # Add your project directories here

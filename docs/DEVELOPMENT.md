@@ -299,9 +299,27 @@ server to see a change.
   `var(--shadow)`, …) defined once in `static/app.css`. Never write a colour
   anywhere else: `static/tests/tokens.test.js` fails on a hex or `rgb()`
   value outside `app.css`, and on a `var(--…)` that isn't defined.
+- **Themes:** the `:root, [data-theme="bold"]` block in `app.css` is the
+  default theme; `[data-theme="corporate"]` and `[data-theme="corporate-dark"]`
+  redefine every token (colours, radius, fonts, label case) so a preview of
+  one theme renders correctly inside a page in another. `static/theme.js`
+  applies the saved theme before the page paints and draws the header menu
+  and first-run picker. Adding a theme means a block in `app.css`, an entry
+  in `theme.js` and a `UiTheme` variant in `src/config.rs`; a test checks
+  all three agree and that every block sets every token.
+- **Labels and buttons:** write labels in sentence case ("Match case") and
+  give them the `label-case` class (or `text-transform: var(--label-case)`):
+  Bold shows them in capitals, the corporate themes as written. Never put a
+  file name, path or query inside one. Buttons use `.btn` / `.btn-primary`.
+  The token test fails on a literal `uppercase` or a hard-coded font name.
 - **Tailwind** colour names in `tailwind.config.js` point at the same tokens.
   After changing classes or the config, run `npm run build:css` and commit
   `static/tailwind.css` (CI checks it is up to date).
+- **Code:** `static/code-view.js` is the one code viewer (the file viewer,
+  the hover preview and the dependency explorer's source pane): line
+  numbers, highlighting, a window of lines with "Show more", and the ruler
+  of hits beside the scrollbar. Its pure parts are in
+  `static/lib/keyword-helpers.js` with tests.
 - Run the JavaScript tests with `node --test static/tests/*.test.js`.
 
 ### Performance Optimization Checklist

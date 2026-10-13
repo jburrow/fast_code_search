@@ -23,17 +23,29 @@ module.exports = {
                 "outline-variant": "var(--border)",
                 "primary": "var(--accent-ink)",
                 "primary-container": "var(--accent)",
+                "on-accent": "var(--on-accent)",
+                "hover": "var(--hover)",
+                "primary-hover": "var(--primary-hover)",
+                "on-primary-hover": "var(--on-primary-hover)",
+                "focus": "var(--focus)",
+            },
+            // Control and card borders are a theme's "strong line" (black in
+            // Bold, light grey in Corporate), not its ink.
+            borderColor: {
+                "black": "var(--line-strong)",
             },
             fontFamily: {
                 "headline": ["Space Grotesk", "sans-serif"],
                 "body": ["Inter", "sans-serif"],
-                "label": ["JetBrains Mono", "monospace"]
+                // Labels follow the theme; code, paths and queries stay mono.
+                "label": ["var(--font-label)"],
+                "mono": ["var(--font-mono)"]
             },
             borderRadius: {
-                // Design system uses sharp corners throughout; only pill/badge shapes use full rounding.
-                "DEFAULT": "0px",
-                "lg": "0px",
-                "xl": "0px",
+                // Corners follow the theme (square in Bold); only pill shapes use full rounding.
+                "DEFAULT": "var(--radius)",
+                "lg": "var(--radius)",
+                "xl": "var(--radius)",
                 "full": "9999px"
             },
         },

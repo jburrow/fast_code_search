@@ -9,7 +9,7 @@ const path = require('node:path');
 
 const STATIC = path.join(__dirname, '..');
 // Generated or vendored files, and the token file itself.
-const SKIP = new Set(['app.css', 'tailwind.css', 'fonts.css', 'highlight-light.min.css']);
+const SKIP = new Set(['app.css', 'tailwind.css', 'fonts.css']);
 const HEX = /#[0-9a-fA-F]{3,8}\b/g;
 const RGB = /\brgba?\(\s*\d/g;
 
@@ -37,6 +37,54 @@ test('no hard-coded colours outside app.css', () => {
         });
     }
     assert.deepEqual(found, [], 'use a var(--token) from static/app.css instead');
+});
+
+test('labels get their case and font from the theme', () => {
+    const found = [];
+    for (const file of sources()) {
+        const lines = fs.readFileSync(path.join(STATIC, file), 'utf8').split('\n');
+        lines.forEach((line, i) => {
+            if (/text-transform:\s*uppercase/.test(line) || /class="[^"]*\buppercase\b/.test(line)) {
+                found.push(`${file}:${i + 1}: use .label-case or text-transform: var(--label-case)`);
+            }
+            if (/'JetBrains Mono'|"Space Grotesk"|'Space Grotesk'/.test(line)) {
+                found.push(`${file}:${i + 1}: use var(--font-mono), var(--font-label) or var(--font-display)`);
+            }
+        });
+    }
+    assert.deepEqual(found, []);
+});
+
+// A theme block must set every colour itself: a preview drawn in one theme
+// inside a page in another would otherwise inherit the page's colours.
+test('every theme sets every colour token', () => {
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    const block = (selector) => {
+        const start = css.indexOf(selector + ' {');
+        assert.ok(start >= 0, `no ${selector} block in app.css`);
+        return css.slice(start, css.indexOf('\n}', start));
+    };
+    const names = (text) => new Set([...text.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+    // Shared by every theme: fonts, language badge colours.
+    const shared = (n) => /^--(font-(ui|mono)|lang-)/.test(n);
+    const bold = [...names(block(':root, [data-theme="bold"]'))].filter((n) => !shared(n));
+    const themeIds = [...css.matchAll(/^\[data-theme="([a-z-]+)"\] \{/gm)].map((m) => m[1]);
+    assert.deepEqual(themeIds, ['corporate', 'corporate-dark']);
+    for (const id of themeIds) {
+        const own = names(block(`[data-theme="${id}"]`));
+        const missing = bold.filter((n) => !own.has(n));
+        assert.deepEqual(missing, [], id);
+    }
+});
+
+test('theme.js, app.css and the server agree on the theme names', () => {
+    const js = fs.readFileSync(path.join(STATIC, 'theme.js'), 'utf8');
+    const ids = [...js.matchAll(/\{ id: '([a-z-]+)'/g)].map((m) => m[1]);
+    assert.deepEqual(ids, ['bold', 'corporate', 'corporate-dark']);
+    const rust = fs.readFileSync(path.join(STATIC, '..', 'src', 'config.rs'), 'utf8');
+    const variants = rust.slice(rust.indexOf('pub enum UiTheme'), rust.indexOf('}', rust.indexOf('pub enum UiTheme')));
+    const kebab = [...variants.matchAll(/^\s+([A-Z][A-Za-z]+),/gm)].map((m) => m[1].replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase());
+    assert.deepEqual(kebab, ids);
 });
 
 test('every var(--token) a page uses is defined', () => {

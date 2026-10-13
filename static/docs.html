@@ -4,27 +4,27 @@
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Documentation — Fast Code Search</title>
+    <!-- Theme first, so the page paints in the right colours (theme.js) -->
+    <script src="/ui-config.js"></script>
+    <script src="/theme.js"></script>
     <link rel="stylesheet" href="/tailwind.css"/>
     <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
     <style>
-        /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
-        .docs-content { border-radius: 0 !important; border-color: var(--ink) !important; box-shadow: var(--shadow-sm); }
-        .docs-content code { border-radius: 0 !important; }
-        .docs-content pre { border-radius: 0 !important; border: 1px solid var(--border); }
-        .badge { border-radius: 0 !important; }
         .docs-content {
-            background: var(--surface-2);
-            border-radius: 4px;
+            background: var(--surface);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-sm);
             padding: 2rem 2.5rem;
             margin-top: 1rem;
-            border: 1px solid var(--border);
+            border: 1px solid var(--line-strong);
             max-width: 900px;
             margin-left: auto;
             margin-right: auto;
         }
 
         .docs-content h1 {
+            font-family: var(--font-display);
             font-size: 1.75rem;
             font-weight: 700;
             margin-bottom: 1.5rem;
@@ -34,6 +34,7 @@
         }
 
         .docs-content h2 {
+            font-family: var(--font-display);
             font-size: 1.25rem;
             font-weight: 700;
             margin-top: 2rem;
@@ -43,12 +44,13 @@
         }
 
         .docs-content h3 {
+            font-family: var(--font-label);
             font-size: 1rem;
             font-weight: 600;
             margin-top: 1.5rem;
             margin-bottom: 0.5rem;
             color: var(--text-2);
-            text-transform: uppercase;
+            text-transform: var(--label-case);
             letter-spacing: 0.04em;
             font-size: 0.8rem;
         }
@@ -63,15 +65,16 @@
             background: var(--surface-1);
             color: var(--text);
             padding: 0.1rem 0.375rem;
-            border-radius: 3px;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            border-radius: var(--radius);
+            font-family: var(--font-mono);
             font-size: 0.875em;
         }
 
         .docs-content pre {
             background: var(--surface-1);
             padding: 1rem 1.25rem;
-            border-radius: 4px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
             overflow-x: auto;
             margin: 1rem 0;
         }
@@ -111,22 +114,23 @@
             background: var(--surface-3);
             font-weight: 700;
             font-size: 0.75rem;
-            text-transform: uppercase;
+            text-transform: var(--label-case);
             letter-spacing: 0.05em;
             color: var(--text-4);
         }
 
         .docs-content td {
-            background: var(--page);
+            background: var(--surface);
         }
 
         .badge {
             display: inline-block;
             padding: 0.1rem 0.45rem;
-            border-radius: 2px;
+            border-radius: var(--radius);
+            font-family: var(--font-label);
             font-size: 0.75rem;
             font-weight: 700;
-            text-transform: uppercase;
+            text-transform: var(--label-case);
             letter-spacing: 0.04em;
         }
 
@@ -186,7 +190,7 @@
             <p>Searches for exact text matches across all indexed files. Uses trigram indexing for fast candidate
                 filtering.</p>
             <ul>
-                <li>Case-insensitive matching; the <strong>MATCH CASE</strong> toggle (or
+                <li>Case-insensitive matching; the <strong><span class="label-case">Match case</span></strong> toggle (or
                     <code>case:yes</code>, <code>case=true</code>) matches case exactly. In the web UI
                     the toggle applies to regex too, and the results header says which applied.</li>
                 <li>Supports glob-based path filtering</li>
@@ -226,7 +230,7 @@
             </table>
             <p>Things that catch people out:</p>
             <ul>
-                <li><strong>Case.</strong> In the web UI a regex ignores case unless MATCH CASE is on,
+                <li><strong>Case.</strong> In the web UI a regex ignores case unless <span class="label-case">Match case</span> is on,
                     like plain search. On the API and in <code>fcs -e</code> a regex matches case (as in
                     ripgrep) unless it starts with <code>(?i)</code> or the request says
                     <code>case=false</code>.</li>
@@ -263,7 +267,7 @@
                 <code>file:</code> and <code>lang:</code> still narrow the files.</p>
 
             <h3>Dependency Explorer</h3>
-            <p><a href="/graph.html">GRAPH</a> shows the import graph around one file next to its source: what it
+            <p><a href="/graph.html" class="label-case">Graph</a> shows the import graph around one file next to its source: what it
                 imports and what imports it, the impact of changing it (with the affected tests), the shortest
                 import chain between two files, and a folder-level module map with import cycles marked. Search
                 results, the deps popover and the file viewer link into it, and <strong>Search these files</strong>
@@ -278,26 +282,22 @@
             <table>
                 <tr>
                     <th>Mode</th>
-                    <th>Icon</th>
                     <th>Description</th>
                     <th>When Used</th>
                 </tr>
                 <tr>
                     <td><span class="badge badge-auto">Auto</span></td>
-                    <td>🔄</td>
                     <td>Automatically chooses Fast or Full based on candidate count</td>
                     <td>Default mode</td>
                 </tr>
                 <tr>
                     <td><span class="badge badge-fast">Fast</span></td>
-                    <td>⚡</td>
                     <td>Ranks by file metadata, reads the top 2000 files only (<code>fast_rank_files</code>;
-                        SEARCH ALL FILES or <code>max_files</code> asks for more)</td>
+                        <span class="label-case">Search all files</span> or <code>max_files</code> asks for more)</td>
                     <td>>5,000 candidates (Auto) or explicit</td>
                 </tr>
                 <tr>
                     <td><span class="badge badge-full">Full</span></td>
-                    <td>📊</td>
                     <td>Reads all candidate files for full scoring</td>
                     <td>≤5,000 candidates (Auto) or explicit</td>
                 </tr>
@@ -678,7 +678,7 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                     <td>WebSocket for real-time indexing progress</td>
                 </tr>
             </table>
-            <p>The <code>/api/graph/*</code> endpoints back the <a href="/graph.html">GRAPH</a> page.
+            <p>The <code>/api/graph/*</code> endpoints back the <a href="/graph.html" class="label-case">Graph</a> page.
                 Rust <code>mod foo;</code> edges (and <code>pub use child::X</code> re-exports) are left out
                 unless <code>containment=true</code>. Every parameter is described in
                 <code>docs/API.md</code> in the repository.</p>

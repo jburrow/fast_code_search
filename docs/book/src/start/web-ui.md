@@ -60,10 +60,17 @@ lists every place it is used:
 
 ## Reading results
 
-- Hover a hit to preview the surrounding lines; click **View file** for the
-  whole file with the line highlighted (large files open in a window with
-  "Show more"). Click a line number to select that line; **Copy link**
-  copies a URL that reopens the search with the file at that line.
+- Each hit shows its line with the line number in a gutter (and the
+  context lines around it, if you asked for some). Definitions and
+  references are tagged. Click the bold line number to open the file there,
+  or hover it to preview the whole file. Click the file name to open the
+  file at its first hit; copy and the dependency explorer link show when
+  you hover the file.
+- The file viewer and the preview mark every line the query matches in a
+  strip beside the scrollbar; click the strip to jump to the nearest one.
+  Click a line number to select that line; **Copy link** copies a URL that
+  reopens the search with the file at that line. Large files open in a
+  window of lines with "Show more" at either end.
 - Ctrl+click (⌘+click on a Mac) a name in the file viewer or a result to
   open its definition; holding the key underlines what you can click. One
   definition opens directly, several open a list, and a name with no
@@ -90,8 +97,8 @@ its source. Pick a file on the left (most connected first) and switch view:
 - **Module map**: folders laid out so each only imports folders to its
   left; red marks import cycles.
 
-Click a box to read the file and a line to open the import statement it
-stands for; double-click (or Enter) to centre the graph on it. Import lines
+Click a box to read the file (import lines are marked beside its
+scrollbar) and a line to open the import statement it stands for; double-click (or Enter) to centre the graph on it. Import lines
 in the source are highlighted and link to their target; imports of
 packages and the standard library are marked *external*. **Search these
 files** runs a keyword search limited to the files on screen.
@@ -102,6 +109,17 @@ dependencies; **Show mod declarations** brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.
 
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
+
+## Themes
+
+The first time you open the UI it asks you to pick a theme; hover an option
+to try it on the page. **Bold** (the default) has capitalised labels and
+hard edges; **Corporate** and **Corporate dark** are quieter, with sentence
+case and rounded corners. Change it any time with the palette button in the
+header. The choice is kept in your browser. On a shared server,
+`default_theme` sets the theme for people who haven't chosen one and
+`theme_picker = false` skips the first-run question (see
+[Configuration](../guides/configuration.md)).
 
 ## Other pages
 
