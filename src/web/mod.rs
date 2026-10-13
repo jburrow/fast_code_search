@@ -6,8 +6,8 @@ mod mcp;
 pub mod metrics;
 
 pub use api::{
-    file_matches_to_json, results_to_json, ErrorResponse, FileMatchJson, SearchResponse,
-    SearchResultJson, MAX_FILE_MATCHES,
+    file_matches_to_json, results_to_json, ErrorResponse, FileMatchJson, LimitHitJson,
+    SearchResponse, SearchResultJson, MAX_FILE_MATCHES,
 };
 
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};

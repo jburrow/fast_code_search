@@ -351,7 +351,10 @@ impl SearchEngine {
         let base_cap = limits.doc_cap();
         let mut budget = limits.match_budget;
         let mut budget_cut = false;
-        let mut doc_truncated = false;
+        let mut hit = std::collections::BTreeSet::new();
+        if use_fast && candidates_searched < total_candidates {
+            hit.insert(SearchLimit::FileCap);
+        }
         let mut matches: Vec<SearchMatch> = Vec::new();
         let threads = rayon::current_num_threads().max(1);
         let (mut i, mut chunk) = (0usize, threads);
@@ -360,14 +363,15 @@ impl SearchEngine {
             // No document in this chunk can usefully emit more than the
             // budget left at its start (plus one, to learn that it had
             // more); fixed per chunk, so it is deterministic.
+            let chunk_cap = base_cap.min(budget.saturating_add(1));
             let doc_run = QueryRun::new(
                 &limits
                     .with_match_budget(usize::MAX)
-                    .with_per_doc_cap(base_cap.min(budget.saturating_add(1))),
+                    .with_per_doc_cap(chunk_cap),
             );
             if doc_run.exhausted() {
-                doc_truncated = true;
-                break; // deadline
+                hit.insert(SearchLimit::Deadline);
+                break;
             }
             let end = (i + chunk).min(doc_ids.len());
             let per: Vec<Option<Vec<SearchMatch>>> = doc_ids[i..end]
@@ -379,7 +383,18 @@ impl SearchEngine {
                     per_doc(doc_id, &doc_run)
                 })
                 .collect();
-            doc_truncated |= doc_run.was_truncated();
+            let stopped = doc_run.stopped_by();
+            if stopped & QueryRun::DEADLINE != 0 {
+                hit.insert(SearchLimit::Deadline);
+            }
+            // A file stopped at a cap below the per-file cap was cut by the
+            // budget, which `budget_cut` reports below.
+            if stopped & QueryRun::CAP != 0 && base_cap <= budget {
+                hit.insert(SearchLimit::PerFileCap);
+            }
+            if stopped & QueryRun::BUDGET != 0 {
+                hit.insert(SearchLimit::MatchBudget);
+            }
             docs_read += end - i;
             for hits in per.into_iter().flatten() {
                 if hits.len() > budget {
@@ -407,7 +422,12 @@ impl SearchEngine {
         let found = matches.len();
         Self::sort_and_page(&mut matches, &limits);
 
-        let truncated = budget_cut || doc_truncated;
+        if budget_cut {
+            hit.insert(SearchLimit::MatchBudget);
+        }
+        // The file cap leaves the total exact for the files that were
+        // opened; every other limit makes it unknown.
+        let truncated = hit.iter().any(|l| *l != SearchLimit::FileCap);
         (
             matches,
             SearchRankingInfo {
@@ -416,6 +436,7 @@ impl SearchEngine {
                 candidates_searched,
                 truncated_by_budget: truncated,
                 total_matches: if truncated { None } else { Some(found) },
+                limits_hit: hit.into_iter().collect(),
             },
         )
     }

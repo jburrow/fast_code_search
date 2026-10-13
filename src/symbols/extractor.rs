@@ -1315,14 +1315,38 @@ impl SymbolExtractor {
                         }
                     }
                     "import_from_statement" => {
-                        // Get the module name from the import
                         if let Some(module_node) = child.child_by_field_name("module_name") {
                             let module = &source[module_node.byte_range()];
-                            imports.push(ImportStatement {
-                                path: module.to_string(),
-                                line: child.start_position().row,
-                                import_type: ImportType::Python,
-                            });
+                            // `from pkg import a, b as c`: one entry per name,
+                            // `pkg.a`, so a name that is a submodule resolves to
+                            // its own file (as Python and grimp do); a name that
+                            // is not falls back to `pkg` itself. `from . import
+                            // a` gives `.a`. A `*` import is `pkg`.
+                            let mut names = Vec::new();
+                            let mut name_cursor = child.walk();
+                            for part in child.children_by_field_name("name", &mut name_cursor) {
+                                let name_node = if part.kind() == "aliased_import" {
+                                    part.child_by_field_name("name")
+                                } else {
+                                    Some(part)
+                                };
+                                if let Some(n) = name_node {
+                                    names.push(&source[n.byte_range()]);
+                                }
+                            }
+                            let sep = if module.ends_with('.') { "" } else { "." };
+                            let paths: Vec<String> = if names.is_empty() {
+                                vec![module.to_string()]
+                            } else {
+                                names.iter().map(|n| format!("{module}{sep}{n}")).collect()
+                            };
+                            for path in paths {
+                                imports.push(ImportStatement {
+                                    path,
+                                    line: child.start_position().row,
+                                    import_type: ImportType::Python,
+                                });
+                            }
                         } else {
                             // Fallback: extract from full text
                             let text = &source[child.byte_range()];
@@ -1389,16 +1413,40 @@ impl SymbolExtractor {
                             });
                         }
                     }
+                    // `import x from './x' assert { type: 'json' }` (the
+                    // older spelling of `with { … }`) does not parse; take the
+                    // module from the text of the broken statement's first
+                    // line.
+                    "ERROR" => {
+                        let text = source[child.byte_range()].lines().next().unwrap_or("");
+                        if let Some(path) = Self::js_import_from_text(text) {
+                            imports.push(ImportStatement {
+                                path,
+                                line: child.start_position().row,
+                                import_type: ImportType::JavaScript,
+                            });
+                        }
+                    }
                     "call_expression" => {
                         // require('./foo') and dynamic import('./foo')
                         if let Some(func_node) = child.child_by_field_name("function") {
                             let func_name = &source[func_node.byte_range()];
                             if func_name == "require" || func_name == "import" {
-                                if let Some(args_node) = child.child_by_field_name("arguments") {
-                                    let args_text = &source[args_node.byte_range()];
-                                    let path = args_text
-                                        .trim_matches(|c| c == '(' || c == ')')
-                                        .trim()
+                                // The first argument, past any comment
+                                // (`import(/* chunk */ './x')`), if it
+                                // is a plain string.
+                                let first_arg =
+                                    child.child_by_field_name("arguments").and_then(|args| {
+                                        let mut c = args.walk();
+                                        let first = args
+                                            .named_children(&mut c)
+                                            .find(|n| n.kind() != "comment");
+                                        first
+                                    });
+                                if let Some(arg) = first_arg
+                                    .filter(|a| matches!(a.kind(), "string" | "template_string"))
+                                {
+                                    let path = source[arg.byte_range()]
                                         .trim_matches(|c| c == '"' || c == '\'' || c == '`');
                                     if !path.is_empty() && !path.contains("${") {
                                         imports.push(ImportStatement {
@@ -1418,6 +1466,21 @@ impl SymbolExtractor {
                 stack.push(child);
             }
         }
+    }
+
+    /// The module of `import … from 'm'` / `export … from 'm'` in plain
+    /// text, for statements the grammar could not parse.
+    fn js_import_from_text(text: &str) -> Option<String> {
+        let t = text.trim_start();
+        if !(t.starts_with("import ") || t.starts_with("export ")) {
+            return None;
+        }
+        let after = &t[t.find(" from ")? + 6..];
+        let after = after.trim_start();
+        let quote = after.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+        let rest = &after[1..];
+        let path = &rest[..rest.find(quote)?];
+        (!path.is_empty()).then(|| path.to_string())
     }
 
     pub fn is_supported(&self) -> bool {
@@ -1661,7 +1724,17 @@ const { a, b } = obj;
             .extract_imports(py)
             .unwrap();
         let paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
-        assert_eq!(paths, vec!["os", "sys", ".rel", "pkg.mod"], "{paths:?}");
+        assert_eq!(
+            paths,
+            vec!["os", "sys", ".rel.thing", "pkg.mod.x"],
+            "{paths:?}"
+        );
+        let from = "from . import a, b as c\nfrom ..up import *\nfrom x import (y,\n  z)\n";
+        let imports = SymbolExtractor::new(Path::new("a.py"))
+            .extract_imports(from)
+            .unwrap();
+        let paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths, vec![".a", ".b", "..up", "x.y", "x.z"], "{paths:?}");
 
         let js = concat!(
             "import a from './a';\n",
@@ -1670,13 +1743,20 @@ const { a, b } = obj;
             "const d = require(`./d`);\n",
             "const e = await import('./e');\n",
             "const bad = require(`./${name}`);\n",
+            "const f = await import(/* chunk */ './f');\n",
+            "import g from './g.json' assert { type: 'json' };\n",
+            "import h from './h.json' with { type: 'json' };\n",
         );
         let imports = SymbolExtractor::new(Path::new("index.js"))
             .extract_imports(js)
             .unwrap();
         let mut paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
         paths.sort();
-        assert_eq!(paths, vec!["./a", "./b", "./c", "./d", "./e"], "{paths:?}");
+        assert_eq!(
+            paths,
+            vec!["./a", "./b", "./c", "./d", "./e", "./f", "./g.json", "./h.json"],
+            "{paths:?}"
+        );
     }
 
     /// Roadmap 5.6: Python — classes, functions, methods, module constants,

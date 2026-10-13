@@ -8,10 +8,12 @@
 
 use anyhow::Result;
 use fast_code_search::config::IndexerConfig;
+use fast_code_search::search::SearchSettings;
 use fast_code_search::search::{create_progress_broadcaster, IndexingProgress, SearchEngine};
 use fast_code_search::server::{
-    create_server_with_engine,
+    create_server_with_engine, create_server_with_engine_config_limits,
     search_proto::{code_search_client::CodeSearchClient, SearchRequest},
+    service::LIMITS_HIT_HEADER,
 };
 use fast_code_search::web::{create_router, AppState};
 use std::process::Command;
@@ -292,6 +294,29 @@ async fn web_grpc_and_offline_cli_agree() -> Result<()> {
     });
     let http_listener = TcpListener::bind("127.0.0.1:0").await?;
     let web_url = format!("http://{}", http_listener.local_addr()?);
+    // A second gRPC server that lets fast ranking open one file, for the
+    // capped-result check below (gRPC requests cannot set max_files).
+    let capped_listener = TcpListener::bind("127.0.0.1:0").await?;
+    let capped_url = format!("http://{}", capped_listener.local_addr()?);
+    let capped_service = create_server_with_engine_config_limits(
+        engine.clone(),
+        &IndexerConfig::default(),
+        Arc::new(tokio::sync::Semaphore::new(4)),
+        std::time::Duration::from_secs(30),
+        SearchSettings {
+            fast_rank_files: 1,
+            ..SearchSettings::default()
+        },
+    );
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(capped_service)
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(
+                capped_listener,
+            ))
+            .await
+            .expect("gRPC server failed");
+    });
     let router = create_router(
         engine,
         Arc::new(RwLock::new(IndexingProgress::default())),
@@ -314,5 +339,40 @@ async fn web_grpc_and_offline_cli_agree() -> Result<()> {
         let cli = tokio::task::block_in_place(|| cli_hits(config, c));
         assert_eq!(cli, web, "{}: offline fcs differs from the web API", c.name);
     }
+
+    // A capped search names the limit that cut it, in every front end.
+    let web: serde_json::Value = reqwest::Client::new()
+        .get(format!("{web_url}/api/search"))
+        .query(&[("q", "parse"), ("rank", "fast"), ("max_files", "1")])
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(web["limits_hit"][0]["limit"], "max_files", "web: {web}");
+    let cli = tokio::task::block_in_place(|| {
+        Command::new(env!("CARGO_BIN_EXE_fcs"))
+            .env_remove("FCS_CONFIG")
+            .env_remove("FCS_SERVER")
+            .args(["--offline", "--config", config, "--json"])
+            .args(["--rank", "fast", "--max-files", "1", "--", "parse"])
+            .output()
+    })?;
+    let cli: serde_json::Value = serde_json::from_slice(&cli.stdout)?;
+    assert_eq!(cli["limits_hit"], web["limits_hit"], "offline fcs");
+    let mut client = CodeSearchClient::connect(capped_url).await?;
+    let resp = client
+        .search(SearchRequest {
+            query: "parse".into(),
+            rank: "fast".into(),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(
+        resp.metadata()
+            .get(LIMITS_HIT_HEADER)
+            .and_then(|v| v.to_str().ok()),
+        Some("max_files"),
+        "gRPC"
+    );
     Ok(())
 }

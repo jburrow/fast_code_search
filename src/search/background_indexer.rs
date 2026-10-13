@@ -996,8 +996,11 @@ fn finalize_imports(
             pending_imports = pending_count,
             "Resolving remaining import dependencies..."
         );
-        engine.resolve_imports();
     }
+    // Always: besides the remaining imports, this resolves every importer
+    // once against the complete file set and settles the graph for watch
+    // updates.
+    engine.resolve_imports();
 
     info!("Finalizing index...");
     engine.finalize();

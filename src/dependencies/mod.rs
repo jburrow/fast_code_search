@@ -401,28 +401,49 @@ impl DependencyIndex {
             for _ in 1..dots {
                 base = base.parent()?.to_path_buf();
             }
-            return self.python_candidates(&base, &segments);
+            // `from . import name` (`.name`) where `name` is not a module
+            // imports it from the package itself.
+            return self
+                .python_candidates(&base, &segments)
+                .map(|(_, p)| p)
+                .or_else(|| self.indexed(&base.join("__init__.py")));
         }
 
-        // Absolute import: the nearest enclosing directory (walking up a
-        // bounded number of levels) that contains the package/module wins.
-        // Stdlib and site-packages names find nothing and resolve to None.
+        // Absolute import. Python 3 looks only on sys.path, never next to
+        // the importing module, so a directory that is itself a package
+        // (has `__init__.py`) is not a root: `import json` inside
+        // `fields/` is the standard library, not `fields/json.py`. The
+        // other ancestors, and their `src/` (a src layout), are possible
+        // roots; the one where the most of the dotted name exists wins,
+        // the nearest on a tie. Stdlib and site-packages names find
+        // nothing and resolve to None.
+        let mut best: Option<(usize, PathBuf)> = None;
         let mut base = Some(dir);
         for _ in 0..8 {
             let Some(b) = base else { break };
-            if let Some(found) = self.python_candidates(b, &segments) {
-                return Some(found);
+            if self.indexed(&b.join("__init__.py")).is_none() {
+                for root in [b.to_path_buf(), b.join("src")] {
+                    if let Some((k, p)) = self.python_candidates(&root, &segments) {
+                        if k == segments.len() {
+                            return Some(p); // the whole name: nothing beats it
+                        }
+                        if best.as_ref().is_none_or(|(bk, _)| k > *bk) {
+                            best = Some((k, p));
+                        }
+                    }
+                }
             }
             base = b.parent();
         }
-        None
+        best.map(|(_, p)| p)
     }
 
     /// `a.b.c` under `base` -> `a/b/c.py`, `a/b/c/__init__.py`, and for
-    /// `from a.b import name` where `name` is a symbol, `a/b.py` / `a/b/__init__.py`.
-    fn python_candidates(&self, base: &Path, segments: &[&str]) -> Option<PathBuf> {
+    /// `from a.b import name` where `name` is a symbol, `a/b.py` /
+    /// `a/b/__init__.py`. Returns how many segments matched, with the file.
+    fn python_candidates(&self, base: &Path, segments: &[&str]) -> Option<(usize, PathBuf)> {
         if segments.is_empty() {
-            return self.indexed(&base.join("__init__.py"));
+            return self.indexed(&base.join("__init__.py")).map(|p| (0, p));
         }
         for k in (1..=segments.len()).rev() {
             let mut dir = base.to_path_buf();
@@ -436,7 +457,7 @@ impl DependencyIndex {
                 .indexed(&as_module)
                 .or_else(|| self.indexed(&as_package))
             {
-                return Some(p);
+                return Some((k, p));
             }
         }
         None
@@ -480,15 +501,20 @@ impl DependencyIndex {
             if let Some(found) = self.indexed(p) {
                 return Some(found);
             }
-            // TS convention: `import './foo.js'` refers to `foo.ts` on disk.
-            if let Some(stem) = p.to_str().and_then(|s| {
-                s.strip_suffix(".js")
-                    .or_else(|| s.strip_suffix(".jsx"))
-                    .or_else(|| s.strip_suffix(".mjs"))
-            }) {
-                for ext in ["ts", "tsx", "mts"] {
-                    if let Some(found) = self.indexed(Path::new(&format!("{stem}.{ext}"))) {
-                        return Some(found);
+            // TS convention: `import './foo.js'` refers to `foo.ts` on disk
+            // (`.mjs` to `.mts`, `.cjs` to `.cts`).
+            let s = p.to_str().unwrap_or("");
+            for (written, on_disk) in [
+                (".js", &["ts", "tsx"][..]),
+                (".jsx", &["tsx", "ts"][..]),
+                (".mjs", &["mts"][..]),
+                (".cjs", &["cts"][..]),
+            ] {
+                if let Some(stem) = s.strip_suffix(written) {
+                    for ext in on_disk {
+                        if let Some(found) = self.indexed(Path::new(&format!("{stem}.{ext}"))) {
+                            return Some(found);
+                        }
                     }
                 }
             }
@@ -607,6 +633,27 @@ impl DependencyIndex {
         // via id_to_path; also prunes the filename index so a removed path
         // can never be picked as a bare-name resolution candidate).
         self.unregister_path_lookups(file_id);
+    }
+
+    /// Remove every edge out of `file_id`, keeping the file and the edges
+    /// into it. Returns the files that lost an in-edge.
+    pub fn remove_out_edges(&mut self, file_id: u32) -> Vec<u32> {
+        let Some(targets) = self.imports.remove(&file_id) else {
+            return Vec::new();
+        };
+        for &to_file in &targets {
+            if let Some(set) = self.imported_by.get_mut(&to_file) {
+                set.remove(&file_id);
+                let count = set.len() as u32;
+                if count == 0 {
+                    self.imported_by.remove(&to_file);
+                    self.import_counts.remove(&to_file);
+                } else {
+                    self.import_counts.insert(to_file, count);
+                }
+            }
+        }
+        targets.into_iter().collect()
     }
 
     /// Clear all dependency information
@@ -779,6 +826,57 @@ mod tests {
     }
 
     /// Roadmap 2.5: Python relative imports walk parent packages, dotted
+    /// Absolute imports resolve the way Python 3 does (checked against
+    /// grimp on Django by examples/graph_oracle.rs): a package directory is
+    /// never a sys.path root, so a stdlib name is not a sibling module; the
+    /// root where most of the dotted name exists wins; `src/` layouts work;
+    /// `from . import name` of a non-module is the package itself.
+    #[test]
+    fn test_resolve_python_like_python() {
+        let (temp, idx) = setup(&[
+            ("django/__init__.py", ""),
+            ("django/core/__init__.py", ""),
+            ("django/core/exceptions.py", ""),
+            ("django/template/__init__.py", ""),
+            ("django/template/backends/__init__.py", ""),
+            ("django/template/backends/django.py", ""),
+            ("django/template/backends/dummy.py", ""),
+            ("django/db/fields/__init__.py", ""),
+            ("django/db/fields/json.py", ""),
+            ("django/db/fields/composite.py", ""),
+            ("src/lib/__init__.py", ""),
+            ("src/lib/util.py", ""),
+            ("tests/test_lib.py", ""),
+        ]);
+        let f = |rel: &str| temp.path().join(rel);
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&f(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        let dummy = "django/template/backends/dummy.py";
+        assert_eq!(
+            r(dummy, "django.core.exceptions"),
+            id_of(&temp, &idx, "django/core/exceptions.py")
+        );
+        assert_eq!(
+            r(dummy, "django.template.Origin"),
+            id_of(&temp, &idx, "django/template/__init__.py")
+        );
+        assert_eq!(r("django/db/fields/composite.py", "json"), None);
+        assert_eq!(
+            r("django/db/fields/composite.py", ".json"),
+            id_of(&temp, &idx, "django/db/fields/json.py")
+        );
+        assert_eq!(
+            r("django/db/fields/composite.py", ".Field"),
+            id_of(&temp, &idx, "django/db/fields/__init__.py")
+        );
+        assert_eq!(
+            r("tests/test_lib.py", "lib.util"),
+            id_of(&temp, &idx, "src/lib/util.py")
+        );
+    }
+
     /// imports are directories, packages resolve to `__init__.py`, and
     /// stdlib names resolve to nothing.
     #[test]

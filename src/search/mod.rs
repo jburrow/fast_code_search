@@ -17,7 +17,7 @@ pub use background_indexer::{
 pub use engine::{
     create_progress_broadcaster, unix_now_ms, IndexFreshness, IndexingProgress, IndexingStatus,
     LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch, PathQuery,
-    PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine,
+    PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine, SearchLimit,
     SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings, SearchStats,
     SharedIndexingProgress,
 };

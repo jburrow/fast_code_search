@@ -581,14 +581,29 @@ function contentCountLabel(data, n) {
             : { text: plural(n), title: '' };
     }
     if (data.truncated_by_budget) {
+        const why = limitsHitDetail(data, ['match_budget', 'per_file_cap', 'timeout']);
         return {
             text: `${num(n)}+ results`,
-            title: 'The search stopped at its match limit or time limit, so the total is unknown. Load more runs it again with a higher limit.',
+            title: why
+                ? `The total is unknown: ${why}. Load more runs it again with a higher limit.`
+                : 'The search stopped at its match limit or time limit, so the total is unknown. Load more runs it again with a higher limit.',
         };
     }
     return data.has_more
         ? { text: `${num(n)}+ results`, title: 'More results are available' }
         : { text: plural(n), title: '' };
+}
+
+/**
+ * The server's own words for the limits that cut a search
+ * (`limits_hit`), joined, keeping only the named limits. '' when none.
+ * @param {object} data search response
+ * @param {string[]} names e.g. ['timeout']
+ * @returns {string}
+ */
+function limitsHitDetail(data, names) {
+    const hits = Array.isArray(data?.limits_hit) ? data.limits_hit : [];
+    return hits.filter((h) => names.includes(h.limit)).map((h) => h.detail).join('; ');
 }
 
 /**
@@ -631,7 +646,9 @@ function formatDurationMs(ms) {
  */
 function searchMetaLabel(data, durationMs, ignoresCase) {
     const caseNote = ignoresCase === undefined ? '' : (ignoresCase ? ' · ignoring case' : ' · matching case');
-    const time = formatDurationMs(durationMs) + caseNote;
+    // A time limit is the one cut Load more cannot undo, so it is shown.
+    const timedOut = limitsHitDetail(data, ['timeout']) ? ' · stopped at time limit' : '';
+    const time = formatDurationMs(durationMs) + caseNote + timedOut;
     const total = data.total_candidates;
     if (typeof total !== 'number') return { text: time, title: '' };
     const searched = typeof data.candidates_searched === 'number' ? data.candidates_searched : total;
@@ -971,6 +988,7 @@ if (typeof module !== 'undefined' && module.exports) {
         rankDefinitions,
         parseFileViewHash,
         resultsCountLabel,
+        limitsHitDetail,
         loadMoreRequest,
         formatDurationMs,
         searchMetaLabel,

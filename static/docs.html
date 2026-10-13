@@ -481,6 +481,12 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
   "total_matches": 1,
   "has_more": false,
   "truncated_by_budget": false,
+  "limits_hit": [
+    {
+      "limit": "max_files",
+      "detail": "searched the best 2000 of 15000 candidate files (max_files); narrow the query or raise the file limit to search more"
+    }
+  ],
   "elapsed_ms": 23.4,
   "rank_mode": "fast",
   "total_candidates": 15000,
@@ -503,6 +509,15 @@ curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></p
                 <code>total_matches</code> is omitted and <code>has_more</code> is
                 <code>true</code>. Otherwise <code>has_more</code> means
                 <code>offset + total_results &lt; total_matches</code>.</p>
+            <p><strong>Capped results:</strong> <code>limits_hit</code> names every limit that
+                cut the search short, so a capped result never passes for a complete one:
+                <code>max_files</code> (fast ranking opened only the most likely files; the total
+                counts those files), <code>match_budget</code>, <code>per_file_cap</code> (a file had
+                more matching lines than one file may show) and <code>timeout</code>. Each entry has a
+                <code>detail</code> sentence for people. The field is absent when nothing was cut.
+                gRPC sends the same names, comma-separated, in the <code>fcs-limits-hit</code>
+                response header; <code>fcs</code> prints them on stderr and in <code>--json</code>,
+                and the MCP <code>search_code</code> tool adds a "Results capped" line.</p>
 
             <h2 id="query-syntax">Query Syntax</h2>
             <p>Plain-text queries (not <code>regex=true</code>) are a literal, like <code>rg -F</code>:

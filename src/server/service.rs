@@ -7,6 +7,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
+/// gRPC response header naming the limits that cut a search short
+/// (comma-separated [`crate::search::SearchLimit::as_str`] names).
+pub const LIMITS_HIT_HEADER: &str = "fcs-limits-hit";
+
 // Include the generated protobuf code
 pub mod search_proto {
     tonic::include_proto!("search");
@@ -184,7 +188,7 @@ impl CodeSearch for CodeSearchService {
             }
         };
         let engine_arc = std::sync::Arc::clone(&self.engine);
-        let matches = tokio::task::spawn_blocking(move || {
+        let (matches, limits_hit) = tokio::task::spawn_blocking(move || {
             // Held for the search's real lifetime, not the RPC future's.
             let _permit = permit;
             // Use try_read to avoid blocking when a write lock is held during indexing.
@@ -201,11 +205,10 @@ impl CodeSearch for CodeSearchService {
                 }
             };
 
-            let matches = engine
+            let outcome = engine
                 .run(&request, limits)
-                .map_err(Status::invalid_argument)?
-                .matches;
-            Ok::<_, Status>(matches)
+                .map_err(Status::invalid_argument)?;
+            Ok::<_, Status>((outcome.matches, outcome.info.limits_hit))
         })
         .await
         .map_err(|e| Status::internal(format!("Search task panicked: {}", e)))??;
@@ -244,7 +247,16 @@ impl CodeSearch for CodeSearchService {
             }
         });
 
-        Ok(Response::new(ReceiverStream::new(rx)))
+        let mut response = Response::new(ReceiverStream::new(rx));
+        // The stream carries only hits, so the limits that cut the search
+        // travel in a response header: `fcs-limits-hit: max_files,timeout`.
+        if !limits_hit.is_empty() {
+            let names: Vec<&str> = limits_hit.iter().map(|l| l.as_str()).collect();
+            if let Ok(v) = names.join(",").parse() {
+                response.metadata_mut().insert(LIMITS_HIT_HEADER, v);
+            }
+        }
+        Ok(response)
     }
 
     #[tracing::instrument(skip(self, request))]

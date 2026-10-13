@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
   skipped, then LOAD MORE to the end. Every match must be shown exactly
   once.
+- The ripgrep backtest makes up queries from the corpus (`--generate N
+  --seed S`), checks them against `rg -F` and shrinks any that differ to
+  the smallest form. CI runs 500 per run.
+- Dependency-graph oracles: `examples/graph_oracle.rs` compares the
+  import graph with grimp on Django and with TypeScript's own resolver on
+  Vite, listing every edge fcs misses or draws wrongly. CI fails on any
+  regression. Django now matches grimp exactly; Vite's remaining misses
+  are tsconfig `paths`.
+- Capped results say which limit cut them. Search responses carry
+  `limits_hit` (`max_files`, `match_budget`, `per_file_cap`, `timeout`,
+  each with a sentence for people); gRPC sends the names in the
+  `fcs-limits-hit` response header, `fcs` prints a "results capped" note
+  on stderr, MCP's `search_code` adds a "Results capped" line (also when
+  nothing was found), and the web UI names the limit in the count's
+  tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
 - Web UI: denser results, about twice as many hits per screen. A hit is its
@@ -103,6 +118,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Files changed while the initial index was being built could be indexed
   with old content, or stay indexed after being deleted or moved. Content
   that is no longer on disk is now never merged into the index.
+- Python imports resolve the way Python 3 does. `from pkg import
+  submodule` and `from . import submodule` now point at the submodule,
+  not at the package's `__init__.py`. An absolute import no longer
+  resolves to a same-named file next to the importer (`import json`
+  inside a package reaches a sibling `json.py` no more, and `from django
+  import …` inside `backends/` no longer means `backends/django.py`).
+  `src/` layouts resolve. On Django the graph went from 87% to 100% of
+  grimp's edges, with 287 wrong edges removed.
+- The dependency graph of a watched index now ends up the same as a fresh
+  build's. Every file's imports are kept, and a change resolves again the
+  imports it can affect: a file that appears takes over imports that had
+  fallen back to its package, a file that goes hands them back, and an
+  edit that removes an import no longer leaves its edge behind when the
+  imported file is saved in the same burst. The initial build also
+  resolves every import once more at the end, so the graph no longer
+  depends on the order files were indexed in.
+- JavaScript/TypeScript: `import(/* comment */ './x')`, imports with the
+  older `assert { type: 'json' }` and `.cjs` written for a `.cts` file now
+  give edges.
+- Whole-word search now uses the same word characters as ripgrep's `-w`
+  (Unicode `\w`): combining marks such as Indic vowel signs and decomposed
+  accents count as part of a word, so `word:yes` no longer matches inside
+  Hindi, Malayalam or Telugu words.
+- Whole-word search with MATCH CASE no longer misses a match that overlaps
+  a rejected one (`}}` at the end of `field}}}`), and the same on the
+  Unicode case-folding path.
 
 ## [0.15.2] - 2026-10-13
 

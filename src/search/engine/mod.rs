@@ -69,6 +69,74 @@ pub struct SearchRankingInfo {
     /// Total matches found across all searched candidates (before paging),
     /// or `None` when the search was truncated by the budget.
     pub total_matches: Option<usize>,
+    /// Every limit that cut this search short, in [`SearchLimit`] order.
+    /// Empty when the results are complete.
+    pub limits_hit: Vec<SearchLimit>,
+}
+
+/// A limit that stopped a search before it saw everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SearchLimit {
+    /// Fast ranking opened only the best `max_files` candidate files
+    /// (`server.max_fast_rank_files`, the request's `max_files`). The total
+    /// counts matches in the files that were opened.
+    FileCap,
+    /// The match budget ran out: the results are the best of those seen.
+    MatchBudget,
+    /// A file had more matching lines than one file may contribute.
+    PerFileCap,
+    /// The deadline passed (the request's timeout, or the server's).
+    Deadline,
+}
+
+impl SearchLimit {
+    /// Stable name used by the web API, gRPC, `fcs --json` and MCP.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FileCap => "max_files",
+            Self::MatchBudget => "match_budget",
+            Self::PerFileCap => "per_file_cap",
+            Self::Deadline => "timeout",
+        }
+    }
+
+    /// Parse [`Self::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        [
+            Self::FileCap,
+            Self::MatchBudget,
+            Self::PerFileCap,
+            Self::Deadline,
+        ]
+        .into_iter()
+        .find(|l| l.as_str() == s)
+    }
+
+    /// One sentence for people, naming the limit and how to get past it.
+    pub fn describe(self, info: &SearchRankingInfo) -> String {
+        match self {
+            Self::FileCap => format!(
+                "searched the best {} of {} candidate files (max_files); narrow the query or raise the file limit to search more",
+                info.candidates_searched, info.total_candidates
+            ),
+            Self::MatchBudget => {
+                "stopped after collecting enough matches to rank (match budget); these are the best of those seen".to_string()
+            }
+            Self::PerFileCap => {
+                "at least one file had more matching lines than one file may show (per-file cap)".to_string()
+            }
+            Self::Deadline => {
+                "stopped at the time limit (timeout); results come from the files searched so far".to_string()
+            }
+        }
+    }
+}
+
+impl SearchRankingInfo {
+    /// Whether any limit cut the search short.
+    pub fn is_capped(&self) -> bool {
+        !self.limits_hit.is_empty()
+    }
 }
 
 impl SearchRankingInfo {
@@ -79,6 +147,7 @@ impl SearchRankingInfo {
             candidates_searched: 0,
             truncated_by_budget: false,
             total_matches: Some(0),
+            limits_hit: Vec::new(),
         }
     }
 }
@@ -88,7 +157,9 @@ impl SearchRankingInfo {
 /// `match_budget` caps the number of matches materialized across all
 /// documents (each costs a `String`); once it is exhausted no further
 /// documents are opened. `deadline` stops the scan at a wall-clock time.
-/// Both are reported through [`SearchRankingInfo::truncated_by_budget`].
+/// Both are reported through [`SearchRankingInfo::truncated_by_budget`], and
+/// every limit that cut a search is named in
+/// [`SearchRankingInfo::limits_hit`].
 #[derive(Debug, Clone, Copy)]
 pub struct SearchLimits {
     /// Page size.
@@ -299,7 +370,9 @@ impl SearchSettings {
 pub struct QueryRun {
     remaining: std::sync::atomic::AtomicUsize,
     deadline: Option<std::time::Instant>,
-    truncated: std::sync::atomic::AtomicBool,
+    /// [`QueryRun::CAP`], [`QueryRun::BUDGET`] and [`QueryRun::DEADLINE`]
+    /// bits for the limits that stopped this run.
+    truncated: std::sync::atomic::AtomicU8,
     /// Most hits one document may contribute. Grows with the page offset so
     /// "load more" can reach a busy file's later lines.
     per_doc_cap: usize,
@@ -310,7 +383,7 @@ impl QueryRun {
         Self {
             remaining: std::sync::atomic::AtomicUsize::new(limits.match_budget),
             deadline: limits.deadline,
-            truncated: std::sync::atomic::AtomicBool::new(false),
+            truncated: std::sync::atomic::AtomicU8::new(0),
             per_doc_cap: limits.doc_cap(),
         }
     }
@@ -321,8 +394,7 @@ impl QueryRun {
     /// silently leaves out the file's remaining lines.
     pub fn take_doc_match(&self, held: usize) -> bool {
         if held >= self.per_doc_cap {
-            self.truncated
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.mark(Self::CAP);
             return false;
         }
         self.take_match()
@@ -333,12 +405,12 @@ impl QueryRun {
     pub fn exhausted(&self) -> bool {
         use std::sync::atomic::Ordering::Relaxed;
         if self.remaining.load(Relaxed) == 0 {
-            self.truncated.store(true, Relaxed);
+            self.mark(Self::BUDGET);
             return true;
         }
         if let Some(d) = self.deadline {
             if std::time::Instant::now() >= d {
-                self.truncated.store(true, Relaxed);
+                self.mark(Self::DEADLINE);
                 return true;
             }
         }
@@ -352,7 +424,7 @@ impl QueryRun {
         let mut cur = self.remaining.load(Relaxed);
         loop {
             if cur == 0 {
-                self.truncated.store(true, Relaxed);
+                self.mark(Self::BUDGET);
                 return false;
             }
             match self
@@ -365,7 +437,17 @@ impl QueryRun {
         }
     }
 
-    fn was_truncated(&self) -> bool {
+    const CAP: u8 = 1;
+    const BUDGET: u8 = 2;
+    const DEADLINE: u8 = 4;
+
+    fn mark(&self, bit: u8) {
+        self.truncated
+            .fetch_or(bit, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The bits of the limits that stopped this run (0 = none).
+    fn stopped_by(&self) -> u8 {
         self.truncated.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
@@ -814,6 +896,23 @@ pub struct SearchEngine {
     /// segment to indices into this Vec.
     waiting_imports: Vec<Option<(u32, std::path::PathBuf, String)>>,
     waiting_keys: FxHashMap<String, Vec<usize>>,
+    /// Every import of every file, as written, by file id. The graph's
+    /// edges are a function of these and of which files exist; keeping
+    /// them lets a change recompute exactly the importers it can affect, so
+    /// a watched index converges to what a fresh build would draw (an
+    /// import that fell back to a package, `from . import m` reaching
+    /// `__init__.py`, moves to `m.py` when that file appears, and back when
+    /// it goes).
+    import_specs: FxHashMap<u32, (std::path::PathBuf, Vec<String>)>,
+    /// Lowercase path segment of an import -> files with such an import.
+    /// May hold ids of files since removed or re-indexed; checked on use.
+    spec_keys: FxHashMap<String, FxHashSet<u32>>,
+    /// Files whose imports must be resolved again (they imported a file
+    /// that was removed).
+    dirty_importers: FxHashSet<u32>,
+    /// The initial build has finished resolving: from then on every change
+    /// recomputes the importers it affects.
+    graph_settled: bool,
     /// Lowercased stems of files added since the last incremental resolution.
     recently_added_stems: Vec<String>,
     /// Recently compiled regexes (search-as-you-type resends the same pattern).
@@ -859,6 +958,10 @@ impl SearchEngine {
             pending_imports: Vec::new(),
             waiting_imports: Vec::new(),
             waiting_keys: FxHashMap::default(),
+            import_specs: FxHashMap::default(),
+            spec_keys: FxHashMap::default(),
+            dirty_importers: FxHashSet::default(),
+            graph_settled: false,
             recently_added_stems: Vec::new(),
             regex_cache: std::sync::Mutex::new(RegexCache::new(64)),
             generation: 0,
@@ -1072,6 +1175,7 @@ impl SearchEngine {
             self.store_references(file_id, pre_indexed.references);
 
             // Store imports for later resolution
+            self.record_import_specs(file_id, &pre_indexed.path, &pre_indexed.imports);
             if !pre_indexed.imports.is_empty() {
                 self.pending_imports
                     .push((file_id, pre_indexed.path, pre_indexed.imports));
@@ -1100,7 +1204,106 @@ impl SearchEngine {
             .collect();
         self.retry_waiting(all);
         self.recently_added_stems.clear();
+        // Imports resolved while the build was still adding files may have
+        // fallen back to a package whose module was indexed later; resolve
+        // every importer once more against the complete file set, so the
+        // graph does not depend on the order files were indexed in.
+        let everyone: FxHashSet<u32> = self.import_specs.keys().copied().collect();
+        self.dirty_importers.clear();
+        self.recompute_importers(everyone);
         self.compact_waiting_imports();
+        self.graph_settled = true;
+    }
+
+    /// Remember `imports` as `id`'s complete import list.
+    fn record_import_specs(&mut self, id: u32, path: &Path, imports: &[String]) {
+        if imports.is_empty() {
+            self.import_specs.remove(&id);
+            return;
+        }
+        for import in imports {
+            for key in Self::import_keys(import) {
+                self.spec_keys.entry(key).or_default().insert(id);
+            }
+        }
+        self.import_specs
+            .insert(id, (path.to_path_buf(), imports.to_vec()));
+    }
+
+    /// Resolve the imports of `ids` from scratch: drop their out-edges and
+    /// parked imports, then resolve every import they have against the
+    /// files indexed now. Files whose import list is not known (loaded from
+    /// an index saved before lists were kept) are parsed again. Returns the
+    /// number of edges added.
+    fn recompute_importers(&mut self, ids: FxHashSet<u32>) -> usize {
+        let ids: Vec<u32> = ids
+            .into_iter()
+            .filter(|&id| self.file_store.get(id).is_some())
+            .collect();
+        debug_assert!(
+            ids.iter()
+                .all(|&id| self.dependency_index.path_of(id).is_some()),
+            "an importer is being resolved while it is out of the dependency index"
+        );
+        if ids.is_empty() {
+            return 0;
+        }
+        for &id in &ids {
+            if !self.import_specs.contains_key(&id) {
+                if let Some((path, specs)) = self.extract_import_specs(id) {
+                    self.record_import_specs(id, &path, &specs);
+                }
+            }
+        }
+        // Their parked imports are parked again below if still unresolved;
+        // those of removed files go for good.
+        let set: FxHashSet<u32> = ids.iter().copied().collect();
+        let store = &self.file_store;
+        for slot in self.waiting_imports.iter_mut() {
+            if slot
+                .as_ref()
+                .is_some_and(|(id, _, _)| set.contains(id) || store.get(*id).is_none())
+            {
+                *slot = None;
+            }
+        }
+        let mut touched = Vec::new();
+        for &id in &ids {
+            touched.extend(self.dependency_index.remove_out_edges(id));
+            if let Some((path, specs)) = self.import_specs.get(&id) {
+                self.pending_imports.push((id, path.clone(), specs.clone()));
+            }
+        }
+        let added = self.resolve_pending_now();
+        // In-edge counts feed the ranking metadata of old and new targets.
+        for &id in &ids {
+            touched.extend(self.dependency_index.get_dependencies(id));
+        }
+        touched.sort_unstable();
+        touched.dedup();
+        if !self.file_metadata.is_empty() {
+            for id in touched {
+                self.refresh_file_metadata(id);
+            }
+        }
+        added
+    }
+
+    /// Parse `id`'s imports from its indexed content.
+    fn extract_import_specs(&self, id: u32) -> Option<(std::path::PathBuf, Vec<String>)> {
+        if !self.enable_symbols {
+            return None;
+        }
+        let path = self.file_store.get_path(id)?.to_path_buf();
+        let file = self.file_store.get(id)?;
+        let content = file.as_str().ok()?;
+        let specs = crate::symbols::SymbolExtractor::new_for_source(&path, Some(&content))
+            .extract_imports(&content)
+            .ok()?
+            .into_iter()
+            .map(|i| i.path)
+            .collect();
+        Some((path, specs))
     }
 
     /// Resolve the imports of files added since the last call; park those
@@ -1164,6 +1367,20 @@ impl SearchEngine {
         //    mentions a stem that was just indexed. Cost is proportional to
         //    the batch, not to the (ever-growing) set of unresolvable
         //    stdlib/package imports.
+        if self.graph_settled {
+            // Every importer whose imports mention a name just indexed, or
+            // that imported a file just removed, is resolved again: a new
+            // file can take an import over from a package it fell back to.
+            let mut affected = std::mem::take(&mut self.dirty_importers);
+            for stem in &self.recently_added_stems {
+                if let Some(ids) = self.spec_keys.get(stem) {
+                    affected.extend(ids.iter().copied());
+                }
+            }
+            self.recently_added_stems.clear();
+            edges += self.recompute_importers(affected);
+            return edges;
+        }
         let candidates = self.take_retry_candidates();
         edges += self.retry_waiting(candidates);
         edges
@@ -1558,7 +1775,7 @@ impl SearchEngine {
             let pre: Vec<PreIndexedFile> = fresh.par_iter().filter_map(parse).collect();
             indexed += self.index_batch(pre);
         }
-        if indexed > 0 {
+        if indexed + removed > 0 {
             self.resolve_imports_incremental();
         }
         (indexed, removed)
@@ -1605,6 +1822,7 @@ impl SearchEngine {
         // then re-register and re-index under the same id.
         self.file_store.refresh_file_by_id(id);
         self.install_reindexed(id, path, pre, &dependents);
+        self.resolve_imports_incremental();
         Ok(())
     }
 
@@ -1658,10 +1876,13 @@ impl SearchEngine {
         self.symbol_cache[id as usize] = pre.symbols;
         self.store_references(id, pre.references);
 
+        // Resolved by the caller once every file of the batch is back in
+        // the index: resolving here, mid-batch, would resolve importers
+        // that are stripped and not yet installed.
+        self.record_import_specs(id, path, &pre.imports);
         if !pre.imports.is_empty() {
             self.pending_imports
                 .push((id, path.to_path_buf(), pre.imports));
-            self.resolve_imports_incremental();
         }
 
         // Keep fast-mode ranking signals current for the touched file.
@@ -1862,6 +2083,8 @@ impl SearchEngine {
         for other in dependents_changed {
             self.refresh_file_metadata(other);
         }
+        self.import_specs.remove(&id);
+        self.dirty_importers.extend(dependents.iter().copied());
         if let Some(path) = path {
             self.park_dependents(path, &dependents);
         }

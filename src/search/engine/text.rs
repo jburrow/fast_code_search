@@ -443,11 +443,14 @@ pub(super) fn is_word_char_at(bytes: &[u8], idx: usize) -> bool {
     match bytes.get(idx) {
         None => false,
         Some(&b) if b.is_ascii() => b.is_ascii_alphanumeric() || b == b'_',
-        // Non-ASCII: letters/digits count as word characters.
+        // Non-ASCII: Unicode `\w`, as ripgrep's `-w` uses it. Letters and
+        // digits, and also combining marks (the vowel signs of Indic
+        // scripts, a decomposed accent), connector punctuation and the
+        // zero-width joiners.
         Some(_) => std::str::from_utf8(&bytes[idx..])
             .ok()
             .and_then(|s| s.chars().next())
-            .is_some_and(|c| c.is_alphanumeric()),
+            .is_some_and(regex_syntax::is_word_character),
     }
 }
 
@@ -524,9 +527,16 @@ pub(super) fn line_hits<'a>(
     };
     let (mut line_num, mut counted, mut skip_until) = (0usize, 0usize, 0usize);
     if opts.case_sensitive {
+        // Every start position, overlapping ones included: when `}}` in
+        // `x}}}` fails the whole-word test, the next candidate is one byte
+        // on, not past the rejected match (`find_iter` would skip it).
         let finder = memmem::Finder::new(needle.as_bytes());
-        for pos in finder.find_iter(bytes) {
+        let mut from = 0usize;
+        while let Some(i) = bytes.get(from..).and_then(|rest| finder.find(rest)) {
+            let pos = from + i;
+            from = pos + 1;
             if pos < skip_until {
+                from = skip_until;
                 continue;
             }
             push_hit(
@@ -578,7 +588,8 @@ pub(super) fn line_hits<'a>(
                     });
                     break;
                 }
-                from = e;
+                // Try the next start, not the end: matches can overlap.
+                from = s + line[s..].chars().next().map_or(1, char::len_utf8);
             }
             offset += line.len() + 1;
         }

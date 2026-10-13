@@ -1,0 +1,7 @@
+# {remote: {key: {name: field}}}
+wrap(self.catch_all_view(x))
+x»»»
+"name_local": "Tiệt",
+msgstr "ഒഴിച്ചിടരുത്."
+msgstr "सेप्टेम्बर"
+plain: tie." and ok"

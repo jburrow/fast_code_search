@@ -124,6 +124,11 @@ pub fn apply_changes(
         }
     }
     outcome.removed += engine.prune_vanished_in(&dirs);
+    // Files that imported a removed file resolve their imports again (an
+    // import may now fall back to the package, or stay unresolved).
+    if outcome.removed > 0 {
+        engine.resolve_imports_incremental();
+    }
     if outcome.changed() {
         engine.updated_at_ms = Some(crate::search::unix_now_ms());
     }

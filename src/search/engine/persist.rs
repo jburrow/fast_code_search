@@ -191,6 +191,9 @@ impl SearchEngine {
         self.pending_imports.clear();
         self.waiting_imports.clear();
         self.waiting_keys.clear();
+        self.import_specs.clear();
+        self.spec_keys.clear();
+        self.dirty_importers.clear();
         self.recently_added_stems.clear();
         self.dependency_index.clear();
 
@@ -303,6 +306,7 @@ impl SearchEngine {
             self.symbol_cache[entry.file_id as usize] = entry.symbols;
             self.store_references(entry.file_id, entry.references);
 
+            self.record_import_specs(entry.file_id, &entry.path, &entry.imports);
             if !entry.imports.is_empty() {
                 self.pending_imports
                     .push((entry.file_id, entry.path, entry.imports));
