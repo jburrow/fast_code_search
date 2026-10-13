@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-13
+
+**Search works differently in this release.** Plain-text search is now a
+literal, like `rg -F`: several words are one phrase, quotes and a leading
+`-` are part of the text, and the `-term` exclusion and quoted phrases are
+gone. In the web UI, a regex ignores case unless MATCH CASE is on. See
+*Changed* below before upgrading scripts or saved queries.
+
 ### Added
 - Search finds files by path. Typing or pasting a path (`src/web/api.rs`,
   `api.rs`, an absolute path, Windows `\` separators) lists the matching
@@ -1181,7 +1189,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/jburrow/fast_code_search/compare/v0.14.0...v0.15.1
 [0.14.0]: https://github.com/jburrow/fast_code_search/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/jburrow/fast_code_search/compare/v0.12.1...v0.13.0
