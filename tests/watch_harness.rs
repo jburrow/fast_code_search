@@ -624,4 +624,3 @@ fn watch_changes_during_initial_build_converge() {
     }
     h.assert_converges(&format!("changes during the initial build (seed {seed})"));
 }
-
