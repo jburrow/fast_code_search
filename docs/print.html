@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-eb6634d2.js";
+            window.path_to_searchindex_js = "searchindex-f59db20d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0ff2f94c.js"></script>
@@ -573,10 +573,17 @@ the text literally or with its special characters escaped.</li>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with suggested fixes, and a regex that finds nothing with an Ignore case suggestion" style="max-width:100%">
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
-<li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
-whole file with the line highlighted (large files open in a window with
-“Show more”). Click a line number to select that line; <strong>Copy link</strong>
-copies a URL that reopens the search with the file at that line.</li>
+<li>Each hit shows its line with the line number in a gutter (and the
+context lines around it, if you asked for some). Definitions and
+references are tagged. Click the bold line number to open the file there,
+or hover it to preview the whole file. Click the file name to open the
+file at its first hit; copy and the dependency explorer link show when
+you hover the file.</li>
+<li>The file viewer and the preview mark every line the query matches in a
+strip beside the scrollbar; click the strip to jump to the nearest one.
+Click a line number to select that line; <strong>Copy link</strong> copies a URL that
+reopens the search with the file at that line. Large files open in a
+window of lines with “Show more” at either end.</li>
 <li>Ctrl+click (⌘+click on a Mac) a name in the file viewer or a result to
 open its definition; holding the key underlines what you can click. One
 definition opens directly, several open a list, and a name with no
@@ -602,8 +609,8 @@ files among them.</li>
 <li><strong>Module map</strong>: folders laid out so each only imports folders to its
 left; red marks import cycles.</li>
 </ul>
-<p>Click a box to read the file and a line to open the import statement it
-stands for; double-click (or Enter) to centre the graph on it. Import lines
+<p>Click a box to read the file (import lines are marked beside its
+scrollbar) and a line to open the import statement it stands for; double-click (or Enter) to centre the graph on it. Import lines
 in the source are highlighted and link to their target; imports of
 packages and the standard library are marked <em>external</em>. <strong>Search these
 files</strong> runs a keyword search limited to the files on screen.</p>
@@ -3450,6 +3457,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Web UI: the file viewer, the hover preview and the dependency explorer’s
+source pane mark every hit in the whole file in a strip beside the
+scrollbar (query matches; import lines in the explorer). Click the strip
+to jump to the nearest one, including lines not laid out yet (#141). The
+preview’s ↑/↓ now step through every match in the file, not only the
+lines on screen.</li>
 <li>Web UI themes: Bold (the existing look, still the default), Corporate and
 Corporate dark. On a first visit the UI asks which to use, previewing each
 live; the palette button in the header (replacing the <code>?</code> link, which
@@ -3465,6 +3478,16 @@ once.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Web UI: denser results, about twice as many hits per screen. A hit is its
+code with the line number in a gutter instead of a header row above it;
+the kind shows as a small tag on definitions and references; the line
+number opens the file there (and previews it on hover), the file name
+opens the file, and copy and the explorer link show on hover. Language
+and dependency badges are quiet outlines, and on a phone they hide so the
+file name isn’t cut off.</li>
+<li>Web UI: one code viewer for the file viewer, the hover preview and the
+dependency explorer, so line numbers, highlighting and “Show more” look
+and work the same in each.</li>
 <li>Web UI: one rule for labels and buttons. Labels are written in sentence
 case and the theme decides whether they show in capitals (Bold does), so
 buttons, toggles and headings on every page now look alike. The search
@@ -5340,6 +5363,11 @@ The token test fails on a literal <code>uppercase</code> or a hard-coded font na
 <li><strong>Tailwind</strong> colour names in <code>tailwind.config.js</code> point at the same tokens.
 After changing classes or the config, run <code>npm run build:css</code> and commit
 <code>static/tailwind.css</code> (CI checks it is up to date).</li>
+<li><strong>Code:</strong> <code>static/code-view.js</code> is the one code viewer (the file viewer,
+the hover preview and the dependency explorer’s source pane): line
+numbers, highlighting, a window of lines with “Show more”, and the ruler
+of hits beside the scrollbar. Its pure parts are in
+<code>static/lib/keyword-helpers.js</code> with tests.</li>
 <li>Run the JavaScript tests with <code>node --test static/tests/*.test.js</code>.</li>
 </ul>
 <h3 id="performance-optimization-checklist"><a class="header" href="#performance-optimization-checklist">Performance Optimization Checklist</a></h3>

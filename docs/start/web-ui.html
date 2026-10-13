@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-eb6634d2.js";
+            window.path_to_searchindex_js = "../searchindex-f59db20d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -237,10 +237,17 @@ the text literally or with its special characters escaped.</li>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with suggested fixes, and a regex that finds nothing with an Ignore case suggestion" style="max-width:100%">
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
-<li>Hover a hit to preview the surrounding lines; click <strong>View file</strong> for the
-whole file with the line highlighted (large files open in a window with
-“Show more”). Click a line number to select that line; <strong>Copy link</strong>
-copies a URL that reopens the search with the file at that line.</li>
+<li>Each hit shows its line with the line number in a gutter (and the
+context lines around it, if you asked for some). Definitions and
+references are tagged. Click the bold line number to open the file there,
+or hover it to preview the whole file. Click the file name to open the
+file at its first hit; copy and the dependency explorer link show when
+you hover the file.</li>
+<li>The file viewer and the preview mark every line the query matches in a
+strip beside the scrollbar; click the strip to jump to the nearest one.
+Click a line number to select that line; <strong>Copy link</strong> copies a URL that
+reopens the search with the file at that line. Large files open in a
+window of lines with “Show more” at either end.</li>
 <li>Ctrl+click (⌘+click on a Mac) a name in the file viewer or a result to
 open its definition; holding the key underlines what you can click. One
 definition opens directly, several open a list, and a name with no
@@ -266,8 +273,8 @@ files among them.</li>
 <li><strong>Module map</strong>: folders laid out so each only imports folders to its
 left; red marks import cycles.</li>
 </ul>
-<p>Click a box to read the file and a line to open the import statement it
-stands for; double-click (or Enter) to centre the graph on it. Import lines
+<p>Click a box to read the file (import lines are marked beside its
+scrollbar) and a line to open the import statement it stands for; double-click (or Enter) to centre the graph on it. Import lines
 in the source are highlighted and link to their target; imports of
 packages and the standard library are marked <em>external</em>. <strong>Search these
 files</strong> runs a keyword search limited to the files on screen.</p>

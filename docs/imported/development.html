@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-eb6634d2.js";
+            window.path_to_searchindex_js = "../searchindex-f59db20d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-0ff2f94c.js"></script>
@@ -467,6 +467,11 @@ The token test fails on a literal <code>uppercase</code> or a hard-coded font na
 <li><strong>Tailwind</strong> colour names in <code>tailwind.config.js</code> point at the same tokens.
 After changing classes or the config, run <code>npm run build:css</code> and commit
 <code>static/tailwind.css</code> (CI checks it is up to date).</li>
+<li><strong>Code:</strong> <code>static/code-view.js</code> is the one code viewer (the file viewer,
+the hover preview and the dependency explorer’s source pane): line
+numbers, highlighting, a window of lines with “Show more”, and the ruler
+of hits beside the scrollbar. Its pure parts are in
+<code>static/lib/keyword-helpers.js</code> with tests.</li>
 <li>Run the JavaScript tests with <code>node --test static/tests/*.test.js</code>.</li>
 </ul>
 <h3 id="performance-optimization-checklist"><a class="header" href="#performance-optimization-checklist">Performance Optimization Checklist</a></h3>
