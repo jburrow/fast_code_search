@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2d889c6e.js";
+            window.path_to_searchindex_js = "../searchindex-b85cde9d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -241,6 +241,16 @@ tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Web UI: the preview icon is back at the end of each match line (#153 had
+moved the preview to the line number, with nothing to show it). Hovering
+the icon previews the file; clicking it pins the preview, which then
+stays open until Escape, a click outside it or its ×, as does clicking
+or scrolling inside it. The line number opens the file and no longer
+previews it on hover.</li>
+<li>Web UI: results show one line of context either side of each hit by
+default (was the match line only). Filter → Context lines still sets it
+and is remembered once you pick a value; <code>context=0</code> in a link shows the
+match line only.</li>
 <li>Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
 keyboard shortcuts, <code>fcs</code> and MCP, the main API calls) with links into
 the documentation book. It used to be a hand-kept copy of the API

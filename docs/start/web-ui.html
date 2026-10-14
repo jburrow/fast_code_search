@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2d889c6e.js";
+            window.path_to_searchindex_js = "../searchindex-b85cde9d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -237,12 +237,14 @@ the text literally or with its special characters escaped.</li>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/regex.gif" alt="The regex cheat-sheet, an unclosed group with suggested fixes, and a regex that finds nothing with an Ignore case suggestion" style="max-width:100%">
 <h2 id="reading-results"><a class="header" href="#reading-results">Reading results</a></h2>
 <ul>
-<li>Each hit shows its line with the line number in a gutter (and the
-context lines around it, if you asked for some). Definitions and
-references are tagged. Click the bold line number to open the file there,
-or hover it to preview the whole file. Click the file name to open the
-file at its first hit; copy and the dependency explorer link show when
-you hover the file.</li>
+<li>Each hit shows its line with the line number in a gutter and one line of
+context either side (change it under <strong>Filter</strong>: <em>Match only</em> up to ±5;
+the browser remembers your choice). Definitions and references are
+tagged. Hover the ↗ icon at the end of a hit to preview the whole file;
+click the icon to keep the preview open until Escape, a click outside it
+or its ×. Click the line number to open the file there, or the file name
+to open it at its first hit; copy and the dependency explorer link show
+when you hover the file.</li>
 <li>The file viewer and the preview mark every line the query matches in a
 strip beside the scrollbar; click the strip to jump to the nearest one.
 Click a line number to select that line; <strong>Copy link</strong> copies a URL that
