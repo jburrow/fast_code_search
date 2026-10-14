@@ -80,8 +80,8 @@ truncated window of a long line, see `content_truncated`);
 `match_column` the 0-based character column, for placing an editor cursor.
 `line_number` is 0 for a filename match. `match_type` is `TEXT`,
 `SYMBOL_DEFINITION` or `SYMBOL_REFERENCE`. `file_hits` is how many hits
-the search found in the result's file across all pages (a page shows every
-file's best hit before any file's second, so it often holds only some);
+the search found in the result's file across all pages (a file cut at a
+page boundary shows only some of them on this page);
 `file_hits_capped: true` means the file reached the per-file cap and may
 hold more. To fetch one file's hits, repeat the search with `include` set to
 that path (glob metacharacters escaped as `[*]`). `total_matches` is present when
@@ -171,8 +171,8 @@ Each hit's score combines the match with structural signals (weights in
 | Long line | inverse-length damping |
 | Test or example path (fast mode) | 0.7× |
 
-Hits are interleaved by file (every file's best hit first) so one file
-cannot fill a page.
+Results are in rank order with each file's hits kept together: files in
+the order of their best hit, then every hit of that file by score.
 
 ### Import graph
 

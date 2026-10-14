@@ -268,9 +268,9 @@ fn repeat_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>> {
 }
 
 /// `None` when every hit on the first page carries its file's true hit
-/// count. A page interleaves files, so the web UI's "N of M hits" badge
-/// comes from `file_hits`, not from the hits it has; the full result (which
-/// the line check holds to rg's) gives the true counts.
+/// count and each file's hits are together. The web UI's "N of M hits"
+/// badge comes from `file_hits`, not from the hits on the page; the full
+/// result (which the line check holds to rg's) gives the true counts.
 fn file_hits_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>> {
     let (all, _) = run(engine, q, SearchLimits::exhaustive())?;
     let mut want: HashMap<String, u32> = HashMap::new();
@@ -278,6 +278,14 @@ fn file_hits_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>>
         *want.entry(m.file_path.clone()).or_default() += 1;
     }
     let (page, _) = run(engine, q, SearchLimits::new(PAGE))?;
+    let mut runs: Vec<&str> = page.iter().map(|m| m.file_path.as_str()).collect();
+    runs.dedup();
+    let distinct: BTreeSet<&str> = runs.iter().copied().collect();
+    if runs.len() != distinct.len() {
+        return Ok(Some(
+            "order: a file's hits are split by another file's".into(),
+        ));
+    }
     for m in &page {
         let w = want.get(&m.file_path).copied().unwrap_or(0);
         let ok = if m.file_hits_capped {

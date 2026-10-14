@@ -949,10 +949,9 @@ function pathFilterParam(text) {
 }
 
 /**
- * A file group's hit badge. Results interleave files (every file's best hit,
- * then every file's second, …), so a page often shows only some of a file's
- * hits; `fileHits` is how many the search found in the file in all, and
- * `capped` says the file may hold more than that.
+ * A file group's hit badge. A file cut at a page boundary shows only some
+ * of its hits; `fileHits` is how many the search found in the file in all,
+ * and `capped` says the file may hold more than that.
  */
 function groupHitsLabel(shown, fileHits, capped) {
     const total = Math.max(shown, Number(fileHits) || 0);
@@ -962,7 +961,7 @@ function groupHitsLabel(shown, fileHits, capped) {
         return {
             text: `${shown} of ${total.toLocaleString('en-US')}${plus} ${noun(total)}`,
             more: total - shown,
-            title: `Results show each file's best hits first; this file has ${total.toLocaleString('en-US')}${plus} in all`,
+            title: `This file has ${total.toLocaleString('en-US')}${plus} hits in all`,
         };
     }
     return { text: `${shown} ${noun(shown)}`, more: 0, title: '' };

@@ -1665,8 +1665,8 @@ function renderGroupHtml(group) {
         ? `<span class="result-badge lang-badge"><span class="lang-dot" style="background:var(--lang-${langClass || 'default'}, var(--text-4))"></span>${escapeHtml(ext)}</span>`
         : '';
 
-    // The page may show only some of the file's hits (files interleave);
-    // the badge says how many the file has and a button fetches the rest.
+    // A file cut at a page boundary shows only some of its hits; the badge
+    // says how many the file has and a button fetches the rest.
     const hitsLabel = groupHitsLabel(group.hits.length,
         Math.max(...group.hits.map(hit => hit.file_hits || 0)),
         group.hits.some(hit => hit.file_hits_capped));

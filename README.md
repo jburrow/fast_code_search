@@ -155,8 +155,8 @@ cover Rust, Python and JavaScript/TypeScript; search covers every language.
   where the index is saved, and startup or storage problems (a busy port, a
   disk out of space or inodes).
 - **Bounded by design.** Every search runs under a deadline and a match budget,
-  page sizes and offsets are capped, regexes have size limits, and results are
-  interleaved by file so one file cannot fill a page.
+  page sizes and offsets are capped, and regexes have size limits. Results
+  are in rank order with each file's hits together.
 - **`fcs`** ([docs/CLI.md](docs/CLI.md)): grep-style output and exit codes, `--json`,
   and an offline fallback that searches the saved index when the server is down.
 - **MCP for coding agents** at `/mcp`: search, read files and walk the import

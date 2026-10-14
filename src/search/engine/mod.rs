@@ -53,8 +53,8 @@ pub struct SearchMatch {
     /// [`SearchEngine::search_references`], not a text or definition hit.
     pub is_reference: bool,
     pub dependency_count: u32,
-    /// Hits this search found in the match's file, across every page — a
-    /// page interleaves files, so it usually holds only some of them.
+    /// Hits this search found in the match's file, across every page (a
+    /// file cut at a page boundary has only some of them on the page).
     /// Filled in when the results are paged.
     pub file_hits: u32,
     /// The file may hold more hits than `file_hits`: it stopped at the

@@ -370,8 +370,8 @@
         .hit-line .ctx-line-content { flex: 1; min-width: 0; white-space: pre; overflow-x: auto; padding-right: 0.75rem; }
         .hit-open { display: flex; align-items: center; flex-shrink: 0; align-self: center; padding: 0 0.6rem 0 0.25rem; background: none; border: 0; cursor: pointer; color: var(--text-3); }
         .hit-open:hover, .hit-open:focus-visible { color: var(--accent-ink); outline: none; }
-        /* Below a group showing only some of its file's hits (results
-           interleave files): fetch the rest of that file's hits. */
+        /* Below a group showing only some of its file's hits (cut at a
+           page boundary): fetch the rest of that file's hits. */
         .group-more-row { border-top: 1px solid var(--border); padding: 0.3rem 0.75rem 0.3rem 3.25rem; }
         .group-more-btn { background: none; border: 0; padding: 0; cursor: pointer; font-family: var(--font-label); font-size: 0.72rem; font-weight: 700; color: var(--accent-ink); }
         .group-more-btn:hover, .group-more-btn:focus-visible { text-decoration: underline; outline: none; }

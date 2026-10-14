@@ -2589,11 +2589,11 @@ fn test_regex_single_pass_keeps_per_line_semantics() {
     assert_eq!(run(r"fn\r\nmain\("), vec![(3, 0, 2)]);
 }
 
-/// Review 4.1 (result diversity): a file holding many hits no longer fills
-/// the page: every file's best hit comes first, then every file's second
-/// hit, and so on.
+/// Results are in plain rank order with each file's hits kept together:
+/// files in the order of their best hit, every hit of a file before the next
+/// file. No hit waits behind other files' hits.
 #[test]
-fn test_results_interleave_files() {
+fn test_results_keep_each_files_hits_together() {
     use crate::search::query_syntax::parse;
     let temp_dir = TempDir::new().unwrap();
     let src = temp_dir.path().join("src");
@@ -2630,10 +2630,29 @@ fn test_results_interleave_files() {
         .iter()
         .map(|h| h.file_path.rsplit('/').next().unwrap())
         .collect();
-    // The first three hits are one per file; only then does many.rs repeat.
-    let first_three: std::collections::HashSet<&str> = files[..3].iter().copied().collect();
-    assert_eq!(first_three.len(), 3, "{files:?}");
-    assert!(files[3..].iter().all(|f| *f == "many.rs"), "{files:?}");
+    // A file's hits are contiguous: once the list leaves a file it never
+    // comes back to it.
+    let mut runs: Vec<&str> = files.clone();
+    runs.dedup();
+    let distinct: std::collections::HashSet<&str> = runs.iter().copied().collect();
+    assert_eq!(runs.len(), distinct.len(), "{files:?}");
+    // Files come in the order of their best hit, and within a file hits are
+    // in score order.
+    let best: Vec<f64> = runs
+        .iter()
+        .map(|f| {
+            hits.iter()
+                .filter(|h| h.file_path.ends_with(f))
+                .map(|h| h.score)
+                .fold(f64::MIN, f64::max)
+        })
+        .collect();
+    assert!(best.windows(2).all(|w| w[0] >= w[1]), "{runs:?} {best:?}");
+    for w in hits.windows(2) {
+        if w[0].file_path == w[1].file_path {
+            assert!(w[0].score >= w[1].score, "{files:?}");
+        }
+    }
 
     // Each hit carries its file's hit count across all pages, so a file with
     // one hit on this page does not read as a file with one hit.

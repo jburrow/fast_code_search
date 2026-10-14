@@ -201,9 +201,8 @@ pub struct SearchResultJson {
     pub score: f64,
     pub match_type: std::borrow::Cow<'static, str>,
     pub dependency_count: u32,
-    /// Hits the search found in this file across all pages. Results
-    /// interleave files (each file's best hit first), so a page often holds
-    /// only some of a file's hits.
+    /// Hits the search found in this file across all pages; a file cut at
+    /// a page boundary has only some of them on this page.
     #[serde(default)]
     pub file_hits: u32,
     /// The file may hold more hits than `file_hits` (per-file cap or match
