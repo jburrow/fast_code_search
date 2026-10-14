@@ -1,5 +1,7 @@
 //! The file-watch loop: receive change events, gather each burst, apply it to
-//! the engine under one write lock, and checkpoint the index.
+//! the engine, and checkpoint the index. Only installing a burst takes the
+//! write lock; working out what it means and reading the files do not, so
+//! searches keep being answered while changes stream in.
 //!
 //! This used to live inline in `main.rs`, where no test could reach it; the
 //! tests re-implemented their own copy of the loop instead. The server and
@@ -7,7 +9,10 @@
 
 use crate::config::IndexerConfig;
 use crate::search::background_indexer::{save_after_watcher_shutdown, save_on_watcher_update};
-use crate::search::incremental::apply_changes;
+use crate::search::engine_lock;
+use crate::search::incremental::{
+    apply_plan, parse_planned, plan_changes, ChangeOutcome, ChangePlan,
+};
 use crate::search::watcher::{FileChange, FileWatcher, WatcherConfig};
 use crate::search::SearchEngine;
 use anyhow::Result;
@@ -82,12 +87,14 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
                 }
             }
         }
-        let outcome = with_engine_write(&cfg.engine, |engine| {
-            apply_changes(engine, &changes, &cfg.indexer)
-        });
-        if let Some(outcome) = outcome.filter(|o| o.changed()) {
+        let report = apply_burst(&cfg.engine, &changes, &cfg.indexer);
+        if let Some(report) = report.filter(|r| r.outcome.changed()) {
+            let outcome = report.outcome;
             debug!(
                 events = changes.len(),
+                steps = report.steps,
+                longest_hold_ms = report.longest_hold.as_millis() as u64,
+                elapsed_ms = report.elapsed.as_millis() as u64,
                 indexed = outcome.indexed,
                 removed = outcome.removed,
                 "File changes applied"
@@ -96,6 +103,129 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
             if save_on_watcher_update(&cfg.indexer, &cfg.engine, updates_since_save) {
                 updates_since_save = 0;
             }
+        }
+    }
+}
+
+/// What applying a burst did and how long it kept searches out.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BurstReport {
+    /// Files indexed and removed.
+    pub outcome: ChangeOutcome,
+    /// Write-lock steps taken.
+    pub steps: usize,
+    /// The longest single write-lock hold: the longest a search could
+    /// have waited on this burst.
+    pub longest_hold: Duration,
+    /// From start to finish, planning and parsing included.
+    pub elapsed: Duration,
+}
+
+/// Apply a burst the way the server does: work out what it means under a
+/// read lock (stats, directory listings and walks), read and parse the
+/// files under no lock, and take the write lock only to install the
+/// result, a step at a time. Searches are answered throughout, except
+/// during the short steps. The index may change between the steps (the
+/// initial build runs alongside); the install looks every path up again,
+/// and anything that changed on disk meanwhile has an event of its own
+/// coming.
+///
+/// `None` if a step panicked; the rest of the burst is then skipped.
+pub fn apply_burst(
+    engine: &Arc<RwLock<SearchEngine>>,
+    changes: &[FileChange],
+    indexer: &IndexerConfig,
+) -> Option<BurstReport> {
+    let started = Instant::now();
+    let pool = watch_pool();
+    let (plan, parser) = guarded("planning", || {
+        let engine = engine
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pool.install(|| {
+            (
+                plan_changes(&engine, changes, indexer),
+                engine.file_parser(),
+            )
+        })
+    })?;
+    let parsed = guarded("parsing", || pool.install(|| parse_planned(parser, &plan)))?;
+
+    // The removals go in one step and the files in steps of at most
+    // INSTALL_CHUNK, each under its own write lock, so a big burst never
+    // holds searches back for longer than one step.
+    let mut report = BurstReport::default();
+    let removals = ChangePlan {
+        remove: plan.remove,
+        index: Vec::new(),
+    };
+    install(engine, removals, Vec::new(), &mut report)?;
+    let mut parsed = parsed;
+    while !parsed.is_empty() {
+        // Searches that queued during the last step go first.
+        std::thread::sleep(STEP_GAP);
+        let rest = parsed.split_off(parsed.len().min(INSTALL_CHUNK));
+        install(engine, ChangePlan::default(), parsed, &mut report)?;
+        parsed = rest;
+    }
+    report.elapsed = started.elapsed();
+    Some(report)
+}
+
+/// Files installed per write-lock step; see [`apply_burst`].
+pub const INSTALL_CHUNK: usize = 512;
+
+/// The pause between install steps. Longer than a waiting search's
+/// longest back-off (see [`crate::search::engine_lock`]), so the searches
+/// that arrived during a step are answered before the next one starts.
+const STEP_GAP: Duration = Duration::from_millis(20);
+
+/// One install step of [`apply_burst`], added to `report`.
+fn install(
+    engine: &Arc<RwLock<SearchEngine>>,
+    plan: ChangePlan,
+    parsed: Vec<(PathBuf, Option<crate::search::PreIndexedFile>)>,
+    report: &mut BurstReport,
+) -> Option<()> {
+    if plan.remove.is_empty() && parsed.is_empty() {
+        return Some(());
+    }
+    let (outcome, held) = with_engine_write(engine, |engine| {
+        let held = Instant::now();
+        let outcome = apply_plan(engine, plan, parsed);
+        (outcome, held.elapsed())
+    })?;
+    report.outcome += outcome;
+    report.steps += 1;
+    report.longest_hold = report.longest_hold.max(held);
+    Some(())
+}
+
+/// The threads the watcher plans and parses on. Searches scan files on
+/// rayon's global pool; parsing a burst there queued every search behind
+/// the whole burst. Half the cores, so searches keep the rest.
+fn watch_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get() / 2)
+            .unwrap_or(1)
+            .max(1);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("fcs-watch-{i}"))
+            .build()
+            .expect("watcher thread pool")
+    })
+}
+
+/// Run `f`, turning a panic into a skipped batch rather than a dead watcher.
+fn guarded<R>(step: &str, f: impl FnOnce() -> R) -> Option<R> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(result) => Some(result),
+        Err(_) => {
+            error!("File watcher {step} panicked; the change was skipped");
+            None
         }
     }
 }
@@ -123,15 +253,6 @@ fn with_engine_write<R>(
     engine: &Arc<RwLock<SearchEngine>>,
     f: impl FnOnce(&mut SearchEngine) -> R,
 ) -> Option<R> {
-    let mut guard = engine.write().unwrap_or_else(|poisoned| {
-        error!("Search engine lock was poisoned; recovering in file watcher");
-        poisoned.into_inner()
-    });
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut guard))) {
-        Ok(result) => Some(result),
-        Err(_) => {
-            error!("File watcher update panicked; the change was skipped");
-            None
-        }
-    }
+    let mut guard = engine_lock::write(engine);
+    guarded("update", || f(&mut guard))
 }

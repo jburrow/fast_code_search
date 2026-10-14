@@ -291,6 +291,11 @@ pub struct LazyFileStore {
     /// Map from path to file ID. Keys share their allocation with the
     /// entry's `path`, so each path is stored once.
     path_to_id: HashMap<Arc<Path>, u32>,
+    /// Live files by directory, so the watcher's "everything under this
+    /// directory" and "the files in this directory" lookups cost the size of
+    /// the answer rather than a scan of every indexed path (a scan per
+    /// changed directory held the write lock for seconds on large trees).
+    dirs: DirIndex,
     /// IDs that have been tombstoned (removed during incremental updates).
     /// Tombstoned slots are hidden from `get`/`get_path`/lookups and never
     /// reused, so existing file IDs stay stable. Typically tiny.
@@ -321,6 +326,7 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
+            dirs: DirIndex::default(),
             tombstoned: std::collections::HashSet::new(),
             mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),
@@ -356,7 +362,7 @@ impl LazyFileStore {
         }
         let shared: Arc<Path> = Arc::from(path);
         let id = self.files.len() as u32;
-        self.path_to_id.insert(shared.clone(), id);
+        self.link(shared.clone(), id);
         self.files.push(LazyMappedFile::from_shared(shared));
         id
     }
@@ -416,7 +422,7 @@ impl LazyFileStore {
                 );
             }
             let id = self.files.len() as u32;
-            self.path_to_id.insert(shared.clone(), id);
+            self.link(shared.clone(), id);
             self.files.push(LazyMappedFile::from_shared(shared));
             // Estimate content bytes from file metadata so stats stay accurate
             if let Ok(meta) = std::fs::metadata(path) {
@@ -433,7 +439,7 @@ impl LazyFileStore {
             .len();
         if size <= MMAP_THRESHOLD_BYTES {
             let id = self.files.len() as u32;
-            self.path_to_id.insert(shared.clone(), id);
+            self.link(shared.clone(), id);
             self.files
                 .push(LazyMappedFile::from_shared(shared).into_small());
             self.total_content_bytes.fetch_add(size, Ordering::Relaxed);
@@ -451,7 +457,7 @@ impl LazyFileStore {
         let content_size = mmap.len() as u64;
 
         let id = self.files.len() as u32;
-        self.path_to_id.insert(shared.clone(), id);
+        self.link(shared.clone(), id);
         self.files.push(LazyMappedFile::with_mmap(shared, mmap));
 
         // Update mapped count and content bytes
@@ -476,7 +482,10 @@ impl LazyFileStore {
     pub fn remove_file_by_id(&mut self, id: u32) {
         if let Some(f) = self.files.get_mut(id as usize) {
             let p = f.path.clone();
-            self.path_to_id.remove(&*p);
+            if self.path_to_id.get(&*p) == Some(&id) {
+                self.path_to_id.remove(&*p);
+                self.dirs.remove(&p, id);
+            }
             // Drop the mapping and cached content now: a tombstoned slot
             // kept its `Mmap` (and transcoded copy) alive for the life of
             // the store, so every removed large file stayed resident.
@@ -494,7 +503,7 @@ impl LazyFileStore {
             let p = f.path.clone();
             *f = LazyMappedFile::from_shared(p.clone());
             // Ensure the path remains resolvable and the id is live again.
-            self.path_to_id.insert(p, id);
+            self.link(p, id);
             self.tombstoned.remove(&id);
             true
         } else {
@@ -578,14 +587,28 @@ impl LazyFileStore {
     /// (directory semantics: `prefix` must match whole path components).
     /// Used to apply directory deletes / renames from the watcher.
     pub fn ids_under(&self, prefix: &Path) -> Vec<u32> {
-        self.files
-            .iter()
-            .enumerate()
-            .filter(|(id, f)| {
-                !self.tombstoned.contains(&(*id as u32)) && f.path.starts_with(prefix)
-            })
-            .map(|(id, _)| id as u32)
-            .collect()
+        let mut ids = self.dirs.ids_under(prefix);
+        // `prefix` itself may be a file (component-wise `starts_with`).
+        ids.extend(self.path_to_id.get(prefix));
+        ids
+    }
+
+    /// Ids of the live files directly in directory `dir` (not in its
+    /// subdirectories).
+    pub fn ids_in_dir(&self, dir: &Path) -> Vec<u32> {
+        self.dirs.files_in(dir).to_vec()
+    }
+
+    /// Point `path` at `id` in the path map and the directory index.
+    fn link(&mut self, path: Arc<Path>, id: u32) {
+        match self.path_to_id.insert(path.clone(), id) {
+            Some(old) if old == id => {}
+            Some(old) => {
+                self.dirs.remove(&path, old);
+                self.dirs.insert(&path, id);
+            }
+            None => self.dirs.insert(&path, id),
+        }
     }
 
     /// Number of live (non-tombstoned) files.
@@ -602,6 +625,103 @@ impl LazyFileStore {
     pub fn reserve(&mut self, additional: usize) {
         self.files.reserve(additional);
         self.path_to_id.reserve(additional);
+    }
+}
+
+/// Live file ids by parent directory, plus each directory's subdirectories,
+/// so a subtree is walked without visiting unrelated paths.
+#[derive(Default)]
+struct DirIndex {
+    nodes: HashMap<Arc<Path>, DirNode>,
+}
+
+#[derive(Default)]
+struct DirNode {
+    files: Vec<u32>,
+    subdirs: Vec<Arc<Path>>,
+}
+
+impl DirIndex {
+    fn insert(&mut self, path: &Path, id: u32) {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if let Some(node) = self.nodes.get_mut(parent) {
+            node.files.push(id);
+            return;
+        }
+        let parent: Arc<Path> = Arc::from(parent);
+        self.nodes.insert(
+            parent.clone(),
+            DirNode {
+                files: vec![id],
+                subdirs: Vec::new(),
+            },
+        );
+        // Hook the new directory into its ancestors, creating those that
+        // are new as well.
+        let mut child = parent;
+        while let Some(up) = child.parent() {
+            if let Some(node) = self.nodes.get_mut(up) {
+                node.subdirs.push(child);
+                return;
+            }
+            let up: Arc<Path> = Arc::from(up);
+            self.nodes.insert(
+                up.clone(),
+                DirNode {
+                    files: Vec::new(),
+                    subdirs: vec![child],
+                },
+            );
+            child = up;
+        }
+    }
+
+    fn remove(&mut self, path: &Path, id: u32) {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let Some(node) = self.nodes.get_mut(parent) else {
+            return;
+        };
+        if let Some(pos) = node.files.iter().position(|&f| f == id) {
+            node.files.swap_remove(pos);
+        }
+        // Drop directories left empty, so renamed-away trees don't linger.
+        let mut dir: Arc<Path> = Arc::from(parent);
+        loop {
+            match self.nodes.get(&*dir) {
+                Some(n) if n.files.is_empty() && n.subdirs.is_empty() => {}
+                _ => return,
+            }
+            self.nodes.remove(&*dir);
+            let Some(up) = dir.parent() else {
+                return;
+            };
+            let Some(node) = self.nodes.get_mut(up) else {
+                return;
+            };
+            node.subdirs.retain(|d| **d != *dir);
+            dir = Arc::from(up);
+        }
+    }
+
+    fn files_in(&self, dir: &Path) -> &[u32] {
+        self.nodes.get(dir).map(|n| &n.files[..]).unwrap_or(&[])
+    }
+
+    fn ids_under(&self, dir: &Path) -> Vec<u32> {
+        let mut out = Vec::new();
+        let Some(root) = self.nodes.get(dir) else {
+            return out;
+        };
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            out.extend_from_slice(&node.files);
+            stack.extend(node.subdirs.iter().filter_map(|d| self.nodes.get(&**d)));
+        }
+        out
     }
 }
 
@@ -634,6 +754,7 @@ impl LazyFileStore {
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
+            dirs: DirIndex::default(),
             tombstoned: std::collections::HashSet::new(),
             mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),

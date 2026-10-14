@@ -190,6 +190,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ones submitted with Enter. A query counts once the box sits unchanged for
   two seconds or you move on (into the results, a preview or a filter);
   carrying on typing replaces that entry rather than leaving prefixes.
+- Watch mode on large trees no longer answers searches with "index is
+  being updated" while changes stream in. Applying a batch held the write
+  lock for its whole duration, including reading and parsing the files,
+  and a per-directory scan of every indexed path made that seconds long on
+  big trees (15 s for one batch on 200,000 files). Now only installing the
+  parsed files takes the write lock, in steps of at most 512 files with a
+  pause between them; directory lookups cost the size of the directory;
+  the watcher parses on its own threads instead of the pool searches use;
+  and a search waits up to five seconds for a step to finish instead of
+  failing at once. On one million files with 2,000 files rewritten a
+  second, no search was turned away and the slowest took 0.2 s.
 - Results are in rank order again, with each file's hits together: files in
   the order of their best hit, then every hit of that file by score. Since
   v0.12.0 hits were interleaved by file (every file's best hit before any

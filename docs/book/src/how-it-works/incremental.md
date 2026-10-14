@@ -34,31 +34,46 @@ and a rewritten one is read again.
 
 ## Applying a batch
 
-A batch is applied under one write lock in three phases:
+A batch is applied in three steps, and only the last one takes the write
+lock, so searches keep being answered while a batch is read from disk:
 
-1. **Deletes and renames-away** are collected and removed with a single
-   pass over every posting list.
-2. **Modified and created paths** are planned (directories reconciled
-   as above; vanished or newly ineligible paths dropped), then
-   re-indexed together: their old postings stripped in one pass, the files
-   read and parsed in parallel, and installed under their existing ids so
-   nothing else has to be renumbered. Edges *into* a modified file are
-   kept; a file that was deleted and comes back regains its dependents.
-3. **Sibling check.** As a last safety net, the parent directories of
-   every changed path are checked and entries whose file is gone are
-   removed.
-4. **Imports.** Every file's imports are kept as written. Once the whole
-   batch is back in the index, the files whose imports could resolve
-   differently now are resolved again: those that imported a removed file,
-   and those with an import naming a file that appeared. That covers an
-   import that fell back to a package (`from . import m` reaching
-   `__init__.py` while `m.py` is missing) moving to the new file, and
-   back. The dependency graph is therefore a function of the files on
-   disk, the same as a fresh build would draw.
+1. **Plan** (under a read lock, which searches share). Events are
+   coalesced per path. Deleted paths and directories are looked up;
+   modified paths are checked against the disk (directories reconciled as
+   above; vanished or newly ineligible paths dropped). As a safety net for
+   backends that lose the delete half of a rename, the parent directory of
+   every changed path is listed and entries whose file is gone are
+   dropped. The index keeps its files by directory, so all of this costs
+   the size of the batch and the directories it touches, not the size of
+   the index.
+2. **Read and parse** (no lock). The files to (re)index are read and
+   parsed in parallel on the watcher's own threads (half the cores), so
+   the searches running on the shared thread pool are not queued behind
+   a burst.
+3. **Install** (write lock, in steps). The removals go first, with a
+   single pass over every posting list; then the parsed files, at most
+   512 per step, each step under its own write lock with a short pause
+   between steps for the searches that arrived meanwhile. A modified file
+   keeps its id; edges *into* it are kept, and a file that was deleted
+   and comes back regains its dependents. A path is looked up again at
+   install time, since the index may have changed since it was planned
+   (the initial build can run alongside), and a file that changed again
+   since it was read has an event of its own on the way.
 
-Between batches searches run normally; a search that arrives while the
-lock is held gets a 503 with `Retry-After: 1`, which `fcs` and the web UI
-retry on their own.
+**Imports.** Every file's imports are kept as written. After each step
+the files whose imports could resolve differently now are resolved again:
+those that imported a removed file, and those with an import naming a
+file that appeared. That covers an import that fell back to a package
+(`from . import m` reaching `__init__.py` while `m.py` is missing) moving
+to the new file, and back. The dependency graph is therefore a function
+of the files on disk, the same as a fresh build would draw.
+
+A search that arrives during an install step waits for it (up to five
+seconds) instead of being turned away. Only if the lock is still held
+after that does it get a 503 with `Retry-After: 1` (gRPC: `UNAVAILABLE`),
+which `fcs` and the web UI retry on their own. On a generated tree of one
+million Python files with 2,000 files rewritten a second, no search was
+turned away and the slowest took 0.2 s (see `examples/watch_load.rs`).
 
 ## Saving
 
@@ -76,4 +91,15 @@ dozens of changes, changes during the initial build), then compares the
 live index with a fresh index of the same disk: the file set, every hit
 for every vocabulary word, symbol definitions and dependency edges. The
 random sequences print their seed; replay one with
-`FCS_WATCH_SEED=<seed> cargo test --test watch_harness`.
+`FCS_WATCH_SEED=<seed> cargo test --test watch_harness`. Another test
+searches continuously while a burst of changes is applied and fails if a
+search is turned away or waits too long.
+
+For larger trees, `examples/watch_load.rs` generates a tree of small
+scripts (a million, if you like), streams rewrites, creates and deletes
+into it through the real watch loop while threads search, and reports how
+many searches were answered or turned away and the latency percentiles:
+
+```text
+cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000
+```

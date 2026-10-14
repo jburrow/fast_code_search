@@ -195,18 +195,15 @@ impl CodeSearch for CodeSearchService {
         let (matches, limits_hit, scope_files) = tokio::task::spawn_blocking(move || {
             // Held for the search's real lifetime, not the RPC future's.
             let _permit = permit;
-            // Use try_read to avoid blocking when a write lock is held during indexing.
-            let engine = match engine_arc.try_read() {
-                Ok(guard) => guard,
-                Err(std::sync::TryLockError::WouldBlock) => {
-                    return Err(Status::unavailable(
-                        "Index is currently being updated, please retry shortly",
-                    ));
-                }
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
-                    warn!("Search engine lock was poisoned; recovering for search");
-                    poisoned.into_inner()
-                }
+            // Wait briefly for a writer (a watcher batch step) rather than
+            // turning the search away the moment one holds the lock.
+            let Some(engine) = crate::search::engine_lock::read_within(
+                &engine_arc,
+                crate::search::engine_lock::SEARCH_READ_WAIT,
+            ) else {
+                return Err(Status::unavailable(
+                    "Index is currently being updated, please retry shortly",
+                ));
             };
 
             let outcome = engine

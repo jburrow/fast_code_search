@@ -1,5 +1,6 @@
 pub mod background_indexer;
 pub mod engine;
+pub mod engine_lock;
 pub mod file_discovery;
 pub mod fold;
 pub mod incremental;

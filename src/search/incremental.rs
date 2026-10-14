@@ -9,10 +9,11 @@
 //! exclude_files) when indexing a directory that appeared or was renamed in.
 
 use crate::config::IndexerConfig;
-use crate::search::file_discovery::{FileDiscoveryConfig, FileDiscoveryIterator};
+use crate::search::file_discovery::{EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator};
 use crate::search::watcher::FileChange;
 use crate::search::SearchEngine;
-use std::path::Path;
+use rayon::prelude::*;
+use std::path::{Path, PathBuf};
 
 /// What applying a change did, for logging and save accounting.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +24,13 @@ pub struct ChangeOutcome {
     pub removed: usize,
 }
 
+impl std::ops::AddAssign for ChangeOutcome {
+    fn add_assign(&mut self, other: Self) {
+        self.indexed += other.indexed;
+        self.removed += other.removed;
+    }
+}
+
 impl ChangeOutcome {
     /// True if the index changed at all.
     pub fn changed(&self) -> bool {
@@ -30,20 +38,56 @@ impl ChangeOutcome {
     }
 }
 
-/// Apply a burst of changes under one write lock.
+/// A burst of changes worked out against the index and the disk, ready to
+/// be parsed and applied. See [`plan_changes`].
+#[derive(Debug, Default)]
+pub struct ChangePlan {
+    /// Ids to drop: deleted files and directories, files that became
+    /// ineligible, and files in a changed directory that are gone.
+    pub(crate) remove: Vec<u32>,
+    /// Files to read and (re)index.
+    pub(crate) index: Vec<PathBuf>,
+}
+
+impl ChangePlan {
+    /// Files the plan will read and (re)index.
+    pub fn files_to_index(&self) -> &[PathBuf] {
+        &self.index
+    }
+}
+
+/// Apply a burst of changes in one go (plan, parse, install).
 ///
-/// Events are coalesced per path (the last event for a path wins; a rename
-/// is a delete of `from` plus a modify of `to`), all removals are applied in
-/// a single pass over the trigram index, then the surviving modifications
-/// are indexed. A `git checkout` touching thousands of files therefore costs
-/// one lock window and one posting-list scan instead of one per file.
+/// The watch loop runs the same three steps with the lock held only where
+/// each needs it ([`plan_changes`] under a read lock, parsing under none,
+/// [`apply_plan`] under the write lock), so searches keep being answered
+/// while a burst is read from disk.
 pub fn apply_changes(
     engine: &mut SearchEngine,
     changes: &[FileChange],
     config: &IndexerConfig,
 ) -> ChangeOutcome {
+    let plan = plan_changes(engine, changes, config);
+    let parsed = parse_planned(engine.file_parser(), &plan);
+    apply_plan(engine, plan, parsed)
+}
+
+/// Work out what a burst of changes means for the index, touching only the
+/// disk (stats, directory walks) and reading the engine, so it can run under
+/// a read lock while searches go on.
+///
+/// Events are coalesced per path (the last event for a path wins; a rename
+/// is a delete of `from` plus a modify of `to`). A directory hint is
+/// reconciled with the disk; a path that vanished, or is no longer
+/// eligible, is removed; and because a backend may drop the delete /
+/// rename-away half of what happened (FSEvents does), the siblings of every
+/// changed path are checked and entries whose file is gone are removed.
+pub fn plan_changes(
+    engine: &SearchEngine,
+    changes: &[FileChange],
+    config: &IndexerConfig,
+) -> ChangePlan {
     use std::collections::HashMap;
-    use std::path::PathBuf;
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Op {
@@ -72,58 +116,69 @@ pub fn apply_changes(
         }
     }
 
-    // Phase 1: collect every id to remove (files, or whole directories for
-    // paths with no id) and drop them in one pass.
-    let mut doomed: Vec<u32> = Vec::new();
-    for path in &order {
-        if ops[path] != Op::Delete {
-            continue;
-        }
-        match engine.find_file_id(&path.to_string_lossy()) {
-            Some(id) => doomed.push(id),
-            None => doomed.extend(engine.file_ids_under(path)),
+    // Each path is planned on its own (stats, directory walks), in
+    // parallel; removals are applied before additions whatever the order.
+    let probe = EligibilityProbe::new(&discovery_config(config, Vec::new()));
+    let parts: Vec<(ChangePlan, Option<PathBuf>)> = order
+        .par_iter()
+        .map(|path| {
+            let mut part = ChangePlan::default();
+            let is_dir = path.is_dir();
+            match ops[path] {
+                Op::Delete => part.remove.extend(path_ids(engine, path)),
+                Op::Modify => plan_path(engine, path, is_dir, config, &probe, &mut part),
+            }
+            let dir = if is_dir {
+                Some(path.clone())
+            } else {
+                path.parent().map(Path::to_path_buf)
+            };
+            (part, dir)
+        })
+        .collect();
+
+    let mut plan = ChangePlan::default();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut seen_dirs = std::collections::HashSet::new();
+    for (part, dir) in parts {
+        plan.remove.extend(part.remove);
+        plan.index.extend(part.index);
+        if let Some(dir) = dir {
+            if seen_dirs.insert(dir.clone()) {
+                dirs.push(dir);
+            }
         }
     }
-    let removed = engine.remove_files_by_ids(&doomed);
+    plan.remove.extend(engine.vanished_in(&dirs));
+    plan
+}
 
-    // Phase 2: (re)index the modified paths as one batch — directories are
-    // expanded to their eligible files, ineligible or vanished paths are
-    // dropped, and everything else goes through one posting-list pass and
-    // a parallel parse.
+/// Read and parse the files a plan will index, in parallel. Needs no lock.
+pub fn parse_planned(
+    parser: crate::search::engine::FileParser,
+    plan: &ChangePlan,
+) -> Vec<(PathBuf, Option<crate::search::PreIndexedFile>)> {
+    plan.index
+        .par_iter()
+        .map(|p| (p.clone(), parser.parse(p)))
+        .collect()
+}
+
+/// Apply a plan and its parsed files under the caller's write lock: the
+/// removals in one pass over the trigram index, then the parsed files in
+/// another, then import resolution for everything the batch touched.
+pub fn apply_plan(
+    engine: &mut SearchEngine,
+    plan: ChangePlan,
+    parsed: Vec<(PathBuf, Option<crate::search::PreIndexedFile>)>,
+) -> ChangeOutcome {
     let mut outcome = ChangeOutcome {
         indexed: 0,
-        removed,
+        removed: engine.remove_files_by_ids(&plan.remove),
     };
-    let mut to_index: Vec<PathBuf> = Vec::new();
-    for path in &order {
-        if ops[path] != Op::Modify {
-            continue;
-        }
-        let plan = plan_path(engine, path, config);
-        outcome.removed += plan.removed;
-        to_index.extend(plan.files);
-    }
-    let (indexed, removed) = engine.update_files(&to_index);
+    let (indexed, removed) = engine.install_parsed(parsed);
     outcome.indexed += indexed;
     outcome.removed += removed;
-
-    // Phase 3: a backend may have dropped the delete / rename-away half of
-    // what just happened (FSEvents does), so check the siblings of every
-    // changed path and drop entries whose file is gone.
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    for path in &order {
-        let dir = if path.is_dir() {
-            path.clone()
-        } else if let Some(parent) = path.parent() {
-            parent.to_path_buf()
-        } else {
-            continue;
-        };
-        if !dirs.contains(&dir) {
-            dirs.push(dir);
-        }
-    }
-    outcome.removed += engine.prune_vanished_in(&dirs);
     // Files that imported a removed file resolve their imports again (an
     // import may now fall back to the package, or stay unresolved).
     if outcome.removed > 0 {
@@ -145,49 +200,42 @@ pub fn apply_change(
     apply_changes(engine, std::slice::from_ref(change), config)
 }
 
-/// Remove `path` from the index: a single file, or — when no file id matches
-/// (the path was a directory, or is already gone) — every file under it.
-fn remove_path(engine: &mut SearchEngine, path: &Path) -> usize {
-    if engine.remove_file(path) {
-        1
-    } else {
-        engine.remove_files_under(path)
+/// The index entries `path` stands for: a single file, or — when no file
+/// matches exactly (the path was a directory, or is already gone) — every
+/// file under it.
+fn path_ids(engine: &SearchEngine, path: &Path) -> Vec<u32> {
+    match engine.find_file_id_exact(path) {
+        Some(id) => vec![id],
+        None => engine.file_ids_under(path),
     }
 }
 
-/// What a modified path needs: the files to (re)index under it, and how
-/// many index entries were dropped because the path is gone or no longer
+/// Add what a modified path needs to `plan`: the files to (re)index under
+/// it, and the index entries to drop because the path is gone or no longer
 /// eligible.
-#[derive(Default)]
-struct PathPlan {
-    files: Vec<std::path::PathBuf>,
-    removed: usize,
-}
-
-fn plan_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) -> PathPlan {
-    if path.is_dir() {
-        return reconcile_dir(engine, path, config);
+fn plan_path(
+    engine: &SearchEngine,
+    path: &Path,
+    is_dir: bool,
+    config: &IndexerConfig,
+    probe: &EligibilityProbe,
+    plan: &mut ChangePlan,
+) {
+    if is_dir {
+        return reconcile_dir(engine, path, config, plan);
     }
-
     if !path.is_file() {
         // Vanished between the event and now; treat as a delete.
-        return PathPlan {
-            files: Vec::new(),
-            removed: remove_path(engine, path),
-        };
+        plan.remove.extend(path_ids(engine, path));
+        return;
     }
-    if !is_eligible_file(path, config) {
+    if config.is_file_excluded(path) || !probe.is_eligible_path(path, None) {
         // A file that is not eligible (wrong extension, excluded) but was
         // previously indexed must be dropped rather than refreshed.
-        return PathPlan {
-            files: Vec::new(),
-            removed: usize::from(engine.remove_file(path)),
-        };
+        plan.remove.extend(engine.find_file_id_exact(path));
+        return;
     }
-    PathPlan {
-        files: vec![path.to_path_buf()],
-        removed: 0,
-    }
+    plan.index.push(path.to_path_buf());
 }
 
 /// Bring everything under directory `dir` in line with the disk: index
@@ -198,37 +246,26 @@ fn plan_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) -> 
 /// created, renamed in, or events for it were lost. Files whose size and
 /// mtime match what was indexed are left alone, so reconciling a large
 /// unchanged tree costs a walk and a stat per file, not a re-index.
-fn reconcile_dir(engine: &mut SearchEngine, dir: &Path, config: &IndexerConfig) -> PathPlan {
-    let discovery = FileDiscoveryConfig {
-        paths: vec![dir.to_string_lossy().to_string()],
-        exclude_patterns: config.exclude_patterns.clone(),
-        include_extensions: config.include_extensions.clone(),
-        max_file_size: Some(effective_max_size(config)),
-        respect_gitignore: config.respect_gitignore,
-        ..Default::default()
-    };
+fn reconcile_dir(engine: &SearchEngine, dir: &Path, config: &IndexerConfig, plan: &mut ChangePlan) {
+    let discovery = discovery_config(config, vec![dir.to_string_lossy().to_string()]);
     let mut keep = std::collections::HashSet::new();
-    let mut files = Vec::new();
     for file in FileDiscoveryIterator::new(&discovery).filter(|f| !config.is_file_excluded(f)) {
         match engine.find_file_id_exact(&file) {
             Some(id) => {
                 keep.insert(id);
                 if !engine.is_unchanged_on_disk(id, &file) {
-                    files.push(file);
+                    plan.index.push(file);
                 }
             }
-            None => files.push(file),
+            None => plan.index.push(file),
         }
     }
-    let gone: Vec<u32> = engine
-        .file_ids_under(dir)
-        .into_iter()
-        .filter(|id| !keep.contains(id))
-        .collect();
-    PathPlan {
-        files,
-        removed: engine.remove_files_by_ids(&gone),
-    }
+    plan.remove.extend(
+        engine
+            .file_ids_under(dir)
+            .into_iter()
+            .filter(|id| !keep.contains(id)),
+    );
 }
 
 /// `max_file_size = 0` means "the default" everywhere (engine, watcher,
@@ -248,13 +285,17 @@ pub fn is_eligible_file(path: &Path, config: &IndexerConfig) -> bool {
     if config.is_file_excluded(path) {
         return false;
     }
-    let discovery = FileDiscoveryConfig {
-        paths: Vec::new(),
+    crate::search::file_discovery::is_eligible(path, &discovery_config(config, Vec::new()))
+}
+
+/// Discovery settings for `paths` with the indexer's eligibility rules.
+fn discovery_config(config: &IndexerConfig, paths: Vec<String>) -> FileDiscoveryConfig {
+    FileDiscoveryConfig {
+        paths,
         exclude_patterns: config.exclude_patterns.clone(),
         include_extensions: config.include_extensions.clone(),
         max_file_size: Some(effective_max_size(config)),
         respect_gitignore: config.respect_gitignore,
         ..Default::default()
-    };
-    crate::search::file_discovery::is_eligible(path, &discovery)
+    }
 }
