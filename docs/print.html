@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b85cde9d.js";
+            window.path_to_searchindex_js = "searchindex-4c774c89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -633,10 +633,11 @@ resolved for Rust, Python and JavaScript/TypeScript.</p>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 <h2 id="themes"><a class="header" href="#themes">Themes</a></h2>
 <p>The first time you open the UI it asks you to pick a theme; hover an option
-to try it on the page. <strong>Bold</strong> (the default) has capitalised labels and
+to try it on the page (moving off it puts your theme back) and click it
+to use it. <strong>Bold</strong> (the default) has capitalised labels and
 hard edges; <strong>Corporate</strong> and <strong>Corporate dark</strong> are quieter, with sentence
 case and rounded corners. Change it any time with the palette button in the
-header. The choice is kept in your browser. On a shared server,
+header, which previews on hover the same way. The choice is kept in your browser. On a shared server,
 <code>default_theme</code> sets the theme for people who haven’t chosen one and
 <code>theme_picker = false</code> skips the first-run question (see
 <a href="#configuration-cookbook">Configuration</a>).</p>
@@ -4306,7 +4307,8 @@ preview’s ↑/↓ now step through every match in the file, not only the
 lines on screen.</li>
 <li>Web UI themes: Bold (the existing look, still the default), Corporate and
 Corporate dark. On a first visit the UI asks which to use, previewing each
-live; the palette button in the header (replacing the <code>?</code> link, which
+live on hover and putting the chosen theme back on mouse-out (one click
+picks a theme and closes the picker); the palette button in the header (replacing the <code>?</code> link, which
 went to the Docs page also in the navigation) changes it later. The choice
 is kept per browser. New <code>[server]</code> settings: <code>default_theme</code> (<code>"bold"</code>,
 <code>"corporate"</code> or <code>"corporate-dark"</code>) for people who haven’t chosen, and
