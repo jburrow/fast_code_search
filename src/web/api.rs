@@ -147,6 +147,24 @@ pub struct SearchQuery {
     /// `fast_rank_files`, 2000; capped by `max_fast_rank_files`).
     #[serde(default)]
     max_files: Option<usize>,
+    /// Only search these files and what they import: semicolon-separated
+    /// `PATH[:N|:*]` (N hops, 1 by default), `-PATH` to leave them out.
+    /// The same as `deps:` in the query; for a regex, the only way.
+    #[serde(default)]
+    deps: String,
+    /// As `deps`, for the files that import them (`rdeps:`).
+    #[serde(default)]
+    rdeps: String,
+}
+
+/// Split a semicolon-separated `deps` / `rdeps` parameter.
+pub fn split_graph_param(param: &str) -> Vec<String> {
+    param
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// Most path matches one request may ask for.
@@ -215,6 +233,10 @@ pub struct SearchResultJson {
     /// 1-based line number of the first context line (only present when context > 0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_start_line: Option<usize>,
+    /// Import hops from the `deps:` / `rdeps:` anchor (0 = the anchor or its
+    /// package entry file); only on a graph-scoped search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hops: Option<u32>,
 }
 
 /// A file whose path matched the query (the `files` parameter of `/api/search`).
@@ -275,6 +297,33 @@ pub struct SearchResponse {
     /// when it sets a limit. A client may ask for up to this many.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_files_allowed: Option<usize>,
+    /// The files a `deps:` / `rdeps:` search was limited to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ScopeJson>,
+}
+
+/// What a graph-scoped search searched.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScopeJson {
+    /// The filters, normalized: `rdeps:src/a.rs:1`.
+    pub filters: Vec<String>,
+    /// Files in the scope (absent when every filter is negated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<usize>,
+    /// Imports written as project paths that resolve to no file, in files
+    /// of the scope: the scope may be missing files behind them.
+    #[serde(default)]
+    pub unresolved_local: usize,
+}
+
+impl ScopeJson {
+    pub fn from_scope(scope: &crate::search::GraphScope) -> Self {
+        Self {
+            filters: scope.filters.clone(),
+            files: scope.file_count(),
+            unresolved_local: scope.unresolved_local,
+        }
+    }
 }
 
 /// A limit that cut a search short.
@@ -509,6 +558,7 @@ pub async fn search_handler(
             total_candidates: None,
             candidates_searched: None,
             max_files_allowed: None,
+            scope: None,
         }));
     }
 
@@ -532,6 +582,8 @@ pub async fn search_handler(
             .then(|| std::time::Duration::from_millis(params.timeout_ms)),
         max_files: params.max_files,
         path_matches: params.files,
+        deps: split_graph_param(&params.deps),
+        rdeps: split_graph_param(&params.rdeps),
     };
     let settings = state.search_settings;
     let limits = request
@@ -588,7 +640,12 @@ pub async fn search_handler(
         // Context lines: each file is read and split ONCE per request (the
         // result already carries the file id — no path lookup, no per-result
         // re-read when many hits come from one file).
-        let results = results_to_json(&engine, outcome.matches, context_lines);
+        let results = results_to_json(
+            &engine,
+            outcome.matches,
+            context_lines,
+            outcome.scope.as_deref(),
+        );
         let total_results = results.len();
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
@@ -609,6 +666,7 @@ pub async fn search_handler(
             total_candidates: Some(ranking_info.total_candidates),
             candidates_searched: Some(ranking_info.candidates_searched),
             max_files_allowed,
+            scope: outcome.scope.as_deref().map(ScopeJson::from_scope),
         }))
     })
     .await
@@ -643,11 +701,13 @@ pub fn file_matches_to_json(matches: Vec<crate::search::PathMatch>) -> Vec<FileM
 }
 
 /// Turn engine matches into the API's result shape, attaching `context_lines`
-/// lines of context around each hit (read from the engine's file store).
+/// lines of context around each hit (read from the engine's file store),
+/// and each hit's hops when the search was graph-scoped.
 pub fn results_to_json(
     engine: &SearchEngine,
     matches: Vec<crate::search::SearchMatch>,
     context_lines: usize,
+    scope: Option<&crate::search::GraphScope>,
 ) -> Vec<SearchResultJson> {
     let mut line_cache: HashMap<u32, Option<Vec<String>>> = HashMap::new();
     matches
@@ -702,6 +762,7 @@ pub fn results_to_json(
                 file_hits_capped: m.file_hits_capped,
                 context_lines: ctx_lines,
                 context_start_line: ctx_start,
+                hops: scope.and_then(|s| s.hops(m.file_id)),
             }
         })
         .collect()

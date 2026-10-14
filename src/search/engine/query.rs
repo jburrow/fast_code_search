@@ -145,6 +145,7 @@ impl SearchEngine {
         if parsed.text.trim().is_empty() {
             return Ok((Vec::new(), SearchRankingInfo::empty(rank_mode)));
         }
+        let limits = self.limits_with_query_scope(parsed, limits)?;
         let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
         // The index is lowercased, so candidate selection is
         // case-insensitive even for a case-sensitive search; verification
@@ -168,9 +169,14 @@ impl SearchEngine {
         if query.trim().is_empty() {
             return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
         }
+        let limits = self.limits_with_query_scope(parsed, limits)?;
         let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
         let query_lower = fold_str(query).into_owned();
-        let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
+        let mut candidates =
+            self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
+        if let Some(scope) = &limits.scope {
+            candidates = Cow::Owned(scope.restrict(&candidates));
+        }
         let opts = parsed.options;
 
         // Phase 1, no I/O: score every matching symbol from the cache alone
@@ -240,7 +246,7 @@ impl SearchEngine {
         // file set is already bounded, so the budget is sized to cover every
         // symbol in it rather than letting the scan order decide which of
         // the selected files get read.
-        let phase2 = limits.with_match_budget(
+        let phase2 = limits.clone().with_match_budget(
             limits
                 .match_budget
                 .max(selected.len() as usize * Self::SYMBOL_MATCHES_PER_FILE_BUDGET),
@@ -276,6 +282,15 @@ impl SearchEngine {
         S: Fn(u32, &FileMetadata) -> f32,
         F: Fn(u32, &QueryRun) -> Option<Vec<SearchMatch>> + Sync,
     {
+        let scoped;
+        let candidates = match &limits.scope {
+            Some(scope) => {
+                scoped = scope.restrict(candidates);
+                &scoped
+            }
+            None => candidates,
+        };
+        let boost = |id: u32| limits.scope.as_ref().map_or(1.0, |s| s.boost(id));
         let total_candidates = candidates.len() as usize;
         let use_fast = match rank_mode {
             RankMode::Fast => true,
@@ -292,7 +307,10 @@ impl SearchEngine {
             // Fast ranking: order by file metadata (no reads), open the top N.
             let mut scored: Vec<(u32, f32)> = candidates
                 .iter()
-                .map(|id| (id, fast_score(id, self.get_file_metadata(id))))
+                .map(|id| {
+                    let score = fast_score(id, self.get_file_metadata(id));
+                    (id, score * boost(id) as f32)
+                })
                 .collect();
             scored.sort_unstable_by(|a, b| {
                 b.1.partial_cmp(&a.1)
@@ -344,6 +362,7 @@ impl SearchEngine {
             let chunk_cap = base_cap.min(budget.saturating_add(1));
             let doc_run = QueryRun::new(
                 &limits
+                    .clone()
                     .with_match_budget(usize::MAX)
                     .with_per_doc_cap(chunk_cap),
             );
@@ -403,6 +422,11 @@ impl SearchEngine {
             chunk = wanted.clamp(threads, Self::SCAN_CHUNK_MAX);
         }
         let found = matches.len();
+        if limits.scope.is_some() {
+            for m in &mut matches {
+                m.score *= boost(m.file_id);
+            }
+        }
         Self::sort_and_page(&mut matches, &limits, &capped_files);
 
         if budget_cut {
@@ -792,6 +816,7 @@ impl SearchEngine {
         if name.is_empty() {
             return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
         }
+        let limits = self.limits_with_query_scope(parsed, limits)?;
         let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
         Ok(self.run_references(name, path_filter, limits))
     }

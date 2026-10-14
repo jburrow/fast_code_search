@@ -281,6 +281,21 @@ fn typescript_tags_source() -> &'static str {
     })
 }
 
+/// The Python grammar's `tags.scm` records calls only. The supplement in
+/// `queries/python_refs.scm` adds base classes, decorators, type
+/// annotations and functions passed as values.
+fn python_tags_source() -> &'static str {
+    use std::sync::OnceLock;
+    static SRC: OnceLock<String> = OnceLock::new();
+    SRC.get_or_init(|| {
+        format!(
+            "{}\n\n{}",
+            tree_sitter_python::TAGS_QUERY,
+            include_str!("queries/python_refs.scm")
+        )
+    })
+}
+
 fn rust_tags_source() -> &'static str {
     use std::sync::OnceLock;
     static SRC: OnceLock<String> = OnceLock::new();
@@ -320,11 +335,7 @@ fn tags_query_for(language: LanguageFn, extension: &str) -> Option<&'static tree
     let _ = language;
     match extension {
         "rs" => once!(RUST, tree_sitter_rust::LANGUAGE, rust_tags_source()),
-        "py" | "pyi" | "pyw" => once!(
-            PY,
-            tree_sitter_python::LANGUAGE,
-            tree_sitter_python::TAGS_QUERY
-        ),
+        "py" | "pyi" | "pyw" => once!(PY, tree_sitter_python::LANGUAGE, python_tags_source()),
         "js" | "jsx" | "mjs" | "cjs" => once!(
             JS,
             tree_sitter_javascript::LANGUAGE,
@@ -451,6 +462,9 @@ impl SymbolExtractor {
         let mut refs = Vec::new();
         if let Some(query) = self.tags_query() {
             Self::extract_with_tags(query, &root_node, source, &mut symbols, &mut refs);
+        }
+        if matches!(self.extension.as_str(), "py" | "pyi" | "pyw") {
+            super::python_locals::drop_locals(root_node, source, &mut refs);
         }
         let mut walker_symbols = Vec::new();
         Self::extract_functions(&root_node, source, &mut walker_symbols);
@@ -1213,7 +1227,9 @@ impl SymbolExtractor {
         }
     }
 
-    /// Extract Rust use statements and mod declarations
+    /// Extract Rust use statements and mod declarations, plus inline paths
+    /// into the crate (`crate::a::b::f(…)`, `super::x::Y`) used without a
+    /// `use`: each is an import of the module it names, once per file.
     fn extract_rust_imports(
         node: &tree_sitter::Node,
         source: &str,
@@ -1221,6 +1237,7 @@ impl SymbolExtractor {
     ) {
         // Use iterative traversal with explicit stack to avoid stack overflow
         let mut stack = vec![*node];
+        let mut inline_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
         while let Some(current) = stack.pop() {
             let mut cursor = current.walk();
@@ -1247,6 +1264,27 @@ impl SymbolExtractor {
                                     import_type: ImportType::Rust,
                                 });
                             }
+                        }
+                        // Its paths are the import itself, not inline uses.
+                        continue;
+                    }
+                    "scoped_identifier" | "scoped_type_identifier"
+                        if !matches!(
+                            current.kind(),
+                            "scoped_identifier" | "scoped_type_identifier"
+                        ) =>
+                    {
+                        let path = &source[child.byte_range()];
+                        let local = ["crate::", "super::", "self::"]
+                            .iter()
+                            .any(|p| path.starts_with(p));
+                        if local && !path.contains(char::is_whitespace) && inline_seen.insert(path)
+                        {
+                            imports.push(ImportStatement {
+                                path: path.to_string(),
+                                line: child.start_position().row,
+                                import_type: ImportType::Rust,
+                            });
                         }
                     }
                     "mod_item" => {
@@ -1499,6 +1537,36 @@ impl SymbolExtractor {
 
 #[cfg(test)]
 mod tests {
+    /// An inline `crate::a::b::f()` with no `use` is an import of the
+    /// module it names (once per file); paths inside `use` are not repeated,
+    /// and external paths (`std::`, a crate name) are not imports.
+    #[test]
+    fn rust_inline_crate_paths_are_imports() {
+        let src = "use crate::a::B;\n\
+                   fn f() {\n\
+                       crate::search::fold::fold_str(\"x\");\n\
+                       crate::search::fold::fold_str(\"y\");\n\
+                       let _: super::util::Thing = std::mem::take(&mut 1);\n\
+                       let _v: Vec<crate::model::Row> = Vec::new();\n\
+                   }\n";
+        let paths: Vec<String> = SymbolExtractor::new(Path::new("x.rs"))
+            .extract_imports(src)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.path)
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                "crate::a::B",
+                "crate::search::fold::fold_str",
+                "super::util::Thing",
+                "crate::model::Row",
+            ],
+            "{paths:?}"
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -2465,6 +2533,76 @@ void regular_function() {
         let names: Vec<(&str, u32)> = refs.iter().map(|r| (r.name.as_str(), r.line)).collect();
         assert!(names.contains(&("f", 2)), "{names:?}");
         assert!(names.contains(&("method", 3)), "{names:?}");
+    }
+
+    /// Python records more than calls: base classes, decorators, type
+    /// annotations, attributes and functions used as values. Local
+    /// variables that share a function's name, and attributes being
+    /// assigned, are not references. Each form here is a row of
+    /// docs/book/src/reference/reference-support.md.
+    #[test]
+    fn test_python_reference_forms() {
+        let py = "\
+from pkg.models import Base, helper
+@decorator
+@app.route('/x')
+class Foo(Base, Mixin):
+    @permanent.setter
+    def run(self, item: Item, n: int = 3) -> Result:
+        helper(item)
+        self.helper()
+        x = self.prop
+        isinstance(item, Item)
+        cb = helper
+        z: list[Item] = []
+        hooks.register(self.on_done)
+        u: Item | None = None
+        Item.from_dict({})
+        self.prop = 1
+        try:
+            pass
+        except Oops as e:
+            raise Failed
+        return Result
+
+def view(request, app):
+    app.run()
+    return request
+";
+        let (_, _, refs) = SymbolExtractor::new(Path::new("a.py"))
+            .extract_all_with_refs(py)
+            .unwrap();
+        let has = |name: &str, line: u32| refs.iter().any(|r| r.name == name && r.line == line);
+        let lines = |name: &str| -> Vec<u32> {
+            refs.iter()
+                .filter(|r| r.name == name)
+                .map(|r| r.line)
+                .collect()
+        };
+        // Imports are not references.
+        assert!(!has("helper", 0) && !has("Base", 0), "{refs:?}");
+        assert!(has("decorator", 1), "bare decorator: {refs:?}");
+        assert!(has("route", 2), "decorator call: {refs:?}");
+        assert!(has("Base", 3) && has("Mixin", 3), "base classes: {refs:?}");
+        assert!(has("permanent", 4) && has("setter", 4), "{refs:?}");
+        assert!(has("Item", 5) && has("Result", 5), "annotations: {refs:?}");
+        assert!(has("helper", 6) && has("helper", 7), "calls: {refs:?}");
+        assert!(has("prop", 8), "attribute read: {refs:?}");
+        assert!(has("Item", 9), "class as an argument: {refs:?}");
+        assert!(has("helper", 10), "function as a value: {refs:?}");
+        assert!(has("Item", 11), "generic: {refs:?}");
+        assert!(has("on_done", 12), "method as a callback: {refs:?}");
+        assert!(has("Item", 13), "union: {refs:?}");
+        assert!(has("Item", 14), "class through an attribute: {refs:?}");
+        assert_eq!(lines("prop"), vec![8], "assigning is not a use: {refs:?}");
+        assert!(has("Oops", 18) && has("Failed", 19), "exceptions: {refs:?}");
+        assert!(has("Result", 20), "returned: {refs:?}");
+        // Parameters are locals, not uses of the function `view` or `app`.
+        assert!(!has("app", 23) && !has("request", 24), "{refs:?}");
+        assert!(
+            has("run", 23),
+            "a method call on a local still is: {refs:?}"
+        );
     }
 
     /// Review 1.4: Rust type mentions (parameters, fields, generics, paths,

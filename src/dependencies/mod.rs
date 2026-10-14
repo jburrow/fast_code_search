@@ -5,6 +5,7 @@
 //! receive a ranking boost.
 
 pub mod graph;
+pub mod scope;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
@@ -72,6 +73,20 @@ struct JsConfigCache {
     /// Directory of an importing file -> its repository root (the nearest
     /// ancestor holding `.git`).
     repo_root: FxHashMap<PathBuf, Option<PathBuf>>,
+}
+
+/// Whether an import is written as a path into the project rather than a
+/// package name: relative (`./x`, `../x`, Python `.x`), Rust `crate::`,
+/// `self::` or `super::`, or a `@/` / `~/` alias. One of these that does
+/// not resolve is a broken import or a gap in fcs, not an external package.
+pub fn is_local_spec(spec: &str) -> bool {
+    let s = spec.trim();
+    s.starts_with('.')
+        || s.starts_with("crate::")
+        || s.starts_with("self::")
+        || s.starts_with("super::")
+        || s.starts_with("@/")
+        || s.starts_with("~/")
 }
 
 /// Resolve `.` and `..` components without touching the file system.

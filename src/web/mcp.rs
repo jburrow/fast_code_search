@@ -243,7 +243,9 @@ fn tool_definitions() -> Value {
             "Search the indexed code. Use instead of grep: it answers from an in-memory index. \
              In text mode `query` is a literal, like `rg -F`: several words are one phrase, and \
              quotes and a leading - are part of the text. Operators: file:PATTERN, -file:PATTERN, \
-             lang:rust, case:yes, word:yes. mode: text (default), regex (a Rust regex matched \
+             lang:rust, case:yes, word:yes. deps / rdeps limit the search to a file and what it \
+             imports / what imports it (Rust, Python, JS/TS), e.g. rdeps=src/a.rs:2 finds uses \
+             among the code that could break when a.rs changes. mode: text (default), regex (a Rust regex matched \
              per line), symbols (definitions only) or references (call sites and type mentions \
              of an identifier). Text ignores case and regex does not, unless case_sensitive is \
              set. Returns path:line:column with the matching line; in text and regex mode, \
@@ -258,7 +260,9 @@ fn tool_definitions() -> Value {
                     "exclude": {"type": "string", "description": "Semicolon-separated path globs to skip."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_LIMIT, "default": 20},
                     "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "Lines of context around each match."},
-                    "case_sensitive": {"type": "boolean", "description": "Match case exactly (true) or ignore it (false). Default: text ignores case, regex matches it."}
+                    "case_sensitive": {"type": "boolean", "description": "Match case exactly (true) or ignore it (false). Default: text ignores case, regex matches it."},
+                    "deps": {"type": "string", "description": "Only search these files and what they import: semicolon-separated PATH[:N] (N import hops, default 1; * for any distance). A leading - leaves those files out."},
+                    "rdeps": {"type": "string", "description": "Only search these files and the files that import them (change impact): same form as deps."}
                 },
                 "required": ["query"]
             }),
@@ -418,6 +422,10 @@ struct SearchArgs {
     context: usize,
     #[serde(default)]
     case_sensitive: Option<bool>,
+    #[serde(default)]
+    deps: String,
+    #[serde(default)]
+    rdeps: String,
 }
 
 async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
@@ -447,6 +455,8 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         "references": references,
         "context": context,
         "files": MCP_FILE_MATCHES,
+        "deps": a.deps,
+        "rdeps": a.rdeps,
     });
     if let Some(c) = a.case_sensitive {
         params["case"] = json!(c);
@@ -472,6 +482,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         }
         out.push('\n');
     }
+    push_scope_note(&mut out, resp.scope.as_ref());
     if resp.results.is_empty() {
         let _ = writeln!(
             out,
@@ -507,6 +518,11 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
             "SYMBOL_DEFINITION" => "  [definition]",
             "SYMBOL_REFERENCE" => "  [reference]",
             _ => "",
+        };
+        let kind = match r.hops {
+            Some(1) => format!("{kind}  [1 hop]"),
+            Some(h) => format!("{kind}  [{h} hops]"),
+            None => kind.to_string(),
         };
         if r.line_number == 0 {
             let _ = writeln!(out, "{}  [file name matches]", r.file_path);
@@ -551,6 +567,24 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
 fn push_limits_note(out: &mut String, hits: &[super::api::LimitHitJson]) {
     for hit in hits {
         let _ = writeln!(out, "Results capped ({}): {}.", hit.limit, hit.detail);
+    }
+}
+
+/// What a graph-scoped search searched, and whether the graph behind it
+/// may be missing files.
+fn push_scope_note(out: &mut String, scope: Option<&super::api::ScopeJson>) {
+    let Some(scope) = scope else { return };
+    let files = scope
+        .files
+        .map(|n| format!("{n} file{}", if n == 1 { "" } else { "s" }))
+        .unwrap_or_else(|| "all files but those".to_string());
+    let _ = writeln!(out, "Searched {files} ({}).", scope.filters.join(" "));
+    if scope.unresolved_local > 0 {
+        let _ = writeln!(
+            out,
+            "The scope may be incomplete: {} project import(s) in it resolve to no file.",
+            scope.unresolved_local
+        );
     }
 }
 

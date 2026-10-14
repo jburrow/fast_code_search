@@ -35,6 +35,11 @@
 //!   such a query must say what it means in rg terms with `globs`
 //!   (rg `-g` globs, relative to each tree, `!` to exclude), which keeps
 //!   the oracle independent of the code under test.
+//! - `deps:` / `rdeps:` (in `q`, or the `deps` / `rdeps` fields for a
+//!   regex) limit the search to files the import graph reaches; rg has no
+//!   graph, so rg's hits are kept only in the scope's files, which is rg
+//!   run over those files. This checks matching inside the scope; the
+//!   graph itself is checked against the language resolvers (`fcs check`).
 //!
 //! rg runs with `-uu --crlf` per tree, and only files fcs indexed are
 //! compared, so discovery differences (gitignore, binary files, size caps)
@@ -68,7 +73,9 @@ use fast_code_search::search::engine::{
     RankMode, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
 };
 use fast_code_search::search::regex_search::needs_multiline;
-use fast_code_search::search::{parse_query, ParsedQuery, SearchEngine};
+use fast_code_search::search::{
+    parse_query, GraphDirection, GraphFilter, GraphScope, ParsedQuery, SearchEngine,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
@@ -144,6 +151,12 @@ struct Query {
     /// What the query exercises (kept in the report).
     #[serde(default)]
     why: String,
+    /// Graph filters, as the API's `deps` / `rdeps` parameters (the only
+    /// way to scope a regex).
+    #[serde(default)]
+    deps: Vec<String>,
+    #[serde(default)]
+    rdeps: Vec<String>,
     /// Match case, as the API's `case` parameter sets it (overrides
     /// `case:` in `q`). A text query only.
     #[serde(default)]
@@ -168,6 +181,28 @@ impl Query {
             p.options.whole_word = w;
         }
         p
+    }
+
+    /// The graph scope this query searches, if any.
+    fn scope(&self, engine: &SearchEngine) -> Result<Option<GraphScope>> {
+        let mut filters = if self.mode == "text" {
+            self.parsed().graph
+        } else {
+            Vec::new()
+        };
+        for (args, direction) in [
+            (&self.deps, GraphDirection::Deps),
+            (&self.rdeps, GraphDirection::Rdeps),
+        ] {
+            for a in args {
+                filters.push(GraphFilter {
+                    direction,
+                    negate: a.starts_with('-'),
+                    arg: a.trim_start_matches('-').to_string(),
+                });
+            }
+        }
+        engine.graph_scope(&filters).map_err(anyhow::Error::msg)
     }
 
     /// `case` / `word` for the report.
@@ -239,6 +274,7 @@ fn run_ranked(
     limits: SearchLimits,
     rank: RankMode,
 ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+    let limits = limits.with_scope(q.scope(engine)?.map(std::sync::Arc::new));
     Ok(match q.mode.as_str() {
         "text" => engine.search_parsed(&q.parsed(), "", "", limits, rank)?,
         "regex" => engine.search_regex_with_limits(&q.q, "", "", limits, rank)?,
@@ -456,7 +492,7 @@ fn compare_regex(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome>
         multiline: needs_multiline(&q.q),
         ..Default::default()
     };
-    let expected = rg_hits(c, rg, &q.q, flags, &q.globs)?;
+    let expected = in_scope(c, q, rg_hits(c, rg, &q.q, flags, &q.globs)?)?;
     let (e, f) = (flatten(&expected), flatten(fcs));
     Ok(Outcome {
         missing: e.difference(&f).cloned().collect(),
@@ -472,7 +508,10 @@ fn compare_regex(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome>
 
 fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> {
     let parsed = q.parsed();
-    if (!parsed.include_globs.is_empty() || !parsed.exclude_globs.is_empty()) && q.globs.is_empty()
+    if (!parsed.include_globs.is_empty()
+        || !parsed.lang_globs.is_empty()
+        || !parsed.exclude_globs.is_empty())
+        && q.globs.is_empty()
     {
         bail!("query {:?} uses file:/lang: but gives no rg `globs`", q.q);
     }
@@ -491,7 +530,7 @@ fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> 
             note: "no text: fcs should return nothing".into(),
         });
     }
-    let expected = rg_hits(c, rg, &parsed.text, flags, &q.globs)?;
+    let expected = in_scope(c, q, rg_hits(c, rg, &parsed.text, flags, &q.globs)?)?;
     let (e, f) = (flatten(&expected), flatten(fcs));
     Ok(Outcome {
         missing: e.difference(&f).cloned().collect(),
@@ -499,6 +538,24 @@ fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> 
         expected,
         note: String::new(),
     })
+}
+
+/// rg's hits limited to the query's graph scope (all of them when it has
+/// none): the same as running rg over the scope's files.
+fn in_scope(c: &Corpus, q: &Query, mut hits: Hits) -> Result<Hits> {
+    let Some(scope) = q.scope(&c.engine)? else {
+        return Ok(hits);
+    };
+    let mut allowed = std::collections::HashSet::new();
+    for id in 0..c.engine.file_store.len() as u32 {
+        if scope.allows(id) {
+            if let Some(f) = c.engine.file_store.get(id) {
+                allowed.insert(c.engine.make_display_path(&f.path));
+            }
+        }
+    }
+    hits.retain(|file, _| allowed.contains(file));
+    Ok(hits)
 }
 
 fn main() -> Result<()> {
@@ -537,6 +594,8 @@ fn main() -> Result<()> {
                 why: t.why,
                 case: t.case,
                 word: t.word,
+                deps: Vec::new(),
+                rdeps: Vec::new(),
                 generated: true,
             })
             .collect();

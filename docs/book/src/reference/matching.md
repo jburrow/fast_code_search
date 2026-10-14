@@ -26,6 +26,8 @@ below, and `limits_hit` in every response).
 | Regex with `case=false`, `(?i)` or `fcs -e -i` | `rg -i 'PATTERN'` | backtest |
 | `lang:rust foo` | `rg -F -i -t rust 'foo'` | backtest (with `globs`) |
 | `file:*.py foo` / `-file:tests foo` | `rg -F -i -g '*.py' 'foo'` / `-g '!tests'`; a bare word such as `file:parser` matches anywhere in the path, which `-g` has no exact form for | backtest (with `globs`) |
+| `file:src/ lang:rust foo` | `rg -F -i -g 'src/**/*.rs' 'foo'`: different filters narrow each other, as `-g` and `-t` do | backtest (with `globs`) |
+| `rdeps:src/a.rs foo` / `deps:` | `rg -F -i 'foo' FILE…` over the files the import graph puts in scope; rg has no graph | backtest (rg's hits kept to the scope's files) |
 | A text search's filename hits (no line number) | none; closest is `rg --files \| rg -i 'foo'` | not compared |
 | Path matches (`files=N`, the FILES box) | none; closest is `rg --files \| rg -i` with every word required | unit tests |
 | Symbols (SYMBOLS, `fcs symbols`) | none: definitions come from tree-sitter, not from text | engine tests |
@@ -62,7 +64,8 @@ These follow from fcs being a code search server rather than a line filter.
 - **Operators.** Plain text is a literal, like `rg -F`: several words are
   one phrase, and quotes and a leading `-` are part of the text. The only
   exceptions are whole words with an argument: `file:`, `-file:`,
-  `lang:`, `-lang:`, `case:` and `word:`. To search for one of those
+  `lang:`, `-lang:`, `deps:`, `rdeps:` (and their `-` forms), `case:`
+  and `word:`. To search for one of those
   literally, use a regex. The query is trimmed at both ends (`rg ' x'`
   keeps its leading space). See [Query syntax](query-syntax.md).
 - **File names match too.** A text search also lists files whose *name*

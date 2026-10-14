@@ -20,11 +20,14 @@ message SearchRequest {
   bool case_sensitive = 10;           // Exact-case matching (overrides case: in the query)
   bool whole_word = 11;               // Whole-word matching (overrides word: in the query)
   bool references = 12;               // Return the references (call sites, type mentions) of the identifier in query
+  repeated string deps = 13;          // Only search these files and what they import: PATH[:N|:*], -PATH to leave out (as deps: in the query)
+  repeated string rdeps = 14;         // Only search these files and what imports them (as rdeps: in the query)
 }
 
 // A plain-text query is a literal, like `rg -F`: several words are one
 // phrase, and quotes and a leading - are part of the text. It understands the
-// operators file:PAT, -file:PAT, lang:NAME, -lang:NAME, case:yes and word:yes.
+// operators file:PAT, -file:PAT, lang:NAME, -lang:NAME, deps:PATH[:N],
+// rdeps:PATH[:N] (and their - forms), case:yes and word:yes.
 // Regex queries are passed through untouched.
 
 message SearchResult {
@@ -40,8 +43,9 @@ message SearchResult {
   int32 line_match_end = 10;   // Byte offset of match end within the full line
   int32 match_column = 11;     // 0-based character column of match start in the full line
   uint32 dependency_count = 12; // Files that import this file
-  uint32 file_hits = 13;        // Hits the search found in this file across all pages
-  bool file_hits_capped = 14;   // The file may hold more hits than file_hits
+  optional uint32 hops = 13;    // Import hops from the deps/rdeps anchor (graph-scoped searches only)
+  uint32 file_hits = 14;        // Hits the search found in this file across all pages
+  bool file_hits_capped = 15;   // The file may hold more hits than file_hits
 }
 
 enum MatchType {

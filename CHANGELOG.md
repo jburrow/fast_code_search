@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Search by imports: `rdeps:PATH` limits a search to that file and the
+  files that import it, `deps:PATH` to the file and what it imports
+  (`:N` hops, `:*` for any distance, `-rdeps:` / `-deps:` to leave them
+  out, a trailing `/` for a folder). An import that lands on a package's
+  entry file (`mod.rs`, `__init__.py`, `index.ts`) reaches the modules
+  behind it without costing a hop, one entry file at a time, and only when
+  the file names something the module defines; negated filters walk
+  strictly. Unknown, ambiguous or graph-less
+  anchors are errors, never an empty result. Responses say how many files
+  were searched and warn when unresolved project imports may leave files
+  out; hits carry their `hops` and nearer files rank higher. In the query
+  everywhere, plus `deps` / `rdeps` on the API, gRPC, MCP `search_code`
+  and `fcs --deps` / `--rdeps` (the only way to scope a regex), the web
+  UI's FILTER panel, the dependency popover and the explorer's
+  **Search importers** / **Search its imports** buttons.
+- Python references find far more uses: decorators, base classes, type
+  annotations, functions and classes used as values, attribute reads and
+  exceptions, where they used to find calls only (Flask: 57% of the uses
+  Jedi finds, now 98%). Parameters and local variables that share a
+  function's name are no longer listed as its references. Existing indexes
+  re-extract symbols once on the first start.
+- `examples/ref_oracle.rs` and `src/check/oracle/py_refs.py` compare Python
+  references with Jedi's; CI runs them on Flask and Click.
 - Book page "Reference support": what the References mode finds in each
   language, and what it misses. C and C++ record no references; Python
   records calls only; TypeScript, Java and C# miss many type positions.
@@ -62,12 +85,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Import graph: a Rust path into the crate used without a `use`
+  (`crate::a::b::f()`, `super::x::Y`) is an import of the module it names,
+  so the dependency explorer, rankings and `rdeps:` see it. Rebuild the
+  index to pick it up (the v8 format is unreleased, so upgrading from
+  0.15.x rebuilds anyway).
+- `file:` and `lang:` narrow each other: `file:src/ lang:rust` is the Rust
+  files under `src/`, where it used to be every file under `src/` plus
+  every Rust file. Repeating one operator still widens it.
 - Web UI: the preview icon is back at the end of each match line (#153 had
   moved the preview to the line number, with nothing to show it). Hovering
   the icon previews the file; clicking it pins the preview, which then
   stays open until Escape, a click outside it or its ×, as does clicking
   or scrolling inside it. The line number opens the file and no longer
-  previews it on hover.
+  previews it on hover. A kept preview now does what the file viewer
+  does: Ctrl/⌘-click or double-click a name for its definition (Back in the
+  viewer returns to the preview's line), click a line number to select it,
+  Copy link, Explore imports. Its Open button is now **Expand**, which shows
+  the same file in the large viewer at the preview's line (after ↑/↓ or a
+  selected line, not always the original hit).
 - Web UI: results show one line of context either side of each hit by
   default (was the match line only). Filter → Context lines still sets it
   and is remembered once you pick a value; `context=0` in a link shows the

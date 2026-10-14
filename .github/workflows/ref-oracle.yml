@@ -1,0 +1,84 @@
+name: reference oracle
+
+# Does References find the uses a language's own analyser finds?
+# examples/ref_oracle.rs compares the Python references fcs records with
+# Jedi's (src/check/oracle/py_refs.py) on pinned Flask and Click, and fails
+# when a change misses or adds more references than the recorded baseline.
+# Lower the baselines when a fix closes a gap. What the remaining misses
+# and extras are: docs/book/src/reference/reference-support.md.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "src/symbols/**"
+      - "src/check/oracle/py_refs.py"
+      - "examples/ref_oracle.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ref-oracle.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  oracle:
+    name: fcs references vs Jedi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out Flask (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: pallets/flask
+          ref: d086db856be187255b8ec61ef409357393020f32
+          path: bench-corpus/flask
+          fetch-depth: 1
+      - name: Check out Click (corpus)
+        uses: actions/checkout@v4
+        with:
+          repository: pallets/click
+          ref: 2247b35ea1c47c727d7a06e51fa280e12a863ff6
+          path: bench-corpus/click
+          fetch-depth: 1
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the oracle
+        run: python -m pip install jedi==0.20.1
+
+      - name: Build
+        run: cargo build --release --example ref_oracle
+
+      - name: Python (Jedi on Flask)
+        run: |
+          python src/check/oracle/py_refs.py bench-corpus/flask > flask.json
+          ./target/release/examples/ref_oracle --oracle flask.json \
+            --max-missing 40 --max-extra 296 --markdown ref-flask.md
+
+      - name: Python (Jedi on Click)
+        run: |
+          python src/check/oracle/py_refs.py bench-corpus/click > click.json
+          ./target/release/examples/ref_oracle --oracle click.json \
+            --max-missing 145 --max-extra 458 --markdown ref-click.md
+
+      - name: Report
+        if: always()
+        run: cat ref-flask.md ref-click.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

@@ -9,9 +9,11 @@
 //! (JSON, protobuf, terminal) differs.
 
 use crate::search::{
-    parse_query, regex_pattern_with_case, PathQuery, PathSearch, RankMode, SearchEngine,
-    SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
+    parse_query, regex_pattern_with_case, GraphDirection, GraphFilter, GraphScope, PathQuery,
+    PathSearch, RankMode, SearchEngine, SearchLimits, SearchMatch, SearchRankingInfo,
+    SearchSettings,
 };
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Page size when the request does not give one.
@@ -78,6 +80,11 @@ pub struct SearchRequest {
     /// at [`MAX_PATH_MATCHES`]). Only on the first page of a text or regex
     /// search.
     pub path_matches: usize,
+    /// Graph filters as `PATH[:N|:*]`, a leading `-` to leave the files out:
+    /// the same as `deps:` / `rdeps:` in the query, and the only way to
+    /// scope a regex search (whose query is all pattern).
+    pub deps: Vec<String>,
+    pub rdeps: Vec<String>,
 }
 
 /// What a search found.
@@ -87,6 +94,8 @@ pub struct SearchOutcome {
     pub info: SearchRankingInfo,
     /// Path matches, when asked for and applicable.
     pub paths: Option<PathSearch>,
+    /// The files the search was limited to, when it had graph filters.
+    pub scope: Option<Arc<GraphScope>>,
 }
 
 impl SearchOutcome {
@@ -143,6 +152,16 @@ impl SearchEngine {
             parsed.options.whole_word = w;
         }
         let pattern = regex_pattern_with_case(&req.query, req.case_sensitive);
+        // A regex is all pattern: `deps:` inside it is text to match.
+        let mut graph = if req.mode == SearchMode::Regex {
+            Vec::new()
+        } else {
+            std::mem::take(&mut parsed.graph)
+        };
+        graph.extend(request_graph_filters(&req.deps, GraphDirection::Deps));
+        graph.extend(request_graph_filters(&req.rdeps, GraphDirection::Rdeps));
+        let scope = self.graph_scope(&graph)?.map(Arc::new);
+        let limits = limits.with_scope(scope.clone());
         let filter_error = |e: anyhow::Error| format!("Invalid filter pattern: {e}");
         // The path pass gets the same time allowance as the content scan.
         let allowance = limits
@@ -179,6 +198,7 @@ impl SearchEngine {
                     &req.exclude,
                     req.path_matches.min(MAX_PATH_MATCHES),
                     allowance.map(|a| Instant::now() + a),
+                    scope.as_deref(),
                 )
                 .map_err(|e| e.to_string())?,
             )
@@ -189,8 +209,31 @@ impl SearchEngine {
             matches,
             info,
             paths,
+            scope,
         })
     }
+}
+
+/// A request's `deps` / `rdeps` list as graph filters.
+fn request_graph_filters(
+    args: &[String],
+    direction: GraphDirection,
+) -> impl Iterator<Item = GraphFilter> + '_ {
+    args.iter()
+        .map(|a| a.trim())
+        .filter(|a| !a.is_empty() && *a != "-")
+        .map(move |a| match a.strip_prefix('-') {
+            Some(rest) => GraphFilter {
+                direction,
+                negate: true,
+                arg: rest.to_string(),
+            },
+            None => GraphFilter {
+                direction,
+                negate: false,
+                arg: a.to_string(),
+            },
+        })
 }
 
 #[cfg(test)]

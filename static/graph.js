@@ -443,7 +443,7 @@ async function renderSource(p, { line = null, importOf = null } = {}) {
     const searchHref = '/?include=' + encodeURIComponent(searchIncludeFor([p]));
     head.innerHTML = `<div class="p">${esc(p)}</div>
         <div class="m"><span>${esc(hljsLangForPath(p))} · ${plural(file.line_count, 'line')}</span><span>${plural(resolved.length, 'resolved import')} · ${external.length.toLocaleString()} external or unresolved</span>
-        ${p !== S.center ? '<button class="btn" id="centreHere">Centre graph here</button>' : ''}<a class="btn" href="${esc(searchHref)}" title="Keyword search limited to this file">Search in file</a></div>
+        ${p !== S.center ? '<button class="btn" id="centreHere">Centre graph here</button>' : ''}<a class="btn" href="${esc(searchHref)}" title="Keyword search limited to this file">Search in file</a><a class="btn" href="${esc('/?rdeps=' + encodeURIComponent(p))}" title="Keyword search limited to this file and the files that import it (rdeps:)">Search importers</a><a class="btn" href="${esc('/?deps=' + encodeURIComponent(p))}" title="Keyword search limited to this file and the files it imports (deps:)">Search its imports</a></div>
         <div class="chips"><em>Imported by</em>${chipList(1, '')}</div>
         <div class="chips"><em>Imports</em>${chipList(-1, ' out')}</div>`;
 

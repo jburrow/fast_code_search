@@ -10,6 +10,9 @@ const queryInput = document.getElementById('query');
 const maxResultsSelect = document.getElementById('max-results');
 const includeFilterInput = document.getElementById('include-filter');
 const excludeFilterInput = document.getElementById('exclude-filter');
+// Graph scope (`rdeps` / `deps`): per task, so kept in the URL, not storage.
+const rdepsFilterInput = document.getElementById('rdeps-filter');
+const depsFilterInput = document.getElementById('deps-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const referencesModeCheckbox = document.getElementById('references-mode');
@@ -166,6 +169,8 @@ function syncFilterIndicators() {
     const fields = [
         [includeFilterInput, 'Only in'],
         [excludeFilterInput, 'Skipping'],
+        [rdepsFilterInput, 'Files that import'],
+        [depsFilterInput, 'Files imported by'],
     ].filter(([input]) => input && input.value.trim());
 
     const count = document.getElementById('filter-count');
@@ -279,6 +284,8 @@ function applyUrlState(params, opts = {}) {
     text(queryInput, 'q');
     text(includeFilterInput, 'include');
     text(excludeFilterInput, 'exclude');
+    text(rdepsFilterInput, 'rdeps');
+    text(depsFilterInput, 'deps');
     if (params.has('max')) applyMaxResults(params.get('max'));
     else if (absentIsDefault) setSelectValue(maxResultsSelect, '50');
     select(rankModeSelect, 'rank', 'auto');
@@ -292,6 +299,7 @@ function applyUrlState(params, opts = {}) {
     // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
     // so the applied filters are discoverable.
     const hasAdvanced = params.has('include') || params.has('exclude') ||
+        params.has('rdeps') || params.has('deps') ||
         params.has('rank') || params.has('max') || params.has('context');
     if (hasAdvanced) {
         const filterPanel = document.getElementById('filter-panel');
@@ -319,6 +327,11 @@ function currentUrlParams() {
 
     const exclude = excludeFilterInput?.value.trim() || '';
     if (exclude) params.set('exclude', exclude);
+
+    const rdeps = rdepsFilterInput?.value.trim() || '';
+    if (rdeps) params.set('rdeps', rdeps);
+    const deps = depsFilterInput?.value.trim() || '';
+    if (deps) params.set('deps', deps);
 
     if (regexModeCheckbox?.checked) params.set('regex', 'true');
     if (symbolsModeCheckbox?.checked) params.set('symbols', 'true');
@@ -858,6 +871,8 @@ window.addEventListener('scroll', (e) => {
 document.addEventListener('click', (e) => {
     if (!isContextTooltipVisible()) return;
     if (e.target instanceof Node && _ctxTooltip.contains(e.target)) return;
+    // The name menu opened from inside the preview acts on the preview.
+    if (e.target instanceof Element && e.target.closest('.code-menu')) return;
     // A click on the icon that opened it pins it (see wireResultGroups).
     if (_ctxAnchor && e.target instanceof Node && _ctxAnchor.contains(e.target)) return;
     hideContextTooltipImmediately();
@@ -888,11 +903,30 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
                 <span class="ctx-nav-pos"></span>
                 <button type="button" data-step="1" title="Next match" aria-label="Next match">↓</button>
             </span>
-            <button type="button" class="ctx-open" title="Open in the file viewer">Open</button>
+            <button type="button" class="ctx-copy" title="Copy a link that opens this file at the selected line">Copy link</button>
+            ${hasImportGraph(filePath) ? `<a class="ctx-explore" href="${escapeHtml(graphExplorerUrl(filePath))}" title="Open this file in the dependency explorer">Explore imports</a>` : ''}
+            <button type="button" class="ctx-open" title="Show this file in the large viewer">Expand</button>
             <button type="button" class="ctx-close" title="Close (Esc)" aria-label="Close preview">×</button>
         </div>
         <div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
-    tooltip.querySelector('.ctx-open').addEventListener('click', () => showFileModal(filePath, lineNumber));
+    // The preview does what the large viewer does (go to definition, select
+    // a line, copy a link, explore imports); Expand only makes it bigger, at
+    // the line the preview is on (↑/↓ or a clicked line number may have
+    // moved it).
+    tooltip._file = filePath;
+    tooltip._line = lineNumber;
+    tooltip.querySelector('.ctx-open').addEventListener('click', () => {
+        const line = tooltip._line;
+        hideContextTooltipImmediately();
+        showFileModal(filePath, line);
+    });
+    const copyBtn = tooltip.querySelector('.ctx-copy');
+    copyBtn.addEventListener('click', async () => {
+        const url = location.origin + location.pathname + location.search + fileViewHash(filePath, tooltip._line || 1);
+        const ok = await copyTextToClipboard(url);
+        copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
+        setTimeout(() => { copyBtn.textContent = 'Copy link'; }, 1500);
+    });
     tooltip.querySelector('.ctx-close').addEventListener('click', hideContextTooltipImmediately);
     tooltip.classList.toggle('ctx-pinned', _ctxPinned);
     positionTooltip(tooltip, resultItem);
@@ -901,9 +935,17 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
     const body = tooltip.querySelector('.ctx-file-body');
     try {
         const view = await populateFileView(body, filePath, wholeFile ? 0 : lineNumber,
-            _currentMatcher || currentQueryMatcher(), signal, { hint: false });
+            _currentMatcher || currentQueryMatcher(), signal);
         if (!view || signal.aborted) return;
         wireContextNav(tooltip, view, wholeFile ? 0 : lineNumber);
+        // Clicking a line number selects it, as in the large viewer.
+        body.addEventListener('click', (e) => {
+            const num = e.target.closest('.file-line-num');
+            const line = num ? parseInt(num.textContent, 10) : 0;
+            if (!(line > 0)) return;
+            view.setMark(line);
+            tooltip._line = line;
+        });
     } catch (e) {
         if (e.name === 'AbortError') return;
         body.innerHTML = `<div class="error-message">${escapeHtml(e.message)}</div>`;
@@ -925,6 +967,7 @@ function wireContextNav(tooltip, view, startLine) {
         view.linesEl.querySelectorAll('.ctx-current').forEach(l => l.classList.remove('ctx-current'));
         const row = scroll ? view.goTo(lines[current]) : view.row(lines[current]);
         if (row) row.classList.add('ctx-current');
+        tooltip._line = lines[current];
         pos.textContent = `${(current + 1).toLocaleString()} of ${lines.length.toLocaleString()}`;
     };
     nav.hidden = false;
@@ -1014,6 +1057,10 @@ function buildSearchParams(s) {
     const exclude = pathFilterParam(s.excludeFilter);
     if (include) params.set('include', include);
     if (exclude) params.set('exclude', exclude);
+    const rdeps = pathFilterParam(s.rdepsFilter);
+    const deps = pathFilterParam(s.depsFilter);
+    if (rdeps) params.set('rdeps', rdeps);
+    if (deps) params.set('deps', deps);
     // The three modes are mutually exclusive in the UI (the server lets
     // references and symbols silently win over regex).
     if (s.isReferences) params.set('references', 'true');
@@ -1108,6 +1155,8 @@ async function performSearch(opts = {}) {
         maxResults: currentMaxResults(),
         includeFilter: includeFilterInput?.value.trim() || '',
         excludeFilter: excludeFilterInput?.value.trim() || '',
+        rdepsFilter: rdepsFilterInput?.value.trim() || '',
+        depsFilter: depsFilterInput?.value.trim() || '',
         isRegex: regexModeCheckbox?.checked || false,
         symbolsOnly: symbolsModeCheckbox?.checked || false,
         isReferences: referencesModeCheckbox?.checked || false,
@@ -1391,6 +1440,15 @@ function renderSearch(search, durationMs, opts = {}) {
         freshnessEl.style.display = freshness ? '' : 'none';
         freshnessEl.textContent = freshness ? freshness.text : '';
         freshnessEl.title = freshness ? freshness.title : '';
+    }
+
+    const scopeEl = document.getElementById('search-scope');
+    const scope = scopeLabel(data);
+    if (scopeEl) {
+        scopeEl.style.display = scope ? '' : 'none';
+        scopeEl.textContent = scope ? scope.text : '';
+        scopeEl.title = scope ? scope.title : '';
+        scopeEl.style.color = scope && scope.incomplete ? 'var(--warn)' : '';
     }
 
     renderFileMatches(data);
@@ -1691,7 +1749,8 @@ function renderGroupHtml(group) {
             (result.content_truncated
                 ? `<span class="hit-tag truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
                 : '');
-        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}&#10;Click to open the file here`;
+        const hops = result.hops == null ? '' : ` · ${result.hops === 0 ? 'the scope\'s own file' : `${result.hops} import hop${result.hops === 1 ? '' : 's'} away`}`;
+        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}${hops}&#10;Click to open the file here`;
         // The preview icon at the end of the match line: hover it to preview
         // the file, click it to open the file at this line.
         const openBtn = `<button type="button" class="hit-open view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
@@ -1835,7 +1894,7 @@ function wireResultGroups(root) {
         const lineNumber = parseInt(btn.dataset.lineNumber, 10) || 1;
         const wholeFile = btn.dataset.wholeFile === 'true';
         // Click pins the preview open (the document click handler has
-        // already closed any other one); its Open button opens the viewer.
+        // already closed any other one); its Full view button opens the viewer.
         btn.addEventListener('click', () => {
             clearTimeout(_ctxHoverTimer);
             if (isContextTooltipVisible() && _ctxAnchor === btn) { pinContextTooltip(); return; }
@@ -2219,6 +2278,7 @@ async function showDepsTooltip(badgeEl, filePath) {
             `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
             dependentsSection +
             importsSection +
+            `<a class="deps-popover-explore" href="${escapeHtml(scopedSearchUrl('rdeps', filePath, queryInput.value.trim()))}" title="Search only this file and the files that import it">Search the files that import it →</a>` +
             `<a class="deps-popover-explore" href="${escapeHtml(graphExplorerUrl(filePath))}">Open in dependency explorer →</a>`;
 
         // Wire popover links/“more” via delegation using dataset values.
@@ -2565,7 +2625,7 @@ function isDefnModifier(e) {
 /** The code line element (one line of text) that `el` sits in, or null. */
 function codeLineElement(el) {
     if (!el || !el.closest) return null;
-    return el.closest('.file-modal-body .file-line-content, .ctx-line-content');
+    return el.closest('.file-modal-body .file-line-content, .ctx-tooltip .file-line-content, .ctx-line-content');
 }
 
 /** A DOM Range over the [start, end) text offsets of `el`. */
@@ -2616,6 +2676,8 @@ function identifierAtPoint(x, y) {
 /** The file a code line belongs to: the viewer's file or the result's. */
 function fileOfCodeLine(lineEl) {
     if (lineEl.closest('#file-modal')) return _fileView ? _fileView.file : null;
+    const preview = lineEl.closest('.ctx-tooltip');
+    if (preview) return preview._file || null;
     const group = lineEl.closest('.result-group');
     return group ? group.dataset.filePath : null;
 }
@@ -2736,6 +2798,7 @@ function menuForName(name, fromFile) {
 /** Run a search for `name` in the main page: its references, or as text. */
 function searchForName(name, mode) {
     closeFileModal();
+    hideContextTooltipImmediately();
     queryInput.value = mode === 'text' ? definitionQuery(name).replace('case:yes ', '') : name;
     modeCheckboxes().forEach(cb => { cb.checked = mode === 'references' && cb === referencesModeCheckbox; });
     syncToggleVisuals();
@@ -2785,9 +2848,17 @@ async function goToDefinition(name, fromFile, rect) {
     }
 }
 
-/** Open a definition: a Back step inside the viewer, or a fresh viewer. */
+/**
+ * Open a definition: a Back step inside the viewer, or a fresh viewer. From
+ * the preview, the viewer opens with Back leading to where the preview was.
+ */
 function openDefinition(def) {
-    if (document.getElementById('file-modal') && _fileView) {
+    const preview = _ctxTooltip && _ctxTooltip.style.display !== 'none' ? _ctxTooltip : null;
+    if (!document.getElementById('file-modal') && preview && preview._file) {
+        const from = { file: preview._file, line: preview._line || 1 };
+        _fileViewBack = [from];
+        showFileModal(def.file, def.line, { keepHistory: true });
+    } else if (document.getElementById('file-modal') && _fileView) {
         _fileViewBack.push(_fileView);
         showFileModal(def.file, def.line, { keepHistory: true });
     } else {
@@ -2875,7 +2946,13 @@ document.getElementById('active-filters')?.addEventListener('click', (e) => {
     if (btn) clearPathFilters([document.getElementById(btn.dataset.clear)]);
 });
 document.getElementById('clear-filters-btn')?.addEventListener('click', () => {
-    clearPathFilters([includeFilterInput, excludeFilterInput]);
+    clearPathFilters([includeFilterInput, excludeFilterInput, rdepsFilterInput, depsFilterInput]);
+});
+
+[rdepsFilterInput, depsFilterInput].filter(Boolean).forEach((input) => {
+    input.addEventListener('input', syncFilterIndicators);
+    input.addEventListener('input', debouncedSearch);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') optionChanged(); });
 });
 
 if (includeFilterInput) {

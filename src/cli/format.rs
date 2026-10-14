@@ -235,8 +235,24 @@ pub fn summary(resp: &SearchResponse) -> String {
         Some(t) if t > shown => format!(" of {t}"),
         _ => String::new(),
     };
+    let scope = resp
+        .scope
+        .as_ref()
+        .map(|s| {
+            let size = s
+                .files
+                .map(|n| format!(", {n} in scope"))
+                .unwrap_or_default();
+            let gap = if s.unresolved_local > 0 {
+                format!(", {} unresolved imports", s.unresolved_local)
+            } else {
+                String::new()
+            };
+            format!(" [{}{size}{gap}]", s.filters.join(" "))
+        })
+        .unwrap_or_default();
     format!(
-        "{shown}{more} matches{total} in {files} file{} ({:.1} ms{})",
+        "{shown}{more} matches{total} in {files} file{}{scope} ({:.1} ms{})",
         if files == 1 { "" } else { "s" },
         resp.elapsed_ms,
         resp.rank_mode
@@ -266,6 +282,7 @@ pub fn response_from(query: &str, results: Vec<SearchResultJson>) -> SearchRespo
         total_candidates: None,
         candidates_searched: None,
         max_files_allowed: None,
+        scope: None,
     }
 }
 
@@ -291,6 +308,7 @@ mod tests {
             file_hits_capped: false,
             context_lines: None,
             context_start_line: None,
+            hops: None,
         }
     }
 

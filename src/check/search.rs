@@ -242,7 +242,9 @@ pub fn usable_needle(needle: &str) -> bool {
     let p = parse_query(needle);
     p.text == needle
         && p.include_globs.is_empty()
+        && p.lang_globs.is_empty()
         && p.exclude_globs.is_empty()
+        && p.graph.is_empty()
         && !p.options.case_sensitive
         && !p.options.whole_word
 }

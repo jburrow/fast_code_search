@@ -65,6 +65,7 @@ impl SearchEngine {
         exclude_patterns: &str,
         limit: usize,
         deadline: Option<std::time::Instant>,
+        scope: Option<&super::GraphScope>,
     ) -> Result<PathSearch> {
         let empty = ParsedQuery::default();
         let (parsed, regex) = match query {
@@ -85,6 +86,9 @@ impl SearchEngine {
             if id % 1024 == 0 && deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                 out.truncated = true;
                 break;
+            }
+            if scope.is_some_and(|s| !s.allows(id)) {
+                continue;
             }
             let Some(file) = self.file_store.get(id) else {
                 continue;

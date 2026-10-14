@@ -20,11 +20,13 @@ mod paths;
 mod persist;
 mod progress;
 mod query;
+mod scope;
 mod text;
 
 pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness};
 pub use paths::{PathMatch, PathQuery, PathSearch};
 pub use progress::*;
+pub use scope::{GraphScope, MAX_SCOPE_HOPS};
 use text::*;
 
 #[derive(Debug, Clone)]
@@ -168,7 +170,7 @@ impl SearchRankingInfo {
 /// Both are reported through [`SearchRankingInfo::truncated_by_budget`], and
 /// every limit that cut a search is named in
 /// [`SearchRankingInfo::limits_hit`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SearchLimits {
     /// Page size.
     pub max_results: usize,
@@ -183,6 +185,8 @@ pub struct SearchLimits {
     pub per_doc_cap: Option<usize>,
     /// Most candidate files fast ranking opens (the best by metadata).
     pub max_files: usize,
+    /// Only search these files (from `deps:` / `rdeps:`).
+    pub scope: Option<std::sync::Arc<GraphScope>>,
 }
 
 impl SearchLimits {
@@ -234,7 +238,14 @@ impl SearchLimits {
             deadline: None,
             per_doc_cap: None,
             max_files: Self::DEFAULT_MAX_FILES,
+            scope: None,
         }
+    }
+
+    /// Only search the files in `scope`.
+    pub fn with_scope(mut self, scope: Option<std::sync::Arc<GraphScope>>) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// Budget for a page of `max_results` starting at `offset`: eight times

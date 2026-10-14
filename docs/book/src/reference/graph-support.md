@@ -46,6 +46,7 @@ have symbols, but get no import edges.
 | `use my_crate::a;` inside `my_crate` | yes (`[lib] name`, else `[package] name` with `-` as `_`) |
 | `use a::{b, c};`, `use a::*;`, `use a as b;` | yes, to the longest module path that exists (`a/b.rs`, then `a/b/mod.rs`) |
 | `mod foo;` | yes |
+| `crate::a::f()`, `super::x::Y` used inline, without a `use` | yes, once per file, like `use crate::a::f` |
 | `use other_workspace_crate::x;` | **no**: only the importing crate's own name is recognised |
 | `use crate::{a, b};` | **no**: reduces to `crate::`, which does not reach `lib.rs` |
 | `extern crate x;`, `#[path = "…"] mod x;` | **no** |
