@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4448ad18.js";
+            window.path_to_searchindex_js = "searchindex-76196a4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -2131,7 +2131,9 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tr><td><code>from . import y</code></td><td>yes: to <code>y.py</code> when it is a module, else to the package’s <code>__init__.py</code></td></tr>
 <tr><td>Absolute imports</td><td>yes, as Python 3 does: from the ancestor folders that are not packages themselves (no <code>__init__.py</code>), so <code>import json</code> inside a package is the standard library, not a <code>json.py</code> next to it; where several could hold the module, the one that holds most of the dotted name wins</td></tr>
 <tr><td><code>src/</code> layouts (<code>tests/</code> importing <code>src/pkg</code>)</td><td>yes: each of those folders’ <code>src/</code> is tried too</td></tr>
-<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read</td></tr>
+<tr><td>Absolute imports from a file nested any number of folders deep</td><td>yes: every ancestor folder is tried</td></tr>
+<tr><td>A repository whose root folder has an <code>__init__.py</code>, run with that folder on <code>sys.path</code> (<code>import app.models</code>)</td><td>yes: when nothing else resolves the import, the outermost package folder is tried as a root if it is the repository root (<code>.git</code>) or no folder above it holds an indexed file</td></tr>
+<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read, so a package in a sibling folder (<code>lib/mypkg/</code> imported from <code>apps/x/main.py</code>, with <code>lib</code> put on <code>PYTHONPATH</code> by your setup) is not found and the import counts as external</td></tr>
 <tr><td><code>.pyi</code> stubs as import targets</td><td><strong>no</strong></td></tr>
 <tr><td>Standard library, installed packages</td><td>no edge, by design</td></tr>
 </tbody>
@@ -3481,8 +3483,8 @@ pkg/sub/views.py     from ..models import User  -&gt; pkg/models.py
 importing file. fcs does not know your <code>sys.path</code>, so it works out the
 likely entries from the folder layout.</p>
 <ol>
-<li><strong>Find the roots.</strong> Walk up from the importing file’s folder, up to 8
-levels. A folder that contains <code>__init__.py</code> is part of a package, so it
+<li><strong>Find the roots.</strong> Walk up from the importing file’s folder, all the
+way up, however deep the file sits. A folder that contains <code>__init__.py</code> is part of a package, so it
 is <em>not</em> a root. Every other folder is a candidate root, and so is its
 <code>src/</code> subfolder (the “src layout”).</li>
 <li><strong>Look under each root</strong> for the dotted name, longest first, exactly as
@@ -3492,6 +3494,14 @@ applies.</li>
 <li><strong>Pick the best root.</strong> A root where the whole name exists wins
 immediately. Otherwise the root that matches the most of the name wins,
 and the nearest root wins a tie.</li>
+<li><strong>A repository root that is itself a package.</strong> When no root found
+anything and the outermost package folder (the top of a chain of
+<code>__init__.py</code> folders) is the repository root, or no folder above it
+holds an indexed file, that folder is tried as a root too. This is the
+repository with an <code>__init__.py</code> in its root folder that is run with
+that folder on <code>sys.path</code>: <code>import app.models</code> from <code>repo/app/views.py</code>
+finds <code>repo/app/models.py</code>. Only the outermost package qualifies, so
+<code>import json</code> inside <code>repo/app/fields/</code> is still the standard library.</li>
 <li><strong>Nothing found means external.</strong> <code>import os</code>, <code>import requests</code> and
 <code>from django.db import models</code> find nothing in the index (the standard
 library and site-packages are not under any of these roots), so they
@@ -4663,6 +4673,17 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Python: an absolute import (<code>import pkg.mod</code>, <code>from pkg import x</code>) in a
+file nested more than 8 folders below its package root resolved to
+nothing, so the dependency explorer listed the project’s own modules as
+external packages. Every ancestor folder is now tried. A package in a
+sibling folder put on <code>PYTHONPATH</code> (<code>lib/mypkg</code> imported from <code>apps/</code>)
+is still not found; the graph support page lists it as a known gap.</li>
+<li>Python: in a repository whose root folder has an <code>__init__.py</code> (run with
+that folder on <code>sys.path</code>), every absolute import of the project’s own
+packages was listed as external, because a package folder is never a
+root. The outermost package folder is now tried as a root when it is the
+repository root or no folder above it holds an indexed file.</li>
 <li>Web UI: search history now records searches made by typing, not only
 ones submitted with Enter. A query counts once the box sits unchanged for
 two seconds or you move on (into the results, a preview or a filter);

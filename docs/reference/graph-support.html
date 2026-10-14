@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4448ad18.js";
+            window.path_to_searchindex_js = "../searchindex-76196a4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -252,7 +252,9 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tr><td><code>from . import y</code></td><td>yes: to <code>y.py</code> when it is a module, else to the package’s <code>__init__.py</code></td></tr>
 <tr><td>Absolute imports</td><td>yes, as Python 3 does: from the ancestor folders that are not packages themselves (no <code>__init__.py</code>), so <code>import json</code> inside a package is the standard library, not a <code>json.py</code> next to it; where several could hold the module, the one that holds most of the dotted name wins</td></tr>
 <tr><td><code>src/</code> layouts (<code>tests/</code> importing <code>src/pkg</code>)</td><td>yes: each of those folders’ <code>src/</code> is tried too</td></tr>
-<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read</td></tr>
+<tr><td>Absolute imports from a file nested any number of folders deep</td><td>yes: every ancestor folder is tried</td></tr>
+<tr><td>A repository whose root folder has an <code>__init__.py</code>, run with that folder on <code>sys.path</code> (<code>import app.models</code>)</td><td>yes: when nothing else resolves the import, the outermost package folder is tried as a root if it is the repository root (<code>.git</code>) or no folder above it holds an indexed file</td></tr>
+<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read, so a package in a sibling folder (<code>lib/mypkg/</code> imported from <code>apps/x/main.py</code>, with <code>lib</code> put on <code>PYTHONPATH</code> by your setup) is not found and the import counts as external</td></tr>
 <tr><td><code>.pyi</code> stubs as import targets</td><td><strong>no</strong></td></tr>
 <tr><td>Standard library, installed packages</td><td>no edge, by design</td></tr>
 </tbody>

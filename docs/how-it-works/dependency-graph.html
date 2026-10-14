@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4448ad18.js";
+            window.path_to_searchindex_js = "../searchindex-76196a4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -295,8 +295,8 @@ pkg/sub/views.py     from ..models import User  -&gt; pkg/models.py
 importing file. fcs does not know your <code>sys.path</code>, so it works out the
 likely entries from the folder layout.</p>
 <ol>
-<li><strong>Find the roots.</strong> Walk up from the importing file’s folder, up to 8
-levels. A folder that contains <code>__init__.py</code> is part of a package, so it
+<li><strong>Find the roots.</strong> Walk up from the importing file’s folder, all the
+way up, however deep the file sits. A folder that contains <code>__init__.py</code> is part of a package, so it
 is <em>not</em> a root. Every other folder is a candidate root, and so is its
 <code>src/</code> subfolder (the “src layout”).</li>
 <li><strong>Look under each root</strong> for the dotted name, longest first, exactly as
@@ -306,6 +306,14 @@ applies.</li>
 <li><strong>Pick the best root.</strong> A root where the whole name exists wins
 immediately. Otherwise the root that matches the most of the name wins,
 and the nearest root wins a tie.</li>
+<li><strong>A repository root that is itself a package.</strong> When no root found
+anything and the outermost package folder (the top of a chain of
+<code>__init__.py</code> folders) is the repository root, or no folder above it
+holds an indexed file, that folder is tried as a root too. This is the
+repository with an <code>__init__.py</code> in its root folder that is run with
+that folder on <code>sys.path</code>: <code>import app.models</code> from <code>repo/app/views.py</code>
+finds <code>repo/app/models.py</code>. Only the outermost package qualifies, so
+<code>import json</code> inside <code>repo/app/fields/</code> is still the standard library.</li>
 <li><strong>Nothing found means external.</strong> <code>import os</code>, <code>import requests</code> and
 <code>from django.db import models</code> find nothing in the index (the standard
 library and site-packages are not under any of these roots), so they

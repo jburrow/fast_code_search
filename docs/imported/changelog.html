@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4448ad18.js";
+            window.path_to_searchindex_js = "../searchindex-76196a4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -356,6 +356,17 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Python: an absolute import (<code>import pkg.mod</code>, <code>from pkg import x</code>) in a
+file nested more than 8 folders below its package root resolved to
+nothing, so the dependency explorer listed the project’s own modules as
+external packages. Every ancestor folder is now tried. A package in a
+sibling folder put on <code>PYTHONPATH</code> (<code>lib/mypkg</code> imported from <code>apps/</code>)
+is still not found; the graph support page lists it as a known gap.</li>
+<li>Python: in a repository whose root folder has an <code>__init__.py</code> (run with
+that folder on <code>sys.path</code>), every absolute import of the project’s own
+packages was listed as external, because a package folder is never a
+root. The outermost package folder is now tried as a root when it is the
+repository root or no folder above it holds an indexed file.</li>
 <li>Web UI: search history now records searches made by typing, not only
 ones submitted with Enter. A query counts once the box sits unchanged for
 two seconds or you move on (into the results, a preview or a filter);
