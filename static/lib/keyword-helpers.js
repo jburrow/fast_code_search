@@ -948,8 +948,38 @@ function pathFilterParam(text) {
     return out.split(';').map(s => s.trim()).filter(Boolean).join(';');
 }
 
+/**
+ * A file group's hit badge. Results interleave files (every file's best hit,
+ * then every file's second, …), so a page often shows only some of a file's
+ * hits; `fileHits` is how many the search found in the file in all, and
+ * `capped` says the file may hold more than that.
+ */
+function groupHitsLabel(shown, fileHits, capped) {
+    const total = Math.max(shown, Number(fileHits) || 0);
+    const plus = capped ? '+' : '';
+    const noun = n => `hit${n === 1 && !plus ? '' : 's'}`;
+    if (total > shown || capped) {
+        return {
+            text: `${shown} of ${total.toLocaleString('en-US')}${plus} ${noun(total)}`,
+            more: total - shown,
+            title: `Results show each file's best hits first; this file has ${total.toLocaleString('en-US')}${plus} in all`,
+        };
+    }
+    return { text: `${shown} ${noun(shown)}`, more: 0, title: '' };
+}
+
+/**
+ * An include glob that matches exactly `path` (the API's path filters are
+ * globs): glob metacharacters are put in a class of their own.
+ */
+function exactPathGlob(path) {
+    return String(path).replace(/[*?[\]{}]/g, ch => `[${ch}]`);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
+        groupHitsLabel,
+        exactPathGlob,
         MAX_RESULTS_LIMIT,
         CONTEXT_LINES_LIMIT,
         clampMaxResults,

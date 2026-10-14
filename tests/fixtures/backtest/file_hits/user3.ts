@@ -1,0 +1,1 @@
+import { GadgetSearchProvider } from "./provider";

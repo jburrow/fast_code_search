@@ -130,6 +130,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Web UI: a file's hit badge said "1 hit" when the file had more, because a
+  page shows every file's best hit before any file's second and the badge
+  counted only the hits on the page. Each result now carries `file_hits`
+  (and `file_hits_capped`) in the web API, gRPC and `fcs --json`; the badge
+  reads "1 of 7 hits" and **Show 6 more hits in this file** fetches the
+  rest in place, kept across **Load more**. The ripgrep backtest checks
+  every first-page count against the full result.
 - Dependency graph: TypeScript and JavaScript imports that go through a
   `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
   `components/Button`) now link to the file they name, including settings

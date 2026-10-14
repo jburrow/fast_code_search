@@ -62,6 +62,7 @@ Response:
     "score": 12.5,
     "match_type": "SYMBOL_DEFINITION",
     "dependency_count": 2,
+    "file_hits": 3,
     "context_lines": ["…"], "context_start_line": 4
   }],
   "query": "helper_target",
@@ -78,7 +79,12 @@ truncated window of a long line, see `content_truncated`);
 `line_match_start`/`line_match_end` are byte offsets into the full line and
 `match_column` the 0-based character column, for placing an editor cursor.
 `line_number` is 0 for a filename match. `match_type` is `TEXT`,
-`SYMBOL_DEFINITION` or `SYMBOL_REFERENCE`. `total_matches` is present when
+`SYMBOL_DEFINITION` or `SYMBOL_REFERENCE`. `file_hits` is how many hits
+the search found in the result's file across all pages (a page shows every
+file's best hit before any file's second, so it often holds only some);
+`file_hits_capped: true` means the file reached the per-file cap and may
+hold more. To fetch one file's hits, repeat the search with `include` set to
+that path (glob metacharacters escaped as `[*]`). `total_matches` is present when
 the search ran to completion; otherwise `truncated_by_budget` is true and
 `has_more` means more may exist. `index` says how current the index is; see
 [Index freshness](#index-freshness).

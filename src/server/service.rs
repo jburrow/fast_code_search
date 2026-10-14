@@ -239,6 +239,8 @@ impl CodeSearch for CodeSearchService {
                     match_column: m.match_column as i32,
                     dependency_count: m.dependency_count,
                     content_truncated: m.content_truncated,
+                    file_hits: m.file_hits,
+                    file_hits_capped: m.file_hits_capped,
                 };
 
                 if tx.send(Ok(result)).await.is_err() {

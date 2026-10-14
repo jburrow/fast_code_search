@@ -49,6 +49,11 @@ file's best hit, then every file's second hit, and so on. One file holding
 a hundred matches cannot fill the page. Ties break on score, then file,
 then line, so paging is deterministic.
 
+Because of this a page usually holds only some of a file's hits, so every
+result carries `file_hits`, how many hits the search found in its file
+across all pages (`file_hits_capped` when the file reached the per-file cap
+and may hold more). The web UI's "1 of 7 hits" badge comes from it.
+
 ## Fast ranking
 
 Above 5,000 candidates (`rank=auto`) only the top 2,000 files are read

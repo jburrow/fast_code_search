@@ -2635,6 +2635,17 @@ fn test_results_interleave_files() {
     assert_eq!(first_three.len(), 3, "{files:?}");
     assert!(files[3..].iter().all(|f| *f == "many.rs"), "{files:?}");
 
+    // Each hit carries its file's hit count across all pages, so a file with
+    // one hit on this page does not read as a file with one hit.
+    for h in &hits {
+        let want = match h.file_path.rsplit('/').next().unwrap() {
+            "many.rs" => 30,
+            _ => 1,
+        };
+        assert_eq!(h.file_hits, want, "{}", h.file_path);
+        assert!(!h.file_hits_capped, "{}", h.file_path);
+    }
+
     // Paging stays stable: page two continues where page one stopped.
     let (page2, _) = engine
         .search_parsed(
@@ -3280,4 +3291,41 @@ fn path_search_hides_the_root_name_when_configured() {
     // The root name is not part of what is shown, so it does not match.
     assert!(path_hits(&engine, "repo").is_empty());
     assert_eq!(path_hits(&engine, "src/web/api.rs"), ["src/web/api.rs"]);
+}
+
+#[test]
+fn test_file_hits_flags_a_file_cut_by_the_per_file_cap() {
+    use crate::search::query_syntax::parse;
+    let temp_dir = TempDir::new().unwrap();
+    let many: String = (0..30).map(|i| format!("let widget_{i} = 1;\n")).collect();
+    fs::write(temp_dir.path().join("many.rs"), &many).unwrap();
+    fs::write(temp_dir.path().join("one.rs"), "let widget = 1;\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(temp_dir.path());
+    for f in ["many.rs", "one.rs"] {
+        engine.index_file(temp_dir.path().join(f)).unwrap();
+    }
+    engine.finalize();
+
+    let (hits, _) = engine
+        .search_parsed(
+            &parse("widget"),
+            "",
+            "",
+            SearchLimits::new(50).with_per_doc_cap(5),
+            RankMode::Full,
+        )
+        .unwrap();
+    let many = hits
+        .iter()
+        .find(|h| h.file_path.ends_with("many.rs"))
+        .unwrap();
+    assert_eq!(many.file_hits, 5);
+    assert!(many.file_hits_capped);
+    let one = hits
+        .iter()
+        .find(|h| h.file_path.ends_with("one.rs"))
+        .unwrap();
+    assert_eq!(one.file_hits, 1);
+    assert!(!one.file_hits_capped);
 }

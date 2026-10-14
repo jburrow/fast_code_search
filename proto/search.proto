@@ -40,6 +40,8 @@ message SearchResult {
   int32 line_match_end = 10;   // Byte offset of match end within the full line
   int32 match_column = 11;     // 0-based character column of match start in the full line
   uint32 dependency_count = 12; // Files that import this file
+  uint32 file_hits = 13;        // Hits the search found in this file across all pages
+  bool file_hits_capped = 14;   // The file may hold more hits than file_hits
 }
 
 enum MatchType {

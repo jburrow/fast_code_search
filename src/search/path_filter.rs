@@ -274,6 +274,17 @@ mod tests {
     }
 
     #[test]
+    fn test_escaped_metacharacters_match_one_exact_path() {
+        // The web UI's "show all hits in this file" puts each glob
+        // metacharacter of the path in a class of its own.
+        let filter =
+            PathFilter::new(&["app/[[]id[]]/[{]a,b[}][*][?].ts".to_string()], &[]).unwrap();
+        assert!(filter.matches("proj/app/[id]/{a,b}*?.ts"));
+        assert!(!filter.matches("proj/app/i/a*?.ts"));
+        assert!(!filter.matches("proj/app/[id]/{a,b}xy.ts"));
+    }
+
+    #[test]
     fn test_exclude_only() {
         let filter = PathFilter::new(&[], &["**/test/**".to_string()]).unwrap();
         assert!(filter.matches("src/main.rs"));

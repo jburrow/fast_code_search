@@ -331,6 +331,9 @@ impl SearchEngine {
             hit.insert(SearchLimit::FileCap);
         }
         let mut matches: Vec<SearchMatch> = Vec::new();
+        // Files that may hold more hits than they gave (per-file cap or the
+        // budget cut them), so their hit counts are lower bounds.
+        let mut capped_files: FxHashSet<u32> = FxHashSet::default();
         let threads = rayon::current_num_threads().max(1);
         let (mut i, mut chunk) = (0usize, threads);
         let (mut docs_read, mut hits_seen) = (0usize, 0usize);
@@ -372,6 +375,11 @@ impl SearchEngine {
             }
             docs_read += end - i;
             for hits in per.into_iter().flatten() {
+                if hits.len() >= chunk_cap || hits.len() > budget {
+                    if let Some(m) = hits.first() {
+                        capped_files.insert(m.file_id);
+                    }
+                }
                 if hits.len() > budget {
                     matches.extend(hits.into_iter().take(budget));
                     budget_cut = true;
@@ -395,7 +403,7 @@ impl SearchEngine {
             chunk = wanted.clamp(threads, Self::SCAN_CHUNK_MAX);
         }
         let found = matches.len();
-        Self::sort_and_page(&mut matches, &limits);
+        Self::sort_and_page(&mut matches, &limits, &capped_files);
 
         if budget_cut {
             hit.insert(SearchLimit::MatchBudget);
@@ -422,7 +430,15 @@ impl SearchEngine {
     /// a page is not filled by the one file that happens to hold a hundred
     /// matches. Ties break on file id then line, so page N+1 never repeats
     /// or skips a result from page N.
-    pub(super) fn sort_and_page(matches: &mut Vec<SearchMatch>, limits: &SearchLimits) {
+    ///
+    /// Every hit on the page carries how many hits its file has in the whole
+    /// result (`file_hits`), so a file showing one hit on page 1 does not
+    /// read as a file with one hit.
+    pub(super) fn sort_and_page(
+        matches: &mut Vec<SearchMatch>,
+        limits: &SearchLimits,
+        capped_files: &FxHashSet<u32>,
+    ) {
         // Ties break on the display path, not the file id: ids follow
         // discovery order, which differs between machines and runs, and a
         // result page must not.
@@ -459,7 +475,12 @@ impl SearchEngine {
         let end = start.saturating_add(limits.max_results).min(order.len());
         let page: Vec<SearchMatch> = order[start..end]
             .iter()
-            .map(|&i| matches[i].clone())
+            .map(|&i| {
+                let mut m = matches[i].clone();
+                m.file_hits = seen.get(&m.file_id).copied().unwrap_or(1);
+                m.file_hits_capped = capped_files.contains(&m.file_id);
+                m
+            })
             .collect();
         *matches = page;
     }
@@ -877,6 +898,8 @@ impl SearchEngine {
                 is_symbol: false,
                 is_reference: true,
                 dependency_count,
+                file_hits: 0,
+                file_hits_capped: false,
             });
         }
         (!matches.is_empty()).then_some(matches)
@@ -977,6 +1000,8 @@ impl SearchEngine {
                     is_symbol: true,
                     is_reference: false,
                     dependency_count,
+                    file_hits: 0,
+                    file_hits_capped: false,
                 });
                 continue;
             }
@@ -1066,6 +1091,8 @@ impl SearchEngine {
                 is_symbol: true,
                 is_reference: false,
                 dependency_count,
+                file_hits: 0,
+                file_hits_capped: false,
             });
         }
 
@@ -1204,6 +1231,8 @@ impl SearchEngine {
                     is_symbol,
                     is_reference: false,
                     dependency_count,
+                    file_hits: 0,
+                    file_hits_capped: false,
                 });
                 true
             };
@@ -1341,6 +1370,8 @@ impl SearchEngine {
                     is_symbol: true,
                     is_reference: false,
                     dependency_count,
+                    file_hits: 0,
+                    file_hits_capped: false,
                 });
             }
         }
@@ -1453,6 +1484,8 @@ impl SearchEngine {
                     is_symbol,
                     is_reference: false,
                     dependency_count,
+                    file_hits: 0,
+                    file_hits_capped: false,
                 });
                 true
             };
@@ -1493,6 +1526,8 @@ impl SearchEngine {
                     is_symbol: true,
                     is_reference: false,
                     dependency_count,
+                    file_hits: 0,
+                    file_hits_capped: false,
                 });
             }
         }

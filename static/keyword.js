@@ -1408,7 +1408,7 @@ function renderSearch(search, durationMs, opts = {}) {
         return;
     }
 
-    const groupedResults = groupResultsByFile(search.results);
+    const groupedResults = groupResultsByFile(search.results).map(g => withFileHits(g, search));
     if (!opts.preserveSelection) _selectedGroupIndex = -1; // reset keyboard selection on each new search
     // Matcher for lines without server offsets (context lines, previews).
     _currentMatcher = buildQueryMatcher(query, {
@@ -1665,6 +1665,17 @@ function renderGroupHtml(group) {
         ? `<span class="result-badge lang-badge"><span class="lang-dot" style="background:var(--lang-${langClass || 'default'}, var(--text-4))"></span>${escapeHtml(ext)}</span>`
         : '';
 
+    // The page may show only some of the file's hits (files interleave);
+    // the badge says how many the file has and a button fetches the rest.
+    const hitsLabel = groupHitsLabel(group.hits.length,
+        Math.max(...group.hits.map(hit => hit.file_hits || 0)),
+        group.hits.some(hit => hit.file_hits_capped));
+    const moreRow = hitsLabel.more > 0 || (hitsLabel.title && !group.expanded)
+        ? `<div class="group-more-row"><button type="button" class="group-more-btn" data-file-path="${escapeHtml(group.filePath)}">${hitsLabel.more > 0
+            ? `Show ${hitsLabel.more.toLocaleString('en-US')} more hit${hitsLabel.more !== 1 ? 's' : ''} in this file`
+            : 'Show all hits in this file'}</button></div>`
+        : '';
+
     // A filename hit has line_number 0: the viewer opens at line 1 for it.
     const groupViewLine = Math.max(1, firstHit.line_number || 0);
 
@@ -1714,14 +1725,14 @@ function renderGroupHtml(group) {
     }).join('');
 
     return `
-        <div class="result-group bg-white border border-black rounded overflow-hidden" style="box-shadow:var(--shadow-sm)" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
+        <div class="result-group bg-white border border-black rounded overflow-hidden" style="box-shadow:var(--shadow-sm)" role="option" tabindex="-1" aria-selected="false" aria-label="${escapeHtml(group.filePath)}, ${hitsLabel.text}" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}">
             <div class="group-head">
                 <button type="button" class="group-open" data-file-path="${escapeHtml(group.filePath)}" data-line-number="${groupViewLine}"
                     title="Open ${escapeHtml(group.filePath)}">
                     ${iconSvg(fileIcon, 16)}
                     <span class="group-path font-mono">${dirPath ? `<span class="group-dir">${escapeHtml(dirPath)}</span>` : ''}<span class="group-name">${escapeHtml(fileName)}</span></span>
                 </button>
-                <span class="result-badge group-count">${group.hits.length} hit${group.hits.length !== 1 ? 's' : ''}</span>
+                <span class="result-badge group-count"${hitsLabel.title ? ` title="${escapeHtml(hitsLabel.title)}"` : ''}>${hitsLabel.text}</span>
                 <span class="group-badges">${langBadge}${depBadge}</span>
                 <span class="group-actions">
                     ${hasImportGraph(group.filePath) ? `<a class="explore-graph-link"
@@ -1734,9 +1745,58 @@ function renderGroupHtml(group) {
                         title="Copy file path">${iconSvg('content_copy', 16)}</button>
                 </span>
             </div>
-            ${hitsHtml}
+            ${hitsHtml}${moreRow}
         </div>
     `;
+}
+
+/**
+ * Fetch every hit of one file (the same search, filtered to that path) and
+ * redraw its group with them. The hits are kept on the search so a LOAD MORE
+ * redraw keeps the group whole.
+ */
+async function showAllFileHits(btn) {
+    const search = _currentSearch;
+    const filePath = btn.dataset.filePath;
+    if (!search || !filePath) return;
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+    try {
+        const params = new URLSearchParams(search.params);
+        params.set('include', exactPathGlob(filePath));
+        params.set('max', '1000');
+        params.delete('offset');
+        params.delete('files');
+        const data = await fetchSearchPage(params, undefined);
+        if (_currentSearch !== search) return;
+        const hits = data.results.filter(r => r.file_path === filePath);
+        if (!search.fileHits) search.fileHits = new Map();
+        search.fileHits.set(normalizeFileGroupKey(filePath), hits);
+        const groupEl = btn.closest('.result-group');
+        const groups = _render ? _render.groups : null;
+        const index = groups ? groups.findIndex(g => g.filePath === filePath) : -1;
+        if (index < 0 || !groupEl) return;
+        const group = withFileHits(groups[index], search);
+        groups[index] = group;
+        const holder = document.createElement('div');
+        holder.innerHTML = renderGroupHtml(group);
+        wireResultGroups(holder);
+        const fresh = holder.firstElementChild;
+        groupEl.replaceWith(fresh);
+        highlightSelectedGroup(getResultGroups(), { focus: false });
+        fresh.focus({ preventScroll: true });
+    } catch (error) {
+        console.error('Show all hits error:', error);
+        btn.disabled = false;
+        btn.textContent = 'Could not load the hits; try again';
+    }
+}
+
+/** `group` with every hit of its file, when they were fetched. */
+function withFileHits(group, search) {
+    const all = search.fileHits && search.fileHits.get(normalizeFileGroupKey(group.filePath));
+    if (!all || all.length < group.hits.length) return group;
+    return { ...group, hits: all, expanded: true };
 }
 
 /**
@@ -1797,6 +1857,10 @@ function wireResultGroups(root) {
             clearTimeout(_ctxHoverTimer);
             hideContextTooltip();
         });
+    });
+
+    root.querySelectorAll('.group-more-btn').forEach(btn => {
+        btn.addEventListener('click', () => showAllFileHits(btn));
     });
 
     // Copy-path buttons: copy the file path to the clipboard with brief feedback.
