@@ -1421,6 +1421,9 @@ impl SearchEngine {
                     | "index.jsx"
                     | "index.mjs"
                     | "index.cjs"
+                    | "index.mts"
+                    | "index.cts"
+                    | "index.d.ts"
             ) {
                 if let Some(dir) = path
                     .parent()

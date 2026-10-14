@@ -34,6 +34,44 @@ pub struct DependencyIndex {
     /// crate's own binaries and tests `use` it by, or `None` when the
     /// manifest names no package. Read once per crate.
     rust_crate_names: std::sync::RwLock<FxHashMap<PathBuf, Option<String>>>,
+    /// tsconfig.json / jsconfig.json `baseUrl` and `paths`, read on demand.
+    js_configs: std::sync::RwLock<JsConfigCache>,
+    /// Workspace packages: `name` of each indexed package.json -> the
+    /// package. Built on first use; `None` until then.
+    js_packages: std::sync::RwLock<Option<std::sync::Arc<FxHashMap<String, JsPackage>>>>,
+}
+
+/// A package.json in the index, for imports of a workspace package by name.
+#[derive(Debug)]
+struct JsPackage {
+    dir: PathBuf,
+    /// Entry points it declares (`types`, `source`, `module`, `main`, and
+    /// `exports["."]`), relative to `dir`, in the order they are tried.
+    entries: Vec<String>,
+}
+
+/// Module resolution settings from the nearest tsconfig.json or
+/// jsconfig.json, with its `extends` chain applied.
+#[derive(Debug, Default)]
+struct JsConfig {
+    /// `compilerOptions.baseUrl`, absolute.
+    base_url: Option<PathBuf>,
+    /// `compilerOptions.paths`: pattern (at most one `*`) -> targets.
+    paths: Vec<(String, Vec<String>)>,
+    /// Directory `paths` targets are relative to: `baseUrl` when set,
+    /// otherwise the directory of the config that declared `paths`.
+    paths_base: PathBuf,
+}
+
+#[derive(Debug, Default)]
+struct JsConfigCache {
+    /// Directory of an importing file -> its nearest config file.
+    nearest: FxHashMap<PathBuf, Option<PathBuf>>,
+    /// Config file -> its parsed settings (`None` if unreadable).
+    parsed: FxHashMap<PathBuf, Option<std::sync::Arc<JsConfig>>>,
+    /// Directory of an importing file -> its repository root (the nearest
+    /// ancestor holding `.git`).
+    repo_root: FxHashMap<PathBuf, Option<PathBuf>>,
 }
 
 /// Resolve `.` and `..` components without touching the file system.
@@ -57,6 +95,145 @@ pub fn normalize_lexically(path: &Path) -> PathBuf {
             }
             other => out.push(other.as_os_str()),
         }
+    }
+    out
+}
+
+fn is_js_config_name(name: &str) -> bool {
+    name == "jsconfig.json" || (name.starts_with("tsconfig") && name.ends_with(".json"))
+}
+
+/// Read a tsconfig/jsconfig, applying its `extends` chain (relative and
+/// absolute entries; configs from npm packages are skipped). `None` when
+/// the file cannot be read or parsed.
+fn load_js_config(file: &Path, depth: usize) -> Option<JsConfig> {
+    const MAX_EXTENDS_DEPTH: usize = 8;
+    let text = std::fs::read_to_string(file).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&strip_jsonc(&text)).ok()?;
+    let dir = file.parent()?;
+    let mut config = JsConfig {
+        paths_base: dir.to_path_buf(),
+        ..JsConfig::default()
+    };
+    let mut paths_dir = None;
+    if depth < MAX_EXTENDS_DEPTH {
+        let extends: Vec<&str> = match value.get("extends") {
+            Some(serde_json::Value::String(s)) => vec![s.as_str()],
+            Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+            _ => Vec::new(),
+        };
+        // Later entries override earlier ones.
+        for parent in extends {
+            let parent_path = Path::new(parent);
+            if !(parent.starts_with('.') || parent_path.is_absolute()) {
+                continue;
+            }
+            let mut parent_file = normalize_lexically(&dir.join(parent_path));
+            if parent_file.extension().is_none_or(|e| e != "json") {
+                parent_file.as_mut_os_string().push(".json");
+            }
+            if let Some(inherited) = load_js_config(&parent_file, depth + 1) {
+                if inherited.base_url.is_some() {
+                    config.base_url = inherited.base_url;
+                }
+                if !inherited.paths.is_empty() {
+                    config.paths = inherited.paths;
+                    paths_dir = Some(inherited.paths_base);
+                }
+            }
+        }
+    }
+    let options = value.get("compilerOptions");
+    if let Some(base) = options
+        .and_then(|o| o.get("baseUrl"))
+        .and_then(|b| b.as_str())
+    {
+        config.base_url = Some(normalize_lexically(&dir.join(base)));
+    }
+    if let Some(paths) = options
+        .and_then(|o| o.get("paths"))
+        .and_then(|p| p.as_object())
+    {
+        config.paths = paths
+            .iter()
+            .map(|(pattern, targets)| {
+                let targets = targets
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|t| t.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (pattern.clone(), targets)
+            })
+            .collect();
+        paths_dir = Some(dir.to_path_buf());
+    }
+    config.paths_base = config
+        .base_url
+        .clone()
+        .or(paths_dir)
+        .unwrap_or_else(|| dir.to_path_buf());
+    Some(config)
+}
+
+/// tsconfig files are JSON with comments and trailing commas: drop both so
+/// `serde_json` can parse them.
+fn strip_jsonc(text: &str) -> String {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut no_comments = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            no_comments.push(c);
+            match c {
+                '\\' => no_comments.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('/', Some('/')) => {
+                if chars.by_ref().any(|c| c == '\n') {
+                    no_comments.push('\n');
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = ' ';
+                chars
+                    .by_ref()
+                    .find(|&c| std::mem::replace(&mut prev, c) == '*' && c == '/');
+                no_comments.push(' ');
+            }
+            _ => {
+                in_string = c == '"';
+                no_comments.push(c);
+            }
+        }
+    }
+    let mut out = String::with_capacity(no_comments.len());
+    let mut chars = no_comments.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                '\\' => out.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        in_string = c == '"';
+        // A trailing comma: the next significant character closes.
+        if c == ',' && matches!(chars.clone().find(|c| !c.is_whitespace()), Some('}' | ']')) {
+            continue;
+        }
+        out.push(c);
     }
     out
 }
@@ -113,6 +290,18 @@ impl DependencyIndex {
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(root);
             }
+        }
+        if stored_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(is_js_config_name)
+        {
+            // An edited config can change any directory's resolution
+            // (through `extends`), so start over.
+            *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
+        }
+        if stored_path.file_name().is_some_and(|n| n == "package.json") {
+            *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
         }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
@@ -484,23 +673,224 @@ impl DependencyIndex {
         if spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".." {
             return self.js_candidates(&dir.join(spec));
         }
-        // Source-root aliases (`@/x`, `~/x`): nearest ancestor with a
-        // package.json or tsconfig.json, then `src/x` or `x` under it.
-        if let Some(rest) = spec.strip_prefix("@/").or_else(|| spec.strip_prefix("~/")) {
-            let mut d = Some(dir);
-            while let Some(root) = d {
-                if root.join("package.json").is_file() || root.join("tsconfig.json").is_file() {
-                    return self
-                        .js_candidates(&root.join("src").join(rest))
-                        .or_else(|| self.js_candidates(&root.join(rest)));
-                }
-                d = root.parent();
+        // tsconfig/jsconfig `paths`, then `baseUrl`, as tsc resolves them.
+        let config = self.js_config(dir);
+        if let Some(config) = &config {
+            if let Some(found) = self.resolve_js_config(config, spec) {
+                return Some(found);
             }
-            return None;
         }
-        // Bare package specifiers (`react`, `lodash/merge`, `@scope/pkg`) are
-        // external: never guess a same-named local file.
+        // Workspace packages: an indexed package.json carries that name.
+        if let Some(found) = self.resolve_js_workspace(spec) {
+            return Some(found);
+        }
+        // Source-root aliases (`@/x`, `~/x`) with no `paths` entry (bundler
+        // aliases): nearest ancestor with a package.json or tsconfig.json,
+        // else the repository root; then `src/x` or `x` under it.
+        if let Some(rest) = spec.strip_prefix("@/").or_else(|| spec.strip_prefix("~/")) {
+            let root = dir
+                .ancestors()
+                .find(|d| d.join("package.json").is_file() || d.join("tsconfig.json").is_file())
+                .map(Path::to_path_buf)
+                .or_else(|| self.js_repo_root(dir))?;
+            return self
+                .js_candidates(&root.join("src").join(rest))
+                .or_else(|| self.js_candidates(&root.join(rest)));
+        }
+        // No tsconfig, or one without `baseUrl`/`paths`: treat the
+        // repository root as `baseUrl`, so `components/Button` or
+        // `src/lib/x` resolve when that file exists. Anything else
+        // (`react`, `lodash/merge`) is an external package.
+        if config.is_none_or(|c| c.base_url.is_none() && c.paths.is_empty()) {
+            return self
+                .js_repo_root(dir)
+                .and_then(|root| self.js_candidates(&root.join(spec)));
+        }
         None
+    }
+
+    /// Nearest ancestor of `dir` holding `.git` (a directory, or a file in a
+    /// worktree), cached per directory.
+    fn js_repo_root(&self, dir: &Path) -> Option<PathBuf> {
+        if let Some(cached) = self
+            .js_configs
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .repo_root
+            .get(dir)
+        {
+            return cached.clone();
+        }
+        let root = dir
+            .ancestors()
+            .find(|d| d.join(".git").exists())
+            .map(Path::to_path_buf);
+        self.js_configs
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .repo_root
+            .insert(dir.to_path_buf(), root.clone());
+        root
+    }
+
+    /// `@acme/shared` or `@acme/shared/sub` where some indexed package.json
+    /// is named `@acme/shared`: its declared entry points, then `src/index`
+    /// and `index` (a subpath: `src/sub`, then `sub`).
+    fn resolve_js_workspace(&self, spec: &str) -> Option<PathBuf> {
+        // The name is `@scope/pkg` or `pkg`; anything after it is a subpath.
+        let skip = usize::from(spec.starts_with('@'));
+        let name_len = spec
+            .match_indices('/')
+            .nth(skip)
+            .map_or(spec.len(), |(i, _)| i);
+        let sub = spec.get(name_len + 1..).filter(|s| !s.is_empty());
+        self.resolve_js_package(&spec[..name_len], sub)
+    }
+
+    fn resolve_js_package(&self, name: &str, sub: Option<&str>) -> Option<PathBuf> {
+        let packages = self.js_packages();
+        let package = packages.get(name)?;
+        match sub {
+            Some(sub) => self
+                .js_candidates(&package.dir.join("src").join(sub))
+                .or_else(|| self.js_candidates(&package.dir.join(sub))),
+            None => package
+                .entries
+                .iter()
+                .find_map(|entry| self.js_candidates(&package.dir.join(entry)))
+                .or_else(|| self.js_candidates(&package.dir.join("src").join("index")))
+                .or_else(|| self.js_candidates(&package.dir.join("index"))),
+        }
+    }
+
+    /// Indexed package.json files by package name (read once, rebuilt after
+    /// a package.json is registered).
+    fn js_packages(&self) -> std::sync::Arc<FxHashMap<String, JsPackage>> {
+        if let Some(packages) = self
+            .js_packages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return packages.clone();
+        }
+        let mut packages = FxHashMap::default();
+        for manifest in self
+            .filename_to_paths
+            .get("package.json")
+            .into_iter()
+            .flatten()
+        {
+            let Some(value) = std::fs::read_to_string(manifest)
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            else {
+                continue;
+            };
+            let (Some(name), Some(dir)) = (
+                value.get("name").and_then(|n| n.as_str()),
+                manifest.parent(),
+            ) else {
+                continue;
+            };
+            let mut entries: Vec<String> = ["types", "typings", "source", "module", "main"]
+                .iter()
+                .filter_map(|field| value.get(*field)?.as_str().map(String::from))
+                .collect();
+            let dot = match value.get("exports") {
+                Some(serde_json::Value::Object(o)) => o.get(".").or(Some(&value["exports"])),
+                other => other,
+            };
+            match dot {
+                Some(serde_json::Value::String(s)) => entries.push(s.clone()),
+                Some(serde_json::Value::Object(o)) => {
+                    for condition in ["types", "source", "import", "require", "default"] {
+                        if let Some(s) = o.get(condition).and_then(|v| v.as_str()) {
+                            entries.push(s.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            packages.insert(
+                name.to_string(),
+                JsPackage {
+                    dir: dir.to_path_buf(),
+                    entries,
+                },
+            );
+        }
+        let packages = std::sync::Arc::new(packages);
+        *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = Some(packages.clone());
+        packages
+    }
+
+    /// Resolve a non-relative specifier through `paths` (exact pattern
+    /// first, then the wildcard pattern with the longest prefix; each of
+    /// its targets in order), then under `baseUrl`.
+    fn resolve_js_config(&self, config: &JsConfig, spec: &str) -> Option<PathBuf> {
+        let exact = config.paths.iter().find(|(pattern, _)| pattern == spec);
+        let matched = exact.map(|(_, targets)| (targets, "")).or_else(|| {
+            config
+                .paths
+                .iter()
+                .filter_map(|(pattern, targets)| {
+                    let (prefix, suffix) = pattern.split_once('*')?;
+                    let star = spec.strip_prefix(prefix)?.strip_suffix(suffix)?;
+                    Some((prefix.len(), targets, star))
+                })
+                .max_by_key(|(len, _, _)| *len)
+                .map(|(_, targets, star)| (targets, star))
+        });
+        if let Some((targets, star)) = matched {
+            for target in targets {
+                let target = target.replacen('*', star, 1);
+                if let Some(found) = self.js_candidates(&config.paths_base.join(target)) {
+                    return Some(found);
+                }
+            }
+        }
+        config
+            .base_url
+            .as_ref()
+            .and_then(|base| self.js_candidates(&base.join(spec)))
+    }
+
+    /// Settings of the tsconfig.json (or jsconfig.json) nearest to `dir`.
+    fn js_config(&self, dir: &Path) -> Option<std::sync::Arc<JsConfig>> {
+        let cached = {
+            let cache = self.js_configs.read().unwrap_or_else(|e| e.into_inner());
+            cache.nearest.get(dir).map(|config_file| {
+                config_file
+                    .as_ref()
+                    .map(|f| cache.parsed.get(f).cloned().flatten())
+            })
+        };
+        if let Some(config) = cached {
+            return config.flatten();
+        }
+        let config_file = dir.ancestors().find_map(|d| {
+            ["tsconfig.json", "jsconfig.json"]
+                .iter()
+                .map(|name| d.join(name))
+                .find(|f| f.is_file())
+        });
+        let config = config_file.as_ref().and_then(|f| {
+            let parsed = self
+                .js_configs
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .parsed
+                .get(f)
+                .cloned();
+            parsed.unwrap_or_else(|| load_js_config(f, 0).map(std::sync::Arc::new))
+        });
+        let mut cache = self.js_configs.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(f) = &config_file {
+            cache.parsed.insert(f.clone(), config.clone());
+        }
+        cache.nearest.insert(dir.to_path_buf(), config_file);
+        config
     }
 
     /// Probe `p`, `p.<ext>`, `p` with `.js` swapped for `.ts`/`.tsx`, and
@@ -534,7 +924,7 @@ impl DependencyIndex {
                 return Some(found);
             }
         }
-        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+        for ext in Self::JS_EXTENSIONS {
             if let Some(found) = self.indexed(&p.join(format!("index.{ext}"))) {
                 return Some(found);
             }
@@ -677,6 +1067,8 @@ impl DependencyIndex {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
+        *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Canonical path a file id is registered under.
@@ -962,6 +1354,8 @@ mod tests {
             ("src/util/merge.ts", ""),
             ("src/lib/helpers.ts", ""),
             ("src/components/Button.tsx", ""),
+            ("src/esm/index.mts", ""),
+            ("src/legacy.cts", ""),
         ]);
         let f = |rel: &str| temp.path().join(rel);
         let r = |from: &str, imp: &str| {
@@ -979,6 +1373,18 @@ mod tests {
         assert_eq!(
             r("src/app.tsx", "./lib/helpers.js"),
             id_of(&temp, &idx, "src/lib/helpers.ts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./esm"),
+            id_of(&temp, &idx, "src/esm/index.mts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./legacy.cjs"),
+            id_of(&temp, &idx, "src/legacy.cts")
+        );
+        assert_eq!(
+            r("src/app.tsx", "./components/Button.jsx"),
+            id_of(&temp, &idx, "src/components/Button.tsx")
         );
         assert_eq!(
             r("src/components/Button.tsx", "../lib/helpers"),
@@ -1000,6 +1406,177 @@ mod tests {
     /// Roadmap 6.5 finding: candidate probing must not touch the file
     /// system. `..` / `.` in a candidate are resolved lexically and a
     /// candidate that is not indexed is simply absent from the map.
+    /// tsconfig `paths` (exact, wildcard, longest prefix, several targets)
+    /// and `baseUrl`, inherited through a relative `extends` from a config
+    /// written with comments and trailing commas (an Nx-style monorepo).
+    #[test]
+    fn test_resolve_js_tsconfig_paths() {
+        let base = r##"{
+            // shared settings
+            "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                    "@acme/shared": ["libs/shared/src/index.ts"],
+                    "@acme/ui/*": ["libs/ui/src/*"],
+                    "@acme/ui/icons/*": ["libs/icons/src/*"],
+                    "@/*": ["apps/web/app/*"],
+                    "#gen/*": ["missing/*", "libs/gen/*"], /* fallback */
+                },
+            },
+        }"##;
+        let (temp, idx) = setup(&[
+            ("tsconfig.base.json", base),
+            (
+                "apps/web/tsconfig.json",
+                r#"{ "extends": "../../tsconfig.base", "include": ["src"], }"#,
+            ),
+            ("apps/web/src/main.ts", ""),
+            ("apps/web/src/components/Button.tsx", ""),
+            ("apps/web/app/routes.ts", ""),
+            ("libs/shared/src/index.ts", ""),
+            ("libs/ui/src/card.tsx", ""),
+            ("libs/icons/src/star.ts", ""),
+            ("libs/gen/api.ts", ""),
+            ("libs/ui/src/plain.ts", ""),
+            (
+                "libs/ui/tsconfig.json",
+                r#"{"compilerOptions": {"baseUrl": "src"}}"#,
+            ),
+        ]);
+        let from = |rel: &str| temp.path().join(rel).canonicalize().unwrap();
+        let r = |file: &str, spec: &str| {
+            idx.resolve_import_path(&from(file), spec)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        let main = "apps/web/src/main.ts";
+        assert_eq!(
+            r(main, "@acme/shared"),
+            id_of(&temp, &idx, "libs/shared/src/index.ts")
+        );
+        assert_eq!(
+            r(main, "@acme/ui/card"),
+            id_of(&temp, &idx, "libs/ui/src/card.tsx")
+        );
+        assert_eq!(
+            r(main, "@acme/ui/icons/star"),
+            id_of(&temp, &idx, "libs/icons/src/star.ts"),
+            "longest prefix wins"
+        );
+        assert_eq!(
+            r(main, "@/routes"),
+            id_of(&temp, &idx, "apps/web/app/routes.ts"),
+            "`paths` beats the @/ -> src/ guess"
+        );
+        assert_eq!(r(main, "#gen/api"), id_of(&temp, &idx, "libs/gen/api.ts"));
+        assert_eq!(
+            r(main, "apps/web/src/components/Button"),
+            id_of(&temp, &idx, "apps/web/src/components/Button.tsx"),
+            "baseUrl"
+        );
+        assert_eq!(r(main, "react"), None, "bare package");
+        assert_eq!(r(main, "@acme/missing"), None);
+        // A package's own tsconfig (no extends) applies to its files only.
+        assert_eq!(
+            r("libs/ui/src/card.tsx", "plain"),
+            id_of(&temp, &idx, "libs/ui/src/plain.ts")
+        );
+        assert_eq!(r("libs/ui/src/card.tsx", "@acme/shared"), None);
+    }
+
+    /// Workspace packages imported by their package.json `name`: declared
+    /// entry points (`.js` swapped to `.ts`), `src/index` fallback, subpaths.
+    #[test]
+    fn test_resolve_js_workspace_packages() {
+        let (temp, idx) = setup(&[
+            ("package.json", r#"{"name": "root", "private": true}"#),
+            (
+                "packages/shared/package.json",
+                r#"{"name": "@acme/shared", "main": "dist/index.js"}"#,
+            ),
+            ("packages/shared/src/index.ts", ""),
+            ("packages/shared/src/money.ts", ""),
+            (
+                "packages/utils/package.json",
+                r#"{"name": "utils", "exports": {".": {"types": "./lib/main.ts"}}}"#,
+            ),
+            ("packages/utils/lib/main.ts", ""),
+            ("packages/utils/lib/strings.ts", ""),
+            ("apps/web/src/main.ts", ""),
+        ]);
+        let from = temp
+            .path()
+            .join("apps/web/src/main.ts")
+            .canonicalize()
+            .unwrap();
+        let r = |spec: &str| {
+            idx.resolve_import_path(&from, spec)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("@acme/shared"),
+            id_of(&temp, &idx, "packages/shared/src/index.ts")
+        );
+        assert_eq!(
+            r("@acme/shared/money"),
+            id_of(&temp, &idx, "packages/shared/src/money.ts")
+        );
+        assert_eq!(r("utils"), id_of(&temp, &idx, "packages/utils/lib/main.ts"));
+        assert_eq!(
+            r("utils/lib/strings"),
+            id_of(&temp, &idx, "packages/utils/lib/strings.ts")
+        );
+        assert_eq!(r("@acme/other"), None);
+        assert_eq!(r("react"), None);
+    }
+
+    /// With no tsconfig `baseUrl`/`paths`, the repository root (the folder
+    /// holding `.git`) acts as the base for non-relative imports.
+    #[test]
+    fn test_resolve_js_repo_root_fallback() {
+        let (temp, idx) = setup(&[
+            ("web/package.json", r#"{"name": "web"}"#),
+            ("web/src/main.ts", ""),
+            ("components/Button.tsx", ""),
+            ("lib/util/index.ts", ""),
+            ("src/routes.ts", ""),
+        ]);
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        let from = temp.path().join("web/src/main.ts").canonicalize().unwrap();
+        let r = |spec: &str| {
+            idx.resolve_import_path(&from, spec)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("components/Button"),
+            id_of(&temp, &idx, "components/Button.tsx")
+        );
+        assert_eq!(r("lib/util"), id_of(&temp, &idx, "lib/util/index.ts"));
+        assert_eq!(r("react"), None, "no such file under the root");
+        assert_eq!(r("lodash/merge"), None);
+
+        // A tsconfig with `baseUrl` takes over: no repo-root guessing.
+        let (temp, idx) = setup(&[
+            (
+                "tsconfig.json",
+                r#"{"compilerOptions": {"baseUrl": "src"}}"#,
+            ),
+            ("src/main.ts", ""),
+            ("components/Button.tsx", ""),
+        ]);
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        let from = temp.path().join("src/main.ts").canonicalize().unwrap();
+        assert_eq!(idx.resolve_import_path(&from, "components/Button"), None);
+    }
+
+    #[test]
+    fn test_strip_jsonc() {
+        let text = "\u{feff}{\n  // c\n  \"a\": \"http://x/*y*/\", /* b */\n  \"b\": [1, 2,],\n  \"q\": \"\\\"//\",\n}";
+        let v: serde_json::Value = serde_json::from_str(&strip_jsonc(text)).unwrap();
+        assert_eq!(v["a"], "http://x/*y*/");
+        assert_eq!(v["b"], serde_json::json!([1, 2]));
+        assert_eq!(v["q"], "\"//");
+    }
+
     #[test]
     fn test_normalize_lexically() {
         let n = |s: &str| normalize_lexically(Path::new(s));

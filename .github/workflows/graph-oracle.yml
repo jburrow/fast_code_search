@@ -81,7 +81,7 @@ jobs:
         run: |
           (cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) > ts.json
           ./target/release/examples/graph_oracle bench-corpus/vite --oracle ts.json --lang ts \
-            --max-missing 129 --max-extra 1 --markdown graph-ts.md
+            --max-missing 7 --max-extra 1 --markdown graph-ts.md
 
       - name: Report
         if: always()

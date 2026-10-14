@@ -110,6 +110,11 @@ module) are hidden by default since they are structure rather than
 dependencies; **Show mod declarations** brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.
 
+For JavaScript/TypeScript, tsconfig `paths` and `baseUrl`, workspace
+packages imported by name and, without a tsconfig, the repository root are
+followed; [How the import graph is built](../how-it-works/dependency-graph.md)
+has the details.
+
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 
 ## Themes

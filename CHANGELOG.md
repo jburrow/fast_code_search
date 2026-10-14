@@ -130,6 +130,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Dependency graph: TypeScript and JavaScript imports that go through a
+  `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
+  `components/Button`) now link to the file they name, including settings
+  inherited through `extends`. They were treated as npm packages, so repos
+  that rely on aliases had few edges. Imports of a workspace package by its
+  package.json `name` (`@acme/shared`) now link to that package's entry
+  point. With no tsconfig `baseUrl` or `paths`, imports are also tried
+  from the repository root. `import x = require('./x')` is picked up.
 - Python: `from .missing import x` (or `import pkg.missing.sub`) where the
   module does not exist no longer draws an edge to the package above it;
   the import is unresolved, as Python fails it.
