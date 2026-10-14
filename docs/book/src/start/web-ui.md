@@ -129,7 +129,8 @@ header. The choice is kept in your browser. On a shared server,
   index is saved (or that it is memory only or read-only), and any startup
   or storage problems. When there are some, the search page shows "Server
   started with N problems" with a link to it.
-- **Docs** (`/docs.html`): the REST reference with live examples.
+- **Docs** (`/docs.html`): a one-page cheat sheet (query operators, regex,
+  keys, `fcs` and MCP, the main API calls) with links into this book.
 
 The UI talks to the same `/api/search` you can call yourself, so anything
 it shows is available to scripts.

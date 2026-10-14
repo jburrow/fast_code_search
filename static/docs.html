@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-    <title>Documentation — Fast Code Search</title>
+    <title>Cheat sheet — Fast Code Search</title>
     <!-- Theme first, so the page paints in the right colours (theme.js) -->
     <script src="/ui-config.js"></script>
     <script src="/theme.js"></script>
@@ -123,570 +123,150 @@
             background: var(--surface);
         }
 
-        .badge {
-            display: inline-block;
-            padding: 0.1rem 0.45rem;
+        .docs-content kbd {
+            font-family: var(--font-mono);
+            font-size: 0.8em;
+            padding: 0.05rem 0.35rem;
+            border: 1px solid var(--line-strong);
             border-radius: var(--radius);
-            font-family: var(--font-label);
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-transform: var(--label-case);
-            letter-spacing: 0.04em;
+            background: var(--surface-2);
+            white-space: nowrap;
         }
-
-        .badge-fast {
-            background: color-mix(in srgb, var(--info) 15%, transparent);
-            color: var(--info);
-            border: 1px solid color-mix(in srgb, var(--info) 35%, transparent);
-        }
-
-        .badge-full {
-            background: color-mix(in srgb, var(--accent-ink) 12%, transparent);
-            color: var(--accent-ink);
-            border: 1px solid color-mix(in srgb, var(--accent-ink) 35%, transparent);
-        }
-
-        .badge-auto {
-            background: color-mix(in srgb, var(--warn) 12%, transparent);
-            color: var(--warn);
-            border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-
-        .nav-links a {
-            color: var(--accent-ink);
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        .nav-links a:hover {
-            text-decoration: underline;
+        .docs-content p a, .docs-content td a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+        .docs-content td:first-child code { white-space: nowrap; }
+        .docs-lead { color: var(--text-2); }
+        .docs-version { color: var(--text-3); font-size: 0.8rem; }
+        /* The documentation book: the full reference lives there */
+        .docs-content .book-links { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.6rem; margin: 1rem 0 0.5rem; padding: 0; margin-left: 0; list-style: none; }
+        .docs-content .book-links li { margin: 0; }
+        .book-links a { display: block; height: 100%; padding: 0.6rem 0.8rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); text-decoration: none; box-shadow: var(--shadow-sm); }
+        .book-links a:hover, .book-links a:focus-visible { background: var(--hover); }
+        .book-links strong { display: block; color: var(--accent-ink); }
+        .book-links span { display: block; font-size: 0.8rem; color: var(--text-3); margin-top: 0.15rem; }
+        @media (max-width: 639px) {
+            .docs-content { padding: 1.25rem 1rem; }
+            .docs-content table { display: block; overflow-x: auto; }
         }
     </style>
 </head>
 
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
-
     <!-- Shared header, icon sprite and phone tab bar (shell.js) -->
     <script src="/shell.js" data-page="docs"></script>
 
+    <!-- A short cheat sheet. The full documentation is the book; this page
+         used to copy its API reference and drifted from it. -->
     <main class="max-w-[1440px] mx-auto p-6">
         <div class="docs-content">
-            <h1>Fast Code Search Documentation</h1>
+            <h1>Cheat sheet</h1>
+            <p class="docs-lead">The essentials on one page. Everything else, including the full API
+                reference, is in the <a href="https://jburrow.github.io/fast_code_search/docs/">documentation</a>.</p>
+            <p class="docs-version" id="docs-version"></p>
 
-            <p>Fast Code Search is a high-performance, in-memory code search service that uses trigram indexing and
-                symbol awareness: results are ranked by definitions, usage and the import graph, and
-                served from memory in milliseconds.</p>
+            <h2 id="query-syntax">Searching</h2>
+            <p>What you type is searched for as written, like <code>rg -F</code>: several words are
+                one phrase, and quotes and a leading <code>-</code> are text. These operators are the
+                only exceptions:</p>
+            <table>
+                <tr><th>Write</th><th>To get</th></tr>
+                <tr><td><code>file:src/</code></td><td>Only paths matching it (a word anywhere in the path, or a glob such as <code>file:*.rs</code>)</td></tr>
+                <tr><td><code>-file:vendor</code></td><td>Never paths matching it</td></tr>
+                <tr><td><code>lang:rust</code>, <code>-lang:py</code></td><td>Only / never files of that language</td></tr>
+                <tr><td><code>case:yes</code></td><td>Match case exactly (the default ignores case)</td></tr>
+                <tr><td><code>word:yes</code></td><td>Whole words only</td></tr>
+            </table>
+            <p>Combine them: <code>Widget file:src/ -lang:ts case:yes</code>.</p>
+            <table>
+                <tr><th>Button</th><th>Does</th></tr>
+                <tr><td><span class="label-case">Match case</span></td><td>Matches upper and lower case exactly, in every mode</td></tr>
+                <tr><td><span class="label-case">Regex</span></td><td>The query is a regular expression (below)</td></tr>
+                <tr><td><span class="label-case">Symbols</span></td><td>Only the lines that define the name (functions, types, constants…)</td></tr>
+                <tr><td><span class="label-case">References</span></td><td>Every place the identifier is used, matched exactly</td></tr>
+                <tr><td><span class="label-case">Filter</span></td><td>Page size, context lines, and path globs to search only in or skip</td></tr>
+            </table>
 
-            <h2>Search Modes</h2>
-
-            <h3>Keyword Search (Default)</h3>
-            <p>Searches for exact text matches across all indexed files. Uses trigram indexing for fast candidate
-                filtering.</p>
-            <ul>
-                <li>Case-insensitive matching; the <strong><span class="label-case">Match case</span></strong> toggle (or
-                    <code>case:yes</code>, <code>case=true</code>) matches case exactly. In the web UI
-                    the toggle applies to regex too, and the results header says which applied.</li>
-                <li>Supports glob-based path filtering</li>
-                <li>Can filter to symbol definitions only (plus filename matches)</li>
-                <li>The web UI only submits queries of at least 3 characters (a trigram needs three);
-                    the API accepts shorter queries but has to scan candidates without the index</li>
-            </ul>
-            <p>The query is searched for as written, like <code>rg -F</code>: <code>fn main</code> is
-                the phrase <code>fn main</code>, and quotes and a leading <code>-</code> are part of
-                the text (<code>"fn main"</code> finds the words with their quotes, <code>-Wall</code>
-                finds <code>-Wall</code>). Only the operators below are not text.</p>
-
-            <h3>Command line</h3>
-            <p>The <code>fcs</code> client (built with the server) runs the same searches from a
-                terminal: <code>fcs 'fn main'</code>, <code>fcs refs Name</code>,
-                <code>fcs symbols Name</code>, <code>fcs -e 'regex' -g '*.rs'</code>. Output is
-                <code>path:line:col:text</code> when piped and grouped on a terminal; exit codes
-                follow grep (0 matches, 1 none, 2 error). It finds this server through
-                <code>--server</code>, <code>$FCS_SERVER</code> or the configuration, and can search
-                the saved index offline. See <code>docs/CLI.md</code> in the repository.</p>
-
-            <h3 id="regex-search">Regex Search</h3>
-            <p>Enable the <code>Regex</code> toggle to search with regular expression patterns (the
-                syntax of Rust's <code>regex</code> crate). When possible, literals in the regex are used
-                to accelerate the search via trigram filtering. The <code>?</code> button next to the toggle
-                opens a cheat-sheet with runnable examples.</p>
+            <h2 id="regex-search">Regex</h2>
+            <p>Rust <code>regex</code> syntax, matched one line at a time. The <code>?</code> next to
+                <span class="label-case">Regex</span> opens examples you can run.</p>
             <table>
                 <tr><th>Pattern</th><th>Finds</th></tr>
-                <tr><td><code>fn \w+\(</code></td><td>Function definitions (<code>\w+</code> is one or more word characters)</td></tr>
+                <tr><td><code>fn \w+\(</code></td><td>Function definitions</td></tr>
                 <tr><td><code>TODO|FIXME</code></td><td>Either word</td></tr>
-                <tr><td><code>(?i)error</code></td><td><code>error</code>, <code>Error</code>, <code>ERROR</code>…</td></tr>
                 <tr><td><code>\bconfig\b</code></td><td><code>config</code> as a whole word, not <code>configure</code></td></tr>
-                <tr><td><code>\{\s*"success":\s*True</code></td><td><code>{ "success": True</code> with any spacing, including none</td></tr>
+                <tr><td><code>\{\s*"success":\s*True</code></td><td><code>{ "success": True</code> with any spacing</td></tr>
                 <tr><td><code>^import </code></td><td>Lines that start with <code>import </code></td></tr>
-                <tr><td><code>\d{3,}</code></td><td>Three or more digits in a row</td></tr>
                 <tr><td><code>(?s)BEGIN.*?END</code></td><td>A block from <code>BEGIN</code> to the next <code>END</code>, across lines</td></tr>
             </table>
-            <p>Things that catch people out:</p>
             <ul>
-                <li><strong>Case.</strong> In the web UI a regex ignores case unless <span class="label-case">Match case</span> is on,
-                    like plain search. On the API and in <code>fcs -e</code> a regex matches case (as in
-                    ripgrep) unless it starts with <code>(?i)</code> or the request says
-                    <code>case=false</code>.</li>
-                <li><strong>Some characters are syntax.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> have a
-                    meaning; put <code>\</code> before one to match it literally (<code>\{</code>, <code>\.</code>,
-                    <code>\(</code>). An unescaped <code>{</code> at the start of a pattern is an error
-                    ("repetition operator missing expression"). To search for code exactly as written,
-                    turn Regex off instead.</li>
-                <li><strong>Spaces are exact.</strong> <code>\{ "a"</code> needs exactly one space after the
-                    brace, so it misses <code>{"a"</code>. Use <code>\s*</code> for any amount of space
-                    (including none) or <code>\s+</code> for at least one.</li>
-            </ul>
-            <p>When a regex finds nothing, the results area tries a few close variants (flexible spacing,
-                ignoring case, the same text without regex) and offers the ones that find something. When a
-                pattern is invalid, the error points at the problem and offers to search the text literally
-                or with its special characters escaped.</p>
-            <p>Patterns are matched one line at a time, so <code>\s</code> and <code>.</code> never cross a
-                line break. To match across lines, mention a newline in the pattern (<code>\n</code>,
-                <code>\r</code>, <code>\x0a</code>) or set the <code>s</code> flag, e.g.
-                <code>(?s)begin.*?end</code> or <code>fn \w+\(\)\s*\{\n\s*todo!</code>. Such a pattern is
-                matched against the whole file and each match is reported once, on the line where it
-                starts, with the highlighted range clamped to that line.</p>
-
-            <h3>Symbols Only</h3>
-            <p>Enable <code>Symbols Only</code> to search only in symbol definitions (functions, classes, methods,
-                types, interfaces, enums, constants, variables, etc.). Filename matches are also included with
-                <code>line_number</code> set to 0. This is much faster when you're looking for definitions rather than
-                all usages.
-            </p>
-
-            <h3>References</h3>
-            <p>Enable <code>References</code> to list the uses of an identifier: call sites, type mentions and
-                implemented traits, across languages. The name is matched exactly and case-sensitively;
-                <code>file:</code> and <code>lang:</code> still narrow the files.</p>
-
-            <h3>Dependency Explorer</h3>
-            <p><a href="/graph.html" class="label-case">Graph</a> shows the import graph around one file next to its source: what it
-                imports and what imports it, the impact of changing it (with the affected tests), the shortest
-                import chain between two files, and a folder-level module map with import cycles marked. Search
-                results, the deps popover and the file viewer link into it, and <strong>Search these files</strong>
-                runs a keyword search limited to the files on screen. Imports are resolved for Rust, Python and
-                JavaScript/TypeScript.</p>
-
-            <h2>Ranking System</h2>
-
-            <p>For large candidate sets (>5,000 files), the search engine uses a two-phase ranking system to maintain
-                fast response times while preserving result quality.</p>
-
-            <table>
-                <tr>
-                    <th>Mode</th>
-                    <th>Description</th>
-                    <th>When Used</th>
-                </tr>
-                <tr>
-                    <td><span class="badge badge-auto">Auto</span></td>
-                    <td>Automatically chooses Fast or Full based on candidate count</td>
-                    <td>Default mode</td>
-                </tr>
-                <tr>
-                    <td><span class="badge badge-fast">Fast</span></td>
-                    <td>Ranks by file metadata, reads the top 2000 files only (<code>fast_rank_files</code>;
-                        <span class="label-case">Search all files</span> or <code>max_files</code> asks for more)</td>
-                    <td>>5,000 candidates (Auto) or explicit</td>
-                </tr>
-                <tr>
-                    <td><span class="badge badge-full">Full</span></td>
-                    <td>Reads all candidate files for full scoring</td>
-                    <td>≤5,000 candidates (Auto) or explicit</td>
-                </tr>
-            </table>
-
-            <h3>File-Level Scoring Factors</h3>
-            <p>In <span class="badge badge-fast">Fast</span> mode, files are ranked by pre-computed metadata:</p>
-            <ul>
-                <li><strong>Symbol density</strong>: Files with more symbol definitions rank higher (+4 max)
-                </li>
-                <li><strong>Source location</strong>: Files in <code>src/</code> or <code>lib/</code> directories get a
-                    boost (+2)</li>
-                <li><strong>Import count</strong>: Files imported by many others rank higher (+5 max)</li>
-                <li><strong>Test/example penalty</strong>: Test and example files are deprioritized (0.7×)</li>
+                <li><code>{ } ( ) [ ] . * + ? | ^ $ \</code> are syntax: put <code>\</code> before one to
+                    match it, or turn Regex off to search for code exactly as written.</li>
+                <li>Spaces are exact: use <code>\s*</code> for any amount of space, including none.</li>
+                <li>In the web UI a regex ignores case unless <span class="label-case">Match case</span> is on.
+                    On the API and in <code>fcs -e</code> it matches case unless it starts with <code>(?i)</code>.</li>
             </ul>
 
-            <h3>Match-Level Scoring Factors</h3>
-            <p>After reading file content, matches are scored by:</p>
-            <ul>
-                <li><strong>Symbol definition</strong>: 3× boost for matches in symbol names</li>
-                <li><strong>Exact match</strong>: 2× boost when query matches exactly (not a substring)</li>
-                <li><strong>Dependency boost</strong>: <code>1 + 0.5 × log10(dependents)</code> for
-                    files imported by other files (1.0 when nothing imports the file)</li>
-                <li><strong>File score</strong>: Base file score is carried through</li>
+            <h2 id="keys">Keyboard and mouse</h2>
+            <table>
+                <tr><th>Key</th><th>Does</th></tr>
+                <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd> or <kbd>/</kbd></td><td>Focus the search box</td></tr>
+                <tr><td><kbd>j</kbd> <kbd>k</kbd> or <kbd>↓</kbd> <kbd>↑</kbd></td><td>Move through the results</td></tr>
+                <tr><td><kbd>Enter</kbd></td><td>Open the selected file</td></tr>
+                <tr><td><kbd>Esc</kbd></td><td>Close the preview or viewer</td></tr>
+                <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click a name</td><td>Go to its definition</td></tr>
+                <tr><td>Double-click a name</td><td>Definition, references or search for it</td></tr>
+                <tr><td><kbd>Alt</kbd> <kbd>←</kbd></td><td>Back after a jump in the file viewer</td></tr>
+            </table>
+            <p>Hover a result's line number to preview the file; click it to open the file there. The
+                strip beside the viewer's scrollbar marks every match in the file.</p>
+
+            <h2 id="mcp">Command line and coding agents</h2>
+            <pre><code>fcs 'fn main'                 # text search, grep-style output
+fcs -e 'TODO|FIXME' -g '*.rs' # regex, only .rs files
+fcs symbols Widget            # definitions
+fcs refs Widget               # uses
+fcs check                     # compare results with ripgrep on your code</code></pre>
+            <p>This server speaks MCP at <code>/mcp</code>, so a coding agent can search it:</p>
+            <pre><code>claude mcp add --transport http fast_code_search <span id="mcp-url">http://127.0.0.1:8080</span>/mcp</code></pre>
+
+            <h2 id="api">API</h2>
+            <p>The web UI uses the same REST API. The main calls:</p>
+            <table>
+                <tr><th>Call</th><th>Returns</th></tr>
+                <tr><td><code><a href="/api/search?q=main&amp;max=5">GET /api/search?q=main</a></code></td><td>Ranked matches (<code>regex</code>, <code>symbols</code>, <code>references</code>, <code>case</code>, <code>include</code>, <code>exclude</code>, <code>max</code>, <code>offset</code>, <code>context</code>)</td></tr>
+                <tr><td><code><a href="/api/stats">GET /api/stats</a></code></td><td>Index size</td></tr>
+                <tr><td><code><a href="/api/health">GET /api/health</a></code></td><td>Liveness and the server's version</td></tr>
+                <tr><td><code>GET /api/file?file=…</code></td><td>A file's contents</td></tr>
+                <tr><td><code>GET /api/graph/neighborhood?file=…</code></td><td>What a file imports and what imports it</td></tr>
+            </table>
+            <p>Every endpoint, parameter and response field is in the
+                <a href="https://jburrow.github.io/fast_code_search/docs/imported/api.html">API reference</a>.</p>
+
+            <h2 id="book">Documentation</h2>
+            <ul class="book-links">
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/start/web-ui.html"><strong>Web UI</strong><span>Results, preview, viewer, themes</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/reference/query-syntax.html"><strong>Query syntax</strong><span>Operators, case, modes, regex</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/reference/matching.html"><strong>Matching vs ripgrep</strong><span>Where results agree and differ</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/imported/api.html"><strong>API and configuration</strong><span>REST, gRPC, MCP, every setting</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/imported/cli.html"><strong>Command line</strong><span>The <code>fcs</code> client</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/start/editors.html"><strong>Editors and agents</strong><span>VS Code, MCP clients</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/guides/configuration.html"><strong>Configuration cookbook</strong><span>Shared servers, limits, themes</span></a></li>
+                <li><a href="https://jburrow.github.io/fast_code_search/docs/guides/troubleshooting.html"><strong>Troubleshooting</strong><span>When results or indexing look wrong</span></a></li>
             </ul>
-
-            <h2>API Reference</h2>
-
-            <h3>Search Endpoint</h3>
-            <pre><code>GET /api/search</code></pre>
-
-            <table>
-                <tr>
-                    <th>Parameter</th>
-                    <th>Type</th>
-                    <th>Default</th>
-                    <th>Description</th>
-                </tr>
-                <tr>
-                    <td><code>q</code></td>
-                    <td>string</td>
-                    <td>(required)</td>
-                    <td>Search query (see <a href="#query-syntax">Query Syntax</a>; a regex when
-                        <code>regex=true</code>)</td>
-                </tr>
-                <tr>
-                    <td><code>max</code></td>
-                    <td>integer</td>
-                    <td>50</td>
-                    <td>Maximum results (1-1000)</td>
-                </tr>
-                <tr>
-                    <td><code>include</code></td>
-                    <td>string</td>
-                    <td></td>
-                    <td>Semicolon-delimited include patterns</td>
-                </tr>
-                <tr>
-                    <td><code>exclude</code></td>
-                    <td>string</td>
-                    <td></td>
-                    <td>Semicolon-delimited exclude patterns</td>
-                </tr>
-                <tr>
-                    <td><code>regex</code></td>
-                    <td>boolean</td>
-                    <td>false</td>
-                    <td>Treat query as regex pattern. Ignored when <code>symbols</code> is set; combined
-                        with <code>references</code> it is a 400.</td>
-                </tr>
-                <tr>
-                    <td><code>case</code></td>
-                    <td>boolean</td>
-                    <td></td>
-                    <td>Case-sensitive matching; overrides <code>case:</code> in the query. A regex is
-                        case-sensitive unless it starts with <code>(?i)</code>; <code>case=false</code>
-                        adds that flag for you.</td>
-                </tr>
-                <tr>
-                    <td><code>max_files</code></td>
-                    <td>integer</td>
-                    <td>2000</td>
-                    <td>Candidate files fast ranking opens (server default <code>fast_rank_files</code>;
-                        capped by <code>max_fast_rank_files</code>, reported as
-                        <code>max_files_allowed</code>)</td>
-                </tr>
-                <tr>
-                    <td><code>word</code></td>
-                    <td>boolean</td>
-                    <td></td>
-                    <td>Whole-word matching; overrides <code>word:</code> in the query</td>
-                </tr>
-                <tr>
-                    <td><code>references</code></td>
-                    <td>boolean</td>
-                    <td>false</td>
-                    <td>Return the references (call sites, type mentions, implemented traits) of the
-                        identifier in <code>q</code>; results have <code>match_type</code>
-                        <code>SYMBOL_REFERENCE</code>. Exact, case-sensitive name; <code>file:</code> /
-                        <code>lang:</code> operators still narrow the files. Cannot be combined with
-                        <code>regex</code> or <code>symbols</code> (400).</td>
-                </tr>
-                <tr>
-                    <td><code>symbols</code></td>
-                    <td>boolean</td>
-                    <td>false</td>
-                    <td>Search only in symbol definitions and filename matches</td>
-                </tr>
-                <tr>
-                    <td><code>rank</code></td>
-                    <td>string</td>
-                    <td>auto</td>
-                    <td>Ranking mode: <code>auto</code>, <code>fast</code>, or <code>full</code></td>
-                </tr>
-                <tr>
-                    <td><code>context</code></td>
-                    <td>integer</td>
-                    <td>0</td>
-                    <td>Lines of context returned before and after each match (0-10)</td>
-                </tr>
-                <tr>
-                    <td><code>offset</code></td>
-                    <td>integer</td>
-                    <td>0</td>
-                    <td>Results to skip before the returned page; ordering is deterministic, so
-                        <code>offset=max</code> is page two</td>
-                </tr>
-                <tr>
-                    <td><code>timeout_ms</code></td>
-                    <td>integer</td>
-                    <td>0</td>
-                    <td>Stop scanning after this many milliseconds and return the best matches so far
-                        (0 = no deadline; capped at 30000)</td>
-                </tr>
-            </table>
-            <p><strong>Note:</strong> <code>rank</code> applies to text and regex searches; symbol and
-                reference queries use their own candidate order. Every mode reports
-                <code>rank_mode</code>, <code>total_candidates</code> and
-                <code>candidates_searched</code> in the response.</p>
-
-            <h3>Example Requests</h3>
-            <pre><code># Basic search
-curl "http://localhost:8080/api/search?q=function"
-
-# Search with path filter
-curl "http://localhost:8080/api/search?q=parse&include=src/**/*.rs"
-
-# Force fast ranking
-curl "http://localhost:8080/api/search?q=error&rank=fast"
-
-# Regex search for function definitions
-curl "http://localhost:8080/api/search?q=fn%20\w%2B&regex=true"
-
-# Page two, and a 2 s deadline
-curl "http://localhost:8080/api/search?q=error&max=50&offset=50&timeout_ms=2000"
-
-# Call sites and type mentions of an identifier
-curl "http://localhost:8080/api/search?q=SearchEngine&references=true"</code></pre>
-
-            <h3>Response Format</h3>
-            <pre><code>{
-  "results": [
-    {
-      "file_path": "src/parser.rs",
-      "content": "fn parse_token(...)",
-      "line_number": 42,
-      "match_start": 0,
-      "match_end": 5,
-      "content_truncated": false,
-      "line_match_start": 0,
-      "line_match_end": 5,
-      "match_column": 0,
-      "score": 12.5,
-      "match_type": "SYMBOL_DEFINITION",
-      "dependency_count": 8
-    }
-  ],
-  "query": "parse",
-  "total_results": 1,
-  "offset": 0,
-  "total_matches": 1,
-  "has_more": false,
-  "truncated_by_budget": false,
-  "limits_hit": [
-    {
-      "limit": "max_files",
-      "detail": "searched the best 2000 of 15000 candidate files (max_files); narrow the query or raise the file limit to search more"
-    }
-  ],
-  "elapsed_ms": 23.4,
-  "rank_mode": "fast",
-  "total_candidates": 15000,
-  "candidates_searched": 2000
-}</code></pre>
-            <p><strong>Match positions:</strong> <code>match_start</code>/<code>match_end</code> are
-                byte offsets into <code>content</code>, which may be a truncated window of a long
-                line (<code>content_truncated</code>). <code>line_match_start</code>/
-                <code>line_match_end</code> are byte offsets into the <em>full</em> line, and
-                <code>match_column</code> is the 0-based character column of the match start —
-                use those to place an editor cursor or highlight in the real file. For filename
-                hits (<code>line_number</code> = 0) the offsets refer to the display path.</p>
-            <p><strong>Paging and totals:</strong> results are ordered deterministically
-                (score, then file, then line), so <code>offset</code> pages are stable:
-                <code>?q=…&amp;max=50&amp;offset=50</code> is page two. <code>total_results</code>
-                is the length of this page; <code>total_matches</code> is the number of matches
-                across all searched files, when the search ran to completion. Each query has a
-                match budget (and an optional <code>timeout_ms</code>, capped at 30 s); when either
-                stops the scan early, <code>truncated_by_budget</code> is <code>true</code>,
-                <code>total_matches</code> is omitted and <code>has_more</code> is
-                <code>true</code>. Otherwise <code>has_more</code> means
-                <code>offset + total_results &lt; total_matches</code>.</p>
-            <p><strong>Capped results:</strong> <code>limits_hit</code> names every limit that
-                cut the search short, so a capped result never passes for a complete one:
-                <code>max_files</code> (fast ranking opened only the most likely files; the total
-                counts those files), <code>match_budget</code>, <code>per_file_cap</code> (a file had
-                more matching lines than one file may show) and <code>timeout</code>. Each entry has a
-                <code>detail</code> sentence for people. The field is absent when nothing was cut.
-                gRPC sends the same names, comma-separated, in the <code>fcs-limits-hit</code>
-                response header; <code>fcs</code> prints them on stderr and in <code>--json</code>,
-                and the MCP <code>search_code</code> tool adds a "Results capped" line.</p>
-
-            <h2 id="query-syntax">Query Syntax</h2>
-            <p>Plain-text queries (not <code>regex=true</code>) are a literal, like <code>rg -F</code>:
-                several words are one phrase, and quotes and a leading <code>-</code> are part of the
-                text. A few operators, whole words with an argument, narrow the search instead; to
-                search for operator-looking text such as <code>file:x</code>, use a regex.</p>
-            <table>
-                <tr><th>Syntax</th><th>Meaning</th></tr>
-                <tr><td><code>file:PATTERN</code> / <code>-file:PATTERN</code></td>
-                    <td>Only / never paths matching PATTERN (a bare word matches anywhere in the path; globs and <code>/</code> are used as written)</td></tr>
-                <tr><td><code>lang:rust</code> / <code>-lang:py</code></td><td>Only / never files of that language (name or extension)</td></tr>
-                <tr><td><code>case:yes</code></td><td>Case-sensitive matching (also the <code>case=true</code> parameter)</td></tr>
-                <tr><td><code>word:yes</code></td><td>Whole-word matching (also the <code>word=true</code> parameter)</td></tr>
-            </table>
-            <pre><code>curl "http://localhost:8080/api/search?q=parse%20lang:rust%20-file:test%20word:yes"</code></pre>
-            <p>Searching more files: when a query could be in more than 5,000 files, Auto ranking
-                opens the 2,000 most likely (<code>fast_rank_files</code> in the configuration). The
-                response says so (<code>candidates_searched</code> &lt; <code>total_candidates</code>);
-                <code>max_files=N</code> opens more, up to <code>max_fast_rank_files</code>. Paging goes
-                up to <code>offset=100000</code> (<code>max_page_offset</code>).</p>
-
-            <h2>Path Filter Patterns</h2>
-            <p>Use glob patterns to filter which files are searched:</p>
-            <table>
-                <tr>
-                    <th>Pattern</th>
-                    <th>Matches</th>
-                </tr>
-                <tr>
-                    <td><code>*.rs</code></td>
-                    <td>All Rust files</td>
-                </tr>
-                <tr>
-                    <td><code>src/**/*.py</code></td>
-                    <td>Python files under src/</td>
-                </tr>
-                <tr>
-                    <td><code>**/test/**</code></td>
-                    <td>Files in any test/ directory</td>
-                </tr>
-                <tr>
-                    <td><code>**/vendor/**</code></td>
-                    <td>Vendor directories (use <code>exclude</code> parameter)</td>
-                </tr>
-            </table>
-            <p>Separate multiple patterns with semicolons: <code>src/**;lib/**</code></p>
-
-            <h2 id="mcp">MCP for coding agents</h2>
-            <p>This server speaks the Model Context Protocol at <code>/mcp</code>, so a coding agent
-                can search, read files with line numbers and walk the import graph through it
-                instead of grepping. Add it to Claude Code with
-                <code>claude mcp add --transport http fast_code_search http://127.0.0.1:8080/mcp</code>
-                (use this server's address), or run <code>fcs mcp</code> as a stdio server for
-                clients that only launch commands.</p>
-            <table>
-                <tr>
-                    <th>Tool</th>
-                    <th>What it does</th>
-                </tr>
-                <tr><td><code>search_code</code></td><td>Search with the query syntax; modes text, regex, symbols, references</td></tr>
-                <tr><td><code>read_file</code></td><td>Numbered lines of a file, so answers can cite <code>path:line</code></td></tr>
-                <tr><td><code>file_dependencies</code></td><td>What a file imports and what imports it, with import lines</td></tr>
-                <tr><td><code>change_impact</code></td><td>Every file a change to some files can reach, tests listed separately</td></tr>
-                <tr><td><code>import_path</code></td><td>The shortest chain of imports between two files</td></tr>
-                <tr><td><code>dependency_overview</code></td><td>Most connected folders, folder cycles and hub files</td></tr>
-            </table>
-            <p>All tools are read-only. Requests from a browser page on another origin are refused;
-                like the REST API, there is no authentication, so anyone who can reach this port can
-                read the index.</p>
-
-            <h2>Other Endpoints</h2>
-            <table>
-                <tr>
-                    <th>Endpoint</th>
-                    <th>Description</th>
-                </tr>
-                <tr>
-                    <td><code>GET /api/stats</code></td>
-                    <td>Index statistics (files, size, trigrams)</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/status</code></td>
-                    <td>Indexing progress and status</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/health</code></td>
-                    <td>Liveness check: <code>{ status, version, server_type, problems }</code>, always 200
-                        while the process runs. <code>problems</code> counts startup and storage
-                        problems (a busy port, an index owned by another server, a disk short of
-                        space or inodes); the diagnostics endpoint lists them.</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/ready</code></td>
-                    <td>Readiness: 200 with <code>{ ready, status, num_files }</code> once the index can
-                        serve results (a build or reconcile completed, or an index is loaded and idle);
-                        503 with the same fields in the error otherwise. Use it as the Kubernetes
-                        readiness probe.</td>
-                </tr>
-                <tr>
-                    <td><code>GET /metrics</code></td>
-                    <td>Prometheus text exposition: <code>fcs_search_requests_total</code>,
-                        <code>fcs_search_errors_total{reason}</code>, the
-                        <code>fcs_search_duration_seconds</code> histogram, and index gauges (files,
-                        trigrams, dependency edges, content bytes, indexing, ready)</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/dependents?file=...</code></td>
-                    <td>List files that import a given file</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/dependencies?file=...</code></td>
-                    <td>List files that a given file imports</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/graph/neighborhood?file=...</code></td>
-                    <td>The file's import neighbourhood: what it imports and what imports it, up to
-                        <code>depth</code> hops (1&ndash;4, default 2), with busy levels folded</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/graph/impact?file=...</code></td>
-                    <td>Every file that transitively imports the file, by distance, and the test
-                        files among them</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/graph/path?from=...&amp;to=...</code></td>
-                    <td>The shortest import chain between two files</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/graph/modules</code></td>
-                    <td>The graph collapsed to folders, with import cycles marked and a count of imports that resolve to no indexed file</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/graph/imports?file=...</code></td>
-                    <td>The file's import statements and the indexed file each resolves to</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/graph/files?q=...</code></td>
-                    <td>Files matching a path substring, most connected first</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/file?file=...</code></td>
-                    <td>Full UTF-8 content of an indexed file:
-                        <code>{ file, content, size_bytes, line_count }</code></td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/context?file=...&amp;line=N&amp;context=K</code></td>
-                    <td>A window of K lines (default 5) around line N — used by hover previews</td>
-                </tr>
-                <tr>
-                    <td><code>GET /api/diagnostics?sample_count=N</code></td>
-                    <td>Index health, extension breakdown, self-tests, and <code>service</code>:
-                        whether the web UI and gRPC started, where the index is saved (or that it is
-                        memory only or read-only), and the problems behind <code>/api/health</code>'s
-                        count. Any problem marks the status as degraded.</td>
-                </tr>
-                <tr>
-                    <td><code>WS /ws/progress</code></td>
-                    <td>WebSocket for real-time indexing progress</td>
-                </tr>
-            </table>
-            <p>The <code>/api/graph/*</code> endpoints back the <a href="/graph.html" class="label-case">Graph</a> page.
-                Rust <code>mod foo;</code> edges (and <code>pub use child::X</code> re-exports) are left out
-                unless <code>containment=true</code>. Every parameter is described in
-                <code>docs/API.md</code> in the repository.</p>
-            <p><strong>Errors:</strong> non-2xx responses return JSON <code>{ "error": "…" }</code>.
-                A <code>503</code> (index updating) includes a <code>Retry-After</code> header.</p>
         </div>
     </main>
 
+    <script>
+        // The documentation describes the latest release; say which version
+        // this server runs, and use this server's address in the MCP example.
+        document.getElementById('mcp-url').textContent = location.origin;
+        fetch('/api/health').then(r => r.ok ? r.json() : null).then(h => {
+            if (h && h.version) {
+                document.getElementById('docs-version').textContent =
+                    `This server runs version ${h.version}; the documentation describes the latest release.`;
+            }
+        }).catch(() => {});
+    </script>
 </body>
 
 </html>

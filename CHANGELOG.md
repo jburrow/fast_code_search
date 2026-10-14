@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
+  keyboard shortcuts, `fcs` and MCP, the main API calls) with links into
+  the documentation book. It used to be a hand-kept copy of the API
+  reference that had drifted from the book. It shows the server's version
+  and uses the server's own address in the MCP example.
 - Web UI: denser results, about twice as many hits per screen. A hit is its
   code with the line number in a gutter instead of a header row above it;
   the kind shows as a small tag on definitions and references; the line
