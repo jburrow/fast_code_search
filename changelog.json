@@ -1,6 +1,18 @@
 {
   "releases": [
     {
+      "version": "0.16.2",
+      "date": "2026-10-14",
+      "summary": "Watch mode keeps answering searches on very large trees, and Python projects whose imports were listed as external now resolve. Re-index a Python project to pick up the import fixes.",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.16.2"
+    },
+    {
+      "version": "0.16.1",
+      "date": "2026-10-14",
+      "summary": "Existing indexes are rebuilt once on the first start.** The on-disk index format is now version 8 (case-insensitive search folds case like `rg -i`), and symbols are re-extracted for the new reference kinds and Python references; the rebuild also picks up the dependency-graph fixes for TypeScript,...",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.16.1"
+    },
+    {
       "version": "0.15.2",
       "date": "2026-10-13",
       "summary": "Search works differently in this release.** Plain-text search is now a literal, like `rg -F`: several words are one phrase, quotes and a leading `-` are part of the text, and the `-term` exclusion and quoted phrases are gone. In the web UI, a regex ignores case unless MATCH CASE is on. See Change...",
@@ -35,18 +47,6 @@
       "date": "2026-09-07",
       "summary": "",
       "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.12.0"
-    },
-    {
-      "version": "0.11.0",
-      "date": "2026-09-07",
-      "summary": "",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.11.0"
-    },
-    {
-      "version": "0.10.1",
-      "date": "2026-09-06",
-      "summary": "",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.10.1"
     }
   ]
 }

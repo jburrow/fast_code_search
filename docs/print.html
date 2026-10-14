@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3046fade.js";
+            window.path_to_searchindex_js = "searchindex-4ab63b0a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -286,12 +286,12 @@ identity.
 The checksum proves the file is intact; the signature proves it was built
 by this repository’s release workflow for this tag, and not merely
 uploaded by someone holding the account.</p>
-<pre><code class="language-bash">sha256sum -c fast_code_search-v0.15.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+<pre><code class="language-bash">sha256sum -c fast_code_search-v0.16.2-x86_64-unknown-linux-gnu.tar.gz.sha256
 cosign verify-blob \
-  --bundle fast_code_search-v0.15.2-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --bundle fast_code_search-v0.16.2-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  fast_code_search-v0.15.2-x86_64-unknown-linux-gnu.tar.gz
+  fast_code_search-v0.16.2-x86_64-unknown-linux-gnu.tar.gz
 </code></pre>
 <p><a href="https://docs.sigstore.dev/cosign/installation/"><code>cosign</code></a> is a single
 binary; no key management is involved because the signing is keyless.</p>
@@ -310,7 +310,7 @@ its repository exists; until then use the archive, <code>cargo binstall</code> o
 container image.</p>
 <h2 id="container-image"><a class="header" href="#container-image">Container image</a></h2>
 <p>Every release from v0.13.0 is also published as
-<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.15</code>, <code>0.15.2</code>). The
+<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.16</code>, <code>0.16.2</code>). The
 image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
 serves the web UI and REST API on port 8080 and gRPC on 50051:</p>
 <pre><code class="language-bash">docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search
@@ -4524,7 +4524,54 @@ deadline stops is a sample of whatever was read in time.</li>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.16.2...HEAD">Unreleased</a></a></h2>
+<h2 id="0162---2026-10-14"><a class="header" href="#0162---2026-10-14"><a href="https://github.com/jburrow/fast_code_search/compare/v0.16.1...v0.16.2">0.16.2</a> - 2026-10-14</a></h2>
+<p>Watch mode keeps answering searches on very large trees, and Python
+projects whose imports were listed as external now resolve. Re-index a
+Python project to pick up the import fixes.</p>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li>Web UI: Semantic is no longer in the header nav, since semantic search
+is not being developed for now. The page still works at
+<code>/semantic.html</code> (and shows its tab while open).</li>
+</ul>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<ul>
+<li>Watch mode on large trees no longer answers searches with “index is
+being updated” while changes stream in. Applying a batch held the write
+lock for its whole duration, including reading and parsing the files,
+and a per-directory scan of every indexed path made that seconds long on
+big trees (15 s for one batch on 200,000 files). Now only installing the
+parsed files takes the write lock, in steps of at most 512 files with a
+pause between them; directory lookups cost the size of the directory;
+the watcher parses on its own threads instead of the pool searches use;
+and a search waits up to five seconds for a step to finish instead of
+failing at once. On one million files with 2,000 files rewritten a
+second, no search was turned away and the slowest took 0.2 s.</li>
+<li>Python: an absolute import (<code>import pkg.mod</code>, <code>from pkg import x</code>) in a
+file nested more than 8 folders below its package root resolved to
+nothing, so the dependency explorer listed the project’s own modules as
+external packages. Every ancestor folder is now tried. A package in a
+sibling folder put on <code>PYTHONPATH</code> (<code>lib/mypkg</code> imported from <code>apps/</code>)
+is still not found; the graph support page lists it as a known gap.</li>
+<li>Python: in a repository whose root folder has an <code>__init__.py</code> (run with
+that folder on <code>sys.path</code>), every absolute import of the project’s own
+packages was listed as external, because a package folder is never a
+root. The outermost package folder is now tried as a root when it is the
+repository root or no folder above it holds an indexed file.</li>
+<li>Web UI: search history now records searches made by typing, not only
+ones submitted with Enter. A query counts once the box sits unchanged for
+two seconds or you move on (into the results, a preview or a filter);
+carrying on typing replaces that entry rather than leaving prefixes.</li>
+</ul>
+<h2 id="0161---2026-10-14"><a class="header" href="#0161---2026-10-14"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...v0.16.1">0.16.1</a> - 2026-10-14</a></h2>
+<p><strong>Existing indexes are rebuilt once on the first start.</strong> The on-disk
+index format is now version 8 (case-insensitive search folds case like
+<code>rg -i</code>), and symbols are re-extracted for the new reference kinds and
+Python references; the rebuild also picks up the dependency-graph fixes
+for TypeScript, Python and Rust. Results are
+now in rank order with each file’s hits together. The v0.16.1 binaries
+report their version as 0.16.0.</p>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
 <li>Reference kinds: each reference is a <code>call</code>, <code>type</code>, <code>value</code> or
@@ -4608,16 +4655,12 @@ on stderr, MCP’s <code>search_code</code> adds a “Results capped” line (al
 nothing was found), and the web UI names the limit in the count’s
 tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
-<li>Web UI: Semantic is no longer in the header nav, since semantic search
-is not being developed for now. The page still works at
-<code>/semantic.html</code> (and shows its tab while open).</li>
 <li>Import graph: a Rust path into the crate used without a <code>use</code>
 (<code>crate::a::b::f()</code>, <code>super::x::Y</code>) is an import of the module it names,
 so the dependency explorer, rankings and <code>rdeps:</code> see it. Rebuild the
-index to pick it up (the v8 format is unreleased, so upgrading from
-0.15.x rebuilds anyway).</li>
+index to pick it up (upgrading from 0.15.x rebuilds it anyway).</li>
 <li><code>file:</code> and <code>lang:</code> narrow each other: <code>file:src/ lang:rust</code> is the Rust
 files under <code>src/</code>, where it used to be every file under <code>src/</code> plus
 every Rust file. Repeating one operator still widens it.</li>
@@ -4693,34 +4736,8 @@ the engine. Offline <code>fcs</code> now enforces <code>server.max_page_offset</
 server does. A new test checks that all three return the same hits in
 the same order.</li>
 </ul>
-<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
 <ul>
-<li>Python: an absolute import (<code>import pkg.mod</code>, <code>from pkg import x</code>) in a
-file nested more than 8 folders below its package root resolved to
-nothing, so the dependency explorer listed the project’s own modules as
-external packages. Every ancestor folder is now tried. A package in a
-sibling folder put on <code>PYTHONPATH</code> (<code>lib/mypkg</code> imported from <code>apps/</code>)
-is still not found; the graph support page lists it as a known gap.</li>
-<li>Python: in a repository whose root folder has an <code>__init__.py</code> (run with
-that folder on <code>sys.path</code>), every absolute import of the project’s own
-packages was listed as external, because a package folder is never a
-root. The outermost package folder is now tried as a root when it is the
-repository root or no folder above it holds an indexed file.</li>
-<li>Web UI: search history now records searches made by typing, not only
-ones submitted with Enter. A query counts once the box sits unchanged for
-two seconds or you move on (into the results, a preview or a filter);
-carrying on typing replaces that entry rather than leaving prefixes.</li>
-<li>Watch mode on large trees no longer answers searches with “index is
-being updated” while changes stream in. Applying a batch held the write
-lock for its whole duration, including reading and parsing the files,
-and a per-directory scan of every indexed path made that seconds long on
-big trees (15 s for one batch on 200,000 files). Now only installing the
-parsed files takes the write lock, in steps of at most 512 files with a
-pause between them; directory lookups cost the size of the directory;
-the watcher parses on its own threads instead of the pool searches use;
-and a search waits up to five seconds for a step to finish instead of
-failing at once. On one million files with 2,000 files rewritten a
-second, no search was turned away and the slowest took 0.2 s.</li>
 <li>Results are in rank order again, with each file’s hits together: files in
 the order of their best hit, then every hit of that file by score. Since
 v0.12.0 hits were interleaved by file (every file’s best hit before any
@@ -4827,7 +4844,7 @@ request may ask for, and <code>max_page_offset</code> (default 100000, 0 = no li
 sets how deep a client may page. Responses report the cap as
 <code>max_files_allowed</code> when one is set.</li>
 </ul>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li><strong>Plain-text search is a literal, like <code>rg -F</code>.</strong> Several words are one
 phrase: <code>fn main</code> finds lines holding <code>fn main</code>, not every line holding
@@ -4876,7 +4893,7 @@ on stderr (<code>-q</code> hides it), <code>fcs status</code> reports it, MCP <c
 results end with it, and a new MCP tool, <code>index_status</code>, lets an agent
 check the files it just wrote.</li>
 </ul>
-<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
+<h3 id="fixed-2"><a class="header" href="#fixed-2">Fixed</a></h3>
 <ul>
 <li>Web UI: search result context and hover previews are syntax-highlighted in
 one pass, so doc comments and other multi-line comments are shown as
@@ -4953,7 +4970,7 @@ literally or escaped. The regex docs gained examples and pitfalls.</li>
 <li>rustls 0.23.36 -&gt; 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
 messages accepted across encryption-level boundaries).</li>
 </ul>
-<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
 <ul>
 <li>
 <p>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
@@ -5016,7 +5033,7 @@ readiness probes, and one index per server (its gRPC examples relied on
 reflection, which the server does not offer).</p>
 </li>
 </ul>
-<h3 id="fixed-2"><a class="header" href="#fixed-2">Fixed</a></h3>
+<h3 id="fixed-3"><a class="header" href="#fixed-3">Fixed</a></h3>
 <ul>
 <li>Search correctness review: a file with more than 100 hits now reports
 the total as unknown and LOAD MORE reaches its later lines (it claimed an
@@ -5071,7 +5088,7 @@ recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
 slow. CI runs it and the documentation site shows the result alongside
 the latency and ranking-quality figures, with two new book pages.</li>
 </ul>
-<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
+<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
 <ul>
 <li>Ranking: single-term lines of a multi-term query are capped per file and
 the files holding the phrase are scanned first, so the match budget can
@@ -5113,7 +5130,7 @@ reference, moved out of the README.</li>
 <li>Release pages carry an install table, checksum instructions and a
 first-run line alongside the changelog section.</li>
 </ul>
-<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
+<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
 <ul>
 <li>README rewritten as a landing page that leads with how results are
 ranked; benchmark figures are from the latest CI run and link to it.</li>
@@ -5129,7 +5146,7 @@ moved under <code>docs/internal/</code>.</li>
 built-in runner over <code>static/tests</code>) and fails if the committed
 <code>tailwind.css</code> does not match the markup.</li>
 </ul>
-<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
+<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
 <ul>
 <li>Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
 icon font (which stays only for the semantic pages); result groups are
@@ -5141,7 +5158,7 @@ then every file’s second hit, and so on, so one file holding a hundred
 matches no longer fills the page. Phrase and all-term tiers still come
 first; paging stays deterministic.</li>
 </ul>
-<h3 id="fixed-3"><a class="header" href="#fixed-3">Fixed</a></h3>
+<h3 id="fixed-4"><a class="header" href="#fixed-4">Fixed</a></h3>
 <ul>
 <li>Web UI: dependency popover failures are shown inline instead of an
 <code>alert()</code>; copying a path works on plain-HTTP origins (textarea
@@ -5166,14 +5183,14 @@ HTTP client).</li>
 </ul>
 <p>Fixes from the 2026-09-06 engine and UI review
 (<code>docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md</code>).</p>
-<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
+<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
 <ul>
 <li>Line-mode regex patterns are matched in one pass per file (compiled with
 <code>(?mR)</code>, one hit per line, per-line semantics for <code>^</code>, <code>$</code>, <code>\s</code> and CRLF
 kept), removing the per-line start-up cost that made <code>fn\s+main\(</code> an
 order of magnitude slower than <code>main\(</code> over the same candidates.</li>
 </ul>
-<h3 id="fixed-4"><a class="header" href="#fixed-4">Fixed</a></h3>
+<h3 id="fixed-5"><a class="header" href="#fixed-5">Fixed</a></h3>
 <ul>
 <li>Regex candidate generation treated a repetition as one contiguous copy on
 both sides, so <code>fo+bar</code> demanded the literal <code>fobar</code> and never found
@@ -5279,7 +5296,7 @@ docs.html matches the API; the “INDEX” header stat is labelled as mapped
 content.</li>
 </ul>
 <h2 id="0101---2026-09-06"><a class="header" href="#0101---2026-09-06"><a href="https://github.com/jburrow/fast_code_search/compare/v0.10.0...v0.10.1">0.10.1</a> - 2026-09-06</a></h2>
-<h3 id="fixed-5"><a class="header" href="#fixed-5">Fixed</a></h3>
+<h3 id="fixed-6"><a class="header" href="#fixed-6">Fixed</a></h3>
 <ul>
 <li>The index could keep a file whose delete or rename-away event the watcher
 backend never delivered (FSEvents on macOS drops the source half of a
@@ -5293,7 +5310,7 @@ path is now canonicalized once per importing file.</li>
 annotations; the macOS and Windows test jobs pass.</li>
 </ul>
 <h2 id="0100---2026-09-06"><a class="header" href="#0100---2026-09-06"><a href="https://github.com/jburrow/fast_code_search/compare/v0.9.0...v0.10.0">0.10.0</a> - 2026-09-06</a></h2>
-<h3 id="fixed-6"><a class="header" href="#fixed-6">Fixed</a></h3>
+<h3 id="fixed-7"><a class="header" href="#fixed-7">Fixed</a></h3>
 <ul>
 <li>A freshly loaded index reported absolute display paths (and the UI could
 not round-trip them) until the next finalize, because the configured roots
@@ -5360,7 +5377,7 @@ and the standard <code>grpc.health.v1</code> service.</li>
 <li>gRPC <code>SearchRequest.offset</code> / <code>rank</code> / <code>deadline_ms</code>; results carry
 <code>dependency_count</code>.</li>
 </ul>
-<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
+<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
 <ul>
 <li>Build: the semantic engine is behind the <code>semantic</code> Cargo feature (off by
 default; <code>ml-models</code> implies it), release binaries use thin LTO and are
@@ -5466,7 +5483,7 @@ refresh, dependency-edge removal) instead of leaving stale entries until restart
 <li>Keyboard navigation in results (<code>j</code>/<code>k</code>/arrows to move, Enter to open, <code>/</code> to focus).</li>
 <li>Per-result copy-path button.</li>
 </ul>
-<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
+<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
 <ul>
 <li>API errors are now consistent JSON (<code>{ "error": … }</code>); 503s include <code>Retry-After</code>.</li>
 <li>Static assets use compile-time content hashes for ETags and honor <code>If-None-Match</code>
@@ -5477,7 +5494,7 @@ delay and per-file cache instead of fetching the whole file.</li>
 <li>Docs page documents the <code>context</code> param and the file/context/dependencies/diagnostics
 endpoints, the JSON-error/Retry-After convention, and <code>total_results</code>/<code>has_more</code>.</li>
 </ul>
-<h3 id="fixed-7"><a class="header" href="#fixed-7">Fixed</a></h3>
+<h3 id="fixed-8"><a class="header" href="#fixed-8">Fixed</a></h3>
 <ul>
 <li>Eliminated memory-map UTF-8 undefined behavior and truncation crashes during
 indexing (no more <code>from_utf8_unchecked</code> over bytes that can change underneath it;
@@ -5505,22 +5522,22 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Dependency popover and tooltip interactions in the web UI to improve code navigation context.</li>
 <li>Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.</li>
 </ul>
-<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
+<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
 <ul>
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
 </ul>
-<h3 id="fixed-8"><a class="header" href="#fixed-8">Fixed</a></h3>
+<h3 id="fixed-9"><a class="header" href="#fixed-9">Fixed</a></h3>
 <ul>
 <li>Keyword UI tooltip cleanup behavior now hides context tooltips immediately when opening file views/modal overlays, preventing lingering tooltip artifacts.</li>
 </ul>
 <h2 id="075---2026-03-24"><a class="header" href="#075---2026-03-24"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.4...v0.7.5">0.7.5</a> - 2026-03-24</a></h2>
-<h3 id="fixed-9"><a class="header" href="#fixed-9">Fixed</a></h3>
+<h3 id="fixed-10"><a class="header" href="#fixed-10">Fixed</a></h3>
 <ul>
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
 <h2 id="074---2026-03-20"><a class="header" href="#074---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.3...v0.7.4">0.7.4</a> - 2026-03-20</a></h2>
-<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
+<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
 <ul>
 <li>New UI theme for the keyword search interface with improved layout and styling.</li>
 </ul>
@@ -5529,12 +5546,12 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li>New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.</li>
 </ul>
-<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
+<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
 <ul>
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
 </ul>
-<h3 id="fixed-10"><a class="header" href="#fixed-10">Fixed</a></h3>
+<h3 id="fixed-11"><a class="header" href="#fixed-11">Fixed</a></h3>
 <ul>
 <li>Benchmark CI failure: reset local changes before gh-pages branch switch to prevent dirty <code>Cargo.lock</code> blocking the workflow (#97).</li>
 </ul>
@@ -5544,17 +5561,17 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).</li>
 <li>New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.</li>
 </ul>
-<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
+<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
 <ul>
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
 </ul>
-<h3 id="fixed-11"><a class="header" href="#fixed-11">Fixed</a></h3>
+<h3 id="fixed-12"><a class="header" href="#fixed-12">Fixed</a></h3>
 <ul>
 <li>Linting issues across the codebase (#94).</li>
 </ul>
 <h2 id="071---2026-03-17"><a class="header" href="#071---2026-03-17"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.0...v0.7.1">0.7.1</a> - 2026-03-17</a></h2>
-<h3 id="fixed-12"><a class="header" href="#fixed-12">Fixed</a></h3>
+<h3 id="fixed-13"><a class="header" href="#fixed-13">Fixed</a></h3>
 <ul>
 <li>Fix path handling: canonical storage, root-relative display, and proper glob exclusions (#91).</li>
 <li>Fix semantic web API handlers panicking on a poisoned <code>RwLock</code> (#85).</li>
@@ -5565,7 +5582,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>URL state encoding for semantic search UI; refactored shared helpers into <code>common.js</code> (#93).</li>
 <li>VS Code configuration and tasks for Rust development.</li>
 </ul>
-<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
+<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
 <ul>
 <li>Refactor code structure for improved readability and maintainability.</li>
 </ul>
@@ -5575,7 +5592,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li><strong>GitHub Pages site</strong> (<code>docs/site/</code>): A static project site deployed to <code>gh-pages</code> on every push to <code>main</code> via a new <code>pages.yml</code> workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from <code>dev/bench/</code> pushed by <code>github-action-benchmark</code>), Codecov coverage badge, dynamically-rendered changelog (from <code>changelog.json</code> generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses <code>clean-exclude: dev/</code> to preserve benchmark data, and both <code>pages.yml</code> and <code>benchmark.yml</code> share a <code>gh-pages-deploy</code> concurrency group to prevent simultaneous pushes.</li>
 </ul>
 <h2 id="069---2026-02-28"><a class="header" href="#069---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.8...v0.6.9">0.6.9</a> - 2026-02-28</a></h2>
-<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
+<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
 <ul>
 <li>Version bump and release.</li>
 </ul>
@@ -5590,12 +5607,12 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li><strong>Code coverage reports in CI</strong>: A new <code>coverage</code> job runs on every push and pull request using <code>cargo-llvm-cov</code>. The HTML coverage report is uploaded as a <code>coverage-report</code> GitHub Actions artifact and LCOV data is uploaded to Codecov. See the <a href="#code-coverage">Code Coverage</a> section in the copilot instructions for how to generate reports locally.</li>
 </ul>
-<h3 id="fixed-13"><a class="header" href="#fixed-13">Fixed</a></h3>
+<h3 id="fixed-14"><a class="header" href="#fixed-14">Fixed</a></h3>
 <ul>
 <li><strong>Website becomes unresponsive during index building</strong>: API handlers (<code>search</code>, <code>stats</code>, <code>dependents</code>, <code>dependencies</code>, <code>diagnostics</code>) previously called <code>engine.read()</code> which blocks until any pending write lock (held during batch merges) is released. Under concurrent load, this caused blocking threads to pile up and exhaust the Tokio thread pool, leading to memory pressure and system unresponsiveness. All handlers now use <code>engine.try_read()</code> and immediately return <code>503 Service Unavailable</code> with the message <em>“Index is currently being updated, please try again shortly”</em> when the write lock is held. The <code>status</code> endpoint was already safe and is unchanged.</li>
 </ul>
 <h2 id="066---2026-02-27"><a class="header" href="#066---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.5...v0.6.6">0.6.6</a> - 2026-02-27</a></h2>
-<h3 id="fixed-14"><a class="header" href="#fixed-14">Fixed</a></h3>
+<h3 id="fixed-15"><a class="header" href="#fixed-15">Fixed</a></h3>
 <ul>
 <li><strong>OOM during indexing of large codebases (Vec/HashMap over-allocation)</strong>: After each doubling growth, Rust’s <code>Vec</code> and <code>FxHashMap</code> may carry up to 2× excess capacity. On a 62 000-file corpus this contributes tens to hundreds of MB of wasted heap. Three changes address this:
 <ol>
@@ -5606,7 +5623,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 </li>
 </ul>
 <h2 id="065---2026-02-27"><a class="header" href="#065---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.4...v0.6.5">0.6.5</a> - 2026-02-27</a></h2>
-<h3 id="fixed-15"><a class="header" href="#fixed-15">Fixed</a></h3>
+<h3 id="fixed-16"><a class="header" href="#fixed-16">Fixed</a></h3>
 <ul>
 <li><strong><code>content_fallback</code> bytes permanently retained in heap (regression since v0.6.2)</strong>: Files whose mmap failed fell back to a <code>OnceLock&lt;Vec&lt;u8&gt;&gt;</code> cache, which is write-once — once populated, the bytes could never be freed. Replaced with <code>Mutex&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;</code> so the cached bytes are evictable. Resolves the memory-growth issue tracked in v0.6.4 for Linux deployments approaching the mmap limit.</li>
 </ul>
@@ -5621,7 +5638,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 </li>
 </ul>
 <h2 id="064---2026-02-27"><a class="header" href="#064---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.3...v0.6.4">0.6.4</a> - 2026-02-27</a></h2>
-<h3 id="fixed-16"><a class="header" href="#fixed-16">Fixed</a></h3>
+<h3 id="fixed-17"><a class="header" href="#fixed-17">Fixed</a></h3>
 <ul>
 <li><strong>OOM / memory errors during indexing on large codebases (regression since v0.6.0)</strong>: <code>BATCH_SIZE</code> was silently raised from 500 to 2000 in v0.6.0 as part of the Phase-2 parallelisation change (#24). During Phase 1, all <code>BATCH_SIZE</code> files are read into memory simultaneously, so peak RAM scales as <code>batch_size × average_file_size × ~4</code>. On repos with many sizable files (generated code, minified JS, large headers, etc.) this caused 4× higher indexing-time memory consumption and triggered out-of-memory crashes. The default has been restored to <strong>500</strong>. A new <code>batch_size</code> key under <code>[indexer]</code> lets operators tune the trade-off between throughput and RAM:
 <pre><code class="language-toml">[indexer]
@@ -5639,7 +5656,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>README and startup warning updated</strong>: Messaging around <code>vm.max_map_count</code> now accurately describes the graceful fallback behaviour introduced in 0.6.2 rather than implying hard failures.</li>
 </ul>
 <h2 id="062---2026-02-27"><a class="header" href="#062---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.1...v0.6.2">0.6.2</a> - 2026-02-27</a></h2>
-<h3 id="fixed-17"><a class="header" href="#fixed-17">Fixed</a></h3>
+<h3 id="fixed-18"><a class="header" href="#fixed-18">Fixed</a></h3>
 <ul>
 <li><strong>Files beyond the OS mmap limit were silently dropped from search results (P0 — Correctness)</strong>: When the Linux <code>vm.max_map_count</code> safe limit (85% of system max, typically 55,700 on default kernels) was exceeded during indexing, <code>add_file()</code> bailed out and the remaining files were neither registered in the store nor added to the trigram index. On large codebases (e.g. 629k files) only the first ~55,700 files were searchable. Files are now always registered. For files that cannot be memory-mapped (limit exhausted), content is read via <code>std::fs::read()</code> at result-retrieval time and the result is cached, so there is no repeated I/O cost.</li>
 <li><strong>File count in UI showed mmap-capped number instead of true indexed count</strong>: Because the above fix ensures all files are registered, <code>file_store.len()</code> — which drives the FILES counter in the web UI and <code>/api/status</code> — now reflects the true number of indexed files rather than the OS mmap limit.</li>
@@ -5662,7 +5679,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 </li>
 <li><strong>Filename-only matches now returned</strong>: Searching for a filename that does not appear in the file’s content previously returned zero results (the file was shortlisted by the trigram index but then silently dropped). All three search paths now synthesize a <code>SearchMatch</code> at line 0 when the query matches the filename stem but no content lines match.</li>
 </ul>
-<h3 id="fixed-18"><a class="header" href="#fixed-18">Fixed</a></h3>
+<h3 id="fixed-19"><a class="header" href="#fixed-19">Fixed</a></h3>
 <ul>
 <li><strong>Regex trigram lookup not lowercased (P0 — Correctness)</strong>: <code>search_regex()</code> passed raw literal text (e.g. <code>"MyClass"</code>) to the trigram index which stores only lowercased content. Uppercase literals ≥3 chars returned zero trigram hits, causing missed results or a full scan fallback. The literal is now lowercased before the trigram lookup.</li>
 <li><strong>Exact-match score boost used case-insensitive comparison (P0 — Correctness)</strong>: <code>calculate_score_inline()</code> applied the 2× exact-match boost using the already-lowercased query, so every match received the boost regardless of case. The boost now uses the original (un-lowered) query for a true case-sensitive comparison.</li>
@@ -5677,7 +5694,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong><code>FileName</code> symbol search returned wrong content</strong>: <code>search_symbols_in_document()</code> fetched line 0 of the file content for <code>FileName</code> symbols, returning the first line of the file instead of the file path. It now uses the file path as the match content.</li>
 </ul>
 <h2 id="058---2026-02-26"><a class="header" href="#058---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.7...v0.5.8">0.5.8</a> - 2026-02-26</a></h2>
-<h3 id="fixed-19"><a class="header" href="#fixed-19">Fixed</a></h3>
+<h3 id="fixed-20"><a class="header" href="#fixed-20">Fixed</a></h3>
 <ul>
 <li><strong>Fix panic in <code>content_safety_check</code> on multi-byte UTF-8 content</strong>: <code>is_binary_content()</code> sliced a <code>&amp;str</code> at a raw byte offset (8192) which panics when that position falls inside a multi-byte UTF-8 character (e.g. CJK text, emoji). The function now operates on <code>as_bytes()</code> directly, avoiding the invalid slice.</li>
 </ul>
@@ -5690,7 +5707,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong><code>diagnose_mmap_error()</code> helper</strong>: Mmap failures that look like resource-limit errors now produce a rich diagnostic message including current system limits and concrete fix instructions.</li>
 <li><strong>Deployment troubleshooting docs</strong>: New “Memory Allocation Errors on RHEL7/CentOS7” section in <code>DEPLOYMENT.md</code> covering symptoms, root cause, automatic detection behaviour, and two solution paths (with/without sudo).</li>
 </ul>
-<h3 id="fixed-20"><a class="header" href="#fixed-20">Fixed</a></h3>
+<h3 id="fixed-21"><a class="header" href="#fixed-21">Fixed</a></h3>
 <ul>
 <li><strong><code>include_extensions</code> config now honoured during indexing</strong>: The field was parsed but never forwarded to file discovery; it now filters files correctly.</li>
 <li><strong><code>max_file_size</code> config now honoured during indexing</strong>: The configured value is forwarded to <code>FileDiscoveryConfig</code> instead of hardcoding 10 MB.</li>
@@ -5701,12 +5718,12 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Config template corrected</strong>: <code>index_path</code>, <code>save_after_build</code>, <code>save_after_updates</code>, <code>watch</code> placed under <code>[indexer]</code>; <code>telemetry.enabled</code> default fixed.</li>
 </ul>
 <h2 id="056---2026-02-26"><a class="header" href="#056---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.5...v0.5.6">0.5.6</a> - 2026-02-26</a></h2>
-<h3 id="fixed-21"><a class="header" href="#fixed-21">Fixed</a></h3>
+<h3 id="fixed-22"><a class="header" href="#fixed-22">Fixed</a></h3>
 <ul>
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
 <h2 id="055---2026-02-26"><a class="header" href="#055---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5">0.5.5</a> - 2026-02-26</a></h2>
-<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
+<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
 <ul>
 <li>Maintenance release: version/changelog update only; no functional code changes.</li>
 </ul>
@@ -5737,7 +5754,7 @@ is running.</li>
 Use these builds when diagnosing crashes — <code>RUST_BACKTRACE=full</code> will show real function names.</li>
 </ul>
 <h2 id="052---2026-02-25"><a class="header" href="#052---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.1...v0.5.2">0.5.2</a> - 2026-02-25</a></h2>
-<h3 id="fixed-22"><a class="header" href="#fixed-22">Fixed</a></h3>
+<h3 id="fixed-23"><a class="header" href="#fixed-23">Fixed</a></h3>
 <ul>
 <li><strong>SIGABRT / heap corruption during parallel batch indexing</strong>: Tree-sitter C parsers were being
 called concurrently from rayon’s thread pool (<code>par_iter</code> over a 500-file batch). Tree-sitter’s
@@ -5753,7 +5770,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="051---2026-02-25"><a class="header" href="#051---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.0...v0.5.1">0.5.1</a> - 2026-02-25</a></h2>
-<h3 id="fixed-23"><a class="header" href="#fixed-23">Fixed</a></h3>
+<h3 id="fixed-24"><a class="header" href="#fixed-24">Fixed</a></h3>
 <ul>
 <li><strong>OOM crash during background indexing</strong>: <code>PreIndexedFile</code> was retaining a full copy of each file’s content (<code>String</code>, up to 10 MB each) in memory while rayon processed batches in parallel. With a 500-file batch size this could accumulate up to 5 GB of redundant heap on top of the trigram index, causing an allocation failure on large codebases (~60K files). The <code>content</code> field has been removed from <code>PreIndexedFile</code> — it was only needed transiently inside <code>process()</code> to compute trigrams, symbols, and imports, all of which are now the only data carried into <code>index_batch</code>.</li>
 </ul>
@@ -5770,7 +5787,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
+<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
 <ul>
 <li>Semantic search vector index now uses HNSW instead of linear search</li>
 <li>Updated documentation with HNSW configuration and tuning guide</li>
@@ -5803,7 +5820,7 @@ are serialised.</li>
 <p><strong>Semantic model download verification</strong>: Optional SHA256 verification via <code>FCS_MODEL_SHA256</code> or <code>FCS_MODEL_SHA256_&lt;MODEL&gt;</code></p>
 </li>
 </ul>
-<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
+<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
 <ul>
 <li>Tracing subscriber upgraded from simple <code>FmtSubscriber</code> to layered <code>Registry</code> (fmt + OTel)</li>
 <li><code>tracing-subscriber</code> now uses <code>registry</code> feature alongside <code>env-filter</code></li>
@@ -5811,7 +5828,7 @@ are serialised.</li>
 <li>Binary startup reordered: config loads before tracing init so TOML telemetry values are available</li>
 <li><code>--init</code> flag exits before tracing init (no subscriber needed for template generation)</li>
 </ul>
-<h3 id="fixed-24"><a class="header" href="#fixed-24">Fixed</a></h3>
+<h3 id="fixed-25"><a class="header" href="#fixed-25">Fixed</a></h3>
 <ul>
 <li><strong>Persisted index loads now rebuild symbol and dependency caches</strong> to restore symbol scoring boosts and import-based ranking</li>
 <li><strong>gRPC keyword service lock handling</strong> now reports lock errors instead of panicking on poisoned locks</li>
@@ -5844,7 +5861,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
+<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
 <ul>
 <li>Symbol extractor now handles C/C++ function declarators correctly (name is in <code>declarator</code> field, not <code>name</code>)</li>
 </ul>
@@ -5879,7 +5896,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
+<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
 <ul>
 <li>Search methods now use file metadata ranking instead of early termination for large candidate sets</li>
 <li><code>search_regex()</code> and <code>search_symbols()</code> also use fast ranking for consistency</li>
@@ -5937,11 +5954,11 @@ are serialised.</li>
 <p><strong>Symbols-only search mode</strong>: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via <code>symbols=true</code> query parameter in REST API or <code>symbols_only=true</code> in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.</p>
 </li>
 </ul>
-<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
+<h3 id="changed-21"><a class="header" href="#changed-21">Changed</a></h3>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
-<h3 id="fixed-25"><a class="header" href="#fixed-25">Fixed</a></h3>
+<h3 id="fixed-26"><a class="header" href="#fixed-26">Fixed</a></h3>
 <ul>
 <li><strong>ML models build on Windows</strong>: Fixed ort 2.0 API compatibility issues and CRT linking conflicts
 <ul>
@@ -5960,7 +5977,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="022---2026-02-01"><a class="header" href="#022---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.1...v0.2.2">0.2.2</a> - 2026-02-01</a></h2>
-<h3 id="changed-21"><a class="header" href="#changed-21">Changed</a></h3>
+<h3 id="changed-22"><a class="header" href="#changed-22">Changed</a></h3>
 <ul>
 <li><strong>Improved indexing log readability</strong>: The background indexing completion message now formats large numbers with underscore separators (e.g., <code>89_210</code>), rounds <code>files_per_sec</code> to whole numbers, and removes redundant raw byte values.</li>
 </ul>
@@ -5970,7 +5987,7 @@ are serialised.</li>
 <li><strong>Indexing completion stats</strong>: When background indexing completes, the log now reports the total size of indexed text and the current process memory usage in human-readable format (e.g., “150.00 MB”). Uses the <code>sysinfo</code> crate for cross-platform memory reporting.</li>
 </ul>
 <h2 id="020---2026-02-01"><a class="header" href="#020---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.1.0...v0.2.0">0.2.0</a> - 2026-02-01</a></h2>
-<h3 id="fixed-26"><a class="header" href="#fixed-26">Fixed</a></h3>
+<h3 id="fixed-27"><a class="header" href="#fixed-27">Fixed</a></h3>
 <ul>
 <li><strong>Duplicate search results</strong>: Fixed issue where the same file could appear multiple times in search results when discovered via symlinks or different path representations. The <code>FileStore</code> now deduplicates files by canonical path.</li>
 </ul>
