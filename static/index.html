@@ -80,6 +80,9 @@
             font: inherit; color: var(--text); padding: 0.05rem 0.45rem;
         }
         .ctx-header button:hover, .ctx-header button:focus-visible { background: var(--hover); outline: none; }
+        .ctx-close { font-weight: 700; }
+        /* Pinned: stays until Esc, a click outside or × */
+        .ctx-tooltip.ctx-pinned { border-color: var(--accent-ink); box-shadow: var(--shadow), 0 0 0 1px var(--accent-ink); }
         /* The whole file scrolls inside the preview; the wheel never reaches
            the page behind it (which used to scroll and close the preview). */
         .ctx-file-body {
@@ -710,8 +713,8 @@
                     <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
                         Context lines
                         <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus" title="Lines of code shown either side of each match">
-                            <option value="0" selected>Match only</option>
-                            <option value="1">±1 line</option>
+                            <option value="0">Match only</option>
+                            <option value="1" selected>±1 line</option>
                             <option value="2">±2 lines</option>
                             <option value="3">±3 lines</option>
                             <option value="4">±4 lines</option>

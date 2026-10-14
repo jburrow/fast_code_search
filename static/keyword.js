@@ -44,6 +44,9 @@ const DEBOUNCE_MS = 300;
 // ============================================
 
 const LS_SETTINGS_KEY = 'fcs_settings';
+// Context lines either side of each hit unless the reader picks otherwise.
+const DEFAULT_CONTEXT = '1';
+let _contextChosen = false;
 const LS_HISTORY_KEY = 'fcs_history';
 const MAX_HISTORY = 50;
 
@@ -55,7 +58,10 @@ function saveSettingsToStorage() {
         const settings = {
             max: maxResultsSelect?.value || '50',
             rank: rankModeSelect?.value || 'auto',
-            context: contextLinesSelect?.value || '0',
+            context: contextLinesSelect?.value || DEFAULT_CONTEXT,
+            // Only a context the reader picked is restored, so a changed
+            // default reaches browsers that saved the old one automatically.
+            contextChosen: _contextChosen,
             include: includeFilterInput?.value.trim() || '',
             exclude: excludeFilterInput?.value.trim() || '',
             regex: regexModeCheckbox?.checked || false,
@@ -78,7 +84,10 @@ function loadSettingsFromStorage() {
         const s = JSON.parse(raw);
         if (s.max != null) applyMaxResults(s.max);
         if (s.rank != null) setSelectValue(rankModeSelect, s.rank);
-        if (s.context != null) setSelectValue(contextLinesSelect, s.context);
+        if (s.context != null && s.contextChosen) {
+            setSelectValue(contextLinesSelect, s.context);
+            _contextChosen = true;
+        }
         if (includeFilterInput && s.include) includeFilterInput.value = s.include;
         if (excludeFilterInput && s.exclude) excludeFilterInput.value = s.exclude;
         if (regexModeCheckbox) regexModeCheckbox.checked = s.regex === true;
@@ -126,7 +135,7 @@ function currentMaxResults() {
 
 /** The validated context-line count to send (0..10). */
 function currentContextLines() {
-    return clampContextLines(contextLinesSelect?.value || '0');
+    return clampContextLines(contextLinesSelect?.value || DEFAULT_CONTEXT);
 }
 
 /** The mode checkboxes; each is mutually exclusive with the others. */
@@ -273,7 +282,7 @@ function applyUrlState(params, opts = {}) {
     if (params.has('max')) applyMaxResults(params.get('max'));
     else if (absentIsDefault) setSelectValue(maxResultsSelect, '50');
     select(rankModeSelect, 'rank', 'auto');
-    select(contextLinesSelect, 'context', '0');
+    select(contextLinesSelect, 'context', DEFAULT_CONTEXT);
     mode(regexModeCheckbox, 'regex');
     mode(symbolsModeCheckbox, 'symbols');
     mode(referencesModeCheckbox, 'references');
@@ -320,7 +329,7 @@ function currentUrlParams() {
     if (rank !== 'auto') params.set('rank', rank);
 
     const context = currentContextLines();
-    if (context !== 0) params.set('context', String(context));
+    if (context !== Number(DEFAULT_CONTEXT)) params.set('context', String(context));
 
     return params;
 }
@@ -768,6 +777,11 @@ async function populateFileView(container, filePath, highlightLine, matcher, sig
 
 let _ctxTooltip = null;
 let _ctxHideTimer = null;
+// A pinned preview (its icon was clicked, or the reader clicked or scrolled
+// inside it) stays open until Escape, a click outside it, or its × button;
+// an unpinned one closes when the pointer leaves.
+let _ctxPinned = false;
+let _ctxAnchor = null; // the icon the open preview belongs to
 let _ctxFetchController = null;
 let _ctxHoverTimer = null;
 // Cache of /api/file responses keyed by path, so hovering the same file
@@ -789,12 +803,16 @@ function getOrCreateTooltip() {
         // Keep tooltip visible when mouse moves into it
         _ctxTooltip.addEventListener('mouseenter', () => clearTimeout(_ctxHideTimer));
         _ctxTooltip.addEventListener('mouseleave', hideContextTooltip);
+        // Using the preview pins it, so it no longer closes on mouse-out.
+        _ctxTooltip.addEventListener('pointerdown', () => pinContextTooltip());
+        _ctxTooltip.addEventListener('wheel', () => pinContextTooltip(), { passive: true });
         document.body.appendChild(_ctxTooltip);
     }
     return _ctxTooltip;
 }
 
 function hideContextTooltip() {
+    if (_ctxPinned) return;
     _ctxHideTimer = setTimeout(() => {
         if (_ctxTooltip) {
             _ctxTooltip.style.display = 'none';
@@ -803,6 +821,7 @@ function hideContextTooltip() {
 }
 
 function hideContextTooltipImmediately() {
+    _ctxPinned = false;
     clearTimeout(_ctxHideTimer);
     clearTimeout(_ctxHoverTimer);
     if (_ctxFetchController) {
@@ -812,6 +831,12 @@ function hideContextTooltipImmediately() {
     if (_ctxTooltip) {
         _ctxTooltip.style.display = 'none';
     }
+}
+
+function pinContextTooltip() {
+    _ctxPinned = true;
+    clearTimeout(_ctxHideTimer);
+    if (_ctxTooltip) _ctxTooltip.classList.add('ctx-pinned');
 }
 
 function isContextTooltipVisible() {
@@ -826,13 +851,15 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && isContextTooltipVisible()) hideContextTooltipImmediately();
 });
 window.addEventListener('scroll', (e) => {
-    if (!isContextTooltipVisible()) return;
+    if (!isContextTooltipVisible() || _ctxPinned) return;
     if (e.target instanceof Node && _ctxTooltip.contains(e.target)) return; // scrolling the preview itself
     hideContextTooltipImmediately();
 }, true);
 document.addEventListener('click', (e) => {
     if (!isContextTooltipVisible()) return;
     if (e.target instanceof Node && _ctxTooltip.contains(e.target)) return;
+    // A click on the icon that opened it pins it (see wireResultGroups).
+    if (_ctxAnchor && e.target instanceof Node && _ctxAnchor.contains(e.target)) return;
     hideContextTooltipImmediately();
 }, true);
 window.addEventListener('resize', () => {
@@ -852,6 +879,7 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
     const signal = _ctxFetchController.signal;
 
     const tooltip = getOrCreateTooltip();
+    _ctxAnchor = resultItem;
     tooltip.innerHTML = `
         <div class="ctx-header">
             <span class="ctx-path">${escapeHtml(filePath)}${wholeFile ? '' : ` : ${lineNumber}`}</span>
@@ -861,9 +889,12 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
                 <button type="button" data-step="1" title="Next match" aria-label="Next match">↓</button>
             </span>
             <button type="button" class="ctx-open" title="Open in the file viewer">Open</button>
+            <button type="button" class="ctx-close" title="Close (Esc)" aria-label="Close preview">×</button>
         </div>
         <div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
     tooltip.querySelector('.ctx-open').addEventListener('click', () => showFileModal(filePath, lineNumber));
+    tooltip.querySelector('.ctx-close').addEventListener('click', hideContextTooltipImmediately);
+    tooltip.classList.toggle('ctx-pinned', _ctxPinned);
     positionTooltip(tooltip, resultItem);
     tooltip.style.display = 'flex';
 
@@ -1649,12 +1680,12 @@ function renderGroupHtml(group) {
             (result.content_truncated
                 ? `<span class="hit-tag truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
                 : '');
-        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}&#10;Click to open the file here; hover to preview it`;
+        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}&#10;Click to open the file here`;
         // The preview icon at the end of the match line: hover it to preview
         // the file, click it to open the file at this line.
         const openBtn = `<button type="button" class="hit-open view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
-            aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}" title="Preview the file (click to open it)">${iconSvg('open_in_new', 16)}</button>`;
-        const matchNum = `<button type="button" class="hit-num view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
+            aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}" title="Preview the file (click to keep it open)">${iconSvg('open_in_new', 16)}</button>`;
+        const matchNum = `<button type="button" class="hit-num hit-num-open" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
             aria-label="Open file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}" title="${title}">${isFilenameHit ? 'file' : result.line_number}</button>`;
 
         // With context, every line of the window; without, the match line
@@ -1733,8 +1764,8 @@ function wireResultGroups(root) {
         });
     });
 
-    // The file name opens the file at its first hit.
-    root.querySelectorAll('.group-open').forEach(btn => {
+    // The file name opens the file at its first hit; a line number at that line.
+    root.querySelectorAll('.group-open, .hit-num-open').forEach(btn => {
         btn.addEventListener('click', () => showFileModal(btn.dataset.filePath, parseInt(btn.dataset.lineNumber, 10) || 1));
     });
 
@@ -1743,10 +1774,19 @@ function wireResultGroups(root) {
         const filePath = btn.dataset.filePath;
         const lineNumber = parseInt(btn.dataset.lineNumber, 10) || 1;
         const wholeFile = btn.dataset.wholeFile === 'true';
-        btn.addEventListener('click', () => showFileModal(filePath, lineNumber));
+        // Click pins the preview open (the document click handler has
+        // already closed any other one); its Open button opens the viewer.
+        btn.addEventListener('click', () => {
+            clearTimeout(_ctxHoverTimer);
+            if (isContextTooltipVisible() && _ctxAnchor === btn) { pinContextTooltip(); return; }
+            _ctxPinned = true;
+            showContextTooltip(btn, filePath, lineNumber, wholeFile);
+        });
         // Hover-intent delay: only fetch a preview if the cursor lingers ~200ms,
         // so sweeping down a results list doesn't fire a burst of requests.
+        // A pinned preview is not replaced by hovering another icon.
         btn.addEventListener('mouseenter', () => {
+            if (_ctxPinned && isContextTooltipVisible()) return;
             clearTimeout(_ctxHoverTimer);
             _ctxHoverTimer = setTimeout(
                 () => showContextTooltip(btn, filePath, lineNumber, wholeFile),
@@ -2764,7 +2804,7 @@ modeCheckboxes().forEach(cb => {
     });
 });
 if (rankModeSelect) rankModeSelect.addEventListener('change', optionChanged);
-if (contextLinesSelect) contextLinesSelect.addEventListener('change', optionChanged);
+if (contextLinesSelect) contextLinesSelect.addEventListener('change', () => { _contextChosen = true; optionChanged(); });
 
 document.getElementById('active-filters')?.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-clear]');
