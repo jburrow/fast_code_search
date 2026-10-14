@@ -67,7 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the icon previews the file; clicking it pins the preview, which then
   stays open until Escape, a click outside it or its ×, as does clicking
   or scrolling inside it. The line number opens the file and no longer
-  previews it on hover.
+  previews it on hover. A kept preview now does what the file viewer
+  does: Ctrl/⌘-click or double-click a name for its definition (Back in the
+  viewer returns to the preview's line), click a line number to select it,
+  Copy link, Explore imports. Its Open button is now **Expand**, which shows
+  the same file in the large viewer at the preview's line (after ↑/↓ or a
+  selected line, not always the original hit).
 - Web UI: results show one line of context either side of each hit by
   default (was the match line only). Filter → Context lines still sets it
   and is remembered once you pick a value; `context=0` in a link shows the
