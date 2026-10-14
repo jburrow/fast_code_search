@@ -178,6 +178,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   external packages. Every ancestor folder is now tried. A package in a
   sibling folder put on `PYTHONPATH` (`lib/mypkg` imported from `apps/`)
   is still not found; the graph support page lists it as a known gap.
+- Python: in a repository whose root folder has an `__init__.py` (run with
+  that folder on `sys.path`), every absolute import of the project's own
+  packages was listed as external, because a package folder is never a
+  root. The outermost package folder is now tried as a root when it is the
+  repository root or no folder above it holds an indexed file.
 - Results are in rank order again, with each file's hits together: files in
   the order of their best hit, then every hit of that file by score. Since
   v0.12.0 hits were interleaved by file (every file's best hit before any

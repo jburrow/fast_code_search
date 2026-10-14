@@ -66,6 +66,7 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 | Absolute imports | yes, as Python 3 does: from the ancestor folders that are not packages themselves (no `__init__.py`), so `import json` inside a package is the standard library, not a `json.py` next to it; where several could hold the module, the one that holds most of the dotted name wins |
 | `src/` layouts (`tests/` importing `src/pkg`) | yes: each of those folders' `src/` is tried too |
 | Absolute imports from a file nested any number of folders deep | yes: every ancestor folder is tried |
+| A repository whose root folder has an `__init__.py`, run with that folder on `sys.path` (`import app.models`) | yes: when nothing else resolves the import, the outermost package folder is tried as a root if it is the repository root (`.git`) or no folder above it holds an indexed file |
 | Other `sys.path` entries (`pyproject.toml`, `setup.cfg`, `PYTHONPATH`) | **no**: no configuration is read, so a package in a sibling folder (`lib/mypkg/` imported from `apps/x/main.py`, with `lib` put on `PYTHONPATH` by your setup) is not found and the import counts as external |
 | `.pyi` stubs as import targets | **no** |
 | Standard library, installed packages | no edge, by design |
