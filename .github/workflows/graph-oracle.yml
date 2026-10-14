@@ -77,6 +77,20 @@ jobs:
           ./target/release/examples/graph_oracle bench-corpus/django --oracle py.json --lang py \
             --max-missing 0 --max-extra 0 --markdown graph-py.md
 
+      - name: Python (grimp on a package nested 14 levels deep)
+        run: |
+          python scripts/graph-oracle/deep_python_tree.py deep-py 14
+          python src/check/oracle/py.py deep-py > py-deep.json
+          ./target/release/examples/graph_oracle deep-py --oracle py-deep.json --lang py \
+            --max-missing 0 --max-extra 0 --markdown graph-py-deep.md
+
+      - name: Python (grimp on a repository whose root folder has __init__.py)
+        run: |
+          python scripts/graph-oracle/deep_python_tree.py root-init-py 4 --root-init
+          python src/check/oracle/py.py root-init-py > py-root-init.json
+          ./target/release/examples/graph_oracle root-init-py --oracle py-root-init.json --lang py \
+            --max-missing 0 --max-extra 0 --markdown graph-py-root-init.md
+
       - name: TypeScript (resolveModuleName on Vite)
         run: |
           (cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) > ts.json
@@ -85,4 +99,4 @@ jobs:
 
       - name: Report
         if: always()
-        run: cat graph-py.md graph-ts.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        run: cat graph-py.md graph-py-deep.md graph-py-root-init.md graph-ts.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

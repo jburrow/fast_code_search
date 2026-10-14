@@ -113,8 +113,8 @@ Python 3 looks for an absolute import only on `sys.path`, never next to the
 importing file. fcs does not know your `sys.path`, so it works out the
 likely entries from the folder layout.
 
-1. **Find the roots.** Walk up from the importing file's folder, up to 8
-   levels. A folder that contains `__init__.py` is part of a package, so it
+1. **Find the roots.** Walk up from the importing file's folder, all the
+   way up, however deep the file sits. A folder that contains `__init__.py` is part of a package, so it
    is *not* a root. Every other folder is a candidate root, and so is its
    `src/` subfolder (the "src layout").
 2. **Look under each root** for the dotted name, longest first, exactly as
@@ -124,7 +124,15 @@ likely entries from the folder layout.
 3. **Pick the best root.** A root where the whole name exists wins
    immediately. Otherwise the root that matches the most of the name wins,
    and the nearest root wins a tie.
-4. **Nothing found means external.** `import os`, `import requests` and
+4. **A repository root that is itself a package.** When no root found
+   anything and the outermost package folder (the top of a chain of
+   `__init__.py` folders) is the repository root, or no folder above it
+   holds an indexed file, that folder is tried as a root too. This is the
+   repository with an `__init__.py` in its root folder that is run with
+   that folder on `sys.path`: `import app.models` from `repo/app/views.py`
+   finds `repo/app/models.py`. Only the outermost package qualifies, so
+   `import json` inside `repo/app/fields/` is still the standard library.
+5. **Nothing found means external.** `import os`, `import requests` and
    `from django.db import models` find nothing in the index (the standard
    library and site-packages are not under any of these roots), so they
    resolve to nothing.

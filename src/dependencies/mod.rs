@@ -31,6 +31,10 @@ pub struct DependencyIndex {
     /// Reverse of `path_to_id`, so removal and re-registration are O(1)
     /// instead of a full scan (and so `filename_to_paths` can be pruned).
     id_to_path: FxHashMap<u32, PathBuf>,
+    /// Directory -> how many indexed files sit directly in it. A directory
+    /// missing here holds no indexed file of its own (it is outside the
+    /// index, or only holds folders).
+    files_per_dir: FxHashMap<PathBuf, u32>,
     /// Rust crate directory (the one holding `Cargo.toml`) -> the name the
     /// crate's own binaries and tests `use` it by, or `None` when the
     /// manifest names no package. Read once per crate.
@@ -318,6 +322,9 @@ impl DependencyIndex {
         if stored_path.file_name().is_some_and(|n| n == "package.json") {
             *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
         }
+        if let Some(dir) = stored_path.parent() {
+            *self.files_per_dir.entry(dir.to_path_buf()).or_default() += 1;
+        }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
     }
@@ -328,6 +335,14 @@ impl DependencyIndex {
             return;
         };
         self.path_to_id.remove(&path);
+        if let Some(dir) = path.parent() {
+            if let Some(n) = self.files_per_dir.get_mut(dir) {
+                *n -= 1;
+                if *n == 0 {
+                    self.files_per_dir.remove(dir);
+                }
+            }
+        }
         if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
             if let Some(paths) = self.filename_to_paths.get_mut(filename) {
                 paths.retain(|p| *p != path);
@@ -623,30 +638,60 @@ impl DependencyIndex {
         // `fields/` is the standard library, not `fields/json.py`. The
         // other ancestors, and their `src/` (a src layout), are possible
         // roots; the one where the most of the dotted name exists wins,
-        // the nearest on a tie. Stdlib and site-packages names find
-        // nothing and resolve to None.
+        // the nearest on a tie. Every ancestor is tried, however deep the
+        // importing file sits. Stdlib and site-packages names find nothing
+        // and resolve to None.
         let mut best: Option<(usize, PathBuf)> = None;
-        let mut base = Some(dir);
-        for _ in 0..8 {
-            let Some(b) = base else { break };
-            if self.indexed(&b.join("__init__.py")).is_none() {
+        // `import a.b` needs `a/b`; `from a import name` is `a.name` or
+        // `name` from `a`. Less is not a match. `Some` is the whole name:
+        // nothing beats it.
+        let try_root = |root: &Path, best: &mut Option<(usize, PathBuf)>| -> Option<PathBuf> {
+            let (k, p) = self.python_candidates(root, &segments)?;
+            if k == segments.len() {
+                return Some(p);
+            }
+            if k + 1 >= segments.len() && best.as_ref().is_none_or(|(bk, _)| k > *bk) {
+                *best = Some((k, p));
+            }
+            None
+        };
+        let is_package = |d: &Path| self.indexed(&d.join("__init__.py")).is_some();
+        for b in dir.ancestors() {
+            if !is_package(b) {
                 for root in [b.to_path_buf(), b.join("src")] {
-                    if let Some((k, p)) = self.python_candidates(&root, &segments) {
-                        // `import a.b` needs `a/b`; `from a import name` is
-                        // `a.name` or `name` from `a`. Less is not a match.
-                        if k + 1 < segments.len() {
-                            continue;
-                        }
-                        if k == segments.len() {
-                            return Some(p); // the whole name: nothing beats it
-                        }
-                        if best.as_ref().is_none_or(|(bk, _)| k > *bk) {
-                            best = Some((k, p));
-                        }
+                    if let Some(p) = try_root(&root, &mut best) {
+                        return Some(p);
                     }
                 }
             }
-            base = b.parent();
+        }
+        if best.is_none() {
+            // A repository whose root folder has an `__init__.py` but is
+            // run with that folder on sys.path (`import app.models` from
+            // `repo/app/views.py`, with `repo/__init__.py`): the outermost
+            // package folder is a root too, when nothing above it is part
+            // of the project: it is the repository root (holds `.git`), or
+            // no folder above it holds an indexed file.
+            // Only then: in Django, `django/` is the outermost package but
+            // the repository holds it, so `from http import HTTPStatus`
+            // must stay the standard library, not `django/http/`. And
+            // only the outermost: `import json` inside `repo/app/fields/`
+            // must not find `repo/app/fields/json.py`.
+            let repo_root = self.js_repo_root(dir);
+            let nothing_above = |b: &Path| {
+                b.ancestors()
+                    .skip(1)
+                    .all(|a| !self.files_per_dir.contains_key(a))
+            };
+            for b in dir.ancestors() {
+                let top = is_package(b) && b.parent().is_none_or(|parent| !is_package(parent));
+                let project_root = repo_root.as_deref() == Some(b) || nothing_above(b);
+                if top && project_root {
+                    if let Some(p) = try_root(b, &mut best) {
+                        return Some(p);
+                    }
+                }
+            }
         }
         best.map(|(_, p)| p)
     }
@@ -1078,6 +1123,7 @@ impl DependencyIndex {
         self.path_to_id.clear();
         self.filename_to_paths.clear();
         self.id_to_path.clear();
+        self.files_per_dir.clear();
         self.rust_crate_names
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -1299,6 +1345,75 @@ mod tests {
             r(dummy, "django.missing"),
             id_of(&temp, &idx, "django/__init__.py"),
             "`from django import missing` may name something in the package"
+        );
+    }
+
+    /// An absolute import resolves however deep the importing file sits:
+    /// the package root may be many package folders above it.
+    #[test]
+    fn test_resolve_python_deep_package() {
+        let dirs = ["top", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+        let mut files = vec![("top/m.py".to_string(), "")];
+        for n in 1..=dirs.len() {
+            files.push((format!("{}/__init__.py", dirs[..n].join("/")), ""));
+        }
+        let deep = format!("{}/deep.py", dirs.join("/"));
+        files.push((deep.clone(), ""));
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), *c)).collect();
+        let (temp, idx) = setup(&refs);
+        let r = |imp: &str| {
+            idx.resolve_import_path(&temp.path().join(&deep), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(r("top.m"), id_of(&temp, &idx, "top/m.py"));
+        assert_eq!(r("top.a.b"), id_of(&temp, &idx, "top/a/b/__init__.py"));
+        assert_eq!(r("os.path"), None);
+    }
+
+    /// A repository whose root folder has an `__init__.py`, run with that
+    /// folder on sys.path: its top-level packages still resolve, but a
+    /// stdlib name inside a package is not a sibling module, and the
+    /// outermost package of an indexed repository is not a root
+    /// (Django's `from http import x` is not `django/http/`).
+    #[test]
+    fn test_resolve_python_root_with_init() {
+        let (temp, idx) = setup(&[
+            ("__init__.py", ""),
+            ("app/__init__.py", ""),
+            ("app/models.py", ""),
+            ("app/fields/__init__.py", ""),
+            ("app/fields/json.py", ""),
+            ("app/fields/composite.py", ""),
+            ("lib/util.py", ""),
+            ("README.md", ""),
+            ("django/__init__.py", ""),
+            ("django/http/__init__.py", ""),
+            ("django/views.py", ""),
+        ]);
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&temp.path().join(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        let composite = "app/fields/composite.py";
+        assert_eq!(
+            r(composite, "app.models"),
+            id_of(&temp, &idx, "app/models.py")
+        );
+        assert_eq!(r(composite, "lib.util"), id_of(&temp, &idx, "lib/util.py"));
+        assert_eq!(r(composite, "json"), None);
+        assert_eq!(r(composite, "os.path"), None);
+        // Without the root `__init__.py`, the outermost package `django/`
+        // sits in a folder holding indexed files, so it is not a root.
+        let mut idx = idx;
+        idx.remove_file(id_of(&temp, &idx, "__init__.py").unwrap());
+        let r = |from: &str, imp: &str| {
+            idx.resolve_import_path(&temp.path().join(from), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(r("django/views.py", "http.HTTPStatus"), None);
+        assert_eq!(
+            r("django/views.py", "django.http"),
+            id_of(&temp, &idx, "django/http/__init__.py")
         );
     }
 

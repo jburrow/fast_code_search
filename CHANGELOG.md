@@ -175,6 +175,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Python: an absolute import (`import pkg.mod`, `from pkg import x`) in a
+  file nested more than 8 folders below its package root resolved to
+  nothing, so the dependency explorer listed the project's own modules as
+  external packages. Every ancestor folder is now tried. A package in a
+  sibling folder put on `PYTHONPATH` (`lib/mypkg` imported from `apps/`)
+  is still not found; the graph support page lists it as a known gap.
+- Python: in a repository whose root folder has an `__init__.py` (run with
+  that folder on `sys.path`), every absolute import of the project's own
+  packages was listed as external, because a package folder is never a
+  root. The outermost package folder is now tried as a root when it is the
+  repository root or no folder above it holds an indexed file.
 - Web UI: search history now records searches made by typing, not only
   ones submitted with Enter. A query counts once the box sits unchanged for
   two seconds or you move on (into the results, a preview or a filter);
