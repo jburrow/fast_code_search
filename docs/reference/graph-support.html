@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4c774c89.js";
+            window.path_to_searchindex_js = "../searchindex-0f864e90.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -199,9 +199,12 @@ have symbols, but get no import edges.</p>
 <li>An import resolves only to a file that is <strong>in the index</strong>. Packages
 outside the indexed folders (<code>std</code>, site-packages, <code>node_modules</code>, which
 is excluded by default) never produce an edge.</li>
-<li>A bare or external name resolves to nothing. There is no “a file with
-that name somewhere in the repo” guess, so a missing edge is never
-replaced by a wrong one.</li>
+<li>A bare or external name resolves to nothing, unless the language’s own
+configuration maps it to an indexed file (for JavaScript and TypeScript:
+tsconfig <code>paths</code>/<code>baseUrl</code>, a workspace <code>package.json</code> <code>name</code>, or the
+repository root when there is no tsconfig <code>baseUrl</code>). There is no “a
+file with that name somewhere in the repo” guess, so a missing edge is
+never replaced by a wrong one.</li>
 <li>Imports that do not resolve are kept. They are retried when a matching
 file is indexed later, and <code>GET /api/graph/imports?path=…</code> lists every
 import of a file with its line, and <code>target: null</code> for the unresolved
@@ -264,15 +267,17 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tr><td><code>import … from './x'</code>, <code>export … from './x'</code>, <code>export * from './x'</code></td><td>yes</td></tr>
 <tr><td><code>require('./x')</code>, <code>require(`./x`)</code>, <code>import('./x')</code></td><td>yes (not a template string with <code>${…}</code>), also <code>import(/* comment */ './x')</code></td></tr>
 <tr><td><code>import x from './x.json' with { type: 'json' }</code>, and the older <code>assert { … }</code></td><td>yes</td></tr>
-<tr><td><code>import x = require('./x')</code> (TypeScript)</td><td><strong>no</strong></td></tr>
+<tr><td><code>import x = require('./x')</code> (TypeScript)</td><td>yes</td></tr>
 <tr><td>Relative specifiers (<code>./</code>, <code>../</code>, <code>.</code>, <code>..</code>)</td><td>yes</td></tr>
-<tr><td><code>@/x</code>, <code>~/x</code></td><td>yes: from the nearest folder with a <code>package.json</code> or <code>tsconfig.json</code>, trying <code>src/x</code> then <code>x</code></td></tr>
-<tr><td>Extension probing</td><td>the exact file; <code>.js</code>/<code>.jsx</code> written for a <code>.ts</code>/<code>.tsx</code> file, <code>.mjs</code> for <code>.mts</code>, <code>.cjs</code> for <code>.cts</code>; then <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code> appended; then <code>index.{ts,tsx,js,jsx,mjs,cjs}</code></td></tr>
+<tr><td><code>@/x</code>, <code>~/x</code></td><td>yes: tsconfig <code>paths</code> when it maps them, else from the nearest folder with a <code>package.json</code> or <code>tsconfig.json</code> (else the repository root), trying <code>src/x</code> then <code>x</code></td></tr>
+<tr><td>Extension probing</td><td>the exact file; <code>.js</code>/<code>.jsx</code> written for a <code>.ts</code>/<code>.tsx</code> file, <code>.mjs</code> for <code>.mts</code>, <code>.cjs</code> for <code>.cts</code>; then <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code> appended; then <code>index</code> with each of those extensions</td></tr>
 <tr><td>Imports of stylesheets, <code>.vue</code>/<code>.svelte</code> components and other assets</td><td>yes, when the file is indexed (a bundler resolves them; TypeScript does not)</td></tr>
-<tr><td><code>index.mts</code>, <code>index.cts</code>, <code>index.d.ts</code>; a folder’s <code>package.json</code> <code>main</code></td><td><strong>no</strong></td></tr>
+<tr><td>A folder’s own <code>package.json</code> <code>main</code> (<code>import './lib'</code> where <code>lib/package.json</code> names the entry)</td><td><strong>no</strong></td></tr>
 <tr><td><code>package.json</code> <code>imports</code> (<code>#name</code>) and a package importing itself by name</td><td><strong>no</strong></td></tr>
-<tr><td>tsconfig <code>paths</code> and <code>baseUrl</code></td><td><strong>no</strong>: tsconfig is not parsed</td></tr>
-<tr><td>Workspace packages by name, <code>package.json</code> <code>exports</code>/<code>main</code></td><td><strong>no</strong></td></tr>
+<tr><td>tsconfig / jsconfig <code>paths</code> and <code>baseUrl</code>, with relative <code>extends</code></td><td>yes, as <code>tsc</code> resolves them; an <code>extends</code> naming an npm package is skipped</td></tr>
+<tr><td>Workspace packages by name (<code>@acme/shared</code>, <code>@acme/shared/x</code>)</td><td>yes: to an indexed <code>package.json</code> with that <code>name</code>: its <code>types</code>/<code>source</code>/<code>module</code>/<code>main</code>/<code>exports["."]</code> entry, else <code>src/index</code>; a subpath under <code>src/</code> or the package root</td></tr>
+<tr><td>No tsconfig <code>baseUrl</code>/<code>paths</code> (<code>import 'components/Button'</code>)</td><td>yes: tried from the repository root (the folder holding <code>.git</code>)</td></tr>
+<tr><td><code>exports</code> subpath maps and nested conditions</td><td><strong>no</strong></td></tr>
 <tr><td>Packages in <code>node_modules</code></td><td>no edge, by design</td></tr>
 </tbody>
 </table>
@@ -290,7 +295,7 @@ wrongly:</p>
 </thead>
 <tbody>
 <tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>src/check/oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
-<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>src/check/oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>92% of edges, 1 extra; 122 of the 129 misses are tsconfig <code>paths</code> (<code>~utils</code>, <code>vite/module-runner</code>)</td></tr>
+<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>src/check/oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>99.6% of edges, 1 extra; 4 of the 7 misses are <code>package.json</code> <code>imports</code> (<code>#name</code>); 221 workspace-package edges the oracle cannot see without an install are listed apart</td></tr>
 </tbody>
 </table>
 </div>

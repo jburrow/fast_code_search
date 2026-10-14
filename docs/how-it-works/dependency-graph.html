@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4c774c89.js";
+            window.path_to_searchindex_js = "../searchindex-0f864e90.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -190,7 +190,9 @@ short reference: a table of which import forms are handled. This page is
 the method behind that table.</p>
 <h2 id="the-rule-that-decides-internal-vs-external"><a class="header" href="#the-rule-that-decides-internal-vs-external">The rule that decides internal vs external</a></h2>
 <p>fcs has no list of package names, and it does not read <code>requirements.txt</code>,
-<code>pyproject.toml</code>, <code>package.json</code> dependencies or a lockfile. The decision
+<code>pyproject.toml</code>, <code>package.json</code> dependencies or a lockfile. (For
+JavaScript and TypeScript it reads <code>tsconfig.json</code> and each indexed
+<code>package.json</code>’s own <code>name</code> and entry points, described below.) The decision
 is made by one rule, the same for every language:</p>
 <blockquote>
 <p>An import is <strong>internal</strong> when the language’s own lookup rules, applied
@@ -352,10 +354,11 @@ would for Python with that root first on <code>sys.path</code>.</li>
 </table>
 </div>
 <p>A template string with <code>${…}</code>, or any argument that is not a string
-literal, is a runtime value and is skipped. <code>import x = require('./a')</code>
-(TypeScript’s older form) is not extracted yet.</p>
+literal, is a runtime value and is skipped. TypeScript’s older
+<code>import x = require('./a')</code> is extracted as <code>./a</code>.</p>
 <h3 id="how-a-specifier-is-classified"><a class="header" href="#how-a-specifier-is-classified">How a specifier is classified</a></h3>
-<p>The specifier’s first characters decide which lookup applies:</p>
+<p>The specifier’s first characters decide which lookups apply, in this
+order:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -363,15 +366,21 @@ literal, is a runtime value and is skipped. <code>import x = require('./a')</cod
 </thead>
 <tbody>
 <tr><td><code>./x</code>, <code>../x</code>, <code>.</code>, <code>..</code></td><td>Relative to the importing file’s folder</td><td>Local but unresolved</td></tr>
-<tr><td><code>@/x</code>, <code>~/x</code></td><td>From the nearest parent folder with a <code>package.json</code> or <code>tsconfig.json</code>: <code>src/x</code> first, then <code>x</code></td><td>Local but unresolved</td></tr>
-<tr><td>anything else (<code>react</code>, <code>lodash/merge</code>, <code>@scope/pkg</code>, <code>#internal</code>, a tsconfig <code>paths</code> alias)</td><td>None</td><td>External</td></tr>
+<tr><td>anything else</td><td>1. The nearest <code>tsconfig.json</code> (or <code>jsconfig.json</code>): its <code>paths</code> (an exact pattern, else the wildcard pattern with the longest prefix, each target in order), then its <code>baseUrl</code>, with relative <code>extends</code> applied, as <code>tsc</code> does</td><td>(next step)</td></tr>
+<tr><td></td><td>2. A workspace package: an indexed <code>package.json</code> whose <code>name</code> is the package part (<code>@acme/shared</code> of <code>@acme/shared/money</code>). The bare name goes to its entry point (<code>types</code>, <code>typings</code>, <code>source</code>, <code>module</code>, <code>main</code>, then <code>exports["."]</code>), then <code>src/index</code>, then <code>index</code>; a subpath goes to <code>src/money</code>, then <code>money</code></td><td>(next step)</td></tr>
+<tr><td></td><td>3. <code>@/x</code>, <code>~/x</code>: from the nearest parent folder with a <code>package.json</code> or <code>tsconfig.json</code> (else the repository root): <code>src/x</code> first, then <code>x</code></td><td>Local but unresolved</td></tr>
+<tr><td></td><td>4. When no tsconfig sets <code>baseUrl</code> or <code>paths</code>: the repository root (the folder holding <code>.git</code>) as <code>baseUrl</code>, so <code>components/Button</code> finds <code>&lt;repo&gt;/components/Button.tsx</code></td><td>External</td></tr>
 </tbody>
 </table>
 </div>
-<p>Bare specifiers are always external. That is right for npm packages, but
-it also covers aliases fcs does not understand yet: tsconfig <code>paths</code> and
-<code>baseUrl</code>, workspace packages imported by name, and <code>package.json</code>
-<code>imports</code> (<code>#name</code>). Those show up as missing edges, not as wrong ones.</p>
+<p>Each step only counts when it finds an indexed file, so <code>react</code> and
+<code>lodash/merge</code> stay external: no tsconfig alias, no indexed <code>package.json</code>
+and no file under the repository root carries that name. <code>package.json</code>
+<code>imports</code> (<code>#name</code>) are not read yet and show up as missing edges.</p>
+<p>tsconfig, <code>package.json</code> and <code>.git</code> are read from disk (once per folder,
+and again when a <code>tsconfig*.json</code> or <code>package.json</code> is re-indexed), so a
+tsconfig excluded from the index still applies. The graph is built when
+files are indexed: after changing <code>paths</code> or a package’s <code>name</code>, re-index.</p>
 <h3 id="finding-the-file"><a class="header" href="#finding-the-file">Finding the file</a></h3>
 <p>Given the folder path a specifier points at, fcs tries, in order:</p>
 <ol>
@@ -381,13 +390,13 @@ extension of the compiled output, so <code>./a.js</code> can mean <code>a.ts</co
 <code>a.tsx</code>, <code>./a.jsx</code> can mean <code>a.tsx</code> or <code>a.ts</code>, <code>./a.mjs</code> means <code>a.mts</code>
 and <code>./a.cjs</code> means <code>a.cts</code>.</li>
 <li><strong>Appended extensions</strong>: <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code>, in that order.</li>
-<li><strong>A folder’s index file</strong>: <code>index.ts</code>, <code>index.tsx</code>, <code>index.js</code>,
-<code>index.jsx</code>, <code>index.mjs</code>, <code>index.cjs</code>.</li>
+<li><strong>A folder’s index file</strong>: <code>index</code> with each of the extensions in 3.</li>
 </ol>
 <pre><code class="language-text">web/
   package.json
   src/app.tsx         import { api } from './api'      -&gt; src/api.ts
                       import Button from '@/ui/Button'  -&gt; src/ui/Button/index.tsx
+                      import { money } from '@acme/shared' -&gt; packages/shared/src/index.ts
                       import './styles.css'             -&gt; src/styles.css (if indexed)
                       import React from 'react'         -&gt; external
   src/api.ts          export * from './types.js'        -&gt; src/types.ts
@@ -397,14 +406,13 @@ resolve when that file is indexed, because a bundler resolves them and
 they are real dependencies. TypeScript itself does not resolve them.</p>
 <h3 id="javascript-and-typescript-limits"><a class="header" href="#javascript-and-typescript-limits">JavaScript and TypeScript limits</a></h3>
 <ul>
-<li><code>tsconfig.json</code> and <code>jsconfig.json</code> are not parsed: no <code>paths</code>, no
-<code>baseUrl</code>, no <code>rootDirs</code>. The <code>@/</code> and <code>~/</code> aliases are hard-wired to the
-common convention.</li>
-<li><code>package.json</code> is used only as a marker for <code>@/</code> and <code>~/</code>. Its <code>main</code>,
-<code>exports</code> and <code>imports</code> fields are not read, and a workspace package
-imported by its name is external.</li>
-<li><code>index.mts</code>, <code>index.cts</code> and <code>index.d.ts</code> are not tried as a folder’s
-index file.</li>
+<li><code>package.json</code> <code>imports</code> (<code>#name</code>), <code>exports</code> subpath maps and nested
+<code>exports</code> conditions are not read; <code>rootDirs</code> is not applied.</li>
+<li>A tsconfig <code>extends</code> that names an npm package (<code>@tsconfig/node20</code>) is
+skipped; relative <code>extends</code> (a string or an array) are followed.</li>
+<li>Aliases defined only in a bundler config (webpack, Vite, Jest) are not
+read. <code>@/</code> and <code>~/</code> follow the common convention; other bundler-only
+aliases show up as missing edges.</li>
 </ul>
 <h2 id="seeing-what-did-not-resolve"><a class="header" href="#seeing-what-did-not-resolve">Seeing what did not resolve</a></h2>
 <ul>
@@ -419,7 +427,7 @@ line; unresolved ones have <code>target: null</code>.</li>
 lists a file’s unresolved imports.</li>
 </ul>
 <p>A large <code>unresolved_local</code> count usually means a form from the limits
-above (tsconfig <code>paths</code>, for example) or files excluded from the index.</p>
+above (a bundler-only alias, for example) or files excluded from the index.</p>
 <h2 id="how-the-method-is-checked"><a class="header" href="#how-the-method-is-checked">How the method is checked</a></h2>
 <p>Rules like these are easy to get subtly wrong, so fcs compares its graph
 with each language’s own resolver, an <strong>oracle</strong> that knows nothing about
@@ -445,6 +453,11 @@ draws and the oracle does not is <strong>extra</strong>, which means a wrong edg
 one row of the support table.</li>
 <li>Edges from TypeScript files to stylesheets, components and assets are
 counted separately and not judged, since TypeScript cannot resolve them.</li>
+<li>Package-style imports that fcs links and the oracle leaves unresolved
+are listed separately and not counted as extra. The oracle runs without
+an install, so it cannot follow a workspace package’s <code>node_modules</code>
+link; fcs links it to the package’s source. The repository-root fallback
+lands here too.</li>
 </ul>
 <p>CI runs both oracles on pinned public repositories and fails if a change
 adds a missing or extra edge:</p>
@@ -455,7 +468,7 @@ adds a missing or extra edge:</p>
 </thead>
 <tbody>
 <tr><td>Python</td><td>Django 5.2 (grimp 3.17)</td><td>3,041 of 3,041 edges, none extra</td></tr>
-<tr><td>TypeScript</td><td>Vite 6.3.5 (TypeScript 5.9)</td><td>129 missing, 1 extra; 122 of the misses are tsconfig <code>paths</code> aliases</td></tr>
+<tr><td>TypeScript</td><td>Vite 6.3.5 (TypeScript 5.9)</td><td>7 missing (4 <code>package.json</code> <code>imports</code>, 3 relative imports TypeScript resolves through a folder’s <code>package.json</code> or, where <code>a.js</code> and <code>a.ts</code> both exist, to <code>a.ts</code>), 1 extra; 221 workspace-package edges listed apart</td></tr>
 </tbody>
 </table>
 </div>

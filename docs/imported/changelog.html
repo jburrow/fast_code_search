@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4c774c89.js";
+            window.path_to_searchindex_js = "../searchindex-0f864e90.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -311,6 +311,14 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Dependency graph: TypeScript and JavaScript imports that go through a
+<code>tsconfig.json</code>/<code>jsconfig.json</code> <code>paths</code> alias or <code>baseUrl</code> (<code>@app/orders</code>,
+<code>components/Button</code>) now link to the file they name, including settings
+inherited through <code>extends</code>. They were treated as npm packages, so repos
+that rely on aliases had few edges. Imports of a workspace package by its
+package.json <code>name</code> (<code>@acme/shared</code>) now link to that package’s entry
+point. With no tsconfig <code>baseUrl</code> or <code>paths</code>, imports are also tried
+from the repository root. <code>import x = require('./x')</code> is picked up.</li>
 <li>Python: <code>from .missing import x</code> (or <code>import pkg.missing.sub</code>) where the
 module does not exist no longer draws an edge to the package above it;
 the import is unresolved, as Python fails it.</li>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4c774c89.js";
+            window.path_to_searchindex_js = "../searchindex-0f864e90.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -284,6 +284,10 @@ files</strong> runs a keyword search limited to the files on screen.</p>
 module) are hidden by default since they are structure rather than
 dependencies; <strong>Show mod declarations</strong> brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.</p>
+<p>For JavaScript/TypeScript, tsconfig <code>paths</code> and <code>baseUrl</code>, workspace
+packages imported by name and, without a tsconfig, the repository root are
+followed; <a href="../how-it-works/dependency-graph.html">How the import graph is built</a>
+has the details.</p>
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 <h2 id="themes"><a class="header" href="#themes">Themes</a></h2>
 <p>The first time you open the UI it asks you to pick a theme; hover an option
