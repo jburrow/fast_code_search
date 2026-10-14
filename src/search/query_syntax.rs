@@ -1,6 +1,6 @@
 //! Search query syntax for plain-text searches: the text to find, plus
 //! `file:`, `lang:`, `deps:`, `rdeps:`, `case:` and `word:` operators in the
-//! style of Zoekt / Sourcegraph.
+//! style of Zoekt / Sourcegraph, and `kind:` for reference searches.
 //!
 //! Filters of different kinds narrow each other (`file:src/ lang:rs` is the
 //! Rust files under `src/`); repeating one kind widens it (`lang:rs lang:py`
@@ -17,6 +17,8 @@
 //! An operator is a whole whitespace-separated token with an argument
 //! (`file:` alone is text). To search for operator-looking text such as
 //! `file:x`, use a regex. Regex queries are passed through untouched.
+
+use crate::symbols::extractor::RefKind;
 
 /// Matching options that change how the text is verified in file content.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -42,6 +44,16 @@ pub struct ParsedQuery {
     pub graph: Vec<GraphFilter>,
     /// Matching options (from `case:` / `word:`).
     pub options: SearchOptions,
+    /// Reference kinds to keep (from `kind:` / `-kind:`), one bit per
+    /// [`RefKind`]; `None` keeps every kind. Reference search only.
+    pub ref_kinds: Option<u8>,
+}
+
+impl ParsedQuery {
+    /// Whether a reference of `kind` passes the `kind:` operators.
+    pub fn keeps_ref_kind(&self, kind: RefKind) -> bool {
+        self.ref_kinds.is_none_or(|bits| bits & kind.bit() != 0)
+    }
 }
 
 /// Which way a graph filter walks the imports.
@@ -102,6 +114,8 @@ impl ParsedQuery {
 ///   `-deps:` / `-rdeps:` leave them out
 /// - `case:yes`   case-sensitive (`case:no` forces insensitive)
 /// - `word:yes`   whole-word matching
+/// - `kind:call`  references of these kinds only (`call`, `type`, `value`,
+///   `attribute`; comma-separated or repeated); `-kind:attribute` drops one
 ///
 /// Any other token is text, quotes and a leading `-` included. An operator
 /// without an argument, or `lang:` with a name it does not know, is text.
@@ -156,6 +170,27 @@ fn apply_operator(q: &mut ParsedQuery, token: &Token) -> bool {
             negate: token.op.starts_with('-'),
             arg: arg.to_string(),
         }),
+        "kind:" | "-kind:" => {
+            let mut bits = 0u8;
+            for name in arg.split(',').filter(|n| !n.is_empty()) {
+                let Some(kind) = RefKind::parse(name) else {
+                    return false;
+                };
+                bits |= kind.bit();
+            }
+            if bits == 0 {
+                return false;
+            }
+            let all = RefKind::ALL.iter().fold(0u8, |b, k| b | k.bit());
+            let current = q
+                .ref_kinds
+                .unwrap_or(if token.op == "kind:" { 0 } else { all });
+            q.ref_kinds = Some(if token.op == "kind:" {
+                current | bits
+            } else {
+                current & !bits
+            });
+        }
         "case:" => q.options.case_sensitive = is_yes(arg),
         "word:" => q.options.whole_word = is_yes(arg),
         _ => return false,
@@ -172,7 +207,8 @@ fn is_yes(v: &str) -> bool {
 
 /// Operator prefixes, longest first where one is a suffix of another.
 const OPERATORS: &[&str] = &[
-    "-file:", "file:", "-lang:", "lang:", "-rdeps:", "rdeps:", "-deps:", "deps:", "case:", "word:",
+    "-file:", "file:", "-lang:", "lang:", "-rdeps:", "rdeps:", "-deps:", "deps:", "-kind:",
+    "kind:", "case:", "word:",
 ];
 
 /// One whitespace-separated token: `raw[start..end]`. When it starts with
@@ -309,6 +345,26 @@ fn lang_globs(name: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kind_operators_pick_reference_kinds() {
+        let call = RefKind::Call.bit();
+        let attr = RefKind::Attribute.bit();
+        let all = RefKind::ALL.iter().fold(0u8, |b, k| b | k.bit());
+        assert_eq!(parse("size").ref_kinds, None);
+        let q = parse("size kind:call");
+        assert_eq!((q.text.as_str(), q.ref_kinds), ("size", Some(call)));
+        assert!(q.keeps_ref_kind(RefKind::Call) && !q.keeps_ref_kind(RefKind::Type));
+        assert_eq!(parse("size kind:call,attr").ref_kinds, Some(call | attr));
+        assert_eq!(
+            parse("size kind:call kind:attribute").ref_kinds,
+            Some(call | attr)
+        );
+        assert_eq!(parse("size -kind:attribute").ref_kinds, Some(all & !attr));
+        // An unknown kind, or none, leaves the token as text.
+        assert_eq!(parse("size kind:nope").text, "size kind:nope");
+        assert_eq!(parse("size kind:").text, "size kind:");
+    }
 
     #[test]
     fn several_words_are_one_phrase() {

@@ -1734,7 +1734,10 @@ function renderGroupHtml(group) {
         const matchType = getMatchTypeLabel(result.match_type);
         const isFilenameHit = !result.line_number;
         const viewLine = isFilenameHit ? 1 : result.line_number;
-        const tags = (matchType.isSymbol ? `<span class="hit-tag">${matchType.text}</span>` : '') +
+        // A reference names its kind (call, type, value, attribute), which
+        // the kind: operator filters on.
+        const tagText = result.reference_kind ? `${matchType.text} · ${escapeHtml(result.reference_kind)}` : matchType.text;
+        const tags = (matchType.isSymbol ? `<span class="hit-tag" title="${result.reference_kind ? 'Filter with kind:' + escapeHtml(result.reference_kind) : ''}">${tagText}</span>` : '') +
             (result.content_truncated
                 ? `<span class="hit-tag truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
                 : '');

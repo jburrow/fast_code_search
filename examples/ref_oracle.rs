@@ -27,6 +27,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use fast_code_search::symbols::extractor::RefKind;
 use fast_code_search::symbols::SymbolExtractor;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -49,6 +50,10 @@ struct Args {
     /// Groups shown for misses and for extras.
     #[arg(long, default_value_t = 12)]
     groups: usize,
+    /// Leave out fcs references of these kinds (`call`, `type`, `value`,
+    /// `attribute`), as `-kind:` would; the oracle's list is unchanged.
+    #[arg(long, value_delimiter = ',')]
+    drop_kind: Vec<String>,
     /// Write the markdown report here as well as to stderr.
     #[arg(long)]
     markdown: Option<PathBuf>,
@@ -118,6 +123,10 @@ fn main() -> Result<()> {
     let oracle: Oracle = serde_json::from_slice(
         &std::fs::read(&args.oracle).with_context(|| format!("reading {:?}", args.oracle))?,
     )?;
+    let mut dropped = Vec::new();
+    for k in &args.drop_kind {
+        dropped.push(RefKind::parse(k).with_context(|| format!("unknown kind {k:?}"))?);
+    }
     let names: HashSet<&str> = oracle.refs.iter().map(|r| r.name.as_str()).collect();
     let mut want: HashMap<&str, HashSet<(u32, u32)>> = HashMap::new();
     for r in &oracle.refs {
@@ -144,8 +153,9 @@ fn main() -> Result<()> {
         let Ok(source) = std::fs::read_to_string(file) else {
             continue;
         };
-        let (_, _, refs) =
+        let (_, _, mut refs) =
             SymbolExtractor::new(std::path::Path::new(file)).extract_all_with_refs(&source)?;
+        refs.retain(|r| !dropped.contains(&r.kind));
         stored += refs.len();
         let have: HashSet<(u32, u32)> = refs.iter().map(|r| (r.line, r.column)).collect();
         let lines: Vec<&str> = source.lines().collect();

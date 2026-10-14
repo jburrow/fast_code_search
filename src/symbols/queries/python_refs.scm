@@ -8,12 +8,13 @@
 (class_definition
   superclasses: (argument_list (identifier) @name)) @reference.class
 
-; Decorators without a call: @login_required
+; Decorators without a call: @login_required, @bp.before_app_request
 (decorator (identifier) @name) @reference.call
+(decorator (attribute attribute: (identifier) @name)) @reference.call
 
-; Every attribute: obj.method passed as a callback, a property read,
-; pkg.Class in an annotation, @bp.before_app_request
-(attribute attribute: (identifier) @name) @reference.call
+; Every attribute read: obj.method passed as a callback, a property,
+; pkg.Class in an annotation (kind:attribute; a call of it stays kind:call)
+(attribute attribute: (identifier) @name) @reference.attribute
 
 ; The object of a decorator attribute: @permanent.setter
 (decorator (attribute object: (identifier) @name)) @reference.call
@@ -29,17 +30,17 @@
 
 ; Functions and classes used as values: passed, compared, assigned,
 ; returned, collected
-(argument_list (identifier) @name) @reference.call
-(keyword_argument value: (identifier) @name) @reference.call
-(comparison_operator (identifier) @name) @reference.call
-(assignment right: (identifier) @name) @reference.call
-(return_statement (identifier) @name) @reference.call
-(tuple (identifier) @name) @reference.call
-(list (identifier) @name) @reference.call
-(set (identifier) @name) @reference.call
-(pair value: (identifier) @name) @reference.call
-(boolean_operator (identifier) @name) @reference.call
-(conditional_expression (identifier) @name) @reference.call
+(argument_list (identifier) @name) @reference.value
+(keyword_argument value: (identifier) @name) @reference.value
+(comparison_operator (identifier) @name) @reference.value
+(assignment right: (identifier) @name) @reference.value
+(return_statement (identifier) @name) @reference.value
+(tuple (identifier) @name) @reference.value
+(list (identifier) @name) @reference.value
+(set (identifier) @name) @reference.value
+(pair value: (identifier) @name) @reference.value
+(boolean_operator (identifier) @name) @reference.value
+(conditional_expression (identifier) @name) @reference.value
 
 ; Unions and subscripts, in annotations and type aliases: A | B, Callable[[A], B]
 (binary_operator (identifier) @name) @reference.type

@@ -18,7 +18,7 @@ Usage: fcs [OPTIONS] <COMMAND>
 
 Commands:
   search   Search file contents (the default; `fcs QUERY` works too)
-  refs     Find references (call sites, type mentions) of an identifier
+  refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
   symbols  Search symbol definitions (functions, types, classes, ...) only
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
@@ -199,7 +199,7 @@ Options:
 ## `fcs refs --help`
 
 ```text
-Find references (call sites, type mentions) of an identifier
+Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
 
 Usage: fcs refs [OPTIONS] <QUERY>...
 
