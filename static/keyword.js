@@ -858,6 +858,8 @@ window.addEventListener('scroll', (e) => {
 document.addEventListener('click', (e) => {
     if (!isContextTooltipVisible()) return;
     if (e.target instanceof Node && _ctxTooltip.contains(e.target)) return;
+    // The name menu opened from inside the preview acts on the preview.
+    if (e.target instanceof Element && e.target.closest('.code-menu')) return;
     // A click on the icon that opened it pins it (see wireResultGroups).
     if (_ctxAnchor && e.target instanceof Node && _ctxAnchor.contains(e.target)) return;
     hideContextTooltipImmediately();
@@ -888,17 +890,29 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
                 <span class="ctx-nav-pos"></span>
                 <button type="button" data-step="1" title="Next match" aria-label="Next match">↓</button>
             </span>
-            <button type="button" class="ctx-open" title="Open this line in the full file viewer: go to definition, dependencies, copy link">Full view</button>
+            <button type="button" class="ctx-copy" title="Copy a link that opens this file at the selected line">Copy link</button>
+            ${hasImportGraph(filePath) ? `<a class="ctx-explore" href="${escapeHtml(graphExplorerUrl(filePath))}" title="Open this file in the dependency explorer">Explore imports</a>` : ''}
+            <button type="button" class="ctx-open" title="Show this file in the large viewer">Expand</button>
             <button type="button" class="ctx-close" title="Close (Esc)" aria-label="Close preview">×</button>
         </div>
         <div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
-    // Hand over to the file viewer at the match the preview is showing
-    // (↑/↓ may have moved it), and close the preview behind it.
+    // The preview does what the large viewer does (go to definition, select
+    // a line, copy a link, explore imports); Expand only makes it bigger, at
+    // the line the preview is on (↑/↓ or a clicked line number may have
+    // moved it).
+    tooltip._file = filePath;
     tooltip._line = lineNumber;
     tooltip.querySelector('.ctx-open').addEventListener('click', () => {
         const line = tooltip._line;
         hideContextTooltipImmediately();
         showFileModal(filePath, line);
+    });
+    const copyBtn = tooltip.querySelector('.ctx-copy');
+    copyBtn.addEventListener('click', async () => {
+        const url = location.origin + location.pathname + location.search + fileViewHash(filePath, tooltip._line || 1);
+        const ok = await copyTextToClipboard(url);
+        copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
+        setTimeout(() => { copyBtn.textContent = 'Copy link'; }, 1500);
     });
     tooltip.querySelector('.ctx-close').addEventListener('click', hideContextTooltipImmediately);
     tooltip.classList.toggle('ctx-pinned', _ctxPinned);
@@ -908,9 +922,17 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
     const body = tooltip.querySelector('.ctx-file-body');
     try {
         const view = await populateFileView(body, filePath, wholeFile ? 0 : lineNumber,
-            _currentMatcher || currentQueryMatcher(), signal, { hint: false });
+            _currentMatcher || currentQueryMatcher(), signal);
         if (!view || signal.aborted) return;
         wireContextNav(tooltip, view, wholeFile ? 0 : lineNumber);
+        // Clicking a line number selects it, as in the large viewer.
+        body.addEventListener('click', (e) => {
+            const num = e.target.closest('.file-line-num');
+            const line = num ? parseInt(num.textContent, 10) : 0;
+            if (!(line > 0)) return;
+            view.setMark(line);
+            tooltip._line = line;
+        });
     } catch (e) {
         if (e.name === 'AbortError') return;
         body.innerHTML = `<div class="error-message">${escapeHtml(e.message)}</div>`;
@@ -2509,7 +2531,7 @@ function isDefnModifier(e) {
 /** The code line element (one line of text) that `el` sits in, or null. */
 function codeLineElement(el) {
     if (!el || !el.closest) return null;
-    return el.closest('.file-modal-body .file-line-content, .ctx-line-content');
+    return el.closest('.file-modal-body .file-line-content, .ctx-tooltip .file-line-content, .ctx-line-content');
 }
 
 /** A DOM Range over the [start, end) text offsets of `el`. */
@@ -2560,6 +2582,8 @@ function identifierAtPoint(x, y) {
 /** The file a code line belongs to: the viewer's file or the result's. */
 function fileOfCodeLine(lineEl) {
     if (lineEl.closest('#file-modal')) return _fileView ? _fileView.file : null;
+    const preview = lineEl.closest('.ctx-tooltip');
+    if (preview) return preview._file || null;
     const group = lineEl.closest('.result-group');
     return group ? group.dataset.filePath : null;
 }
@@ -2680,6 +2704,7 @@ function menuForName(name, fromFile) {
 /** Run a search for `name` in the main page: its references, or as text. */
 function searchForName(name, mode) {
     closeFileModal();
+    hideContextTooltipImmediately();
     queryInput.value = mode === 'text' ? definitionQuery(name).replace('case:yes ', '') : name;
     modeCheckboxes().forEach(cb => { cb.checked = mode === 'references' && cb === referencesModeCheckbox; });
     syncToggleVisuals();
@@ -2729,9 +2754,17 @@ async function goToDefinition(name, fromFile, rect) {
     }
 }
 
-/** Open a definition: a Back step inside the viewer, or a fresh viewer. */
+/**
+ * Open a definition: a Back step inside the viewer, or a fresh viewer. From
+ * the preview, the viewer opens with Back leading to where the preview was.
+ */
 function openDefinition(def) {
-    if (document.getElementById('file-modal') && _fileView) {
+    const preview = _ctxTooltip && _ctxTooltip.style.display !== 'none' ? _ctxTooltip : null;
+    if (!document.getElementById('file-modal') && preview && preview._file) {
+        const from = { file: preview._file, line: preview._line || 1 };
+        _fileViewBack = [from];
+        showFileModal(def.file, def.line, { keepHistory: true });
+    } else if (document.getElementById('file-modal') && _fileView) {
         _fileViewBack.push(_fileView);
         showFileModal(def.file, def.line, { keepHistory: true });
     } else {

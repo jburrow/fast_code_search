@@ -79,7 +79,10 @@
             background: var(--surface); border: 1px solid var(--line-strong); cursor: pointer;
             font: inherit; color: var(--text); padding: 0.05rem 0.45rem;
         }
-        .ctx-header button:hover, .ctx-header button:focus-visible { background: var(--hover); outline: none; }
+        .ctx-header a { color: var(--text); text-decoration: none; border: 1px solid var(--line-strong); background: var(--surface); padding: 0.05rem 0.45rem; white-space: nowrap; }
+        .ctx-header button:hover, .ctx-header button:focus-visible,
+        .ctx-header a:hover, .ctx-header a:focus-visible { background: var(--hover); outline: none; }
+        .ctx-header button { white-space: nowrap; }
         .ctx-close { font-weight: 700; }
         /* Pinned: stays until Esc, a click outside or × */
         .ctx-tooltip.ctx-pinned { border-color: var(--accent-ink); box-shadow: var(--shadow), 0 0 0 1px var(--accent-ink); }

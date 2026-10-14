@@ -64,8 +64,10 @@ lists every place it is used:
   context either side (change it under **Filter**: *Match only* up to ±5;
   the browser remembers your choice). Definitions and references are
   tagged. Hover the ↗ icon at the end of a hit to preview the whole file;
-  click the icon to keep the preview open until Escape, a click outside it
-  or its ×. Click the line number to open the file there, or the file name
+  click the icon (or anywhere in the preview) to keep it open until
+  Escape, a click outside it or its ×. A kept preview does everything the
+  file viewer does (go to definition, select a line, Copy link, Explore
+  imports); **Expand** shows the same file in the large viewer. Click the line number to open the file there, or the file name
   to open it at its first hit; copy and the dependency explorer link show
   when you hover the file.
 - The file viewer and the preview mark every line the query matches in a
@@ -73,7 +75,7 @@ lists every place it is used:
   Click a line number to select that line; **Copy link** copies a URL that
   reopens the search with the file at that line. Large files open in a
   window of lines with "Show more" at either end.
-- Ctrl+click (⌘+click on a Mac) a name in the file viewer or a result to
+- Ctrl+click (⌘+click on a Mac) a name in the file viewer, the preview or a result to
   open its definition; holding the key underlines what you can click. One
   definition opens directly, several open a list, and a name with no
   definition is searched for as text. Each jump in the viewer leaves a
