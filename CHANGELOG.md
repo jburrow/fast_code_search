@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines on screen.
 - Web UI themes: Bold (the existing look, still the default), Corporate and
   Corporate dark. On a first visit the UI asks which to use, previewing each
-  live; the palette button in the header (replacing the `?` link, which
+  live on hover and putting the chosen theme back on mouse-out (one click
+  picks a theme and closes the picker); the palette button in the header (replacing the `?` link, which
   went to the Docs page also in the navigation) changes it later. The choice
   is kept per browser. New `[server]` settings: `default_theme` (`"bold"`,
   `"corporate"` or `"corporate-dark"`) for people who haven't chosen, and

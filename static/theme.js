@@ -59,6 +59,7 @@
     function closeMenu() {
         if (!menu) return;
         const btn = menu._anchor;
+        menu._restore();
         menu.remove();
         menu = null;
         document.removeEventListener('mousedown', onOutside, true);
@@ -90,6 +91,19 @@
         menu.innerHTML = THEMES.map((t) =>
             `<button type="button" role="menuitemradio" aria-checked="${t.id === active}" data-theme-id="${t.id}">${swatch(t.id)}${t.name}</button>`
         ).join('');
+        // Hover or arrow keys preview a theme; leaving it, or closing the
+        // menu without picking, puts the selected one back.
+        const preview = (e) => {
+            const b = e.target.closest('button[data-theme-id]');
+            if (b) apply(b.dataset.themeId);
+        };
+        menu.addEventListener('mouseover', preview);
+        menu.addEventListener('focusin', preview);
+        menu.addEventListener('mouseout', (e) => {
+            const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('button[data-theme-id]') : null;
+            if (!to || !menu.contains(to)) apply(saved() || active);
+        });
+        menu._restore = () => apply(saved() || active);
         menu.addEventListener('click', (e) => {
             const b = e.target.closest('button[data-theme-id]');
             if (!b) return;
@@ -127,7 +141,7 @@
         overlay.innerHTML =
             `<div class="theme-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="theme-picker-title">` +
                 `<h2 id="theme-picker-title">Choose a theme</h2>` +
-                `<p>Pick how Fast Code Search looks in this browser. You can change it later from the palette button in the header.</p>` +
+                `<p>Click a theme to use it in this browser (hover to preview). You can change it later from the palette button in the header.</p>` +
                 `<div class="theme-options">` +
                     THEMES.map((t) =>
                         `<button type="button" class="theme-option" data-theme-id="${t.id}" aria-pressed="${t.id === picked}">` +
@@ -139,7 +153,6 @@
                 `</div>` +
                 `<div class="theme-picker-actions">` +
                     `<button type="button" class="theme-option-skip btn">Not now</button>` +
-                    `<button type="button" class="theme-option-use btn btn-primary">Use this theme</button>` +
                 `</div>` +
             `</div>`;
 
@@ -165,16 +178,23 @@
             const o = e.target.closest('.theme-option');
             if (o) apply(o.dataset.themeId);
         });
-        overlay.addEventListener('mouseleave', () => apply(picked));
+        // Leaving an option (for the gap, the text or outside the dialog)
+        // puts the selected theme back; moving to another option previews it.
+        overlay.addEventListener('mouseout', (e) => {
+            const from = e.target.closest('.theme-option');
+            const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('.theme-option') : null;
+            if (from && from !== to && !to) apply(picked);
+        });
         overlay.addEventListener('focusin', (e) => {
             const o = e.target.closest('.theme-option');
             if (o) apply(o.dataset.themeId);
         });
         overlay.addEventListener('click', (e) => {
             const o = e.target.closest('.theme-option');
-            if (o) { mark(o.dataset.themeId); return; }
-            if (e.target.closest('.theme-option-use')) close(true);
-            else if (e.target.closest('.theme-option-skip') || e.target === overlay) close(false);
+            // One click picks the theme and closes the picker; hovering
+            // already previews it, so there is nothing left to confirm.
+            if (o) { mark(o.dataset.themeId); close(true); return; }
+            if (e.target.closest('.theme-option-skip') || e.target === overlay) close(false);
         });
         document.addEventListener('keydown', onKey, true);
         document.body.appendChild(overlay);
