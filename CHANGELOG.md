@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `fcs --deps` / `--rdeps` (the only way to scope a regex), the web
   UI's FILTER panel, the dependency popover and the explorer's
   **Search importers** / **Search its imports** buttons.
+- Python references find far more uses: decorators, base classes, type
+  annotations, functions and classes used as values, attribute reads and
+  exceptions, where they used to find calls only (Flask: 57% of the uses
+  Jedi finds, now 98%). Parameters and local variables that share a
+  function's name are no longer listed as its references. Existing indexes
+  re-extract symbols once on the first start.
+- `examples/ref_oracle.rs` and `src/check/oracle/py_refs.py` compare Python
+  references with Jedi's; CI runs them on Flask and Click.
 - Book page "Reference support": what the References mode finds in each
   language, and what it misses. C and C++ record no references; Python
   records calls only; TypeScript, Java and C# miss many type positions.

@@ -12,8 +12,8 @@ those positions. Two consequences hold for every language:
 - **Names, not symbols.** `fcs refs parse` returns every call of anything
   called `parse`, whichever class or module it belongs to. Nothing tells two
   functions with the same name apart.
-- **Only the listed positions.** A use in any other position (a function
-  passed as a value, an import line, a property read) is not a reference,
+- **Only the listed positions.** A use in any other position (an import
+  line; outside Python, a function passed as a value) is not a reference,
   even though a text search finds it. When references look incomplete,
   search the plain text as well.
 
@@ -28,7 +28,7 @@ listed as not found, that is a known gap.
 | Language | Calls | Method calls | Type mentions | `new` / constructors | Base classes | Not found (main gaps) |
 |---|---|---|---|---|---|---|
 | Rust | yes | yes | yes | n/a | `impl Trait for T` | anything inside a macro's arguments, the `Type` in `Type::new()`, enum variants (`Item::A`), `use` lines, functions as values |
-| Python | yes | yes | **no** | yes (a call) | **no** | type annotations, base classes, bare `@decorator`, functions as values, attribute reads, imports |
+| Python | yes | yes | yes | yes (a call) | yes | imports, string annotations, a few value positions; also returns uses of other things with the same name (see below) |
 | JavaScript | yes | yes | n/a | yes | **no** | `extends`, `instanceof`, functions as values, property reads, imports |
 | TypeScript | yes | yes | partly | yes | **no** | `Foo[]`, `Foo<T>`, `A \| B`, `ns.Type`, type arguments, `type` aliases, `extends` and `implements`, `instanceof`, imports |
 | Go | yes | yes | yes | composite literals (`Item{}`) | n/a | functions as values (`Run: helper`, `cb := helper`), field reads, imports |
@@ -62,18 +62,30 @@ references.
 
 ## Python (`.py`, `.pyi`, `.pyw`)
 
-Python records **calls only**.
+Python is checked against [Jedi](https://github.com/davidhalter/jedi),
+which resolves each name to its definition (see the end of the page).
 
 | Form | Found |
 |---|---|
 | `helper(x)`, `self.helper()`, `pkg.util.do_thing()`, `Foo()` | yes |
-| `@app.route("/x")` (the `route`) | yes, it is a call |
-| Bare `@decorator` | **no** |
-| Base classes: `class Foo(Base, Mixin)` | **no** |
-| Type annotations: `item: Item`, `-> Result`, `list[Item]` | **no** |
-| Classes and functions passed as values: `isinstance(x, Item)`, `cb = helper`, `return Result` | **no** |
-| Attribute reads: `self.prop`, `obj.CONSTANT` | **no** |
+| Decorators: `@login_required`, `@app.route("/x")`, `@bp.before_app_request`, `@name.setter` | yes |
+| Base classes: `class Foo(Base, Mixin)` | yes |
+| Type annotations: `item: Item`, `-> Result`, `list[Item]`, `Item \| None`, `Callable[[A], B]`, `t.Optional[Item]` | yes |
+| Functions and classes as values: `isinstance(x, Item)`, `cb = helper`, `return Result`, `register(self.on_done)`, `(a, b)`, `{"k": helper}`, `x == helper` | yes |
+| Any attribute that is read: `self.prop`, `obj.CONSTANT`, `request.form` | yes |
+| A class used through an attribute: `Item.from_dict()` (the `Item`, when it starts with a capital) | yes |
+| `except Oops as e:`, `raise Failed` | yes |
+| Assigning an attribute: `self.prop = 1` | no, on purpose: it sets `prop`, it does not use it |
+| A parameter or local variable with the same name as a function (`def view(request, app): app.run()`) | no, on purpose: Python makes a name bound anywhere in a function local to it, unless it is declared `global` or `nonlocal` |
 | `import`, `from … import` | **no** |
+| Annotations written as strings: `x: "Item"` | **no** |
+| Other value positions: lambda bodies, `yield x`, `*args` unpacking, f-string `{x}` | **no** |
+
+Because references are names, `fcs refs get` also returns every `.get(…)`
+on a dictionary, and `fcs refs status_code` returns reads of every
+attribute called `status_code`, whichever class it belongs to. On the
+repositories below, between one Python reference in ten and one in five
+is such a use of something else with the same name.
 
 ## JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`)
 
@@ -165,8 +177,41 @@ parameters are returned as references too** (`x` in `x = Item.new`).
 
 ## How complete this is
 
-There is no reference oracle yet (the import graph has one, see
-[Dependency graph support](graph-support.md)). Each form above is checked
+### Python, against Jedi
+
+`examples/ref_oracle.rs` compares the references fcs records in a
+repository with the ones [Jedi](https://github.com/davidhalter/jedi) 0.20
+finds (`src/check/oracle/py_refs.py`): every name Jedi resolves to a
+function, class or property defined in the repository, other than the
+definition itself and import lines. A reference Jedi lists and fcs does not
+is **missing**. A reference fcs records, under the name of one of those
+functions or classes, where Jedi resolves the name to something else, is
+**extra**: almost always a use of something else with the same name.
+Where Jedi cannot resolve a name at all (an untyped receiver), neither side
+is counted.
+
+| Repository | Found | Precision | Before October 2026 |
+|---|---|---|---|
+| pallets/flask | 98.1% | 87.3% | 57.4% found, 90.9% precision |
+| psf/requests | 100% | 90.2% | 74.4%, 88.9% |
+| pallets/click | 97.1% | 91.3% | 65.5%, 93.6% |
+| encode/httpx | 99.5% | 80.5% | 59.0%, 86.6% |
+
+CI runs it on Flask and Click (`.github/workflows/ref-oracle.yml`) and
+fails if a change misses or adds more references than that.
+
+```sh
+pip install jedi==0.20.1
+python3 src/check/oracle/py_refs.py bench-corpus/flask > flask.json
+cargo run --release --example ref_oracle -- --oracle flask.json
+```
+
+The report groups misses and extras by the syntax around the name, which
+says which row of the Python table each one is.
+
+### Other languages
+
+There is no oracle for the other languages yet. Each form above is checked
 with a small file per language. To give a sense of scale, a one-off count
 in October 2026 took every function, method and type defined in a public
 repository and counted how many of its uses in code fall on a reference.
@@ -177,10 +222,8 @@ local variable that shares a type's name, an import line).
 |---|---|---|
 | Go | spf13/cobra | 90% |
 | Rust | fast_code_search `src/` | 53% |
-| Python | psf/requests | 53% |
 | Java | google/gson | 52% |
 | C# | JamesNK/Newtonsoft.Json | 50% |
-| Python | pallets/flask | 44% |
 | TypeScript | colinhacks/zod | 40% |
 | TypeScript | sindresorhus/ky | 38% |
 | C | DaveGamble/cJSON | 0% |
