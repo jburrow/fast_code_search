@@ -222,6 +222,14 @@ pub struct SearchResultJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_kind: Option<std::borrow::Cow<'static, str>>,
     pub dependency_count: u32,
+    /// Hits the search found in this file across all pages; a file cut at
+    /// a page boundary has only some of them on this page.
+    #[serde(default)]
+    pub file_hits: u32,
+    /// The file may hold more hits than `file_hits` (per-file cap or match
+    /// budget reached).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_hits_capped: bool,
     /// Context lines before and after the match (only present when context > 0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_lines: Option<Vec<String>>,
@@ -756,6 +764,8 @@ pub fn results_to_json(
                     .reference_kind
                     .map(|k| std::borrow::Cow::Borrowed(k.as_str())),
                 dependency_count: m.dependency_count,
+                file_hits: m.file_hits,
+                file_hits_capped: m.file_hits_capped,
                 context_lines: ctx_lines,
                 context_start_line: ctx_start,
                 hops: scope.and_then(|s| s.hops(m.file_id)),

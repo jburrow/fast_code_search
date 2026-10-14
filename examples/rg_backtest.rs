@@ -303,6 +303,44 @@ fn repeat_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// `None` when every hit on the first page carries its file's true hit
+/// count and each file's hits are together. The web UI's "N of M hits"
+/// badge comes from `file_hits`, not from the hits on the page; the full
+/// result (which the line check holds to rg's) gives the true counts.
+fn file_hits_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>> {
+    let (all, _) = run(engine, q, SearchLimits::exhaustive())?;
+    let mut want: HashMap<String, u32> = HashMap::new();
+    for m in &all {
+        *want.entry(m.file_path.clone()).or_default() += 1;
+    }
+    let (page, _) = run(engine, q, SearchLimits::new(PAGE))?;
+    let mut runs: Vec<&str> = page.iter().map(|m| m.file_path.as_str()).collect();
+    runs.dedup();
+    let distinct: BTreeSet<&str> = runs.iter().copied().collect();
+    if runs.len() != distinct.len() {
+        return Ok(Some(
+            "order: a file's hits are split by another file's".into(),
+        ));
+    }
+    for m in &page {
+        let w = want.get(&m.file_path).copied().unwrap_or(0);
+        let ok = if m.file_hits_capped {
+            m.file_hits <= w
+        } else {
+            m.file_hits == w
+        };
+        if !ok {
+            return Ok(Some(format!(
+                "file hits: {} says {}{}, it has {w}",
+                m.file_path,
+                m.file_hits,
+                if m.file_hits_capped { "+" } else { "" }
+            )));
+        }
+    }
+    Ok(None)
+}
+
 /// `None` when LOAD MORE ends with every hit exactly once, else what went
 /// wrong. Emulates the web UI (`loadMoreRequest` in keyword-helpers.js):
 /// each click fetches the whole list again, `PAGE` longer, from offset 0 and
@@ -587,8 +625,11 @@ fn main() -> Result<()> {
         } else {
             match repeat_problem(&corpus.engine, q)? {
                 Some(p) => Some(p),
-                None if args.check_paging => paging_problem(&corpus.engine, q)?,
-                None => None,
+                None => match file_hits_problem(&corpus.engine, q)? {
+                    Some(p) => Some(p),
+                    None if args.check_paging => paging_problem(&corpus.engine, q)?,
+                    None => None,
+                },
             }
         };
         let paging = match paging {

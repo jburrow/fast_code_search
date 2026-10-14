@@ -952,6 +952,33 @@ function pathFilterParam(text) {
 }
 
 /**
+ * A file group's hit badge. A file cut at a page boundary shows only some
+ * of its hits; `fileHits` is how many the search found in the file in all,
+ * and `capped` says the file may hold more than that.
+ */
+function groupHitsLabel(shown, fileHits, capped) {
+    const total = Math.max(shown, Number(fileHits) || 0);
+    const plus = capped ? '+' : '';
+    const noun = n => `hit${n === 1 && !plus ? '' : 's'}`;
+    if (total > shown || capped) {
+        return {
+            text: `${shown} of ${total.toLocaleString('en-US')}${plus} ${noun(total)}`,
+            more: total - shown,
+            title: `This file has ${total.toLocaleString('en-US')}${plus} hits in all`,
+        };
+    }
+    return { text: `${shown} ${noun(shown)}`, more: 0, title: '' };
+}
+
+/**
+ * An include glob that matches exactly `path` (the API's path filters are
+ * globs): glob metacharacters are put in a class of their own.
+ */
+function exactPathGlob(path) {
+    return String(path).replace(/[*?[\]{}]/g, ch => `[${ch}]`);
+}
+
+/**
  * The results-header note for a graph-scoped search (`deps:` / `rdeps:`):
  * how many files it searched, and a warning when imports in those files
  * resolve to nothing (the scope may be missing files). null when unscoped.
@@ -994,6 +1021,8 @@ function scopedSearchUrl(kind, path, query) {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
+        groupHitsLabel,
+        exactPathGlob,
         MAX_RESULTS_LIMIT,
         CONTEXT_LINES_LIMIT,
         clampMaxResults,

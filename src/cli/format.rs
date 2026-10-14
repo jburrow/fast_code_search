@@ -306,6 +306,8 @@ mod tests {
             match_type: "TEXT".into(),
             reference_kind: None,
             dependency_count: 0,
+            file_hits: 1,
+            file_hits_capped: false,
             context_lines: None,
             context_start_line: None,
             hops: None,

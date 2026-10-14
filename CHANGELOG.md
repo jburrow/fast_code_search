@@ -172,6 +172,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Results are in rank order again, with each file's hits together: files in
+  the order of their best hit, then every hit of that file by score. Since
+  v0.12.0 hits were interleaved by file (every file's best hit before any
+  file's second), and since #147 regardless of score, so a file's other
+  hits could be pages away. This was never asked for. On the ranking
+  suite, precision@5 goes from 0.90 to 1.00; precision@1 is unchanged.
+- Web UI: a file's hit badge counted only the hits on the page ("1 hit" for
+  a file with seven). Each result now carries `file_hits` (and
+  `file_hits_capped`) in the web API, gRPC and `fcs --json`. A file cut at
+  a page boundary reads "3 of 7 hits", and **Show 4 more hits in this
+  file** fetches the rest in place, kept across **Load more**. The ripgrep
+  backtest checks every first-page count against the full result and that
+  each file's hits are together.
 - Dependency graph: TypeScript and JavaScript imports that go through a
   `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
   `components/Button`) now link to the file they name, including settings

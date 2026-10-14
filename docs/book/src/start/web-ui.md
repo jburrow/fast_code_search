@@ -29,6 +29,11 @@ the binary.
   files, fast ranking opens only the most likely 2,000; the summary says
   "Searched 2,000 of N files" and **SEARCH ALL FILES** opens the rest (or
   as many as the server allows).
+- Results are in rank order with each file's hits together (see
+  [Ranking](../how-it-works/ranking.md#result-order)). A file cut at the
+  end of a page says so: its badge reads "3 of 7 hits", and **Show 4 more
+  hits in this file** under its code fetches the rest in place. "7+" means
+  the file reached the per-file cap and may hold more.
 - Files whose *path* matches the query are listed in a **FILES** box above
   the results, so typing or pasting `src/web/api.rs` (or just `api.rs`)
   finds the file even when no line mentions it. File names rank first;

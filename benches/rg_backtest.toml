@@ -20,6 +20,10 @@ q = "needle"
 why = "plain term; one file has 250 hits (per-document cap)"
 
 [[query]]
+q = "GadgetSearchProvider"
+why = "one file with six hits among files with one: a page shows each file's best hit first, so every hit must carry its file's full count (the web UI's 'N of M hits' badge)"
+
+[[query]]
 q = "Runtime"
 why = "common identifier, case-insensitive by default"
 

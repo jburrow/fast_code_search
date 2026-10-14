@@ -685,6 +685,26 @@ test('windowFor: grow the window nearby, start a new one far away', () => {
     assert.deepEqual(H.windowFor(4990, 1, 100, 5000, 100, 100), { from: 4890, to: 5000, fresh: true });
 });
 
+// ---------- per-file hit counts ----------
+
+test('groupHitsLabel: a page showing some of a file\'s hits says how many it has', () => {
+    assert.deepEqual(H.groupHitsLabel(1, 7, false).text, '1 of 7 hits');
+    assert.equal(H.groupHitsLabel(1, 7, false).more, 6);
+    assert.equal(H.groupHitsLabel(2, 2, false).text, '2 hits');
+    assert.equal(H.groupHitsLabel(1, 1, false).text, '1 hit');
+    assert.equal(H.groupHitsLabel(1, 1, false).more, 0);
+    // Older servers send no count: the hits on the page are all we know.
+    assert.equal(H.groupHitsLabel(3, undefined, false).text, '3 hits');
+    // A file cut by the per-file cap may hold more.
+    assert.equal(H.groupHitsLabel(5, 5, true).text, '5 of 5+ hits');
+    assert.equal(H.groupHitsLabel(1, 1200, false).text, '1 of 1,200 hits');
+});
+
+test('exactPathGlob: escapes glob metacharacters one by one', () => {
+    assert.equal(H.exactPathGlob('src/a.ts'), 'src/a.ts');
+    assert.equal(H.exactPathGlob('app/[id]/{a,b}*?.ts'), 'app/[[]id[]]/[{]a,b[}][*][?].ts');
+});
+
 // ---------- graph-scoped search ----------
 
 test('parseQueryTerms: deps: and rdeps: are filters, not text', () => {

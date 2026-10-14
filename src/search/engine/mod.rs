@@ -58,6 +58,13 @@ pub struct SearchMatch {
     /// attribute).
     pub reference_kind: Option<crate::symbols::extractor::RefKind>,
     pub dependency_count: u32,
+    /// Hits this search found in the match's file, across every page (a
+    /// file cut at a page boundary has only some of them on the page).
+    /// Filled in when the results are paged.
+    pub file_hits: u32,
+    /// The file may hold more hits than `file_hits`: it stopped at the
+    /// per-file cap or the match budget.
+    pub file_hits_capped: bool,
 }
 
 /// Information about how a search was ranked

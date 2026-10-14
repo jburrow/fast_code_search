@@ -42,12 +42,22 @@ The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.
 
-## Diversity
+## Result order
 
-Hits are ordered by their rank inside their file: every
-file's best hit, then every file's second hit, and so on. One file holding
-a hundred matches cannot fill the page. Ties break on score, then file,
-then line, so paging is deterministic.
+Results are in rank order with each file's hits kept together: files in
+the order of their best hit, and every hit of a file, by score, before the
+next file. No hit waits behind other files' hits; a file with a hundred
+matches takes as much of the page as it needs, as in ripgrep. Ties break
+on score, then file, then line, so paging is deterministic.
+
+(From v0.12.0 to v0.15.2 results were interleaved by file instead: every
+file's best hit, then every file's second, so a file's later hits could be
+pages away. That was never asked for and was removed.)
+
+Every result carries `file_hits`, how many hits the search found in its
+file across all pages (`file_hits_capped` when the file reached the
+per-file cap and may hold more), so a file cut at a page boundary says
+"3 of 7 hits" in the web UI rather than "3 hits".
 
 ## Fast ranking
 

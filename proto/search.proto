@@ -44,6 +44,8 @@ message SearchResult {
   int32 match_column = 11;     // 0-based character column of match start in the full line
   uint32 dependency_count = 12; // Files that import this file
   optional uint32 hops = 13;    // Import hops from the deps/rdeps anchor (graph-scoped searches only)
+  uint32 file_hits = 14;        // Hits the search found in this file across all pages
+  bool file_hits_capped = 15;   // The file may hold more hits than file_hits
 }
 
 enum MatchType {
