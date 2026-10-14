@@ -16,10 +16,10 @@ pub use background_indexer::{
     BackgroundIndexerConfig,
 };
 pub use engine::{
-    create_progress_broadcaster, unix_now_ms, IndexFreshness, IndexingProgress, IndexingStatus,
-    LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch, PathQuery,
-    PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine, SearchLimit,
-    SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings, SearchStats,
+    create_progress_broadcaster, unix_now_ms, GraphScope, IndexFreshness, IndexingProgress,
+    IndexingStatus, LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch,
+    PathQuery, PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine,
+    SearchLimit, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings, SearchStats,
     SharedIndexingProgress,
 };
 pub use file_discovery::{
@@ -27,7 +27,9 @@ pub use file_discovery::{
 };
 pub use incremental::{apply_change, apply_changes, ChangeOutcome};
 pub use path_filter::PathFilter;
-pub use query_syntax::{parse as parse_query, ParsedQuery, SearchOptions};
+pub use query_syntax::{
+    parse as parse_query, GraphDirection, GraphFilter, ParsedQuery, SearchOptions,
+};
 pub use ranking::{FileScoreWeights, RankingWeights};
 pub use regex_search::{pattern_with_case as regex_pattern_with_case, RegexAnalysis};
 pub use request::{SearchMode, SearchOutcome, SearchRequest};

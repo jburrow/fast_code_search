@@ -118,6 +118,14 @@ const CASES: &[Case] = &[
         glob: None,
     },
     Case {
+        name: "graph scope",
+        query: "parse rdeps:src/util.rs",
+        mode: "text",
+        case_sensitive: false,
+        word: false,
+        glob: None,
+    },
+    Case {
         name: "symbols",
         query: "parse",
         mode: "symbols",

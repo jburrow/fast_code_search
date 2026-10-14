@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Search by imports: `rdeps:PATH` limits a search to that file and the
+  files that import it, `deps:PATH` to the file and what it imports
+  (`:N` hops, `:*` for any distance, `-rdeps:` / `-deps:` to leave them
+  out, a trailing `/` for a folder). An import that lands on a package's
+  entry file (`mod.rs`, `__init__.py`, `index.ts`) reaches the modules
+  behind it without costing a hop. Unknown, ambiguous or graph-less
+  anchors are errors, never an empty result. Responses say how many files
+  were searched and warn when unresolved project imports may leave files
+  out; hits carry their `hops` and nearer files rank higher. In the query
+  everywhere, plus `deps` / `rdeps` on the API, gRPC, MCP `search_code`
+  and `fcs --deps` / `--rdeps` (the only way to scope a regex), the web
+  UI's FILTER panel, the dependency popover and the explorer's
+  **Search importers** / **Search its imports** buttons.
 - Imports that resolve to no indexed file are counted, and the ones written
   as a path into the project (`./x`, `.x`, `crate::`, `@/`), which point at
   a broken import or an unsupported form, are called out: in the dependency
@@ -58,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- `file:` and `lang:` narrow each other: `file:src/ lang:rust` is the Rust
+  files under `src/`, where it used to be every file under `src/` plus
+  every Rust file. Repeating one operator still widens it.
 - Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
   keyboard shortcuts, `fcs` and MCP, the main API calls) with links into
   the documentation book. It used to be a hand-kept copy of the API

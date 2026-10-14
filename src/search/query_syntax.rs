@@ -1,6 +1,10 @@
 //! Search query syntax for plain-text searches: the text to find, plus
-//! `file:`, `lang:`, `case:` and `word:` operators in the style of Zoekt /
-//! Sourcegraph.
+//! `file:`, `lang:`, `deps:`, `rdeps:`, `case:` and `word:` operators in the
+//! style of Zoekt / Sourcegraph.
+//!
+//! Filters of different kinds narrow each other (`file:src/ lang:rs` is the
+//! Rust files under `src/`); repeating one kind widens it (`lang:rs lang:py`
+//! is either language).
 //!
 //! # The text is a literal
 //!
@@ -28,12 +32,54 @@ pub struct SearchOptions {
 pub struct ParsedQuery {
     /// The literal text to find (empty when the query is only operators).
     pub text: String,
-    /// Path globs a file must match (from `file:` / `lang:`).
+    /// Path globs a file must match, one of them (from `file:`).
     pub include_globs: Vec<String>,
+    /// Language globs a file must also match, one of them (from `lang:`).
+    pub lang_globs: Vec<String>,
     /// Path globs that exclude a file (from `-file:` / `-lang:`).
     pub exclude_globs: Vec<String>,
+    /// Import-graph filters (from `deps:` / `rdeps:` and their negations).
+    pub graph: Vec<GraphFilter>,
     /// Matching options (from `case:` / `word:`).
     pub options: SearchOptions,
+}
+
+/// Which way a graph filter walks the imports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GraphDirection {
+    /// `deps:` — the file and what it imports.
+    Deps,
+    /// `rdeps:` — the file and what imports it.
+    Rdeps,
+}
+
+impl GraphDirection {
+    /// The operator, without the colon.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Deps => "deps",
+            Self::Rdeps => "rdeps",
+        }
+    }
+}
+
+/// A `deps:` / `rdeps:` filter as typed. The argument is `PATH`,
+/// `PATH:N` (hops) or `PATH:*`; the engine resolves it against the index,
+/// since only it knows whether a trailing `:N` is part of a file name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GraphFilter {
+    pub direction: GraphDirection,
+    /// `-deps:` / `-rdeps:`: leave those files out.
+    pub negate: bool,
+    pub arg: String,
+}
+
+impl GraphFilter {
+    /// The filter as it would be typed.
+    pub fn display(&self) -> String {
+        let dash = if self.negate { "-" } else { "" };
+        format!("{dash}{}:{}", self.direction.name(), self.arg)
+    }
 }
 
 impl ParsedQuery {
@@ -51,6 +97,9 @@ impl ParsedQuery {
 /// - `-file:PAT`  exclude paths matching PAT
 /// - `lang:NAME`  include files of that language (`rs`, `rust`, `py`, ...)
 /// - `-lang:NAME` exclude them
+/// - `deps:PATH[:N|:*]`  only PATH and the files it imports (N hops, 1 by
+///   default, `*` for any distance); `rdeps:` the files importing it;
+///   `-deps:` / `-rdeps:` leave them out
 /// - `case:yes`   case-sensitive (`case:no` forces insensitive)
 /// - `word:yes`   whole-word matching
 ///
@@ -93,11 +142,20 @@ fn apply_operator(q: &mut ParsedQuery, token: &Token) -> bool {
                 return false;
             };
             if token.op == "lang:" {
-                q.include_globs.extend(globs);
+                q.lang_globs.extend(globs);
             } else {
                 q.exclude_globs.extend(globs);
             }
         }
+        "deps:" | "-deps:" | "rdeps:" | "-rdeps:" => q.graph.push(GraphFilter {
+            direction: if token.op.ends_with("rdeps:") {
+                GraphDirection::Rdeps
+            } else {
+                GraphDirection::Deps
+            },
+            negate: token.op.starts_with('-'),
+            arg: arg.to_string(),
+        }),
         "case:" => q.options.case_sensitive = is_yes(arg),
         "word:" => q.options.whole_word = is_yes(arg),
         _ => return false,
@@ -113,7 +171,9 @@ fn is_yes(v: &str) -> bool {
 }
 
 /// Operator prefixes, longest first where one is a suffix of another.
-const OPERATORS: &[&str] = &["-file:", "file:", "-lang:", "lang:", "case:", "word:"];
+const OPERATORS: &[&str] = &[
+    "-file:", "file:", "-lang:", "lang:", "-rdeps:", "rdeps:", "-deps:", "deps:", "case:", "word:",
+];
 
 /// One whitespace-separated token: `raw[start..end]`. When it starts with
 /// an operator prefix, `op` is that prefix and `arg` its (unquoted)
@@ -264,14 +324,15 @@ mod tests {
     fn operators_are_parsed() {
         let q = parse("needle lang:rust file:src/ -file:test case:yes word:y -lang:py");
         assert_eq!(q.text, "needle");
-        assert_eq!(q.include_globs, vec!["**/*.rs", "**/src/**"]);
+        assert_eq!(q.include_globs, vec!["**/src/**"]);
+        assert_eq!(q.lang_globs, vec!["**/*.rs"]);
         assert_eq!(
             q.exclude_globs,
             vec!["*/**/*test*", "**/*.py", "**/*.pyi", "**/*.pyw"]
         );
         assert!(q.options.case_sensitive && q.options.whole_word);
         assert_eq!(parse("file:*.toml").include_globs, vec!["*/**/*.toml"]);
-        assert_eq!(parse("lang:xyz").include_globs, vec!["**/*.xyz"]);
+        assert_eq!(parse("lang:xyz").lang_globs, vec!["**/*.xyz"]);
         assert_eq!(parse("lang:xyz").text, "");
         // Operators between pieces of text join them with one space.
         assert_eq!(parse("fn  file:src/  main").text, "fn main");
@@ -341,6 +402,48 @@ mod tests {
         assert_eq!(parse("file:\"my dir").text, "dir");
         // Operator-looking text inside a token is text.
         assert_eq!(parse("url=file:x").text, "url=file:x");
+    }
+
+    #[test]
+    fn graph_filters_are_parsed() {
+        let q = parse("Weight rdeps:src/search/ranking.rs:2 -deps:\"my dir/a.py\" deps:x.ts");
+        assert_eq!(q.text, "Weight");
+        let f = |direction, negate, arg: &str| GraphFilter {
+            direction,
+            negate,
+            arg: arg.to_string(),
+        };
+        assert_eq!(
+            q.graph,
+            vec![
+                f(GraphDirection::Rdeps, false, "src/search/ranking.rs:2"),
+                f(GraphDirection::Deps, true, "my dir/a.py"),
+                f(GraphDirection::Deps, false, "x.ts"),
+            ]
+        );
+        assert_eq!(q.graph[1].display(), "-deps:my dir/a.py");
+        assert_eq!(parse("deps:").text, "deps:");
+        assert!(parse("url=deps:x").graph.is_empty());
+    }
+
+    /// `file:` and `lang:` narrow each other; each widens itself.
+    #[test]
+    fn file_and_lang_both_apply() {
+        use crate::search::path_filter::PathFilter;
+        let filter = |q: &str| {
+            let p = parse(q);
+            PathFilter::from_delimited(&p.include_globs.join(";"), &p.exclude_globs.join(";"))
+                .unwrap()
+                .and_include(&p.lang_globs)
+                .unwrap()
+        };
+        let src_rs = filter("x file:src/ lang:rs");
+        assert!(src_rs.matches("/proj/src/main.rs"));
+        assert!(!src_rs.matches("/proj/src/app.py"));
+        assert!(!src_rs.matches("/proj/tests/main.rs"));
+        let rs_or_py = filter("x lang:rs lang:py");
+        assert!(rs_or_py.matches("/proj/a.rs") && rs_or_py.matches("/proj/a.py"));
+        assert!(!rs_or_py.matches("/proj/a.go"));
     }
 
     #[test]
