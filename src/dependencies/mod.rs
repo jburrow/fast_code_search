@@ -401,12 +401,16 @@ impl DependencyIndex {
             for _ in 1..dots {
                 base = base.parent()?.to_path_buf();
             }
-            // `from . import name` (`.name`) where `name` is not a module
-            // imports it from the package itself.
-            return self
-                .python_candidates(&base, &segments)
-                .map(|(_, p)| p)
-                .or_else(|| self.indexed(&base.join("__init__.py")));
+            // `from .a import name` is the module `a.name` or `name` from
+            // `a`; nothing shorter (Python fails the import). `from . import
+            // name` where `name` is not a module imports it from the
+            // package itself.
+            return match self.python_candidates(&base, &segments) {
+                Some((k, p)) if k + 1 >= segments.len() => Some(p),
+                Some(_) => None,
+                None if segments.len() <= 1 => self.indexed(&base.join("__init__.py")),
+                None => None,
+            };
         }
 
         // Absolute import. Python 3 looks only on sys.path, never next to
@@ -424,6 +428,11 @@ impl DependencyIndex {
             if self.indexed(&b.join("__init__.py")).is_none() {
                 for root in [b.to_path_buf(), b.join("src")] {
                     if let Some((k, p)) = self.python_candidates(&root, &segments) {
+                        // `import a.b` needs `a/b`; `from a import name` is
+                        // `a.name` or `name` from `a`. Less is not a match.
+                        if k + 1 < segments.len() {
+                            continue;
+                        }
                         if k == segments.len() {
                             return Some(p); // the whole name: nothing beats it
                         }
@@ -874,6 +883,15 @@ mod tests {
         assert_eq!(
             r("tests/test_lib.py", "lib.util"),
             id_of(&temp, &idx, "src/lib/util.py")
+        );
+        // A module that does not exist is a broken import, not an import
+        // of the package above it (`from .missing import x` fails).
+        assert_eq!(r("django/db/fields/composite.py", ".missing.thing"), None);
+        assert_eq!(r(dummy, "django.missing.sub.thing"), None);
+        assert_eq!(
+            r(dummy, "django.missing"),
+            id_of(&temp, &idx, "django/__init__.py"),
+            "`from django import missing` may name something in the package"
         );
     }
 
