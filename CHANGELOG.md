@@ -91,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Web UI: Semantic is no longer in the header nav, since semantic search
+  is not being developed for now. The page still works at
+  `/semantic.html` (and shows its tab while open).
 - Import graph: a Rust path into the crate used without a `use`
   (`crate::a::b::f()`, `super::x::Y`) is an import of the module it names,
   so the dependency explorer, rankings and `rdeps:` see it. Rebuild the
@@ -172,6 +175,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Web UI: search history now records searches made by typing, not only
+  ones submitted with Enter. A query counts once the box sits unchanged for
+  two seconds or you move on (into the results, a preview or a filter);
+  carrying on typing replaces that entry rather than leaving prefixes.
 - Results are in rank order again, with each file's hits together: files in
   the order of their best hit, then every hit of that file by score. Since
   v0.12.0 hits were interleaved by file (every file's best hit before any
