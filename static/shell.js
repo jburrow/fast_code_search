@@ -39,7 +39,9 @@
 
     const PAGES = [
         { id: 'search', href: '/', label: 'Search', icon: 'i-search' },
-        { id: 'semantic', href: '/semantic.html', label: 'Semantic', icon: 'i-auto-awesome' },
+        // Semantic search is frozen, so it is left out of the nav; the page
+        // still works at /semantic.html and shows its own tab when open.
+        { id: 'semantic', href: '/semantic.html', label: 'Semantic', icon: 'i-auto-awesome', hidden: true },
         { id: 'graph', href: '/graph.html', label: 'Graph', icon: 'i-account-tree' },
         { id: 'index', href: '/diagnostics.html', label: 'Index', icon: 'i-analytics' },
         { id: 'docs', href: '/docs.html', label: 'Docs', icon: 'i-description' },
@@ -50,6 +52,7 @@
     const icon = (id, size) =>
         `<svg class="icon" width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"/></svg>`;
     const here = (p) => (p.id === current ? ' aria-current="page"' : '');
+    const shown = PAGES.filter(p => !p.hidden || p.id === current);
 
     const extra = document.getElementById('app-header-extra');
     const extraHtml = extra ? extra.innerHTML : '';
@@ -60,7 +63,7 @@
             `<div class="app-header-left">` +
                 `<div class="app-wordmark">fast_code_search</div>` +
                 `<nav class="app-nav" aria-label="Main">` +
-                    PAGES.map(p => `<a href="${p.href}"${here(p)}>${p.label}</a>`).join('') +
+                    shown.map(p => `<a href="${p.href}"${here(p)}>${p.label}</a>`).join('') +
                 `</nav>` +
             `</div>` +
             extraHtml +
@@ -69,7 +72,7 @@
             `</div>` +
         `</header>` +
         `<nav class="app-tabbar" aria-label="Main">` +
-            PAGES.map(p => `<a href="${p.href}"${here(p)}>${icon(p.icon, 20)}<span>${p.label}</span></a>`).join('') +
+            shown.map(p => `<a href="${p.href}"${here(p)}>${icon(p.icon, 20)}<span>${p.label}</span></a>`).join('') +
         `</nav>`;
 
     if (script) script.insertAdjacentHTML('beforebegin', html);

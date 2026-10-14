@@ -91,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Web UI: Semantic is no longer in the header nav, since semantic search
+  is not being developed for now. The page still works at
+  `/semantic.html` (and shows its tab while open).
 - Import graph: a Rust path into the crate used without a `use`
   (`crate::a::b::f()`, `super::x::Y`) is an import of the module it names,
   so the dependency explorer, rankings and `rdeps:` see it. Rebuild the
