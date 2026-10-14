@@ -6,7 +6,8 @@ use crate::diagnostics::{
     KeywordDiagnosticsResponse, KeywordIndexDiagnostics, TestResult, TestSummary,
 };
 use crate::search::{
-    IndexFreshness, IndexingStatus, PathFreshness, RankMode, SearchEngine, SearchLimits,
+    engine_lock, IndexFreshness, IndexingStatus, PathFreshness, RankMode, SearchEngine,
+    SearchLimits,
 };
 use axum::{
     extract::{
@@ -1220,29 +1221,27 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
         .unwrap_or_default()
 }
 
-/// Handle a WebSocket connection for progress updates
-/// Acquire the engine read lock without blocking a worker thread.
+/// The engine's read lock for a request, waiting up to
+/// [`engine_lock::SEARCH_READ_WAIT`] for a writer (a watcher batch step, a
+/// checkpoint) to finish. Call it on a blocking thread, never a tokio
+/// worker.
 ///
-/// `WouldBlock` (a writer holds the lock during indexing) becomes a 503 with
+/// A writer still holding the lock after that becomes a 503 with
 /// `Retry-After`. A *poisoned* lock is recovered rather than turned into a
 /// permanent 500: every indexing path is wrapped in `catch_unwind`, so poison
 /// only means some other thread panicked, not that the index is unusable.
 pub(super) fn try_read_engine(
     engine: &std::sync::RwLock<SearchEngine>,
 ) -> Result<std::sync::RwLockReadGuard<'_, SearchEngine>, (StatusCode, String)> {
-    match engine.try_read() {
-        Ok(guard) => Ok(guard),
-        Err(std::sync::TryLockError::WouldBlock) => Err((
+    engine_lock::read_within(engine, engine_lock::SEARCH_READ_WAIT).ok_or_else(|| {
+        (
             StatusCode::SERVICE_UNAVAILABLE,
             "Index is currently being updated, please try again shortly".to_string(),
-        )),
-        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
-            tracing::error!("Search engine lock was poisoned; recovering for read");
-            Ok(poisoned.into_inner())
-        }
-    }
+        )
+    })
 }
 
+/// Handle a WebSocket connection for progress updates
 async fn handle_progress_socket(socket: WebSocket, state: WebState) {
     let (mut sender, mut receiver) = socket.split();
 

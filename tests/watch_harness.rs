@@ -16,8 +16,8 @@
 
 use fast_code_search::config::IndexerConfig;
 use fast_code_search::search::{
-    create_progress_broadcaster, run_background_indexer, watch_loop, BackgroundIndexerConfig,
-    IndexingProgress, SearchEngine, WatchLoopConfig,
+    create_progress_broadcaster, engine_lock, run_background_indexer, watch_loop,
+    BackgroundIndexerConfig, FileChange, IndexingProgress, SearchEngine, WatchLoopConfig,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -623,4 +623,109 @@ fn watch_changes_during_initial_build_converge() {
         h.random_op(&mut n);
     }
     h.assert_converges(&format!("changes during the initial build (seed {seed})"));
+}
+
+// ---------------------------------------------------------------------------
+// Searches during updates. A batch used to be applied under one write lock,
+// file reads and directory scans included, and a search that met the lock
+// was turned away ("index is being updated"); on a large tree with changes
+// streaming in, that was most searches.
+
+/// Rewrite every file of a [`Harness::new`] tree of `files` files, keeping
+/// each file's import, and return their paths.
+fn rewrite_all(h: &mut Harness, files: usize) -> Vec<PathBuf> {
+    (0..files)
+        .map(|i| {
+            let dir = ["app", "app/core", "web/src", "web/src/ui"][i % 4];
+            let ext = if dir.starts_with("app") { "py" } else { "ts" };
+            let rel = format!("{dir}/m{i}.{ext}");
+            let sibling = (i >= 4).then(|| format!("m{}", i - 4));
+            h.write_quiet(&rel, sibling.as_deref());
+            h.path(&rel)
+        })
+        .collect()
+}
+
+/// A burst far bigger than one install step is installed in steps, and no
+/// step holds the write lock for more than a fraction of the burst: the
+/// planning and the file reads happen outside it. The result still matches
+/// a fresh index.
+#[test]
+fn burst_holds_the_write_lock_in_short_steps() {
+    const FILES: usize = 2400;
+    let mut h = Harness::new(seed_from_env(31), FILES);
+    build_index(&h.config, h.engine.clone());
+    let changed = rewrite_all(&mut h, FILES);
+    let changes: Vec<FileChange> = changed.into_iter().map(FileChange::Modified).collect();
+
+    let report = watch_loop::apply_burst(&h.engine, &changes, &h.config).expect("burst applied");
+
+    assert_eq!(report.outcome.indexed, FILES);
+    assert!(
+        report.steps >= FILES.div_ceil(watch_loop::INSTALL_CHUNK),
+        "expected the burst in steps of at most {} files: {report:?}",
+        watch_loop::INSTALL_CHUNK
+    );
+    assert!(
+        report.longest_hold * 3 < report.elapsed,
+        "one write-lock hold took most of the burst, so searches were held \
+         back for all of it: {report:?}"
+    );
+    h.note(format!("rewrite all {FILES} files in one burst"));
+    h.assert_converges("burst applied in steps");
+}
+
+/// Searches running while the watch loop applies a burst are all answered,
+/// none turned away, and the index still converges.
+#[test]
+fn searches_are_answered_while_a_burst_applies() {
+    const FILES: usize = 1200;
+    let mut h = Harness::new(seed_from_env(57), FILES);
+    h.start(false);
+    h.assert_converges("initial build");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let searchers: Vec<_> = (0..2)
+        .map(|t| {
+            let (engine, stop) = (h.engine.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let (mut served, mut turned_away) = (0usize, 0usize);
+                let mut slowest = Duration::ZERO;
+                let mut n = t;
+                while !stop.load(Ordering::Relaxed) {
+                    n += 1;
+                    let started = Instant::now();
+                    match engine_lock::read_within(&engine, engine_lock::SEARCH_READ_WAIT) {
+                        Some(engine) => {
+                            std::hint::black_box(engine.search(VOCAB[n % VOCAB.len()], 20));
+                            served += 1;
+                            slowest = slowest.max(started.elapsed());
+                        }
+                        None => turned_away += 1,
+                    }
+                }
+                (served, turned_away, slowest)
+            })
+        })
+        .collect();
+
+    rewrite_all(&mut h, FILES);
+    let mut n = 0;
+    for _ in 0..40 {
+        h.random_op(&mut n);
+    }
+    h.note(format!(
+        "rewrite all {FILES} files, then 40 random operations"
+    ));
+    h.assert_converges("burst while searching");
+
+    stop.store(true, Ordering::Relaxed);
+    for s in searchers {
+        let (served, turned_away, slowest) = s.join().unwrap();
+        assert!(served > 0, "a searcher never got the lock");
+        assert_eq!(
+            turned_away, 0,
+            "{turned_away} searches were turned away during the burst (slowest answered in {slowest:?})"
+        );
+    }
 }

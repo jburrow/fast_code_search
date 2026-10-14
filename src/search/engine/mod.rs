@@ -691,6 +691,26 @@ pub struct PreIndexedFile {
     pub modified: Option<std::time::SystemTime>,
 }
 
+/// How the engine reads and parses a file, copied out of the engine so
+/// files can be parsed without holding its lock (see
+/// [`SearchEngine::install_parsed`]).
+#[derive(Debug, Clone, Copy)]
+pub struct FileParser {
+    transcode_non_utf8: bool,
+    max_file_size: u64,
+    enable_symbols: bool,
+}
+
+impl FileParser {
+    /// Read and parse `path`; `None` when it is unreadable, binary or too
+    /// large to index. Reads owned content (no live mmap, so a file being
+    /// rewritten concurrently cannot SIGBUS us).
+    pub fn parse(&self, path: &Path) -> Option<PreIndexedFile> {
+        PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size)
+            .map(|(partial, _)| PreIndexedFile::from_partial(partial, self.enable_symbols))
+    }
+}
+
 impl PreIndexedFile {
     /// Phase 2: run tree-sitter symbol/import extraction on an already-processed partial.
     ///
@@ -1728,22 +1748,61 @@ impl SearchEngine {
     /// per-file [`Self::update_file`] path cost a full posting-list scan per
     /// modified file. Returns `(indexed, removed)`.
     pub fn update_files(&mut self, paths: &[PathBuf]) -> (usize, usize) {
-        if paths.is_empty() {
+        let parser = self.file_parser();
+        let mut unique: Vec<&PathBuf> = Vec::with_capacity(paths.len());
+        let mut seen = std::collections::HashSet::new();
+        for path in paths {
+            if seen.insert(path) {
+                unique.push(path);
+            }
+        }
+        let parsed = unique
+            .par_iter()
+            .map(|p| ((*p).clone(), parser.parse(p)))
+            .collect();
+        self.install_parsed(parsed)
+    }
+
+    /// The settings files are read and parsed with, so a caller can parse
+    /// without holding the engine lock and hand the results to
+    /// [`Self::install_parsed`].
+    pub fn file_parser(&self) -> FileParser {
+        FileParser {
+            transcode_non_utf8: self.transcode_non_utf8,
+            max_file_size: self.max_file_size,
+            enable_symbols: self.enable_symbols,
+        }
+    }
+
+    /// Install files that were read and parsed ahead of time (see
+    /// [`Self::file_parser`]): a path already indexed is re-indexed under
+    /// its id, or dropped when it is now unreadable (`None`); a new path is
+    /// added. Ids are looked up here, under the caller's write lock, so the
+    /// index may have changed since the files were parsed. Every stale
+    /// posting list is stripped in one pass. Returns `(indexed, removed)`.
+    pub fn install_parsed(
+        &mut self,
+        parsed: Vec<(PathBuf, Option<PreIndexedFile>)>,
+    ) -> (usize, usize) {
+        if parsed.is_empty() {
             return (0, 0);
         }
-        let mut known: Vec<(u32, PathBuf)> = Vec::new();
-        let mut fresh: Vec<PathBuf> = Vec::new();
+        let mut known: Vec<(u32, PathBuf, Option<PreIndexedFile>)> = Vec::new();
+        let mut fresh: Vec<PreIndexedFile> = Vec::new();
+        let mut fresh_paths = std::collections::HashSet::new();
         let mut doomed = roaring::RoaringBitmap::new();
-        for path in paths {
-            match self.find_file_id_exact(path) {
+        for (path, pre) in parsed {
+            match self.find_file_id_exact(&path) {
                 Some(id) => {
                     if doomed.insert(id) {
-                        known.push((id, path.clone()));
+                        known.push((id, path, pre));
                     }
                 }
                 None => {
-                    if !fresh.contains(path) {
-                        fresh.push(path.clone());
+                    if let Some(pre) = pre {
+                        if fresh_paths.insert(path) {
+                            fresh.push(pre);
+                        }
                     }
                 }
             }
@@ -1757,27 +1816,16 @@ impl SearchEngine {
         // record it twice.
         let dependents_of: Vec<Vec<u32>> = known
             .iter()
-            .map(|(id, _)| {
+            .map(|(id, _, _)| {
                 let mut deps = self.strip_caches_and_edges(*id);
                 deps.retain(|d| !doomed.contains(*d));
                 deps
             })
             .collect();
 
-        // Parallel owned reads + parsing (no live mmaps: a file being
-        // rewritten concurrently cannot SIGBUS us).
-        let transcode = self.transcode_non_utf8;
-        let max_size = self.max_file_size;
-        let symbols = self.enable_symbols;
-        let parse = |p: &PathBuf| {
-            PartialIndexedFile::process(p, transcode, max_size)
-                .map(|(partial, _)| PreIndexedFile::from_partial(partial, symbols))
-        };
-        let parsed: Vec<Option<PreIndexedFile>> = known.par_iter().map(|(_, p)| parse(p)).collect();
-
         let mut indexed = 0;
         let mut removed = 0;
-        for (((id, path), pre), dependents) in known.into_iter().zip(parsed).zip(dependents_of) {
+        for ((id, path, pre), dependents) in known.into_iter().zip(dependents_of) {
             match pre {
                 Some(pre) => {
                     self.file_store.refresh_file_by_id(id);
@@ -1797,8 +1845,7 @@ impl SearchEngine {
         }
 
         if !fresh.is_empty() {
-            let pre: Vec<PreIndexedFile> = fresh.par_iter().filter_map(parse).collect();
-            indexed += self.index_batch(pre);
+            indexed += self.index_batch(fresh);
         }
         if indexed + removed > 0 {
             self.resolve_imports_incremental();
@@ -1965,19 +2012,37 @@ impl SearchEngine {
     /// of every changed path costs one stat per file in those directories
     /// and makes the index self-healing against lost deletes.
     pub fn prune_vanished_in(&mut self, dirs: &[PathBuf]) -> usize {
-        let mut doomed = Vec::new();
-        for dir in dirs {
-            let prefix = canonicalize_lossy(dir);
-            for id in self.file_store.ids_under(&prefix) {
-                let Some(path) = self.file_store.get_path(id) else {
-                    continue;
-                };
-                if path.parent() == Some(prefix.as_path()) && !path.exists() {
-                    doomed.push(id);
-                }
-            }
-        }
+        let doomed = self.vanished_in(dirs);
         self.remove_files_by_ids(&doomed)
+    }
+
+    /// The indexed files directly in one of `dirs` that no longer exist on
+    /// disk (see [`Self::prune_vanished_in`]). Reads only, so the watcher
+    /// can stat under a read lock.
+    pub fn vanished_in(&self, dirs: &[PathBuf]) -> Vec<u32> {
+        dirs.par_iter()
+            .flat_map_iter(|dir| {
+                let prefix = canonicalize_lossy(dir);
+                let ids = self.file_store.ids_in_dir(&prefix);
+                // One directory listing instead of a stat per indexed file.
+                let listed: Option<std::collections::HashSet<std::ffi::OsString>> =
+                    std::fs::read_dir(&prefix).ok().map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok().map(|e| e.file_name()))
+                            .collect()
+                    });
+                ids.into_iter().filter(move |&id| {
+                    let Some(path) = self.file_store.get_path(id) else {
+                        return false;
+                    };
+                    match (&listed, path.file_name()) {
+                        (Some(names), Some(name)) => !names.contains(name),
+                        // Unlistable directory: ask about each file.
+                        _ => !path.exists(),
+                    }
+                })
+            })
+            .collect()
     }
 
     /// Ids of every live file under directory `dir` (any form of the path;
