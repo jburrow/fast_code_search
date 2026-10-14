@@ -34,6 +34,7 @@
 
 - [Indexing pipeline](how-it-works/indexing.md)
 - [Candidates and regex analysis](how-it-works/candidates.md)
+- [The import graph](how-it-works/dependency-graph.md)
 - [Ranking](how-it-works/ranking.md)
 - [Incremental updates](how-it-works/incremental.md)
 - [Persistence](how-it-works/persistence.md)

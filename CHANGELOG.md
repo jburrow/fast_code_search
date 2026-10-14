@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explorer's folder map, in `GET /api/graph/modules` (`unresolved_imports`,
   `unresolved_local`), in MCP's `dependency_overview`, and per file in
   `file_dependencies`.
+- Docs: "How the import graph is built" explains how Python and
+  JavaScript/TypeScript imports are extracted and resolved, how an import
+  is judged internal (resolves to an indexed file) or external, and how
+  the method is checked against grimp and TypeScript.
 - `fcs check [PATH…]`: checks fcs on your own code. It indexes the folders
   in memory, compares queries made up from the files with `rg -F` (exit 1
   on any difference, with each differing query shrunk), and compares the

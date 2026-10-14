@@ -6,6 +6,9 @@ here produces no edge. If fcs misses an edge listed as supported, that is a
 bug; if it misses one listed as not handled, that is a known gap. Python
 and TypeScript are checked against their own resolvers (see the end of the
 page).
+[How the import graph is built](../how-it-works/dependency-graph.md)
+explains the method, including how an import is judged internal or
+external.
 
 Edges exist for **Rust, Python and JavaScript/TypeScript** only. Go, Java,
 C and C++ `#include`, C#, Ruby and every other language are searched and

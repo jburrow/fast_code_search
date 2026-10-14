@@ -391,7 +391,7 @@ impl SearchEngine {
             let wanted = budget
                 .saturating_mul(docs_read)
                 .checked_div(hits_seen)
-                .map_or(grow, |n| (n + 1).min(grow));
+                .map_or(grow, |n| n.saturating_add(1).min(grow));
             chunk = wanted.clamp(threads, Self::SCAN_CHUNK_MAX);
         }
         let found = matches.len();
