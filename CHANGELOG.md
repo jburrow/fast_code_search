@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `fcs --deps` / `--rdeps` (the only way to scope a regex), the web
   UI's FILTER panel, the dependency popover and the explorer's
   **Search importers** / **Search its imports** buttons.
+- Book page "Reference support": what the References mode finds in each
+  language, and what it misses. C and C++ record no references; Python
+  records calls only; TypeScript, Java and C# miss many type positions.
 - Imports that resolve to no indexed file are counted, and the ones written
   as a path into the project (`./x`, `.x`, `crate::`, `@/`), which point at
   a broken import or an unsupported form, are called out: in the dependency
@@ -46,7 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines on screen.
 - Web UI themes: Bold (the existing look, still the default), Corporate and
   Corporate dark. On a first visit the UI asks which to use, previewing each
-  live; the palette button in the header (replacing the `?` link, which
+  live on hover and putting the chosen theme back on mouse-out (one click
+  picks a theme and closes the picker); the palette button in the header (replacing the `?` link, which
   went to the Docs page also in the navigation) changes it later. The choice
   is kept per browser. New `[server]` settings: `default_theme` (`"bold"`,
   `"corporate"` or `"corporate-dark"`) for people who haven't chosen, and
@@ -81,6 +85,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `file:` and `lang:` narrow each other: `file:src/ lang:rust` is the Rust
   files under `src/`, where it used to be every file under `src/` plus
   every Rust file. Repeating one operator still widens it.
+- Web UI: the preview icon is back at the end of each match line (#153 had
+  moved the preview to the line number, with nothing to show it). Hovering
+  the icon previews the file; clicking it pins the preview, which then
+  stays open until Escape, a click outside it or its ×, as does clicking
+  or scrolling inside it. The line number opens the file and no longer
+  previews it on hover.
+- Web UI: results show one line of context either side of each hit by
+  default (was the match line only). Filter → Context lines still sets it
+  and is remembered once you pick a value; `context=0` in a link shows the
+  match line only.
 - Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
   keyboard shortcuts, `fcs` and MCP, the main API calls) with links into
   the documentation book. It used to be a hand-kept copy of the API
@@ -139,6 +153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Dependency graph: TypeScript and JavaScript imports that go through a
+  `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
+  `components/Button`) now link to the file they name, including settings
+  inherited through `extends`. They were treated as npm packages, so repos
+  that rely on aliases had few edges. Imports of a workspace package by its
+  package.json `name` (`@acme/shared`) now link to that package's entry
+  point. With no tsconfig `baseUrl` or `paths`, imports are also tried
+  from the repository root. `import x = require('./x')` is picked up.
 - Python: `from .missing import x` (or `import pkg.missing.sub`) where the
   module does not exist no longer draws an edge to the package above it;
   the import is unresolved, as Python fails it.

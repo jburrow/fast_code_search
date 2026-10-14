@@ -114,7 +114,9 @@ case").
 | References | REFERENCES / `fcs refs` / `references=true` | Call sites and type mentions of the identifier |
 
 References are exact and case-sensitive on the identifier; `file:` and
-`lang:` still narrow the files.
+`lang:` still narrow the files. Which positions count as a reference
+differs by language, and C and C++ record none: see
+[Reference support](reference-support.md).
 
 ## Regex notes
 

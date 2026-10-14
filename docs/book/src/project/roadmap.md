@@ -24,7 +24,9 @@ under `docs/internal/plans/`; individual items are GitHub issues labelled
   repository itself.
 - **Visual identity**: architecture and ranking diagrams are in the book;
   still open: a wordmark and a demo recording.
-- **Reference capture** for more languages (Go, Java, C# call sites) and
+- **Reference capture**: C and C++ record no references, and C#, Java,
+  TypeScript and Python miss common forms (see
+  [Reference support](../reference/reference-support.md)); plus
   cross-language import resolution improvements.
 
 ## Done recently

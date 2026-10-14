@@ -196,6 +196,11 @@ pub struct GraphReport {
     pub fcs_unresolved: usize,
     /// fcs edges to stylesheets, components and assets, not compared.
     pub unjudged: usize,
+    /// fcs edges for bare imports the oracle leaves unresolved (workspace
+    /// packages, which TypeScript only finds through an installed
+    /// `node_modules`, and the repository-root fallback). Shown, not counted
+    /// as extra.
+    pub bare_only_fcs: Vec<(String, String, String)>,
 }
 
 /// Compare `engine`'s import graph with `oracle`'s edges.
@@ -247,6 +252,26 @@ pub fn compare(engine: &SearchEngine, lang: Lang, oracle: &Oracle) -> GraphRepor
         .map(|(_, _, imports)| imports.len())
         .sum();
 
+    // Bare imports the oracle could not resolve but fcs links: judged
+    // separately, since the oracle runs without an install.
+    let mut bare_only: BTreeMap<(u32, u32), String> = BTreeMap::new();
+    for e in oracle.edges.iter().filter(|e| e.to.is_none()) {
+        let bare = !(e.spec.starts_with('.') || e.spec.starts_with('/'));
+        let Some(from) = id_of(&e.from).filter(|_| bare) else {
+            continue;
+        };
+        let Some(from_path) = index.path_of(from) else {
+            continue;
+        };
+        if let Some(to) = index
+            .resolve_import_path(from_path, &e.spec)
+            .and_then(|p| index.get_file_id(&p))
+        {
+            bare_only
+                .entry((from, to))
+                .or_insert_with(|| e.spec.clone());
+        }
+    }
     let missing = expected
         .iter()
         .filter(|(k, _)| !actual.contains(k))
@@ -254,8 +279,13 @@ pub fn compare(engine: &SearchEngine, lang: Lang, oracle: &Oracle) -> GraphRepor
         .collect();
     let extra = actual
         .iter()
-        .filter(|k| !expected.contains_key(k))
+        .filter(|k| !expected.contains_key(k) && !bare_only.contains_key(k))
         .map(|(from, to)| (shown(*from), shown(*to)))
+        .collect();
+    let bare_only_fcs = bare_only
+        .iter()
+        .filter(|(k, _)| actual.contains(k) && !expected.contains_key(k))
+        .map(|((from, to), spec)| (shown(*from), spec.clone(), shown(*to)))
         .collect();
     GraphReport {
         lang,
@@ -267,6 +297,7 @@ pub fn compare(engine: &SearchEngine, lang: Lang, oracle: &Oracle) -> GraphRepor
         oracle_unresolved,
         fcs_unresolved,
         unjudged,
+        bare_only_fcs,
     }
 }
 
@@ -294,7 +325,8 @@ impl GraphReport {
             self.missing.len(),
             self.extra.len(),
             100.0 * self.found() as f64 / self.expected.max(1) as f64,
-            100.0 * self.found() as f64 / self.actual.max(1) as f64,
+            100.0 * self.found() as f64
+                / (self.actual - self.bare_only_fcs.len()).max(1) as f64,
         )?;
         writeln!(
             md,
@@ -306,6 +338,13 @@ impl GraphReport {
                 md,
                 "{} fcs edges to stylesheets, components and assets are not compared (the oracle cannot resolve them).",
                 self.unjudged
+            )?;
+        }
+        if !self.bare_only_fcs.is_empty() {
+            writeln!(
+                md,
+                "{} fcs edges for package-style imports the oracle leaves unresolved (workspace packages, which TypeScript finds only after an install, and the repository-root fallback) are listed below, not counted as extra.",
+                self.bare_only_fcs.len()
             )?;
         }
         let mut by_shape: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -333,6 +372,13 @@ impl GraphReport {
             writeln!(md, "\n### Extra (fcs draws, the oracle does not)\n\n```")?;
             for (from, to) in self.extra.iter().take(samples * 4) {
                 writeln!(md, "{from}  ->  {to}")?;
+            }
+            writeln!(md, "```")?;
+        }
+        if !self.bare_only_fcs.is_empty() {
+            writeln!(md, "\n### Package-style imports only fcs resolves\n\n```")?;
+            for (from, spec, to) in self.bare_only_fcs.iter().take(samples * 4) {
+                writeln!(md, "{from}: {spec}  ->  {to}")?;
             }
             writeln!(md, "```")?;
         }

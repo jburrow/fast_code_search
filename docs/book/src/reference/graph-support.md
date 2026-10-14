@@ -19,9 +19,12 @@ have symbols, but get no import edges.
 - An import resolves only to a file that is **in the index**. Packages
   outside the indexed folders (`std`, site-packages, `node_modules`, which
   is excluded by default) never produce an edge.
-- A bare or external name resolves to nothing. There is no "a file with
-  that name somewhere in the repo" guess, so a missing edge is never
-  replaced by a wrong one.
+- A bare or external name resolves to nothing, unless the language's own
+  configuration maps it to an indexed file (for JavaScript and TypeScript:
+  tsconfig `paths`/`baseUrl`, a workspace `package.json` `name`, or the
+  repository root when there is no tsconfig `baseUrl`). There is no "a
+  file with that name somewhere in the repo" guess, so a missing edge is
+  never replaced by a wrong one.
 - Imports that do not resolve are kept. They are retried when a matching
   file is indexed later, and `GET /api/graph/imports?path=…` lists every
   import of a file with its line, and `target: null` for the unresolved
@@ -73,15 +76,17 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 | `import … from './x'`, `export … from './x'`, `export * from './x'` | yes |
 | `require('./x')`, `` require(`./x`) ``, `import('./x')` | yes (not a template string with `${…}`), also `import(/* comment */ './x')` |
 | `import x from './x.json' with { type: 'json' }`, and the older `assert { … }` | yes |
-| `import x = require('./x')` (TypeScript) | **no** |
+| `import x = require('./x')` (TypeScript) | yes |
 | Relative specifiers (`./`, `../`, `.`, `..`) | yes |
-| `@/x`, `~/x` | yes: from the nearest folder with a `package.json` or `tsconfig.json`, trying `src/x` then `x` |
-| Extension probing | the exact file; `.js`/`.jsx` written for a `.ts`/`.tsx` file, `.mjs` for `.mts`, `.cjs` for `.cts`; then `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json` appended; then `index.{ts,tsx,js,jsx,mjs,cjs}` |
+| `@/x`, `~/x` | yes: tsconfig `paths` when it maps them, else from the nearest folder with a `package.json` or `tsconfig.json` (else the repository root), trying `src/x` then `x` |
+| Extension probing | the exact file; `.js`/`.jsx` written for a `.ts`/`.tsx` file, `.mjs` for `.mts`, `.cjs` for `.cts`; then `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json` appended; then `index` with each of those extensions |
 | Imports of stylesheets, `.vue`/`.svelte` components and other assets | yes, when the file is indexed (a bundler resolves them; TypeScript does not) |
-| `index.mts`, `index.cts`, `index.d.ts`; a folder's `package.json` `main` | **no** |
+| A folder's own `package.json` `main` (`import './lib'` where `lib/package.json` names the entry) | **no** |
 | `package.json` `imports` (`#name`) and a package importing itself by name | **no** |
-| tsconfig `paths` and `baseUrl` | **no**: tsconfig is not parsed |
-| Workspace packages by name, `package.json` `exports`/`main` | **no** |
+| tsconfig / jsconfig `paths` and `baseUrl`, with relative `extends` | yes, as `tsc` resolves them; an `extends` naming an npm package is skipped |
+| Workspace packages by name (`@acme/shared`, `@acme/shared/x`) | yes: to an indexed `package.json` with that `name`: its `types`/`source`/`module`/`main`/`exports["."]` entry, else `src/index`; a subpath under `src/` or the package root |
+| No tsconfig `baseUrl`/`paths` (`import 'components/Button'`) | yes: tried from the repository root (the folder holding `.git`) |
+| `exports` subpath maps and nested conditions | **no** |
 | Packages in `node_modules` | no edge, by design |
 
 ## How this is checked
@@ -95,7 +100,7 @@ wrongly:
 | Language | Oracle | Repository | Result |
 |---|---|---|---|
 | Python | [grimp](https://github.com/python-grimp/grimp) 3.17 (`src/check/oracle/py.py`) | Django 5.2 | 3,041 of 3,041 edges, none extra |
-| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`src/check/oracle/ts.mjs`) | Vite 6.3.5 | 92% of edges, 1 extra; 122 of the 129 misses are tsconfig `paths` (`~utils`, `vite/module-runner`) |
+| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`src/check/oracle/ts.mjs`) | Vite 6.3.5 | 99.6% of edges, 1 extra; 4 of the 7 misses are `package.json` `imports` (`#name`); 221 workspace-package edges the oracle cannot see without an install are listed apart |
 
 CI runs both, and fails if a change misses or adds more edges than that.
 

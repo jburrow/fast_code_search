@@ -60,12 +60,14 @@ lists every place it is used:
 
 ## Reading results
 
-- Each hit shows its line with the line number in a gutter (and the
-  context lines around it, if you asked for some). Definitions and
-  references are tagged. Click the bold line number to open the file there,
-  or hover it to preview the whole file. Click the file name to open the
-  file at its first hit; copy and the dependency explorer link show when
-  you hover the file.
+- Each hit shows its line with the line number in a gutter and one line of
+  context either side (change it under **Filter**: *Match only* up to ±5;
+  the browser remembers your choice). Definitions and references are
+  tagged. Hover the ↗ icon at the end of a hit to preview the whole file;
+  click the icon to keep the preview open until Escape, a click outside it
+  or its ×. Click the line number to open the file there, or the file name
+  to open it at its first hit; copy and the dependency explorer link show
+  when you hover the file.
 - The file viewer and the preview mark every line the query matches in a
   strip beside the scrollbar; click the strip to jump to the nearest one.
   Click a line number to select that line; **Copy link** copies a URL that
@@ -108,15 +110,21 @@ module) are hidden by default since they are structure rather than
 dependencies; **Show mod declarations** brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.
 
+For JavaScript/TypeScript, tsconfig `paths` and `baseUrl`, workspace
+packages imported by name and, without a tsconfig, the repository root are
+followed; [How the import graph is built](../how-it-works/dependency-graph.md)
+has the details.
+
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
 
 ## Themes
 
 The first time you open the UI it asks you to pick a theme; hover an option
-to try it on the page. **Bold** (the default) has capitalised labels and
+to try it on the page (moving off it puts your theme back) and click it
+to use it. **Bold** (the default) has capitalised labels and
 hard edges; **Corporate** and **Corporate dark** are quieter, with sentence
 case and rounded corners. Change it any time with the palette button in the
-header. The choice is kept in your browser. On a shared server,
+header, which previews on hover the same way. The choice is kept in your browser. On a shared server,
 `default_theme` sets the theme for people who haven't chosen one and
 `theme_picker = false` skips the first-run question (see
 [Configuration](../guides/configuration.md)).

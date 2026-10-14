@@ -10,7 +10,9 @@ the method behind that table.
 ## The rule that decides internal vs external
 
 fcs has no list of package names, and it does not read `requirements.txt`,
-`pyproject.toml`, `package.json` dependencies or a lockfile. The decision
+`pyproject.toml`, `package.json` dependencies or a lockfile. (For
+JavaScript and TypeScript it reads `tsconfig.json` and each indexed
+`package.json`'s own `name` and entry points, described below.) The decision
 is made by one rule, the same for every language:
 
 > An import is **internal** when the language's own lookup rules, applied
@@ -169,23 +171,31 @@ myproject/                  (no __init__.py: a root)
 | `import data from './a.json' with { type: 'json' }` (or `assert`) | `./a.json` |
 
 A template string with `${…}`, or any argument that is not a string
-literal, is a runtime value and is skipped. `import x = require('./a')`
-(TypeScript's older form) is not extracted yet.
+literal, is a runtime value and is skipped. TypeScript's older
+`import x = require('./a')` is extracted as `./a`.
 
 ### How a specifier is classified
 
-The specifier's first characters decide which lookup applies:
+The specifier's first characters decide which lookups apply, in this
+order:
 
 | Specifier | Lookup | If nothing is found |
 |---|---|---|
 | `./x`, `../x`, `.`, `..` | Relative to the importing file's folder | Local but unresolved |
-| `@/x`, `~/x` | From the nearest parent folder with a `package.json` or `tsconfig.json`: `src/x` first, then `x` | Local but unresolved |
-| anything else (`react`, `lodash/merge`, `@scope/pkg`, `#internal`, a tsconfig `paths` alias) | None | External |
+| anything else | 1. The nearest `tsconfig.json` (or `jsconfig.json`): its `paths` (an exact pattern, else the wildcard pattern with the longest prefix, each target in order), then its `baseUrl`, with relative `extends` applied, as `tsc` does | (next step) |
+| | 2. A workspace package: an indexed `package.json` whose `name` is the package part (`@acme/shared` of `@acme/shared/money`). The bare name goes to its entry point (`types`, `typings`, `source`, `module`, `main`, then `exports["."]`), then `src/index`, then `index`; a subpath goes to `src/money`, then `money` | (next step) |
+| | 3. `@/x`, `~/x`: from the nearest parent folder with a `package.json` or `tsconfig.json` (else the repository root): `src/x` first, then `x` | Local but unresolved |
+| | 4. When no tsconfig sets `baseUrl` or `paths`: the repository root (the folder holding `.git`) as `baseUrl`, so `components/Button` finds `<repo>/components/Button.tsx` | External |
 
-Bare specifiers are always external. That is right for npm packages, but
-it also covers aliases fcs does not understand yet: tsconfig `paths` and
-`baseUrl`, workspace packages imported by name, and `package.json`
-`imports` (`#name`). Those show up as missing edges, not as wrong ones.
+Each step only counts when it finds an indexed file, so `react` and
+`lodash/merge` stay external: no tsconfig alias, no indexed `package.json`
+and no file under the repository root carries that name. `package.json`
+`imports` (`#name`) are not read yet and show up as missing edges.
+
+tsconfig, `package.json` and `.git` are read from disk (once per folder,
+and again when a `tsconfig*.json` or `package.json` is re-indexed), so a
+tsconfig excluded from the index still applies. The graph is built when
+files are indexed: after changing `paths` or a package's `name`, re-index.
 
 ### Finding the file
 
@@ -198,14 +208,14 @@ Given the folder path a specifier points at, fcs tries, in order:
    and `./a.cjs` means `a.cts`.
 3. **Appended extensions**: `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts
    .json`, in that order.
-4. **A folder's index file**: `index.ts`, `index.tsx`, `index.js`,
-   `index.jsx`, `index.mjs`, `index.cjs`.
+4. **A folder's index file**: `index` with each of the extensions in 3.
 
 ```text
 web/
   package.json
   src/app.tsx         import { api } from './api'      -> src/api.ts
                       import Button from '@/ui/Button'  -> src/ui/Button/index.tsx
+                      import { money } from '@acme/shared' -> packages/shared/src/index.ts
                       import './styles.css'             -> src/styles.css (if indexed)
                       import React from 'react'         -> external
   src/api.ts          export * from './types.js'        -> src/types.ts
@@ -217,14 +227,13 @@ they are real dependencies. TypeScript itself does not resolve them.
 
 ### JavaScript and TypeScript limits
 
-- `tsconfig.json` and `jsconfig.json` are not parsed: no `paths`, no
-  `baseUrl`, no `rootDirs`. The `@/` and `~/` aliases are hard-wired to the
-  common convention.
-- `package.json` is used only as a marker for `@/` and `~/`. Its `main`,
-  `exports` and `imports` fields are not read, and a workspace package
-  imported by its name is external.
-- `index.mts`, `index.cts` and `index.d.ts` are not tried as a folder's
-  index file.
+- `package.json` `imports` (`#name`), `exports` subpath maps and nested
+  `exports` conditions are not read; `rootDirs` is not applied.
+- A tsconfig `extends` that names an npm package (`@tsconfig/node20`) is
+  skipped; relative `extends` (a string or an array) are followed.
+- Aliases defined only in a bundler config (webpack, Vite, Jest) are not
+  read. `@/` and `~/` follow the common convention; other bundler-only
+  aliases show up as missing edges.
 
 ## Seeing what did not resolve
 
@@ -239,7 +248,7 @@ they are real dependencies. TypeScript itself does not resolve them.
   lists a file's unresolved imports.
 
 A large `unresolved_local` count usually means a form from the limits
-above (tsconfig `paths`, for example) or files excluded from the index.
+above (a bundler-only alias, for example) or files excluded from the index.
 
 ## How the method is checked
 
@@ -262,6 +271,11 @@ The comparison (`src/check/graph.rs`) works on edges between files:
   one row of the support table.
 - Edges from TypeScript files to stylesheets, components and assets are
   counted separately and not judged, since TypeScript cannot resolve them.
+- Package-style imports that fcs links and the oracle leaves unresolved
+  are listed separately and not counted as extra. The oracle runs without
+  an install, so it cannot follow a workspace package's `node_modules`
+  link; fcs links it to the package's source. The repository-root fallback
+  lands here too.
 
 CI runs both oracles on pinned public repositories and fails if a change
 adds a missing or extra edge:
@@ -269,7 +283,7 @@ adds a missing or extra edge:
 | Language | Repository | Result |
 |---|---|---|
 | Python | Django 5.2 (grimp 3.17) | 3,041 of 3,041 edges, none extra |
-| TypeScript | Vite 6.3.5 (TypeScript 5.9) | 129 missing, 1 extra; 122 of the misses are tsconfig `paths` aliases |
+| TypeScript | Vite 6.3.5 (TypeScript 5.9) | 7 missing (4 `package.json` `imports`, 3 relative imports TypeScript resolves through a folder's `package.json` or, where `a.js` and `a.ts` both exist, to `a.ts`), 1 extra; 221 workspace-package edges listed apart |
 
 To run the same comparison on your own code, run `fcs check` (see
 [Correctness against ripgrep](../benchmarks/correctness.md#on-your-own-code-fcs-check)).

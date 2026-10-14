@@ -80,6 +80,9 @@
             font: inherit; color: var(--text); padding: 0.05rem 0.45rem;
         }
         .ctx-header button:hover, .ctx-header button:focus-visible { background: var(--hover); outline: none; }
+        .ctx-close { font-weight: 700; }
+        /* Pinned: stays until Esc, a click outside or × */
+        .ctx-tooltip.ctx-pinned { border-color: var(--accent-ink); box-shadow: var(--shadow), 0 0 0 1px var(--accent-ink); }
         /* The whole file scrolls inside the preview; the wheel never reaches
            the page behind it (which used to scroll and close the preview). */
         .ctx-file-body {
@@ -365,6 +368,8 @@
         button.hit-num { background: none; border: 0; font-family: inherit; line-height: inherit; cursor: pointer; color: var(--text-2); font-weight: 700; border-radius: 0; }
         button.hit-num:hover, button.hit-num:focus-visible { color: var(--text); text-decoration: underline; outline: none; }
         .hit-line .ctx-line-content { flex: 1; min-width: 0; white-space: pre; overflow-x: auto; padding-right: 0.75rem; }
+        .hit-open { display: flex; align-items: center; flex-shrink: 0; align-self: center; padding: 0 0.6rem 0 0.25rem; background: none; border: 0; cursor: pointer; color: var(--text-3); }
+        .hit-open:hover, .hit-open:focus-visible { color: var(--accent-ink); outline: none; }
         .hit-tags { display: flex; gap: 0.3rem; flex-shrink: 0; padding: 0 0.5rem; }
         .hit-tag { font-family: var(--font-label); text-transform: var(--label-case); font-size: 9.5px; padding: 0 5px; line-height: 1.6; color: var(--on-info-soft); background: var(--info-soft); border: 1px solid var(--info); border-radius: var(--radius); }
         /* Phone: the path gets the room; the badges go before it is cut */
@@ -709,8 +714,8 @@
                     <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
                         Context lines
                         <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus" title="Lines of code shown either side of each match">
-                            <option value="0" selected>Match only</option>
-                            <option value="1">±1 line</option>
+                            <option value="0">Match only</option>
+                            <option value="1" selected>±1 line</option>
                             <option value="2">±2 lines</option>
                             <option value="3">±3 lines</option>
                             <option value="4">±4 lines</option>
