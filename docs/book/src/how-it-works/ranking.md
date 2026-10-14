@@ -65,7 +65,8 @@ Symbol search scores exact name matches above prefix matches above
 substrings, with variables and constants slightly below types and
 functions of the same name. Reference search returns call sites and type
 mentions of an identifier, verified against the current file content, and
-ranks them with the same file-level signals.
+ranks them with the same file-level signals. What counts as a reference
+differs by language; see [Reference support](../reference/reference-support.md).
 
 ## Worked examples
 
