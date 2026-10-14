@@ -684,3 +684,29 @@ test('windowFor: grow the window nearby, start a new one far away', () => {
     assert.deepEqual(H.windowFor(4000, 1, 100, 5000, 100, 100), { from: 3900, to: 4100, fresh: true });
     assert.deepEqual(H.windowFor(4990, 1, 100, 5000, 100, 100), { from: 4890, to: 5000, fresh: true });
 });
+
+// ---------- graph-scoped search ----------
+
+test('parseQueryTerms: deps: and rdeps: are filters, not text', () => {
+    assert.equal(H.parseQueryTerms('Weight rdeps:src/a.rs:2 -deps:b.py').text, 'Weight');
+    assert.equal(H.parseQueryTerms('deps:').text, 'deps:');
+    assert.equal(H.parseQueryTerms('url=deps:x').text, 'url=deps:x');
+});
+
+test('scopeLabel: file count, plain-words tooltip and the incomplete warning', () => {
+    assert.equal(H.scopeLabel({}), null);
+    const one = H.scopeLabel({ scope: { filters: ['rdeps:src/a.rs:1'], files: 23, unresolved_local: 0 } });
+    assert.equal(one.text, 'In 23 files by imports');
+    assert.match(one.title, /src\/a\.rs and the files that import it directly/);
+    assert.equal(one.incomplete, false);
+    const gap = H.scopeLabel({ scope: { filters: ['deps:m.py:*', '-rdeps:t.py:2'], files: 1, unresolved_local: 2 } });
+    assert.equal(gap.text, 'In 1 file by imports (may be incomplete)');
+    assert.match(gap.title, /files imported by it at any distance; and not t\.py and the files that import it within 2 hops/);
+    assert.match(gap.title, /2 imports written as project paths/);
+    assert.equal(H.scopeLabel({ scope: { filters: ['-deps:x.py:1'] } }).text, 'Scoped by imports');
+});
+
+test('scopedSearchUrl: keeps the query and names the direction', () => {
+    assert.equal(H.scopedSearchUrl('rdeps', 'src/a b.rs', 'Weight'), '/?q=Weight&rdeps=src%2Fa+b.rs');
+    assert.equal(H.scopedSearchUrl('deps', 'x.py', ''), '/?deps=x.py');
+});

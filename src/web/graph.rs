@@ -516,19 +516,7 @@ pub struct ModulesResponse {
     pub unresolved_local: usize,
 }
 
-/// Whether an import is written as a path into the project rather than a
-/// package name: relative (`./x`, `../x`, Python `.x`), Rust `crate::`,
-/// `self::` or `super::`, or a `@/` / `~/` alias. One of these that does
-/// not resolve is a broken import or a gap in fcs, not an external package.
-pub fn is_local_spec(spec: &str) -> bool {
-    let s = spec.trim();
-    s.starts_with('.')
-        || s.starts_with("crate::")
-        || s.starts_with("self::")
-        || s.starts_with("super::")
-        || s.starts_with("@/")
-        || s.starts_with("~/")
-}
+pub use crate::dependencies::is_local_spec;
 
 fn build_modules(engine: &SearchEngine, containment: bool) -> ModulesResponse {
     let index = &engine.dependency_index;

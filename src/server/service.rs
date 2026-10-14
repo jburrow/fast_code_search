@@ -10,6 +10,8 @@ use tracing::{info, warn};
 /// gRPC response header naming the limits that cut a search short
 /// (comma-separated [`crate::search::SearchLimit::as_str`] names).
 pub const LIMITS_HIT_HEADER: &str = "fcs-limits-hit";
+/// Response header naming how many files a graph-scoped search searched.
+pub const SCOPE_FILES_HEADER: &str = "fcs-scope-files";
 
 // Include the generated protobuf code
 pub mod search_proto {
@@ -157,6 +159,8 @@ impl CodeSearch for CodeSearchService {
                 .then(|| std::time::Duration::from_millis(req.deadline_ms as u64)),
             max_files: None,
             path_matches: 0,
+            deps: req.deps,
+            rdeps: req.rdeps,
         };
         let max_results = request.page_size();
         let limits = request
@@ -188,7 +192,7 @@ impl CodeSearch for CodeSearchService {
             }
         };
         let engine_arc = std::sync::Arc::clone(&self.engine);
-        let (matches, limits_hit) = tokio::task::spawn_blocking(move || {
+        let (matches, limits_hit, scope_files) = tokio::task::spawn_blocking(move || {
             // Held for the search's real lifetime, not the RPC future's.
             let _permit = permit;
             // Use try_read to avoid blocking when a write lock is held during indexing.
@@ -208,7 +212,17 @@ impl CodeSearch for CodeSearchService {
             let outcome = engine
                 .run(&request, limits)
                 .map_err(Status::invalid_argument)?;
-            Ok::<_, Status>((outcome.matches, outcome.info.limits_hit))
+            let hops: Vec<Option<u32>> = outcome
+                .matches
+                .iter()
+                .map(|m| outcome.scope.as_ref().and_then(|s| s.hops(m.file_id)))
+                .collect();
+            let scope_files = outcome.scope.as_ref().and_then(|s| s.file_count());
+            Ok::<_, Status>((
+                outcome.matches.into_iter().zip(hops).collect::<Vec<_>>(),
+                outcome.info.limits_hit,
+                scope_files,
+            ))
         })
         .await
         .map_err(|e| Status::internal(format!("Search task panicked: {}", e)))??;
@@ -217,7 +231,7 @@ impl CodeSearch for CodeSearchService {
 
         // Spawn a task to stream results
         tokio::spawn(async move {
-            for m in matches {
+            for (m, hops) in matches {
                 let match_type = if m.is_reference {
                     MatchType::SymbolReference
                 } else if m.is_symbol {
@@ -239,6 +253,7 @@ impl CodeSearch for CodeSearchService {
                     match_column: m.match_column as i32,
                     dependency_count: m.dependency_count,
                     content_truncated: m.content_truncated,
+                    hops,
                 };
 
                 if tx.send(Ok(result)).await.is_err() {
@@ -254,6 +269,12 @@ impl CodeSearch for CodeSearchService {
             let names: Vec<&str> = limits_hit.iter().map(|l| l.as_str()).collect();
             if let Ok(v) = names.join(",").parse() {
                 response.metadata_mut().insert(LIMITS_HIT_HEADER, v);
+            }
+        }
+        // Likewise the size of a graph-scoped search's file set.
+        if let Some(n) = scope_files {
+            if let Ok(v) = n.to_string().parse() {
+                response.metadata_mut().insert(SCOPE_FILES_HEADER, v);
             }
         }
         Ok(response)

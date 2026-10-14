@@ -3147,7 +3147,7 @@ fn path_search_engine() -> (TempDir, SearchEngine) {
 fn path_hits(engine: &SearchEngine, q: &str) -> Vec<String> {
     let parsed = crate::search::parse_query(q);
     engine
-        .search_paths(PathQuery::Terms(&parsed), "", "", 50, None)
+        .search_paths(PathQuery::Terms(&parsed), "", "", 50, None, None)
         .unwrap()
         .matches
         .into_iter()
@@ -3188,7 +3188,7 @@ fn path_search_matches_a_pasted_absolute_path() {
         .replace('\\', "/");
     let parsed = crate::search::parse_query(&abs);
     let found = engine
-        .search_paths(PathQuery::Terms(&parsed), "", "", 10, None)
+        .search_paths(PathQuery::Terms(&parsed), "", "", 10, None, None)
         .unwrap();
     assert_eq!(found.total, 1);
     let m = &found.matches[0];
@@ -3253,7 +3253,7 @@ fn path_search_honours_terms_filters_and_options() {
     // Ranges are byte offsets into the shown path.
     let parsed = crate::search::parse_query("web api");
     let m = &engine
-        .search_paths(PathQuery::Terms(&parsed), "", "", 1, None)
+        .search_paths(PathQuery::Terms(&parsed), "", "", 1, None, None)
         .unwrap()
         .matches[0];
     assert_eq!(m.ranges, vec![(9, 12), (13, 16)]);
@@ -3263,12 +3263,12 @@ fn path_search_honours_terms_filters_and_options() {
 fn path_search_regex_and_limit() {
     let (_t, engine) = path_search_engine();
     let found = engine
-        .search_paths(PathQuery::Regex(r"web/\w+\.rs$"), "", "", 1, None)
+        .search_paths(PathQuery::Regex(r"web/\w+\.rs$"), "", "", 1, None, None)
         .unwrap();
     assert_eq!(found.total, 2);
     assert_eq!(found.matches.len(), 1);
     assert!(engine
-        .search_paths(PathQuery::Regex("("), "", "", 1, None)
+        .search_paths(PathQuery::Regex("("), "", "", 1, None, None)
         .is_err());
 }
 
@@ -3280,4 +3280,203 @@ fn path_search_hides_the_root_name_when_configured() {
     // The root name is not part of what is shown, so it does not match.
     assert!(path_hits(&engine, "repo").is_empty());
     assert_eq!(path_hits(&engine, "src/web/api.rs"), ["src/web/api.rs"]);
+}
+
+/// Graph-scoped search (`deps:` / `rdeps:`) on a small Python project:
+/// `app/main.py` imports `pkg` (its `__init__.py`), which re-exports
+/// `pkg/core.py`; `pkg/util.py` and `tool.go` are outside the graph.
+fn graph_scope_engine() -> (TempDir, SearchEngine) {
+    let dir = TempDir::new().unwrap();
+    let files = [
+        ("app/main.py", "from pkg import thing\nWeight = 1\n"),
+        ("pkg/__init__.py", "from .core import thing\n"),
+        ("pkg/core.py", "def thing():\n    pass\nWeight = 2\n"),
+        ("pkg/util.py", "Weight = 3\n"),
+        ("lib/util.py", "Weight = 4\nfrom .missing import x\n"),
+        ("tool.go", "var Weight = 5\n"),
+    ];
+    let mut engine = SearchEngine::new();
+    for (rel, body) in files {
+        let p = dir.path().join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, body).unwrap();
+    }
+    for (rel, _) in files {
+        engine.index_file(dir.path().join(rel)).unwrap();
+    }
+    engine.resolve_imports();
+    engine.finalize();
+    (dir, engine)
+}
+
+fn scoped(engine: &SearchEngine, req: crate::search::SearchRequest) -> Result<Vec<String>, String> {
+    let outcome = engine.run(&req, SearchLimits::new(50))?;
+    let mut files: Vec<String> = outcome
+        .matches
+        .iter()
+        .map(|m| {
+            // The path below the temporary directory.
+            let p = m.file_path.replace('\\', "/");
+            let at = p.find("/.tmp").expect("under the temp dir") + 1;
+            p[at..].split_once('/').unwrap().1.to_string()
+        })
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn text(q: &str) -> crate::search::SearchRequest {
+    crate::search::SearchRequest {
+        query: q.to_string(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_rdeps_reaches_importers_through_the_package_entry() {
+    let (_dir, engine) = graph_scope_engine();
+    assert_eq!(
+        scoped(&engine, text("Weight rdeps:pkg/core.py")).unwrap(),
+        vec!["app/main.py", "pkg/core.py"]
+    );
+    // The scope reports its size and each file's distance.
+    let outcome = engine
+        .run(&text("Weight rdeps:pkg/core.py"), SearchLimits::new(50))
+        .unwrap();
+    let scope = outcome.scope.expect("scoped");
+    assert_eq!(scope.file_count(), Some(3)); // core, __init__, main
+    assert_eq!(scope.filters, vec!["rdeps:pkg/core.py:1"]);
+    for m in &outcome.matches {
+        let want = if m.file_path.ends_with("core.py") {
+            0
+        } else {
+            1
+        };
+        assert_eq!(scope.hops(m.file_id), Some(want), "{}", m.file_path);
+    }
+}
+
+#[test]
+fn test_deps_reaches_modules_behind_the_package_entry() {
+    let (_dir, engine) = graph_scope_engine();
+    assert_eq!(
+        scoped(&engine, text("Weight deps:app/main.py")).unwrap(),
+        vec!["app/main.py", "pkg/core.py"]
+    );
+    // Negated: everything but those files, walked strictly (no
+    // pass-through), so pkg/core.py behind the package entry stays in.
+    assert_eq!(
+        scoped(&engine, text("Weight -deps:app/main.py")).unwrap(),
+        vec!["lib/util.py", "pkg/core.py", "pkg/util.py", "tool.go"]
+    );
+    // Graph filters AND with path and language filters.
+    assert_eq!(
+        scoped(&engine, text("Weight deps:app/main.py file:pkg/")).unwrap(),
+        vec!["pkg/core.py"]
+    );
+    assert_eq!(
+        scoped(&engine, text("Weight deps:app/main.py rdeps:pkg/core.py")).unwrap(),
+        vec!["app/main.py", "pkg/core.py"]
+    );
+}
+
+#[test]
+fn test_graph_scope_anchor_errors_are_explicit() {
+    let (_dir, engine) = graph_scope_engine();
+    let err = |q: &str| scoped(&engine, text(q)).unwrap_err();
+    assert!(err("Weight rdeps:nope.py").contains("no indexed file matches nope.py"));
+    let e = err("Weight rdeps:util.py");
+    assert!(
+        e.contains("matches 2 files") && e.contains("lib/util.py"),
+        "{e}"
+    );
+    assert!(err("Weight rdeps:tool.go").contains("no import graph for .go"));
+    assert!(err("Weight rdeps:pkg/core.py:0").contains("hops must be 1 to 10"));
+    assert!(err("Weight rdeps:pkg/core.py:x").contains("no indexed file matches"));
+}
+
+#[test]
+fn test_graph_scope_hops_folders_and_regex() {
+    let (_dir, engine) = graph_scope_engine();
+    // A folder anchor is every graph file under it.
+    assert_eq!(
+        scoped(&engine, text("Weight rdeps:pkg/")).unwrap(),
+        vec!["app/main.py", "pkg/core.py", "pkg/util.py"]
+    );
+    assert_eq!(
+        scoped(&engine, text("Weight deps:app/main.py:*")).unwrap(),
+        vec!["app/main.py", "pkg/core.py"]
+    );
+    // A regex is all pattern; the request field scopes it.
+    let regex = |q: &str, rdeps: &[&str]| crate::search::SearchRequest {
+        query: q.to_string(),
+        mode: crate::search::SearchMode::Regex,
+        rdeps: rdeps.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    };
+    assert_eq!(
+        scoped(&engine, regex(r"Weight = \d", &["pkg/core.py"])).unwrap(),
+        vec!["app/main.py", "pkg/core.py"]
+    );
+    assert!(scoped(&engine, regex(r"Weight rdeps:x", &[]))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn test_graph_scope_counts_unresolved_project_imports() {
+    let (_dir, engine) = graph_scope_engine();
+    let run = |q: &str| {
+        engine
+            .run(&text(q), SearchLimits::new(50))
+            .unwrap()
+            .scope
+            .unwrap()
+    };
+    assert_eq!(run("Weight rdeps:lib/util.py").unresolved_local, 1);
+    assert_eq!(run("Weight rdeps:pkg/core.py").unresolved_local, 0);
+}
+
+/// Importers reached through a package entry file are kept only when they
+/// name something the anchor defines.
+#[test]
+fn test_rdeps_through_a_package_entry_needs_a_name_from_the_anchor() {
+    let dir = TempDir::new().unwrap();
+    let files = [
+        (
+            "pkg/__init__.py",
+            "from .core import thing\nfrom .other import helper\n",
+        ),
+        ("pkg/core.py", "def thing():\n    return 1  # marker\n"),
+        ("pkg/other.py", "def helper():\n    return 2  # marker\n"),
+        (
+            "uses_thing.py",
+            "from pkg import thing\nthing()  # marker\n",
+        ),
+        (
+            "uses_helper.py",
+            "from pkg import helper\nhelper()  # marker\n",
+        ),
+    ];
+    let mut engine = SearchEngine::new();
+    for (rel, body) in files {
+        let p = dir.path().join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, body).unwrap();
+    }
+    for (rel, _) in files {
+        engine.index_file(dir.path().join(rel)).unwrap();
+    }
+    engine.resolve_imports();
+    engine.finalize();
+    assert_eq!(
+        scoped(&engine, text("marker rdeps:pkg/core.py")).unwrap(),
+        vec!["pkg/core.py", "uses_thing.py"]
+    );
+    // Without the package entry in the way, every importer counts.
+    assert_eq!(
+        scoped(&engine, text("marker rdeps:pkg/__init__.py")).unwrap(),
+        vec!["uses_helper.py", "uses_thing.py"]
+    );
 }

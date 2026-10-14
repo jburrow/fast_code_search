@@ -323,7 +323,9 @@ function isYesToken(v) {
     return ['yes', 'y', 'true', '1', 'on'].includes(String(v).toLowerCase());
 }
 
-const QUERY_OPERATORS = ['-file:', 'file:', '-lang:', 'lang:', 'case:', 'word:'];
+const QUERY_OPERATORS = [
+    '-file:', 'file:', '-lang:', 'lang:', '-rdeps:', 'rdeps:', '-deps:', 'deps:', 'case:', 'word:',
+];
 
 /**
  * Split on whitespace, like src/search/query_syntax.rs. Each token keeps its
@@ -373,7 +375,8 @@ function isKnownLang(name) {
 
 /**
  * Parse a plain-text query exactly like src/search/query_syntax.rs: the
- * `file:`/`lang:`/`-file:`/`-lang:` filters are dropped here, `case:` and
+ * `file:`/`lang:`/`deps:`/`rdeps:` filters (and their `-` forms) are
+ * dropped here, `case:` and
  * `word:` set options, and everything else is one literal, as typed
  * (quotes and a leading `-` included). Runs of text separated by operators
  * are joined by one space. An operator without an argument, or `lang:`
@@ -948,6 +951,47 @@ function pathFilterParam(text) {
     return out.split(';').map(s => s.trim()).filter(Boolean).join(';');
 }
 
+/**
+ * The results-header note for a graph-scoped search (`deps:` / `rdeps:`):
+ * how many files it searched, and a warning when imports in those files
+ * resolve to nothing (the scope may be missing files). null when unscoped.
+ * @param {object} data search response
+ * @returns {{text: string, title: string, incomplete: boolean}|null}
+ */
+function scopeLabel(data) {
+    const scope = data && data.scope;
+    if (!scope || !Array.isArray(scope.filters)) return null;
+    const describe = (f) => {
+        const m = /^(-?)(r?deps):(.*):(\d+|\*)$/.exec(f);
+        if (!m) return f;
+        const [, neg, kind, path, hops] = m;
+        const what = kind === 'rdeps' ? 'files that import' : 'files imported by';
+        const reach = hops === '*' ? 'at any distance' : hops === '1' ? 'directly' : `within ${hops} hops`;
+        return `${neg ? 'not ' : ''}${path} and the ${what} it ${reach}`;
+    };
+    const n = scope.files;
+    const text = n == null
+        ? 'Scoped by imports'
+        : `In ${Number(n).toLocaleString('en-US')} file${n === 1 ? '' : 's'} by imports`;
+    const lines = ['Searched only ' + scope.filters.map(describe).join('; and ')];
+    const gap = Number(scope.unresolved_local) || 0;
+    if (gap > 0) {
+        lines.push(`${gap.toLocaleString('en-US')} import${gap === 1 ? '' : 's'} written as project paths in these files resolve to no file, so the scope may be missing files.`);
+    }
+    return { text: gap > 0 ? `${text} (may be incomplete)` : text, title: lines.join('\n'), incomplete: gap > 0 };
+}
+
+/**
+ * A search URL limited to `path` and the files that import it (`rdeps`) or
+ * that it imports (`deps`), keeping `query` when there is one.
+ */
+function scopedSearchUrl(kind, path, query) {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    params.set(kind === 'deps' ? 'deps' : 'rdeps', path);
+    return '/?' + params.toString();
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         MAX_RESULTS_LIMIT,
@@ -1002,5 +1046,7 @@ if (typeof module !== 'undefined' && module.exports) {
         noResultSuggestions,
         regexErrorSuggestions,
         pathFilterParam,
+        scopeLabel,
+        scopedSearchUrl,
     };
 }

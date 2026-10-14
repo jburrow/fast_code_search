@@ -26,6 +26,9 @@ pub struct PathFilter {
     include: Option<GlobSet>,
     /// Exclude patterns - file must not match any
     exclude: Option<GlobSet>,
+    /// Further include groups, each of which the file must also match (one
+    /// pattern per group is enough): `lang:` narrows `file:`, not widens it.
+    require: Vec<GlobSet>,
 }
 
 impl PathFilter {
@@ -89,7 +92,29 @@ impl PathFilter {
             Some(builder.build().context("Failed to build exclude GlobSet")?)
         };
 
-        Ok(Self { include, exclude })
+        Ok(Self {
+            include,
+            exclude,
+            require: Vec::new(),
+        })
+    }
+
+    /// Also require a path to match one of `patterns` (no-op when empty).
+    pub fn and_include(mut self, patterns: &[String]) -> Result<Self> {
+        if patterns.is_empty() {
+            return Ok(self);
+        }
+        let mut builder = GlobSetBuilder::new();
+        for pattern in patterns {
+            for normalized in Self::expand_pattern(pattern) {
+                let glob = Glob::new(&normalized)
+                    .with_context(|| format!("Invalid include glob pattern: {}", pattern))?;
+                builder.add(glob);
+            }
+        }
+        self.require
+            .push(builder.build().context("Failed to build include GlobSet")?);
+        Ok(self)
     }
 
     /// Parse semicolon-delimited patterns into a vector.
@@ -135,7 +160,7 @@ impl PathFilter {
             None => true, // No include patterns = include all
         };
 
-        if !included {
+        if !included || !self.require.iter().all(|set| set.is_match(path)) {
             return false;
         }
 
@@ -150,7 +175,7 @@ impl PathFilter {
 
     /// Check if this filter has any patterns (include or exclude).
     pub fn is_empty(&self) -> bool {
-        self.include.is_none() && self.exclude.is_none()
+        self.include.is_none() && self.exclude.is_none() && self.require.is_empty()
     }
 
     /// Returns true if the path matches any *exclude* pattern (ignores include

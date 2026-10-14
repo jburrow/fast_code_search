@@ -168,11 +168,17 @@ Options:
       --max-files <N>
           Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
+      --deps <PATH[:N]>
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
+
+      --rdeps <PATH[:N]>
+          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -272,11 +278,17 @@ Options:
       --max-files <N>
           Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
+      --deps <PATH[:N]>
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
+
+      --rdeps <PATH[:N]>
+          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -376,11 +388,17 @@ Options:
       --max-files <N>
           Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
+      --deps <PATH[:N]>
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
+
+      --rdeps <PATH[:N]>
+          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)

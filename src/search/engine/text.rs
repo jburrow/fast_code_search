@@ -276,7 +276,8 @@ pub(super) fn merged_path_filter(
         .collect();
     include.extend(parsed.include_globs.iter().map(String::as_str));
     exclude.extend(parsed.exclude_globs.iter().map(String::as_str));
-    PathFilter::from_delimited(&include.join(";"), &exclude.join(";"))
+    PathFilter::from_delimited(&include.join(";"), &exclude.join(";"))?
+        .and_include(&parsed.lang_globs)
 }
 
 /// 0-based character column of `byte_offset` within `line`.

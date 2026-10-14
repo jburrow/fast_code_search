@@ -219,6 +219,13 @@ pub struct SearchArgs {
     /// (default: the server's fast_rank_files, 2000)
     #[arg(long, value_name = "N")]
     pub max_files: Option<usize>,
+    /// Only search this file and what it imports, N hops deep (1 by
+    /// default; `*` for any distance). Repeatable; `-PATH` leaves them out.
+    #[arg(long = "deps", value_name = "PATH[:N]", allow_hyphen_values = true)]
+    pub deps: Vec<String>,
+    /// Only search this file and the files that import it (as `--deps`).
+    #[arg(long = "rdeps", value_name = "PATH[:N]", allow_hyphen_values = true)]
+    pub rdeps: Vec<String>,
 }
 
 /// Search mode, chosen by the subcommand.
@@ -248,6 +255,9 @@ pub struct SearchRequest {
     pub files: usize,
     /// Candidate files fast ranking may open (`None` = the server's default).
     pub max_files: Option<usize>,
+    /// Graph filters, semicolon-separated `PATH[:N]` (`--deps` / `--rdeps`).
+    pub deps: String,
+    pub rdeps: String,
 }
 
 impl SearchRequest {
@@ -273,6 +283,8 @@ impl SearchRequest {
             timeout_ms: args.timeout_ms,
             files: 0,
             max_files: args.max_files,
+            deps: args.deps.join(";"),
+            rdeps: args.rdeps.join(";"),
         }
     }
 
@@ -316,6 +328,12 @@ impl SearchRequest {
         }
         if let Some(n) = self.max_files {
             p.push(("max_files", n.to_string()));
+        }
+        if !self.deps.is_empty() {
+            p.push(("deps", self.deps.clone()));
+        }
+        if !self.rdeps.is_empty() {
+            p.push(("rdeps", self.rdeps.clone()));
         }
         p
     }
@@ -634,6 +652,8 @@ impl Session {
             timeout: (req.timeout_ms > 0).then(|| Duration::from_millis(req.timeout_ms)),
             max_files: req.max_files,
             path_matches: req.files,
+            deps: crate::web::split_graph_param(&req.deps),
+            rdeps: crate::web::split_graph_param(&req.rdeps),
         };
         let settings = self
             .config
@@ -652,7 +672,12 @@ impl Session {
             ),
             None => (Vec::new(), None),
         };
-        let results = crate::web::results_to_json(&engine, outcome.matches, req.context);
+        let results = crate::web::results_to_json(
+            &engine,
+            outcome.matches,
+            req.context,
+            outcome.scope.as_deref(),
+        );
         let total_results = results.len();
         Ok(SearchResponse {
             results,
@@ -671,6 +696,10 @@ impl Session {
             total_candidates: Some(info.total_candidates),
             candidates_searched: Some(info.candidates_searched),
             max_files_allowed: None,
+            scope: outcome
+                .scope
+                .as_deref()
+                .map(crate::web::ScopeJson::from_scope),
         })
     }
 

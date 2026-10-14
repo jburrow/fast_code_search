@@ -242,6 +242,37 @@ q = "file:notanoperator"
 globs = ["*notanoperator*", "**/*notanoperator*/**"]
 why = "a file: filter with nothing to search: fcs returns nothing"
 
+[[query]]
+q = "needle file:src/ lang:rust"
+globs = ["**/src/**/*.rs"]
+why = "file: and lang: both apply (they used to widen each other)"
+
+# ------------------------------------------------- graph scope (deps:)
+# rg has no import graph: its hits are kept only in the scope's files.
+
+[[query]]
+q = "QuerySet rdeps:django/db/models/query.py"
+why = "the module and the files importing it directly (through django.db.models' __init__)"
+
+[[query]]
+q = "QuerySet deps:django/db/models/query.py:2"
+why = "what the module imports, two hops deep"
+
+[[query]]
+q = "spawn_blocking rdeps:tokio/src/runtime/blocking/pool.rs:*"
+why = "Rust: everything that reaches the blocking pool, through mod.rs re-exports"
+
+[[query]]
+q = "spawn_blocking -rdeps:tokio/src/runtime/blocking/pool.rs lang:rust"
+globs = ["*.rs"]
+why = "a negated scope ANDed with a language"
+
+[[query]]
+q = 'fn \w+_blocking'
+mode = "regex"
+rdeps = ["tokio/src/runtime/blocking/pool.rs:2"]
+why = "a regex is all pattern; the rdeps field scopes it"
+
 # ------------------------------------------- several words (one phrase)
 
 [[query]]

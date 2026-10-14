@@ -10,6 +10,9 @@ const queryInput = document.getElementById('query');
 const maxResultsSelect = document.getElementById('max-results');
 const includeFilterInput = document.getElementById('include-filter');
 const excludeFilterInput = document.getElementById('exclude-filter');
+// Graph scope (`rdeps` / `deps`): per task, so kept in the URL, not storage.
+const rdepsFilterInput = document.getElementById('rdeps-filter');
+const depsFilterInput = document.getElementById('deps-filter');
 const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const referencesModeCheckbox = document.getElementById('references-mode');
@@ -166,6 +169,8 @@ function syncFilterIndicators() {
     const fields = [
         [includeFilterInput, 'Only in'],
         [excludeFilterInput, 'Skipping'],
+        [rdepsFilterInput, 'Files that import'],
+        [depsFilterInput, 'Files imported by'],
     ].filter(([input]) => input && input.value.trim());
 
     const count = document.getElementById('filter-count');
@@ -279,6 +284,8 @@ function applyUrlState(params, opts = {}) {
     text(queryInput, 'q');
     text(includeFilterInput, 'include');
     text(excludeFilterInput, 'exclude');
+    text(rdepsFilterInput, 'rdeps');
+    text(depsFilterInput, 'deps');
     if (params.has('max')) applyMaxResults(params.get('max'));
     else if (absentIsDefault) setSelectValue(maxResultsSelect, '50');
     select(rankModeSelect, 'rank', 'auto');
@@ -292,6 +299,7 @@ function applyUrlState(params, opts = {}) {
     // Auto-open the VISIBLE filter panel when a shared URL carries filter params,
     // so the applied filters are discoverable.
     const hasAdvanced = params.has('include') || params.has('exclude') ||
+        params.has('rdeps') || params.has('deps') ||
         params.has('rank') || params.has('max') || params.has('context');
     if (hasAdvanced) {
         const filterPanel = document.getElementById('filter-panel');
@@ -319,6 +327,11 @@ function currentUrlParams() {
 
     const exclude = excludeFilterInput?.value.trim() || '';
     if (exclude) params.set('exclude', exclude);
+
+    const rdeps = rdepsFilterInput?.value.trim() || '';
+    if (rdeps) params.set('rdeps', rdeps);
+    const deps = depsFilterInput?.value.trim() || '';
+    if (deps) params.set('deps', deps);
 
     if (regexModeCheckbox?.checked) params.set('regex', 'true');
     if (symbolsModeCheckbox?.checked) params.set('symbols', 'true');
@@ -1044,6 +1057,10 @@ function buildSearchParams(s) {
     const exclude = pathFilterParam(s.excludeFilter);
     if (include) params.set('include', include);
     if (exclude) params.set('exclude', exclude);
+    const rdeps = pathFilterParam(s.rdepsFilter);
+    const deps = pathFilterParam(s.depsFilter);
+    if (rdeps) params.set('rdeps', rdeps);
+    if (deps) params.set('deps', deps);
     // The three modes are mutually exclusive in the UI (the server lets
     // references and symbols silently win over regex).
     if (s.isReferences) params.set('references', 'true');
@@ -1138,6 +1155,8 @@ async function performSearch(opts = {}) {
         maxResults: currentMaxResults(),
         includeFilter: includeFilterInput?.value.trim() || '',
         excludeFilter: excludeFilterInput?.value.trim() || '',
+        rdepsFilter: rdepsFilterInput?.value.trim() || '',
+        depsFilter: depsFilterInput?.value.trim() || '',
         isRegex: regexModeCheckbox?.checked || false,
         symbolsOnly: symbolsModeCheckbox?.checked || false,
         isReferences: referencesModeCheckbox?.checked || false,
@@ -1421,6 +1440,15 @@ function renderSearch(search, durationMs, opts = {}) {
         freshnessEl.style.display = freshness ? '' : 'none';
         freshnessEl.textContent = freshness ? freshness.text : '';
         freshnessEl.title = freshness ? freshness.title : '';
+    }
+
+    const scopeEl = document.getElementById('search-scope');
+    const scope = scopeLabel(data);
+    if (scopeEl) {
+        scopeEl.style.display = scope ? '' : 'none';
+        scopeEl.textContent = scope ? scope.text : '';
+        scopeEl.title = scope ? scope.title : '';
+        scopeEl.style.color = scope && scope.incomplete ? 'var(--warn)' : '';
     }
 
     renderFileMatches(data);
@@ -1710,7 +1738,8 @@ function renderGroupHtml(group) {
             (result.content_truncated
                 ? `<span class="hit-tag truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
                 : '');
-        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}&#10;Click to open the file here`;
+        const hops = result.hops == null ? '' : ` · ${result.hops === 0 ? 'the scope\'s own file' : `${result.hops} import hop${result.hops === 1 ? '' : 's'} away`}`;
+        const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}${hops}&#10;Click to open the file here`;
         // The preview icon at the end of the match line: hover it to preview
         // the file, click it to open the file at this line.
         const openBtn = `<button type="button" class="hit-open view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
@@ -2185,6 +2214,7 @@ async function showDepsTooltip(badgeEl, filePath) {
             `<div class="deps-popover-header">${escapeHtml(basename)}</div>` +
             dependentsSection +
             importsSection +
+            `<a class="deps-popover-explore" href="${escapeHtml(scopedSearchUrl('rdeps', filePath, queryInput.value.trim()))}" title="Search only this file and the files that import it">Search the files that import it →</a>` +
             `<a class="deps-popover-explore" href="${escapeHtml(graphExplorerUrl(filePath))}">Open in dependency explorer →</a>`;
 
         // Wire popover links/“more” via delegation using dataset values.
@@ -2852,7 +2882,13 @@ document.getElementById('active-filters')?.addEventListener('click', (e) => {
     if (btn) clearPathFilters([document.getElementById(btn.dataset.clear)]);
 });
 document.getElementById('clear-filters-btn')?.addEventListener('click', () => {
-    clearPathFilters([includeFilterInput, excludeFilterInput]);
+    clearPathFilters([includeFilterInput, excludeFilterInput, rdepsFilterInput, depsFilterInput]);
+});
+
+[rdepsFilterInput, depsFilterInput].filter(Boolean).forEach((input) => {
+    input.addEventListener('input', syncFilterIndicators);
+    input.addEventListener('input', debouncedSearch);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') optionChanged(); });
 });
 
 if (includeFilterInput) {

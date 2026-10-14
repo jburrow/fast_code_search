@@ -686,6 +686,7 @@
                     <span id="search-meta" class="font-label text-xs text-outline"></span>
                     <button type="button" id="more-files-btn" class="font-label label-case text-xs font-bold underline hover:text-black" style="display: none;"></button>
                     <span id="index-freshness" class="font-label text-xs text-outline" style="display: none;"></span>
+                    <span id="search-scope" class="font-label text-xs text-outline" style="display: none;"></span>
                 </div>
                 <!-- Which path filters these results went through (keyword.js) -->
                 <div id="active-filters" class="active-filters" hidden></div>
@@ -732,6 +733,16 @@
                     <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
                         Skip paths
                         <input type="text" id="exclude-filter" placeholder="**/test/**, **/vendor/**" autocomplete="off"
+                            class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline" title="Only this file and the files that import it. Add :2 for two import hops, :* for any distance. Same as rdeps: in the query.">
+                        Files that import
+                        <input type="text" id="rdeps-filter" placeholder="src/search/ranking.rs:2" autocomplete="off"
+                            class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline" title="Only this file and the files it imports. Add :2 for two import hops, :* for any distance. Same as deps: in the query.">
+                        Files imported by
+                        <input type="text" id="deps-filter" placeholder="app/main.py" autocomplete="off"
                             class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     </label>
                 </div>
