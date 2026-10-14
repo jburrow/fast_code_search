@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1b982611.js";
+            window.path_to_searchindex_js = "searchindex-4448ad18.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -535,7 +535,10 @@ the binary.</p>
 <h2 id="searching"><a class="header" href="#searching">Searching</a></h2>
 <ul>
 <li>Type and press Enter (or wait: the page searches as you type after a short
-pause). <code>Ctrl</code>/<code>Cmd</code>+<code>K</code> focuses the box from anywhere; <code>/</code> does too.</li>
+pause). <code>Ctrl</code>/<code>Cmd</code>+<code>K</code> focuses the box from anywhere; <code>/</code> does too.
+Focusing the box lists recent searches (kept in this browser): one
+counts once you press Enter, pause for two seconds or move on to the
+results.</li>
 <li><strong>REGEX</strong>, <strong>SYMBOLS</strong> and <strong>REFERENCES</strong> switch modes; <strong>FILTER</strong> opens
 page size, ranking mode, context lines and the path filters (<strong>SEARCH ONLY
 IN</strong> and <strong>SKIP PATHS</strong>: globs separated by <code>,</code> or <code>;</code>). While a path
@@ -4575,6 +4578,9 @@ tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Web UI: Semantic is no longer in the header nav, since semantic search
+is not being developed for now. The page still works at
+<code>/semantic.html</code> (and shows its tab while open).</li>
 <li>Import graph: a Rust path into the crate used without a <code>use</code>
 (<code>crate::a::b::f()</code>, <code>super::x::Y</code>) is an import of the module it names,
 so the dependency explorer, rankings and <code>rdeps:</code> see it. Rebuild the
@@ -4657,6 +4663,10 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Web UI: search history now records searches made by typing, not only
+ones submitted with Enter. A query counts once the box sits unchanged for
+two seconds or you move on (into the results, a preview or a filter);
+carrying on typing replaces that entry rather than leaving prefixes.</li>
 <li>Results are in rank order again, with each file’s hits together: files in
 the order of their best hit, then every hit of that file by score. Since
 v0.12.0 hits were interleaved by file (every file’s best hit before any
