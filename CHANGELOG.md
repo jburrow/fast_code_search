@@ -67,7 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the icon previews the file; clicking it pins the preview, which then
   stays open until Escape, a click outside it or its ×, as does clicking
   or scrolling inside it. The line number opens the file and no longer
-  previews it on hover.
+  previews it on hover. The preview's Open button is now "Full view": it
+  opens the file viewer at the match the preview is showing (after ↑/↓,
+  not always the original hit) and closes the preview.
 - Web UI: results show one line of context either side of each hit by
   default (was the match line only). Filter → Context lines still sets it
   and is remembered once you pick a value; `context=0` in a link shows the

@@ -888,11 +888,18 @@ async function showContextTooltip(resultItem, filePath, lineNumber, wholeFile = 
                 <span class="ctx-nav-pos"></span>
                 <button type="button" data-step="1" title="Next match" aria-label="Next match">↓</button>
             </span>
-            <button type="button" class="ctx-open" title="Open in the file viewer">Open</button>
+            <button type="button" class="ctx-open" title="Open this line in the full file viewer: go to definition, dependencies, copy link">Full view</button>
             <button type="button" class="ctx-close" title="Close (Esc)" aria-label="Close preview">×</button>
         </div>
         <div class="ctx-file-body"><div class="ctx-loading">Loading…</div></div>`;
-    tooltip.querySelector('.ctx-open').addEventListener('click', () => showFileModal(filePath, lineNumber));
+    // Hand over to the file viewer at the match the preview is showing
+    // (↑/↓ may have moved it), and close the preview behind it.
+    tooltip._line = lineNumber;
+    tooltip.querySelector('.ctx-open').addEventListener('click', () => {
+        const line = tooltip._line;
+        hideContextTooltipImmediately();
+        showFileModal(filePath, line);
+    });
     tooltip.querySelector('.ctx-close').addEventListener('click', hideContextTooltipImmediately);
     tooltip.classList.toggle('ctx-pinned', _ctxPinned);
     positionTooltip(tooltip, resultItem);
@@ -925,6 +932,7 @@ function wireContextNav(tooltip, view, startLine) {
         view.linesEl.querySelectorAll('.ctx-current').forEach(l => l.classList.remove('ctx-current'));
         const row = scroll ? view.goTo(lines[current]) : view.row(lines[current]);
         if (row) row.classList.add('ctx-current');
+        tooltip._line = lines[current];
         pos.textContent = `${(current + 1).toLocaleString()} of ${lines.length.toLocaleString()}`;
     };
     nav.hidden = false;
@@ -1775,7 +1783,7 @@ function wireResultGroups(root) {
         const lineNumber = parseInt(btn.dataset.lineNumber, 10) || 1;
         const wholeFile = btn.dataset.wholeFile === 'true';
         // Click pins the preview open (the document click handler has
-        // already closed any other one); its Open button opens the viewer.
+        // already closed any other one); its Full view button opens the viewer.
         btn.addEventListener('click', () => {
             clearTimeout(_ctxHoverTimer);
             if (isContextTooltipVisible() && _ctxAnchor === btn) { pinContextTooltip(); return; }
