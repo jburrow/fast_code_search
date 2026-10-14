@@ -172,6 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Python: an absolute import (`import pkg.mod`, `from pkg import x`) in a
+  file nested more than 8 folders below its package root resolved to
+  nothing, so the dependency explorer listed the project's own modules as
+  external packages. Every ancestor folder is now tried. A package in a
+  sibling folder put on `PYTHONPATH` (`lib/mypkg` imported from `apps/`)
+  is still not found; the graph support page lists it as a known gap.
 - Results are in rank order again, with each file's hits together: files in
   the order of their best hit, then every hit of that file by score. Since
   v0.12.0 hits were interleaved by file (every file's best hit before any

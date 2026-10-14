@@ -623,12 +623,11 @@ impl DependencyIndex {
         // `fields/` is the standard library, not `fields/json.py`. The
         // other ancestors, and their `src/` (a src layout), are possible
         // roots; the one where the most of the dotted name exists wins,
-        // the nearest on a tie. Stdlib and site-packages names find
-        // nothing and resolve to None.
+        // the nearest on a tie. Every ancestor is tried, however deep the
+        // importing file sits. Stdlib and site-packages names find nothing
+        // and resolve to None.
         let mut best: Option<(usize, PathBuf)> = None;
-        let mut base = Some(dir);
-        for _ in 0..8 {
-            let Some(b) = base else { break };
+        for b in dir.ancestors() {
             if self.indexed(&b.join("__init__.py")).is_none() {
                 for root in [b.to_path_buf(), b.join("src")] {
                     if let Some((k, p)) = self.python_candidates(&root, &segments) {
@@ -646,7 +645,6 @@ impl DependencyIndex {
                     }
                 }
             }
-            base = b.parent();
         }
         best.map(|(_, p)| p)
     }
@@ -1300,6 +1298,28 @@ mod tests {
             id_of(&temp, &idx, "django/__init__.py"),
             "`from django import missing` may name something in the package"
         );
+    }
+
+    /// An absolute import resolves however deep the importing file sits:
+    /// the package root may be many package folders above it.
+    #[test]
+    fn test_resolve_python_deep_package() {
+        let dirs = ["top", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+        let mut files = vec![("top/m.py".to_string(), "")];
+        for n in 1..=dirs.len() {
+            files.push((format!("{}/__init__.py", dirs[..n].join("/")), ""));
+        }
+        let deep = format!("{}/deep.py", dirs.join("/"));
+        files.push((deep.clone(), ""));
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), *c)).collect();
+        let (temp, idx) = setup(&refs);
+        let r = |imp: &str| {
+            idx.resolve_import_path(&temp.path().join(&deep), imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(r("top.m"), id_of(&temp, &idx, "top/m.py"));
+        assert_eq!(r("top.a.b"), id_of(&temp, &idx, "top/a/b/__init__.py"));
+        assert_eq!(r("os.path"), None);
     }
 
     /// imports are directories, packages resolve to `__init__.py`, and

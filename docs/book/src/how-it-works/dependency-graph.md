@@ -113,8 +113,8 @@ Python 3 looks for an absolute import only on `sys.path`, never next to the
 importing file. fcs does not know your `sys.path`, so it works out the
 likely entries from the folder layout.
 
-1. **Find the roots.** Walk up from the importing file's folder, up to 8
-   levels. A folder that contains `__init__.py` is part of a package, so it
+1. **Find the roots.** Walk up from the importing file's folder, all the
+   way up, however deep the file sits. A folder that contains `__init__.py` is part of a package, so it
    is *not* a root. Every other folder is a candidate root, and so is its
    `src/` subfolder (the "src layout").
 2. **Look under each root** for the dotted name, longest first, exactly as
