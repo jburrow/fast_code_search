@@ -69,6 +69,9 @@ struct JsConfigCache {
     nearest: FxHashMap<PathBuf, Option<PathBuf>>,
     /// Config file -> its parsed settings (`None` if unreadable).
     parsed: FxHashMap<PathBuf, Option<std::sync::Arc<JsConfig>>>,
+    /// Directory of an importing file -> its repository root (the nearest
+    /// ancestor holding `.git`).
+    repo_root: FxHashMap<PathBuf, Option<PathBuf>>,
 }
 
 /// Resolve `.` and `..` components without touching the file system.
@@ -641,30 +644,63 @@ impl DependencyIndex {
             return self.js_candidates(&dir.join(spec));
         }
         // tsconfig/jsconfig `paths`, then `baseUrl`, as tsc resolves them.
-        if let Some(config) = self.js_config(dir) {
-            if let Some(found) = self.resolve_js_config(&config, spec) {
+        let config = self.js_config(dir);
+        if let Some(config) = &config {
+            if let Some(found) = self.resolve_js_config(config, spec) {
                 return Some(found);
             }
         }
+        // Workspace packages: an indexed package.json carries that name.
+        if let Some(found) = self.resolve_js_workspace(spec) {
+            return Some(found);
+        }
         // Source-root aliases (`@/x`, `~/x`) with no `paths` entry (bundler
         // aliases): nearest ancestor with a package.json or tsconfig.json,
-        // then `src/x` or `x` under it.
+        // else the repository root; then `src/x` or `x` under it.
         if let Some(rest) = spec.strip_prefix("@/").or_else(|| spec.strip_prefix("~/")) {
-            let mut d = Some(dir);
-            while let Some(root) = d {
-                if root.join("package.json").is_file() || root.join("tsconfig.json").is_file() {
-                    return self
-                        .js_candidates(&root.join("src").join(rest))
-                        .or_else(|| self.js_candidates(&root.join(rest)));
-                }
-                d = root.parent();
-            }
-            return None;
+            let root = dir
+                .ancestors()
+                .find(|d| d.join("package.json").is_file() || d.join("tsconfig.json").is_file())
+                .map(Path::to_path_buf)
+                .or_else(|| self.js_repo_root(dir))?;
+            return self
+                .js_candidates(&root.join("src").join(rest))
+                .or_else(|| self.js_candidates(&root.join(rest)));
         }
-        // Bare package specifiers (`react`, `lodash/merge`, `@scope/pkg`) are
-        // external unless an indexed package.json carries that name (a
-        // workspace package): never guess a same-named local file.
-        self.resolve_js_workspace(spec)
+        // No tsconfig, or one without `baseUrl`/`paths`: treat the
+        // repository root as `baseUrl`, so `components/Button` or
+        // `src/lib/x` resolve when that file exists. Anything else
+        // (`react`, `lodash/merge`) is an external package.
+        if config.is_none_or(|c| c.base_url.is_none() && c.paths.is_empty()) {
+            return self
+                .js_repo_root(dir)
+                .and_then(|root| self.js_candidates(&root.join(spec)));
+        }
+        None
+    }
+
+    /// Nearest ancestor of `dir` holding `.git` (a directory, or a file in a
+    /// worktree), cached per directory.
+    fn js_repo_root(&self, dir: &Path) -> Option<PathBuf> {
+        if let Some(cached) = self
+            .js_configs
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .repo_root
+            .get(dir)
+        {
+            return cached.clone();
+        }
+        let root = dir
+            .ancestors()
+            .find(|d| d.join(".git").exists())
+            .map(Path::to_path_buf);
+        self.js_configs
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .repo_root
+            .insert(dir.to_path_buf(), root.clone());
+        root
     }
 
     /// `@acme/shared` or `@acme/shared/sub` where some indexed package.json
@@ -1376,6 +1412,45 @@ mod tests {
         );
         assert_eq!(r("@acme/other"), None);
         assert_eq!(r("react"), None);
+    }
+
+    /// With no tsconfig `baseUrl`/`paths`, the repository root (the folder
+    /// holding `.git`) acts as the base for non-relative imports.
+    #[test]
+    fn test_resolve_js_repo_root_fallback() {
+        let (temp, idx) = setup(&[
+            ("web/package.json", r#"{"name": "web"}"#),
+            ("web/src/main.ts", ""),
+            ("components/Button.tsx", ""),
+            ("lib/util/index.ts", ""),
+            ("src/routes.ts", ""),
+        ]);
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        let from = temp.path().join("web/src/main.ts").canonicalize().unwrap();
+        let r = |spec: &str| {
+            idx.resolve_import_path(&from, spec)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(
+            r("components/Button"),
+            id_of(&temp, &idx, "components/Button.tsx")
+        );
+        assert_eq!(r("lib/util"), id_of(&temp, &idx, "lib/util/index.ts"));
+        assert_eq!(r("react"), None, "no such file under the root");
+        assert_eq!(r("lodash/merge"), None);
+
+        // A tsconfig with `baseUrl` takes over: no repo-root guessing.
+        let (temp, idx) = setup(&[
+            (
+                "tsconfig.json",
+                r#"{"compilerOptions": {"baseUrl": "src"}}"#,
+            ),
+            ("src/main.ts", ""),
+            ("components/Button.tsx", ""),
+        ]);
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        let from = temp.path().join("src/main.ts").canonicalize().unwrap();
+        assert_eq!(idx.resolve_import_path(&from, "components/Button"), None);
     }
 
     #[test]

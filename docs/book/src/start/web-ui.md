@@ -88,8 +88,11 @@ For JavaScript/TypeScript, relative imports (`./x`, `../x`) are probed
 with each extension, `index.*` and the `.js` to `.ts` swap. Non-relative
 imports go through the `paths` and `baseUrl` of the nearest `tsconfig.json`
 (or `jsconfig.json`), following relative `extends`, the way `tsc` does.
-An `@/` or `~/` import with no `paths` entry is tried under the package's
-`src/` and then its root. A package name that matches the `name` of an
+Without a tsconfig, or with one that sets neither `baseUrl` nor `paths`,
+the repository root (the folder holding `.git`) is used as `baseUrl`, so
+`components/Button` finds `<repo>/components/Button.tsx`. An `@/` or `~/`
+import with no `paths` entry is tried under the package's `src/` and then
+its root (the repository root when there is no package.json). A package name that matches the `name` of an
 indexed `package.json` (a workspace package such as `@acme/shared`)
 resolves to that package's declared entry point (`types`, `source`,
 `module`, `main` or `exports`), then `src/index`, and a subpath
