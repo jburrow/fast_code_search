@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d6329b7f.js";
+            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -343,11 +343,17 @@ Options:
       --max-files &lt;N&gt;
           Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
+
+      --rdeps &lt;PATH[:N]&gt;
+          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -444,11 +450,17 @@ Options:
       --max-files &lt;N&gt;
           Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
+
+      --rdeps &lt;PATH[:N]&gt;
+          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -545,11 +557,17 @@ Options:
       --max-files &lt;N&gt;
           Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print only the files that match, one per line
+
+      --rdeps &lt;PATH[:N]&gt;
+          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)

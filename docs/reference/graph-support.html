@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d6329b7f.js";
+            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -229,6 +229,7 @@ reports them, and <code>file_dependencies</code> lists a file’s unresolved imp
 <tr><td><code>use my_crate::a;</code> inside <code>my_crate</code></td><td>yes (<code>[lib] name</code>, else <code>[package] name</code> with <code>-</code> as <code>_</code>)</td></tr>
 <tr><td><code>use a::{b, c};</code>, <code>use a::*;</code>, <code>use a as b;</code></td><td>yes, to the longest module path that exists (<code>a/b.rs</code>, then <code>a/b/mod.rs</code>)</td></tr>
 <tr><td><code>mod foo;</code></td><td>yes</td></tr>
+<tr><td><code>crate::a::f()</code>, <code>super::x::Y</code> used inline, without a <code>use</code></td><td>yes, once per file, like <code>use crate::a::f</code></td></tr>
 <tr><td><code>use other_workspace_crate::x;</code></td><td><strong>no</strong>: only the importing crate’s own name is recognised</td></tr>
 <tr><td><code>use crate::{a, b};</code></td><td><strong>no</strong>: reduces to <code>crate::</code>, which does not reach <code>lib.rs</code></td></tr>
 <tr><td><code>extern crate x;</code>, <code>#[path = "…"] mod x;</code></td><td><strong>no</strong></td></tr>

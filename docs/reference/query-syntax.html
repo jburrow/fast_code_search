@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d6329b7f.js";
+            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -202,16 +202,86 @@ included, is part of the text.</p>
 <tr><td><code>file:src/</code></td><td>Only paths under a <code>src</code> directory. A bare word matches anywhere in the path (<code>file:parser</code>); globs are used as written (<code>file:*.rs</code>, <code>file:crates/**/tests/**</code>).</td></tr>
 <tr><td><code>-file:vendor</code></td><td>Never paths matching the pattern.</td></tr>
 <tr><td><code>lang:rust</code>, <code>-lang:py</code></td><td>Only / never files of that language (by extension: <code>rs</code>/<code>rust</code>, <code>py</code>/<code>python</code>, <code>ts</code>, <code>js</code>, <code>go</code>, <code>java</code>, …).</td></tr>
+<tr><td><code>rdeps:src/search/ranking.rs</code></td><td>Only that file and the files that import it. See <a href="#search-by-imports-deps-and-rdeps">Search by imports</a>.</td></tr>
+<tr><td><code>deps:app/main.py</code></td><td>Only that file and the files it imports.</td></tr>
 <tr><td><code>case:yes</code></td><td>Match case exactly (the default is case-insensitive).</td></tr>
 <tr><td><code>word:yes</code></td><td>Whole words only.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Operators can be combined: <code>Widget file:src/ -lang:ts case:yes</code>. They are
+<p>Operators can be combined: <code>Widget file:src/ -lang:ts case:yes</code>. Filters
+of different kinds narrow each other (<code>file:src/ lang:rust</code> is the Rust
+files under <code>src/</code>); repeating one kind widens it (<code>lang:rust lang:py</code> is
+either language, <code>file:src/ file:lib/</code> either folder). They are
 whole words with an argument: <code>file:</code> alone, or <code>url=file:x</code>, is text.
 Operators between words join the words with one space, so <code>fn file:src/ main</code> searches for <code>fn main</code> under <code>src/</code>. The ends of the query are
 trimmed; spaces inside it are kept. To search for operator-looking text
 such as <code>file:x</code>, use a regex.</p>
+<h2 id="search-by-imports-deps-and-rdeps"><a class="header" href="#search-by-imports-deps-and-rdeps">Search by imports: <code>deps:</code> and <code>rdeps:</code></a></h2>
+<p>These limit a search to the files the import graph connects to one file,
+so the question “where is this used, among the code a change to this file
+could affect?” is one query:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Write</th><th>To search</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Weight rdeps:src/search/ranking.rs</code></td><td><code>ranking.rs</code> and the files that import it</td></tr>
+<tr><td><code>Weight rdeps:src/search/ranking.rs:2</code></td><td>the same, up to two imports away</td></tr>
+<tr><td><code>Weight rdeps:src/search/ranking.rs:*</code></td><td>everything that reaches <code>ranking.rs</code>, at any distance</td></tr>
+<tr><td><code>config deps:app/main.py</code></td><td><code>main.py</code> and the files it imports (<code>:N</code> and <code>:*</code> as above, 10 at most)</td></tr>
+<tr><td><code>Weight rdeps:src/search/</code></td><td>every file under the folder, and the files that import any of them</td></tr>
+<tr><td><code>Weight -rdeps:src/search/ranking.rs</code></td><td>everything except those files</td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li><strong>The path</strong> is the file’s path as results show it, or any trailing part
+of it that names one file (<code>rdeps:ranking.rs</code> when only one file ends
+that way). A path that matches no file, or several, is an error that
+lists them; so is a file in a language the graph does not cover (edges
+exist for Rust, Python and JavaScript/TypeScript, see <a href="graph-support.html">Dependency graph
+support</a>).</li>
+<li><strong>Combining</strong>: repeating <code>rdeps:</code> (or <code>deps:</code>) searches the union; a
+<code>deps:</code> and an <code>rdeps:</code> together search the files in both; both narrow
+<code>file:</code> and <code>lang:</code>, and they narrow each other.</li>
+<li><strong>Package entry files are passed through, carefully.</strong> An import of a
+package usually lands on its entry file (<code>mod.rs</code>, <code>lib.rs</code>, <code>main.rs</code>,
+<code>__init__.py</code>, <code>index.ts</code>/<code>index.js</code>), not on the module behind it. So an
+edge from an entry file to a module of its own package does not count as
+a hop, and a file reached across one is kept only if it names something
+the module on the other side defines (a function, type, constant or
+macro as a whole word, or the module itself in a path such as
+<code>ranking::</code> or <code>./ranking</code>). <code>rdeps:src/search/ranking.rs</code> therefore
+finds the files that <code>use crate::search::RankingWeights</code>, but not every
+importer of <code>crate::search</code>. Only one entry file is crossed in a row
+(<code>ranking.rs</code> to <code>search/mod.rs</code>, never on to <code>lib.rs</code> for free). A child
+module that imports its parent (Rust <code>use super::*</code>) is an ordinary hop:
+use <code>:2</code>.</li>
+<li><strong>Negated filters walk strictly.</strong> <code>-rdeps:</code> and <code>-deps:</code> follow import
+edges only, with no pass-through, so they never leave out a file that
+does not depend on the anchor.</li>
+<li><strong>Rust paths without a <code>use</code></strong> (<code>crate::search::fold::fold_str(…)</code>,
+<code>super::util::Thing</code>) count as imports of the module they name.</li>
+<li><strong>The scope is only as complete as the graph.</strong> The results header (and
+the <code>scope</code> object of the API, MCP’s text, <code>fcs</code>’s summary) says how many
+files were searched, and warns when imports in those files are written
+as project paths (<code>./x</code>, <code>crate::x</code>) but resolve to no file: the scope
+may be missing whatever they point at.</li>
+<li><strong>Ranking</strong>: nearer files rank a little higher; each hit’s <code>hops</code> (0 for
+the file itself and its package entry) is in the API response and the
+row’s tooltip.</li>
+<li><strong>Everywhere</strong>: in the query on any surface; for a regex, whose query is
+all pattern, as the <code>deps</code> / <code>rdeps</code> API parameters (semicolon-separated,
+a leading <code>-</code> to leave out), <code>fcs --deps PATH[:N]</code> / <code>--rdeps</code>, MCP
+<code>search_code</code>’s <code>deps</code> / <code>rdeps</code>, gRPC’s <code>deps</code> / <code>rdeps</code> fields. In the
+web UI they are the FILTER panel’s <strong>Files that import</strong> and <strong>Files
+imported by</strong> boxes, and the dependency popover and the explorer’s
+<strong>Search importers</strong> / <strong>Search its imports</strong> buttons fill them in.</li>
+</ul>
+<p>Inside the scope, matching is exactly what it is without one: a scoped
+search finds what ripgrep finds over the same files.</p>
 <h2 id="case"><a class="header" href="#case">Case</a></h2>
 <p>Plain text ignores case unless the query says <code>case:yes</code>. A regex matches
 case unless it starts with <code>(?i)</code> or the request says to ignore it. The

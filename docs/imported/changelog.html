@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d6329b7f.js";
+            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -188,6 +188,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Search by imports: <code>rdeps:PATH</code> limits a search to that file and the
+files that import it, <code>deps:PATH</code> to the file and what it imports
+(<code>:N</code> hops, <code>:*</code> for any distance, <code>-rdeps:</code> / <code>-deps:</code> to leave them
+out, a trailing <code>/</code> for a folder). An import that lands on a package’s
+entry file (<code>mod.rs</code>, <code>__init__.py</code>, <code>index.ts</code>) reaches the modules
+behind it without costing a hop, one entry file at a time, and only when
+the file names something the module defines; negated filters walk
+strictly. Unknown, ambiguous or graph-less
+anchors are errors, never an empty result. Responses say how many files
+were searched and warn when unresolved project imports may leave files
+out; hits carry their <code>hops</code> and nearer files rank higher. In the query
+everywhere, plus <code>deps</code> / <code>rdeps</code> on the API, gRPC, MCP <code>search_code</code>
+and <code>fcs --deps</code> / <code>--rdeps</code> (the only way to scope a regex), the web
+UI’s FILTER panel, the dependency popover and the explorer’s
+<strong>Search importers</strong> / <strong>Search its imports</strong> buttons.</li>
 <li>Book page “Reference support”: what the References mode finds in each
 language, and what it misses. C and C++ record no references; Python
 records calls only; TypeScript, Java and C# miss many type positions.</li>
@@ -242,6 +257,14 @@ tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Import graph: a Rust path into the crate used without a <code>use</code>
+(<code>crate::a::b::f()</code>, <code>super::x::Y</code>) is an import of the module it names,
+so the dependency explorer, rankings and <code>rdeps:</code> see it. Rebuild the
+index to pick it up (the v8 format is unreleased, so upgrading from
+0.15.x rebuilds anyway).</li>
+<li><code>file:</code> and <code>lang:</code> narrow each other: <code>file:src/ lang:rust</code> is the Rust
+files under <code>src/</code>, where it used to be every file under <code>src/</code> plus
+every Rust file. Repeating one operator still widens it.</li>
 <li>Web UI: the preview icon is back at the end of each match line (#153 had
 moved the preview to the line number, with nothing to show it). Hovering
 the icon previews the file; clicking it pins the preview, which then

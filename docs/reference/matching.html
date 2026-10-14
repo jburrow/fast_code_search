@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d6329b7f.js";
+            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -209,6 +209,8 @@ below, and <code>limits_hit</code> in every response).</p>
 <tr><td>Regex with <code>case=false</code>, <code>(?i)</code> or <code>fcs -e -i</code></td><td><code>rg -i 'PATTERN'</code></td><td>backtest</td></tr>
 <tr><td><code>lang:rust foo</code></td><td><code>rg -F -i -t rust 'foo'</code></td><td>backtest (with <code>globs</code>)</td></tr>
 <tr><td><code>file:*.py foo</code> / <code>-file:tests foo</code></td><td><code>rg -F -i -g '*.py' 'foo'</code> / <code>-g '!tests'</code>; a bare word such as <code>file:parser</code> matches anywhere in the path, which <code>-g</code> has no exact form for</td><td>backtest (with <code>globs</code>)</td></tr>
+<tr><td><code>file:src/ lang:rust foo</code></td><td><code>rg -F -i -g 'src/**/*.rs' 'foo'</code>: different filters narrow each other, as <code>-g</code> and <code>-t</code> do</td><td>backtest (with <code>globs</code>)</td></tr>
+<tr><td><code>rdeps:src/a.rs foo</code> / <code>deps:</code></td><td><code>rg -F -i 'foo' FILE…</code> over the files the import graph puts in scope; rg has no graph</td><td>backtest (rg’s hits kept to the scope’s files)</td></tr>
 <tr><td>A text search’s filename hits (no line number)</td><td>none; closest is <code>rg --files | rg -i 'foo'</code></td><td>not compared</td></tr>
 <tr><td>Path matches (<code>files=N</code>, the FILES box)</td><td>none; closest is <code>rg --files | rg -i</code> with every word required</td><td>unit tests</td></tr>
 <tr><td>Symbols (SYMBOLS, <code>fcs symbols</code>)</td><td>none: definitions come from tree-sitter, not from text</td><td>engine tests</td></tr>
@@ -248,7 +250,8 @@ backtest passes <code>-i</code> to ripgrep whenever fcs ignores case.</li>
 <li><strong>Operators.</strong> Plain text is a literal, like <code>rg -F</code>: several words are
 one phrase, and quotes and a leading <code>-</code> are part of the text. The only
 exceptions are whole words with an argument: <code>file:</code>, <code>-file:</code>,
-<code>lang:</code>, <code>-lang:</code>, <code>case:</code> and <code>word:</code>. To search for one of those
+<code>lang:</code>, <code>-lang:</code>, <code>deps:</code>, <code>rdeps:</code> (and their <code>-</code> forms), <code>case:</code>
+and <code>word:</code>. To search for one of those
 literally, use a regex. The query is trimmed at both ends (<code>rg ' x'</code>
 keeps its leading space). See <a href="query-syntax.html">Query syntax</a>.</li>
 <li><strong>File names match too.</strong> A text search also lists files whose <em>name</em>
