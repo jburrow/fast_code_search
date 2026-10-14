@@ -104,9 +104,15 @@ impl SearchEngine {
                 GraphDirection::Deps => Direction::Imports,
                 GraphDirection::Rdeps => Direction::ImportedBy,
             };
-            let reached = self
-                .dependency_index
-                .scope_walk(&anchors, direction, max_hops);
+            // A negated filter excludes, so it must not over-reach: no
+            // pass-through across package entry files.
+            let reached = self.dependency_index.scope_walk(
+                &anchors,
+                direction,
+                max_hops,
+                !f.negate,
+                &|user, definer| self.names_something_defined_in(user, definer),
+            );
             let hops_text = max_hops.map_or("*".to_string(), |h| h.to_string());
             let dash = if f.negate { "-" } else { "" };
             scope
@@ -147,6 +153,68 @@ impl SearchEngine {
                 .count();
         }
         Ok(Some(scope))
+    }
+
+    /// Whether file `user` names something file `definer` defines: one of
+    /// its top-level kinds of definition (functions, types, constants,
+    /// modules, macros; not methods or fields, whose names are too common)
+    /// as a whole word, or the module itself in a path (`ranking::`,
+    /// `.ranking`, `/ranking`). A definer with nothing to check counts as
+    /// named, so the scope stays on the safe side.
+    fn names_something_defined_in(&self, user: u32, definer: u32) -> bool {
+        use crate::symbols::SymbolType as T;
+        let names: Vec<&str> = self
+            .symbol_cache
+            .get(definer as usize)
+            .into_iter()
+            .flatten()
+            .filter(|s| {
+                s.is_definition
+                    && !matches!(
+                        s.symbol_type,
+                        T::FileName | T::Method | T::Field | T::Property | T::Variable
+                    )
+            })
+            .map(|s| s.name.as_str())
+            .filter(|n| n.len() >= 2)
+            .collect();
+        let stem = self
+            .file_store
+            .get(definer)
+            .and_then(|f| f.path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .filter(|s| !matches!(s.as_str(), "mod" | "lib" | "main" | "__init__" | "index"));
+        if names.is_empty() && stem.is_none() {
+            return true;
+        }
+        let Some(content) = self.file_store.get(user).and_then(|f| f.as_str().ok()) else {
+            return true;
+        };
+        let bytes = content.as_bytes();
+        let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        // Every whole-word occurrence of `name`, as (start, end).
+        let occurrences = |name: &'_ str| {
+            memchr::memmem::find_iter(bytes, name.as_bytes())
+                .map(move |at| (at, at + name.len()))
+                .filter(move |&(at, end)| {
+                    (at == 0 || !word(bytes[at - 1])) && bytes.get(end).is_none_or(|&b| !word(b))
+                })
+                .collect::<Vec<_>>()
+        };
+        if names.iter().any(|n| !occurrences(n).is_empty()) {
+            return true;
+        }
+        stem.is_some_and(|stem| {
+            occurrences(&stem).into_iter().any(|(at, end)| {
+                let before = &bytes[..at];
+                let after = &bytes[end..];
+                // `from .ranking`, `pkg.ranking`, `./ranking`,
+                // `super::ranking`, `ranking::Weight`.
+                before.ends_with(b".")
+                    || before.ends_with(b"/")
+                    || before.ends_with(b"::")
+                    || after.starts_with(b"::")
+            })
+        })
     }
 
     /// The anchor files of `f`, its hop limit, and the anchor as shown.

@@ -3325,10 +3325,11 @@ fn test_deps_reaches_modules_behind_the_package_entry() {
         scoped(&engine, text("Weight deps:app/main.py")).unwrap(),
         vec!["app/main.py", "pkg/core.py"]
     );
-    // Negated: everything but those files.
+    // Negated: everything but those files, walked strictly (no
+    // pass-through), so pkg/core.py behind the package entry stays in.
     assert_eq!(
         scoped(&engine, text("Weight -deps:app/main.py")).unwrap(),
-        vec!["lib/util.py", "pkg/util.py", "tool.go"]
+        vec!["lib/util.py", "pkg/core.py", "pkg/util.py", "tool.go"]
     );
     // Graph filters AND with path and language filters.
     assert_eq!(
@@ -3396,4 +3397,47 @@ fn test_graph_scope_counts_unresolved_project_imports() {
     };
     assert_eq!(run("Weight rdeps:lib/util.py").unresolved_local, 1);
     assert_eq!(run("Weight rdeps:pkg/core.py").unresolved_local, 0);
+}
+
+/// Importers reached through a package entry file are kept only when they
+/// name something the anchor defines.
+#[test]
+fn test_rdeps_through_a_package_entry_needs_a_name_from_the_anchor() {
+    let dir = TempDir::new().unwrap();
+    let files = [
+        (
+            "pkg/__init__.py",
+            "from .core import thing\nfrom .other import helper\n",
+        ),
+        ("pkg/core.py", "def thing():\n    return 1  # marker\n"),
+        ("pkg/other.py", "def helper():\n    return 2  # marker\n"),
+        (
+            "uses_thing.py",
+            "from pkg import thing\nthing()  # marker\n",
+        ),
+        (
+            "uses_helper.py",
+            "from pkg import helper\nhelper()  # marker\n",
+        ),
+    ];
+    let mut engine = SearchEngine::new();
+    for (rel, body) in files {
+        let p = dir.path().join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, body).unwrap();
+    }
+    for (rel, _) in files {
+        engine.index_file(dir.path().join(rel)).unwrap();
+    }
+    engine.resolve_imports();
+    engine.finalize();
+    assert_eq!(
+        scoped(&engine, text("marker rdeps:pkg/core.py")).unwrap(),
+        vec!["pkg/core.py", "uses_thing.py"]
+    );
+    // Without the package entry in the way, every importer counts.
+    assert_eq!(
+        scoped(&engine, text("marker rdeps:pkg/__init__.py")).unwrap(),
+        vec!["uses_helper.py", "uses_thing.py"]
+    );
 }

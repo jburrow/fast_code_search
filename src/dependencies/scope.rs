@@ -7,8 +7,12 @@
 //! package. An edge from a package entry file to one of its own modules
 //! therefore costs no hop: `rdeps:search/ranking.rs` reaches
 //! `search/mod.rs` at hop 0 and the files importing `crate::search` at hop 1.
-//! The result can hold a file that imports something else from the same
-//! package, which is the safe side for "what could this change affect".
+//! Only one entry file is crossed at a time (never `ranking.rs` ->
+//! `search/mod.rs` -> `lib.rs` for free), and a file reached across one is
+//! kept only when it names something the module on the other side defines,
+//! so importing an unrelated item from the same package does not count.
+//! Negated filters walk without pass-through: excluding a superset would
+//! drop files that do not depend on the anchor.
 
 use super::graph::Direction;
 use super::DependencyIndex;
@@ -63,50 +67,95 @@ pub fn is_package_entry_of(entry: &Path, file: &Path) -> bool {
 impl DependencyIndex {
     /// Files reachable from `anchors` in `direction`, each with its hop
     /// count (anchors are hop 0), up to `max_hops` (`None` = no limit).
-    /// Rust `mod` edges are followed; an edge from a package entry file to
-    /// one of its own modules costs no hop.
+    /// Rust `mod` edges are followed.
+    ///
+    /// With `pass_through`, an edge between a package entry file and one of
+    /// its own modules costs no hop, at most once in a row (never a chain of
+    /// entry files), and a file reached across an entry file is kept only
+    /// when `uses(user, definer)` says it names something the module on the
+    /// other side defines: for `rdeps:a.rs` through `mod.rs`, an importer of
+    /// `mod.rs` must name something from `a.rs`; for `deps:f.rs` through
+    /// `mod.rs`, a module behind it must define something `f.rs` names.
     pub fn scope_walk(
         &self,
         anchors: &[u32],
         direction: Direction,
         max_hops: Option<u32>,
+        pass_through: bool,
+        uses: &dyn Fn(u32, u32) -> bool,
     ) -> FxHashMap<u32, u32> {
-        let mut hops: FxHashMap<u32, u32> = FxHashMap::default();
+        /// A file on the walk: its hops, whether it was reached across an
+        /// entry file (and from which file), and the file before it.
+        #[derive(Clone, Copy)]
+        struct Step {
+            node: u32,
+            hops: u32,
+            free_from: Option<u32>,
+            prev: Option<u32>,
+        }
+        let mut best: FxHashMap<u32, u32> = FxHashMap::default();
         // 0-1 breadth-first search: free edges go to the front.
-        let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
+        let mut queue: VecDeque<Step> = VecDeque::new();
         for &a in anchors {
-            if hops.insert(a, 0).is_none() {
-                queue.push_back((a, 0));
+            if best.insert(a, 0).is_none() {
+                queue.push_back(Step {
+                    node: a,
+                    hops: 0,
+                    free_from: None,
+                    prev: None,
+                });
             }
         }
-        while let Some((node, d)) = queue.pop_front() {
-            if hops.get(&node).is_some_and(|&best| best < d) {
+        while let Some(step) = queue.pop_front() {
+            if best.get(&step.node).is_some_and(|&b| b < step.hops) {
                 continue; // a shorter route was found after this was queued
             }
-            for next in self.neighbours(node, direction, true) {
+            for next in self.neighbours(step.node, direction, true) {
                 let (importer, imported) = match direction {
-                    Direction::Imports => (node, next),
-                    Direction::ImportedBy => (next, node),
+                    Direction::Imports => (step.node, next),
+                    Direction::ImportedBy => (next, step.node),
                 };
-                let free = match (self.path_of(importer), self.path_of(imported)) {
-                    (Some(i), Some(m)) => is_package_entry_of(i, m),
-                    _ => false,
+                let free = pass_through
+                    && step.free_from.is_none()
+                    && match (self.path_of(importer), self.path_of(imported)) {
+                        (Some(i), Some(m)) => is_package_entry_of(i, m),
+                        _ => false,
+                    };
+                let keep = match (direction, free) {
+                    // Through a package entry into its modules: the module
+                    // must define something the file before the entry names.
+                    (Direction::Imports, true) => step.prev.is_none_or(|user| uses(user, next)),
+                    // Out of an entry file reached from module `a`: the
+                    // importer must name something `a` defines.
+                    (Direction::ImportedBy, false) => {
+                        step.free_from.is_none_or(|definer| uses(next, definer))
+                    }
+                    _ => true,
                 };
-                let nd = if free { d } else { d + 1 };
-                if max_hops.is_some_and(|max| nd > max) {
+                if !keep {
                     continue;
                 }
-                if hops.get(&next).is_none_or(|&best| nd < best) {
-                    hops.insert(next, nd);
+                let hops = if free { step.hops } else { step.hops + 1 };
+                if max_hops.is_some_and(|max| hops > max) {
+                    continue;
+                }
+                if best.get(&next).is_none_or(|&b| hops < b) {
+                    best.insert(next, hops);
+                    let s = Step {
+                        node: next,
+                        hops,
+                        free_from: free.then_some(step.node),
+                        prev: Some(step.node),
+                    };
                     if free {
-                        queue.push_front((next, nd));
+                        queue.push_front(s);
                     } else {
-                        queue.push_back((next, nd));
+                        queue.push_back(s);
                     }
                 }
             }
         }
-        hops
+        best
     }
 }
 
@@ -161,9 +210,9 @@ mod tests {
             ],
             &[(1, 0), (2, 1), (3, 2), (4, 1)],
         );
-        let one = idx.scope_walk(&[0], Direction::ImportedBy, Some(1));
+        let one = idx.scope_walk(&[0], Direction::ImportedBy, Some(1), true, &|_, _| true);
         assert_eq!(sorted(&one), vec![(0, 0), (1, 0), (2, 1), (4, 1)]);
-        let all = idx.scope_walk(&[0], Direction::ImportedBy, None);
+        let all = idx.scope_walk(&[0], Direction::ImportedBy, None, true, &|_, _| true);
         assert_eq!(sorted(&all), vec![(0, 0), (1, 0), (2, 1), (3, 2), (4, 1)]);
     }
 
@@ -179,8 +228,46 @@ mod tests {
             ],
             &[(0, 1), (1, 2), (2, 3)],
         );
-        let one = idx.scope_walk(&[0], Direction::Imports, Some(1));
+        let one = idx.scope_walk(&[0], Direction::Imports, Some(1), true, &|_, _| true);
         assert_eq!(sorted(&one), vec![(0, 0), (1, 1), (2, 1)]);
+    }
+
+    #[test]
+    fn pass_through_never_chains_and_checks_names() {
+        // 2018 layout: 0 search/ranking.rs, 1 search.rs (mod ranking;),
+        // 2 lib.rs (mod search;), 3 bin.rs uses the crate (lib.rs),
+        // 4 web.rs and 5 cli.rs import search.rs; only web.rs names
+        // something ranking.rs defines.
+        let idx = index(
+            &[
+                "/r/src/search/ranking.rs",
+                "/r/src/search.rs",
+                "/r/src/lib.rs",
+                "/r/src/bin.rs",
+                "/r/src/web.rs",
+                "/r/src/cli.rs",
+            ],
+            &[(1, 0), (2, 1), (3, 2), (4, 1), (5, 1)],
+        );
+        let uses = |user: u32, definer: u32| definer == 0 && user == 4;
+        // lib.rs (`mod search;`) and cli.rs import search.rs but name
+        // nothing from ranking.rs.
+        let walk = idx.scope_walk(&[0], Direction::ImportedBy, Some(1), true, &uses);
+        assert_eq!(sorted(&walk), vec![(0, 0), (1, 0), (4, 1)]);
+        // Without the name check they count, but lib.rs is a hop (no second
+        // free edge), so bin.rs, which imports lib.rs, is out of reach.
+        let all = |_: u32, _: u32| true;
+        let walk = idx.scope_walk(&[0], Direction::ImportedBy, Some(1), true, &all);
+        assert_eq!(sorted(&walk), vec![(0, 0), (1, 0), (2, 1), (4, 1), (5, 1)]);
+        // Strict walk (negated filters): every edge is a hop.
+        let strict = idx.scope_walk(&[0], Direction::ImportedBy, Some(1), false, &uses);
+        assert_eq!(sorted(&strict), vec![(0, 0), (1, 1)]);
+        // deps: through search.rs, only modules defining what web.rs names.
+        let deps = idx.scope_walk(&[4], Direction::Imports, Some(1), true, &uses);
+        assert_eq!(sorted(&deps), vec![(0, 1), (1, 1), (4, 0)]);
+        let none = |_: u32, _: u32| false;
+        let deps = idx.scope_walk(&[5], Direction::Imports, Some(1), true, &none);
+        assert_eq!(sorted(&deps), vec![(1, 1), (5, 0)]);
     }
 
     #[test]
@@ -189,7 +276,7 @@ mod tests {
             &["/r/a.py", "/r/b.py", "/r/c.py"],
             &[(0, 1), (1, 2), (2, 0), (0, 2)],
         );
-        let all = idx.scope_walk(&[0], Direction::Imports, None);
+        let all = idx.scope_walk(&[0], Direction::Imports, None, true, &|_, _| true);
         assert_eq!(sorted(&all), vec![(0, 0), (1, 1), (2, 1)]);
     }
 }

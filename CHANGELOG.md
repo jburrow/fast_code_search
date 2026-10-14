@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`:N` hops, `:*` for any distance, `-rdeps:` / `-deps:` to leave them
   out, a trailing `/` for a folder). An import that lands on a package's
   entry file (`mod.rs`, `__init__.py`, `index.ts`) reaches the modules
-  behind it without costing a hop. Unknown, ambiguous or graph-less
+  behind it without costing a hop, one entry file at a time, and only when
+  the file names something the module defines; negated filters walk
+  strictly. Unknown, ambiguous or graph-less
   anchors are errors, never an empty result. Responses say how many files
   were searched and warn when unresolved project imports may leave files
   out; hits carry their `hops` and nearer files rank higher. In the query
@@ -71,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Import graph: a Rust path into the crate used without a `use`
+  (`crate::a::b::f()`, `super::x::Y`) is an import of the module it names,
+  so the dependency explorer, rankings and `rdeps:` see it. Rebuild the
+  index to pick it up (the v8 format is unreleased, so upgrading from
+  0.15.x rebuilds anyway).
 - `file:` and `lang:` narrow each other: `file:src/ lang:rust` is the Rust
   files under `src/`, where it used to be every file under `src/` plus
   every Rust file. Repeating one operator still widens it.

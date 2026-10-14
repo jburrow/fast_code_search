@@ -57,16 +57,24 @@ could affect?" is one query:
 - **Combining**: repeating `rdeps:` (or `deps:`) searches the union; a
   `deps:` and an `rdeps:` together search the files in both; both narrow
   `file:` and `lang:`, and they narrow each other.
-- **Package entry files are passed through.** An import of a package
-  usually lands on its entry file (`mod.rs`, `lib.rs`, `main.rs`,
-  `__init__.py`, `index.ts`/`index.js`), not on the module behind it. So
-  an edge from an entry file to a module of its own package does not count
-  as a hop: `rdeps:src/search/ranking.rs` also searches the files that
-  import `crate::search` (through `search/mod.rs`), and `deps:main.py`
-  reaches the modules a package's `__init__.py` re-exports. This can add a
-  file that imports something else from the same package, which is the
-  safe side for "what could this affect". A child module that imports its
-  parent (Rust `use super::*`) is an ordinary hop: use `:2`.
+- **Package entry files are passed through, carefully.** An import of a
+  package usually lands on its entry file (`mod.rs`, `lib.rs`, `main.rs`,
+  `__init__.py`, `index.ts`/`index.js`), not on the module behind it. So an
+  edge from an entry file to a module of its own package does not count as
+  a hop, and a file reached across one is kept only if it names something
+  the module on the other side defines (a function, type, constant or
+  macro as a whole word, or the module itself in a path such as
+  `ranking::` or `./ranking`). `rdeps:src/search/ranking.rs` therefore
+  finds the files that `use crate::search::RankingWeights`, but not every
+  importer of `crate::search`. Only one entry file is crossed in a row
+  (`ranking.rs` to `search/mod.rs`, never on to `lib.rs` for free). A child
+  module that imports its parent (Rust `use super::*`) is an ordinary hop:
+  use `:2`.
+- **Negated filters walk strictly.** `-rdeps:` and `-deps:` follow import
+  edges only, with no pass-through, so they never leave out a file that
+  does not depend on the anchor.
+- **Rust paths without a `use`** (`crate::search::fold::fold_str(…)`,
+  `super::util::Thing`) count as imports of the module they name.
 - **The scope is only as complete as the graph.** The results header (and
   the `scope` object of the API, MCP's text, `fcs`'s summary) says how many
   files were searched, and warns when imports in those files are written

@@ -1213,7 +1213,9 @@ impl SymbolExtractor {
         }
     }
 
-    /// Extract Rust use statements and mod declarations
+    /// Extract Rust use statements and mod declarations, plus inline paths
+    /// into the crate (`crate::a::b::f(…)`, `super::x::Y`) used without a
+    /// `use`: each is an import of the module it names, once per file.
     fn extract_rust_imports(
         node: &tree_sitter::Node,
         source: &str,
@@ -1221,6 +1223,7 @@ impl SymbolExtractor {
     ) {
         // Use iterative traversal with explicit stack to avoid stack overflow
         let mut stack = vec![*node];
+        let mut inline_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
         while let Some(current) = stack.pop() {
             let mut cursor = current.walk();
@@ -1247,6 +1250,27 @@ impl SymbolExtractor {
                                     import_type: ImportType::Rust,
                                 });
                             }
+                        }
+                        // Its paths are the import itself, not inline uses.
+                        continue;
+                    }
+                    "scoped_identifier" | "scoped_type_identifier"
+                        if !matches!(
+                            current.kind(),
+                            "scoped_identifier" | "scoped_type_identifier"
+                        ) =>
+                    {
+                        let path = &source[child.byte_range()];
+                        let local = ["crate::", "super::", "self::"]
+                            .iter()
+                            .any(|p| path.starts_with(p));
+                        if local && !path.contains(char::is_whitespace) && inline_seen.insert(path)
+                        {
+                            imports.push(ImportStatement {
+                                path: path.to_string(),
+                                line: child.start_position().row,
+                                import_type: ImportType::Rust,
+                            });
                         }
                     }
                     "mod_item" => {
@@ -1490,6 +1514,36 @@ impl SymbolExtractor {
 
 #[cfg(test)]
 mod tests {
+    /// An inline `crate::a::b::f()` with no `use` is an import of the
+    /// module it names (once per file); paths inside `use` are not repeated,
+    /// and external paths (`std::`, a crate name) are not imports.
+    #[test]
+    fn rust_inline_crate_paths_are_imports() {
+        let src = "use crate::a::B;\n\
+                   fn f() {\n\
+                       crate::search::fold::fold_str(\"x\");\n\
+                       crate::search::fold::fold_str(\"y\");\n\
+                       let _: super::util::Thing = std::mem::take(&mut 1);\n\
+                       let _v: Vec<crate::model::Row> = Vec::new();\n\
+                   }\n";
+        let paths: Vec<String> = SymbolExtractor::new(Path::new("x.rs"))
+            .extract_imports(src)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.path)
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                "crate::a::B",
+                "crate::search::fold::fold_str",
+                "super::util::Thing",
+                "crate::model::Row",
+            ],
+            "{paths:?}"
+        );
+    }
+
     use super::*;
 
     #[test]
