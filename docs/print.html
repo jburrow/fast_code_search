@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d8de7e4f.js";
+            window.path_to_searchindex_js = "searchindex-accb8136.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ff6984d8.js"></script>
+        <script src="toc-5204d8cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1608,7 +1608,7 @@ edge, so it is left out too.</p>
 <tr><td><code>GET /api/graph/neighborhood</code></td><td><code>file</code>, <code>depth</code> (1–4, default 2), <code>limit</code> (files per level, default 12, max 500), <code>expand</code> (comma-separated levels to list up to 500 files, e.g. <code>-2,1</code>)</td><td><code>nodes</code> (<code>path</code>, signed <code>depth</code>: negative for files it imports, positive for files importing it; <code>imports</code>, <code>imported_by</code>, <code>test</code>, <code>cycle</code>), <code>edges</code> among them (<code>from</code>, <code>to</code>, <code>cycle</code>, <code>containment</code>), <code>hidden</code> (per level: <code>count</code> and the shared <code>folder</code> or number of <code>folders</code>), and <code>upstream</code> / <code>downstream</code> totals</td></tr>
 <tr><td><code>GET /api/graph/impact</code></td><td><code>file</code>, <code>limit</code>, <code>expand</code></td><td>Every file that transitively imports <code>file</code>, by distance: <code>affected</code>, <code>levels</code>, <code>tests_total</code>, <code>tests</code> (up to 200, nearest first), plus <code>nodes</code> / <code>edges</code> / <code>hidden</code> as above</td></tr>
 <tr><td><code>GET /api/graph/path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest import chain as <code>files</code> (each imports the next). When there is none from <code>from</code> to <code>to</code>, the reverse chain with <code>reversed: true</code>; <code>found: false</code> when neither exists</td></tr>
-<tr><td><code>GET /api/graph/modules</code></td><td>—</td><td>The graph collapsed to folders: <code>folders</code> (<code>files</code>, <code>imports</code>, <code>imported_by</code>, <code>cycle</code>) and <code>edges</code> (<code>from</code>, <code>to</code>, <code>count</code> of file imports, <code>cycle</code>). Cached until the index changes</td></tr>
+<tr><td><code>GET /api/graph/modules</code></td><td>—</td><td>The graph collapsed to folders: <code>folders</code> (<code>files</code>, <code>imports</code>, <code>imported_by</code>, <code>cycle</code>) and <code>edges</code> (<code>from</code>, <code>to</code>, <code>count</code> of file imports, <code>cycle</code>); <code>unresolved_imports</code>, the imports that resolve to no indexed file, and <code>unresolved_local</code>, those of them written as a path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>), which point at a broken import or a form fcs does not resolve. Cached until the index changes</td></tr>
 <tr><td><code>GET /api/graph/imports</code></td><td><code>file</code></td><td>The file’s import statements: <code>line</code> (1-based), <code>spec</code> as written, the indexed <code>target</code> it resolves to (<code>null</code> for packages, the standard library and files outside the index), <code>containment</code></td></tr>
 <tr><td><code>GET /api/graph/files</code></td><td><code>q</code> (case-insensitive substring), <code>limit</code> (default 100, max 1000)</td><td><code>files</code> most connected first, with <code>imports</code> / <code>imported_by</code>, and the <code>total</code> that matched</td></tr>
 </tbody>
@@ -1941,7 +1941,10 @@ MCP’s graph tools) understands, per language. An import that is not listed
 here produces no edge. If fcs misses an edge listed as supported, that is a
 bug; if it misses one listed as not handled, that is a known gap. Python
 and TypeScript are checked against their own resolvers (see the end of the
-page).</p>
+page).
+<a href="#how-the-import-graph-is-built">How the import graph is built</a>
+explains the method, including how an import is judged internal or
+external.</p>
 <p>Edges exist for <strong>Rust, Python and JavaScript/TypeScript</strong> only. Go, Java,
 C and C++ <code>#include</code>, C#, Ruby and every other language are searched and
 have symbols, but get no import edges.</p>
@@ -1957,6 +1960,12 @@ replaced by a wrong one.</li>
 file is indexed later, and <code>GET /api/graph/imports?path=…</code> lists every
 import of a file with its line, and <code>target: null</code> for the unresolved
 ones.</li>
+<li>The unresolved ones are counted. Most are packages, but one written as a
+path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>) is a broken import
+or a form listed below as not handled. The dependency explorer’s folder
+map gives that count, <code>GET /api/graph/modules</code> returns both
+(<code>unresolved_imports</code>, <code>unresolved_local</code>), MCP’s <code>dependency_overview</code>
+reports them, and <code>file_dependencies</code> lists a file’s unresolved imports.</li>
 </ul>
 <h2 id="rust-rs"><a class="header" href="#rust-rs">Rust (<code>.rs</code>)</a></h2>
 <div class="table-wrapper">
@@ -1989,7 +1998,7 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tbody>
 <tr><td><code>import a.b</code>, <code>import a, b as c</code></td><td>yes, one edge per module</td></tr>
 <tr><td><code>from a.b import c</code></td><td>yes: to <code>a/b/c.py</code> (or <code>a/b/c/__init__.py</code>) when <code>c</code> is a module, else to <code>a/b.py</code> or <code>a/b/__init__.py</code>, as Python does</td></tr>
-<tr><td><code>from .x import y</code>, <code>from ..x import y</code></td><td>yes: one dot is the file’s own package, each extra dot one level up</td></tr>
+<tr><td><code>from .x import y</code>, <code>from ..x import y</code></td><td>yes: one dot is the file’s own package, each extra dot one level up; when <code>x</code> does not exist the import is unresolved, as Python fails it</td></tr>
 <tr><td><code>from . import y</code></td><td>yes: to <code>y.py</code> when it is a module, else to the package’s <code>__init__.py</code></td></tr>
 <tr><td>Absolute imports</td><td>yes, as Python 3 does: from the ancestor folders that are not packages themselves (no <code>__init__.py</code>), so <code>import json</code> inside a package is the standard library, not a <code>json.py</code> next to it; where several could hold the module, the one that holds most of the dotted name wins</td></tr>
 <tr><td><code>src/</code> layouts (<code>tests/</code> importing <code>src/pkg</code>)</td><td>yes: each of those folders’ <code>src/</code> is tried too</td></tr>
@@ -2933,6 +2942,291 @@ When either stops the scan the response says so
 paging past <code>max_page_offset</code> (100,000 by default) is refused rather than
 allowed to grow the budget without bound.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-the-import-graph-is-built"><a class="header" href="#how-the-import-graph-is-built">How the import graph is built</a></h1>
+<p>This page explains how fcs turns Python and JavaScript/TypeScript imports
+into edges between files, and how it decides that an import is <strong>internal</strong>
+(an edge to a file in your project) or <strong>external</strong> (a package, which gets
+no edge). <a href="#dependency-graph-support">Dependency graph support</a> is the
+short reference: a table of which import forms are handled. This page is
+the method behind that table.</p>
+<h2 id="the-rule-that-decides-internal-vs-external"><a class="header" href="#the-rule-that-decides-internal-vs-external">The rule that decides internal vs external</a></h2>
+<p>fcs has no list of package names, and it does not read <code>requirements.txt</code>,
+<code>pyproject.toml</code>, <code>package.json</code> dependencies or a lockfile. The decision
+is made by one rule, the same for every language:</p>
+<blockquote>
+<p>An import is <strong>internal</strong> when the language’s own lookup rules, applied
+to the files fcs has indexed, find a file. Otherwise it is <strong>unresolved</strong>,
+and it gets no edge.</p>
+</blockquote>
+<p>So “internal” means “resolves to an indexed file”, and everything else
+falls into one of two kinds of unresolved import:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Kind</th><th>How fcs tells</th><th>Examples</th><th>What it means</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>External</strong></td><td>Written as a package name (not as a path into the project), and no indexed file matches</td><td><code>import os</code>, <code>import numpy</code>, <code>from django.db import models</code> when Django is not indexed, <code>import React from 'react'</code>, <code>lodash/merge</code>, <code>@scope/pkg</code></td><td>The standard library or an installed package. This is expected and is not a problem.</td></tr>
+<tr><td><strong>Local but unresolved</strong></td><td>Written as a path into the project (<code>.x</code>, <code>./x</code>, <code>../x</code>, <code>@/x</code>, <code>~/x</code>) and no indexed file matches</td><td><code>from .missing import x</code>, <code>import './old-name'</code></td><td>A broken import, a file that is excluded from the index, or a form fcs does not handle yet (see the support table)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The test for “written as a path into the project” is purely about the text:
+it starts with <code>.</code>, <code>@/</code>, <code>~/</code>, or Rust’s <code>crate::</code>, <code>self::</code>, <code>super::</code>.
+<code>import pkg.missing</code> written as an absolute Python name cannot be told
+apart from a package, so it counts as external.</p>
+<p>Two consequences follow from the rule.</p>
+<ul>
+<li><strong>What is indexed decides what is internal.</strong> Third-party code is not
+indexed by default: <code>node_modules</code>, <code>venv</code>, <code>.venv</code>, <code>build</code> and <code>dist</code>
+are excluded. So installed packages are external. If you index a
+dependency’s source tree on purpose (for example, Django next to your
+project), imports of it become internal edges, as long as the lookup
+rules below reach it.</li>
+<li><strong>fcs never guesses by name.</strong> If <code>import utils</code> cannot be found by the
+lookup rules, fcs does not settle for “some file called <code>utils.py</code>
+somewhere in the repository”. A missing edge is better than a wrong one,
+because a wrong edge silently corrupts “imported by N”, ranking and the
+dependency explorer.</li>
+</ul>
+<h2 id="the-pipeline"><a class="header" href="#the-pipeline">The pipeline</a></h2>
+<p>Both languages go through the same three steps.</p>
+<ol>
+<li><strong>Extract.</strong> Each file is parsed with its tree-sitter grammar, in the
+same pass that extracts symbols. Every import statement becomes an
+<em>import string</em> (the module text as written) and the line it is on.
+Nothing is executed and no interpreter or compiler is run.</li>
+<li><strong>Resolve.</strong> The import string is turned into candidate file paths
+using the language’s rules (below). A candidate counts only if it is an
+indexed file. The check is a lookup in the index’s path table; the disk
+is not consulted. The first candidate that is indexed becomes the edge.</li>
+<li><strong>Keep the rest.</strong> An import that resolves to nothing is kept,
+together with its file and line. When a file is indexed later (a new
+file, a rename, a watcher event), the imports that mention its name are
+tried again. So an edge appears as soon as its target exists, and order
+of indexing does not matter.</li>
+</ol>
+<h2 id="python"><a class="header" href="#python">Python</a></h2>
+<h3 id="what-is-extracted"><a class="header" href="#what-is-extracted">What is extracted</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Source</th><th>Import string(s)</th></tr>
+</thead>
+<tbody>
+<tr><td><code>import a.b</code></td><td><code>a.b</code></td></tr>
+<tr><td><code>import a, b as c</code></td><td><code>a</code>, <code>b</code> (one per module; the alias is ignored)</td></tr>
+<tr><td><code>from a.b import c, d</code></td><td><code>a.b.c</code>, <code>a.b.d</code> (one per name)</td></tr>
+<tr><td><code>from a import *</code></td><td><code>a</code></td></tr>
+<tr><td><code>from . import x</code></td><td><code>.x</code></td></tr>
+<tr><td><code>from ..pkg import x</code></td><td><code>..pkg.x</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>from a.b import c</code> gives <code>a.b.c</code> because <code>c</code> may be a submodule
+(<code>a/b/c.py</code>) or just a name defined in <code>a/b.py</code>. Resolution tries the
+submodule first and falls back to the module, which is what Python does.
+Imports inside functions, <code>if TYPE_CHECKING:</code> blocks and <code>try:</code> blocks are
+extracted like any other. <code>importlib.import_module("x")</code> and <code>__import__</code>
+are not, because their argument is a runtime value.</p>
+<h3 id="relative-imports-from-x-import-y"><a class="header" href="#relative-imports-from-x-import-y">Relative imports (<code>from .x import y</code>)</a></h3>
+<p>These are always internal or local-but-unresolved, never external.</p>
+<ol>
+<li>The dots choose the base folder. One dot is the importing file’s own
+folder (its package), and each extra dot goes one folder up.</li>
+<li>Under that base, fcs looks for the dotted name as a module or package,
+longest first. For <code>.a.b</code> it tries <code>a/b.py</code>, then <code>a/b/__init__.py</code>,
+then <code>a.py</code>, then <code>a/__init__.py</code>.</li>
+<li>A match must cover the whole name, or all of it but the last part
+(the last part may be a name defined in the module). Anything shorter is
+not accepted, because Python would fail that import too.</li>
+<li><code>from . import name</code>, where <code>name</code> is not a module, resolves to the
+package’s own <code>__init__.py</code>.</li>
+</ol>
+<pre><code class="language-text">pkg/__init__.py
+pkg/api.py           from .models import User   -&gt; pkg/models.py
+pkg/models.py        from . import api          -&gt; pkg/api.py
+pkg/sub/views.py     from ..models import User  -&gt; pkg/models.py
+                     from .missing import x     -&gt; unresolved (local)
+</code></pre>
+<h3 id="absolute-imports-import-ab-from-a-import-b"><a class="header" href="#absolute-imports-import-ab-from-a-import-b">Absolute imports (<code>import a.b</code>, <code>from a import b</code>)</a></h3>
+<p>Python 3 looks for an absolute import only on <code>sys.path</code>, never next to the
+importing file. fcs does not know your <code>sys.path</code>, so it works out the
+likely entries from the folder layout.</p>
+<ol>
+<li><strong>Find the roots.</strong> Walk up from the importing file’s folder, up to 8
+levels. A folder that contains <code>__init__.py</code> is part of a package, so it
+is <em>not</em> a root. Every other folder is a candidate root, and so is its
+<code>src/</code> subfolder (the “src layout”).</li>
+<li><strong>Look under each root</strong> for the dotted name, longest first, exactly as
+for relative imports: <code>a/b.py</code>, <code>a/b/__init__.py</code>, <code>a.py</code>,
+<code>a/__init__.py</code>. The same “whole name, or all but the last part” rule
+applies.</li>
+<li><strong>Pick the best root.</strong> A root where the whole name exists wins
+immediately. Otherwise the root that matches the most of the name wins,
+and the nearest root wins a tie.</li>
+<li><strong>Nothing found means external.</strong> <code>import os</code>, <code>import requests</code> and
+<code>from django.db import models</code> find nothing in the index (the standard
+library and site-packages are not under any of these roots), so they
+resolve to nothing.</li>
+</ol>
+<pre><code class="language-text">myproject/                  (no __init__.py: a root)
+  src/shop/__init__.py
+  src/shop/cart.py          from shop.models import Item  -&gt; src/shop/models.py
+  src/shop/models.py        import json                   -&gt; external (stdlib)
+  src/shop/json.py
+  tests/test_cart.py        from shop.cart import Cart    -&gt; src/shop/cart.py
+</code></pre>
+<p><code>import json</code> in <code>src/shop/models.py</code> does not resolve to the
+<code>src/shop/json.py</code> next to it. <code>src/shop/</code> is a package, so it is not on
+<code>sys.path</code>, and Python would load the standard library’s <code>json</code>. A
+<code>tests/test_cart.py</code> that imports <code>shop</code> finds it through the
+<code>myproject/src/</code> root.</p>
+<h3 id="python-limits"><a class="header" href="#python-limits">Python limits</a></h3>
+<ul>
+<li>Only the folder layout is used. <code>sys.path</code> entries from <code>pyproject.toml</code>,
+<code>setup.cfg</code>, <code>PYTHONPATH</code>, <code>.pth</code> files or editable installs are not
+read, so a package that lives somewhere these rules do not reach is
+external to fcs.</li>
+<li>Namespace packages (folders without <code>__init__.py</code>) work when they sit
+under a root, because each segment is a folder name.</li>
+<li><code>.pyi</code> stub files are indexed and their imports are extracted, but they
+are never the target of an import.</li>
+<li>A name that exists both in your project and in the standard library
+(say a top-level <code>logging.py</code> in a root) resolves to your file, as it
+would for Python with that root first on <code>sys.path</code>.</li>
+</ul>
+<h2 id="javascript-and-typescript"><a class="header" href="#javascript-and-typescript">JavaScript and TypeScript</a></h2>
+<h3 id="what-is-extracted-1"><a class="header" href="#what-is-extracted-1">What is extracted</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Source</th><th>Import string</th></tr>
+</thead>
+<tbody>
+<tr><td><code>import x from './a'</code>, <code>import './a'</code>, <code>import type { T } from './a'</code></td><td><code>./a</code></td></tr>
+<tr><td><code>export { x } from './a'</code>, <code>export * from './a'</code></td><td><code>./a</code></td></tr>
+<tr><td><code>require('./a')</code>, <code>require(`./a`)</code></td><td><code>./a</code></td></tr>
+<tr><td><code>import('./a')</code>, <code>import(/* chunk */ './a')</code></td><td><code>./a</code></td></tr>
+<tr><td><code>import data from './a.json' with { type: 'json' }</code> (or <code>assert</code>)</td><td><code>./a.json</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A template string with <code>${…}</code>, or any argument that is not a string
+literal, is a runtime value and is skipped. <code>import x = require('./a')</code>
+(TypeScript’s older form) is not extracted yet.</p>
+<h3 id="how-a-specifier-is-classified"><a class="header" href="#how-a-specifier-is-classified">How a specifier is classified</a></h3>
+<p>The specifier’s first characters decide which lookup applies:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Specifier</th><th>Lookup</th><th>If nothing is found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>./x</code>, <code>../x</code>, <code>.</code>, <code>..</code></td><td>Relative to the importing file’s folder</td><td>Local but unresolved</td></tr>
+<tr><td><code>@/x</code>, <code>~/x</code></td><td>From the nearest parent folder with a <code>package.json</code> or <code>tsconfig.json</code>: <code>src/x</code> first, then <code>x</code></td><td>Local but unresolved</td></tr>
+<tr><td>anything else (<code>react</code>, <code>lodash/merge</code>, <code>@scope/pkg</code>, <code>#internal</code>, a tsconfig <code>paths</code> alias)</td><td>None</td><td>External</td></tr>
+</tbody>
+</table>
+</div>
+<p>Bare specifiers are always external. That is right for npm packages, but
+it also covers aliases fcs does not understand yet: tsconfig <code>paths</code> and
+<code>baseUrl</code>, workspace packages imported by name, and <code>package.json</code>
+<code>imports</code> (<code>#name</code>). Those show up as missing edges, not as wrong ones.</p>
+<h3 id="finding-the-file"><a class="header" href="#finding-the-file">Finding the file</a></h3>
+<p>Given the folder path a specifier points at, fcs tries, in order:</p>
+<ol>
+<li><strong>The exact file</strong>, when the specifier has an extension.</li>
+<li><strong>The TypeScript extension swap.</strong> In TypeScript ESM code you write the
+extension of the compiled output, so <code>./a.js</code> can mean <code>a.ts</code> or
+<code>a.tsx</code>, <code>./a.jsx</code> can mean <code>a.tsx</code> or <code>a.ts</code>, <code>./a.mjs</code> means <code>a.mts</code>
+and <code>./a.cjs</code> means <code>a.cts</code>.</li>
+<li><strong>Appended extensions</strong>: <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code>, in that order.</li>
+<li><strong>A folder’s index file</strong>: <code>index.ts</code>, <code>index.tsx</code>, <code>index.js</code>,
+<code>index.jsx</code>, <code>index.mjs</code>, <code>index.cjs</code>.</li>
+</ol>
+<pre><code class="language-text">web/
+  package.json
+  src/app.tsx         import { api } from './api'      -&gt; src/api.ts
+                      import Button from '@/ui/Button'  -&gt; src/ui/Button/index.tsx
+                      import './styles.css'             -&gt; src/styles.css (if indexed)
+                      import React from 'react'         -&gt; external
+  src/api.ts          export * from './types.js'        -&gt; src/types.ts
+</code></pre>
+<p>Imports of stylesheets, <code>.vue</code> or <code>.svelte</code> components and other assets
+resolve when that file is indexed, because a bundler resolves them and
+they are real dependencies. TypeScript itself does not resolve them.</p>
+<h3 id="javascript-and-typescript-limits"><a class="header" href="#javascript-and-typescript-limits">JavaScript and TypeScript limits</a></h3>
+<ul>
+<li><code>tsconfig.json</code> and <code>jsconfig.json</code> are not parsed: no <code>paths</code>, no
+<code>baseUrl</code>, no <code>rootDirs</code>. The <code>@/</code> and <code>~/</code> aliases are hard-wired to the
+common convention.</li>
+<li><code>package.json</code> is used only as a marker for <code>@/</code> and <code>~/</code>. Its <code>main</code>,
+<code>exports</code> and <code>imports</code> fields are not read, and a workspace package
+imported by its name is external.</li>
+<li><code>index.mts</code>, <code>index.cts</code> and <code>index.d.ts</code> are not tried as a folder’s
+index file.</li>
+</ul>
+<h2 id="seeing-what-did-not-resolve"><a class="header" href="#seeing-what-did-not-resolve">Seeing what did not resolve</a></h2>
+<ul>
+<li>The dependency explorer’s folder map says how many imports written as
+project paths resolve to no file.</li>
+<li><code>GET /api/graph/modules</code> returns <code>unresolved_imports</code> (all of them,
+packages included) and <code>unresolved_local</code> (the ones written as project
+paths).</li>
+<li><code>GET /api/graph/imports?path=…</code> lists every import of a file with its
+line; unresolved ones have <code>target: null</code>.</li>
+<li>MCP’s <code>dependency_overview</code> gives both counts, and <code>file_dependencies</code>
+lists a file’s unresolved imports.</li>
+</ul>
+<p>A large <code>unresolved_local</code> count usually means a form from the limits
+above (tsconfig <code>paths</code>, for example) or files excluded from the index.</p>
+<h2 id="how-the-method-is-checked"><a class="header" href="#how-the-method-is-checked">How the method is checked</a></h2>
+<p>Rules like these are easy to get subtly wrong, so fcs compares its graph
+with each language’s own resolver, an <strong>oracle</strong> that knows nothing about
+fcs.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Oracle</th><th>How it runs</th></tr>
+</thead>
+<tbody>
+<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a>, the import-graph library behind import-linter</td><td>Every package directly under the folder (or its <code>src/</code>) is given to grimp with that folder on <code>sys.path</code>. grimp parses imports statically and resolves them as Python would. External packages are left out.</td></tr>
+<tr><td>JavaScript, TypeScript</td><td>TypeScript’s own <code>ts.resolveModuleName</code></td><td>Every JS/TS file outside <code>node_modules</code>, <code>dist</code> and similar folders is pre-processed with <code>ts.preProcessFile</code>, and each import is resolved under the nearest <code>tsconfig.json</code> or <code>jsconfig.json</code>, with <code>extends</code>, <code>paths</code> and <code>baseUrl</code> applied (Bundler resolution when there is no config). A target in <code>node_modules</code> or outside the folder counts as external.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The comparison (<code>src/check/graph.rs</code>) works on edges between files:</p>
+<ul>
+<li>Only files the oracle analysed are compared.</li>
+<li>An edge the oracle draws and fcs does not is <strong>missing</strong>. An edge fcs
+draws and the oracle does not is <strong>extra</strong>, which means a wrong edge.</li>
+<li>Missing edges are grouped by the shape of the import (relative,
+<code>from pkg import name</code>, <code>@/</code> alias, bare name…), so each group points at
+one row of the support table.</li>
+<li>Edges from TypeScript files to stylesheets, components and assets are
+counted separately and not judged, since TypeScript cannot resolve them.</li>
+</ul>
+<p>CI runs both oracles on pinned public repositories and fails if a change
+adds a missing or extra edge:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Repository</th><th>Result</th></tr>
+</thead>
+<tbody>
+<tr><td>Python</td><td>Django 5.2 (grimp 3.17)</td><td>3,041 of 3,041 edges, none extra</td></tr>
+<tr><td>TypeScript</td><td>Vite 6.3.5 (TypeScript 5.9)</td><td>129 missing, 1 extra; 122 of the misses are tsconfig <code>paths</code> aliases</td></tr>
+</tbody>
+</table>
+</div>
+<p>To run the same comparison on your own code, run <code>fcs check</code> (see
+<a href="#on-your-own-code-fcs-check">Correctness against ripgrep</a>).
+It uses grimp if <code>pip install grimp</code> has been done, and TypeScript if it is
+in the repository’s <code>node_modules</code>. It reports missing and extra edges
+with examples, but does not fail on them: they are either a known gap from
+the limits above or a bug worth reporting.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ranking-1"><a class="header" href="#ranking-1">Ranking</a></h1>
 <p>This is the part that makes results feel right. A hit’s score combines a
 content match with what the index knows about the line, the file and the
@@ -3754,6 +4048,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Imports that resolve to no indexed file are counted, and the ones written
+as a path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>), which point at
+a broken import or an unsupported form, are called out: in the dependency
+explorer’s folder map, in <code>GET /api/graph/modules</code> (<code>unresolved_imports</code>,
+<code>unresolved_local</code>), in MCP’s <code>dependency_overview</code>, and per file in
+<code>file_dependencies</code>.</li>
+<li>Docs: “How the import graph is built” explains how Python and
+JavaScript/TypeScript imports are extracted and resolved, how an import
+is judged internal (resolves to an indexed file) or external, and how
+the method is checked against grimp and TypeScript.</li>
 <li><code>fcs check [PATH…]</code>: checks fcs on your own code. It indexes the folders
 in memory, compares queries made up from the files with <code>rg -F</code> (exit 1
 on any difference, with each differing query shrunk), and compares the
@@ -3853,6 +4157,9 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Python: <code>from .missing import x</code> (or <code>import pkg.missing.sub</code>) where the
+module does not exist no longer draws an edge to the package above it;
+the import is unresolved, as Python fails it.</li>
 <li>Case-insensitive search now folds case exactly as ripgrep’s <code>-i</code> does
 (Unicode simple case folding): <code>s</code> finds the long <code>ſ</code>, <code>k</code> the Kelvin
 sign, <code>μ</code> the micro sign <code>µ</code>, and the Greek symbol forms (<code>ϐ</code>, <code>ϑ</code>, …)

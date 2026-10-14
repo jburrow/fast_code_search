@@ -1,0 +1,526 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>The import graph - fast_code_search</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Code search that ranks like code: definitions above usages, widely imported files first, served from an in-memory trigram index.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/fcs-869a8c82.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "../searchindex-accb8136.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-5204d8cd.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">fast_code_search</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jburrow/fast_code_search" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/jburrow/fast_code_search/edit/main/docs/book/src/how-it-works/dependency-graph.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="how-the-import-graph-is-built"><a class="header" href="#how-the-import-graph-is-built">How the import graph is built</a></h1>
+<p>This page explains how fcs turns Python and JavaScript/TypeScript imports
+into edges between files, and how it decides that an import is <strong>internal</strong>
+(an edge to a file in your project) or <strong>external</strong> (a package, which gets
+no edge). <a href="../reference/graph-support.html">Dependency graph support</a> is the
+short reference: a table of which import forms are handled. This page is
+the method behind that table.</p>
+<h2 id="the-rule-that-decides-internal-vs-external"><a class="header" href="#the-rule-that-decides-internal-vs-external">The rule that decides internal vs external</a></h2>
+<p>fcs has no list of package names, and it does not read <code>requirements.txt</code>,
+<code>pyproject.toml</code>, <code>package.json</code> dependencies or a lockfile. The decision
+is made by one rule, the same for every language:</p>
+<blockquote>
+<p>An import is <strong>internal</strong> when the language’s own lookup rules, applied
+to the files fcs has indexed, find a file. Otherwise it is <strong>unresolved</strong>,
+and it gets no edge.</p>
+</blockquote>
+<p>So “internal” means “resolves to an indexed file”, and everything else
+falls into one of two kinds of unresolved import:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Kind</th><th>How fcs tells</th><th>Examples</th><th>What it means</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>External</strong></td><td>Written as a package name (not as a path into the project), and no indexed file matches</td><td><code>import os</code>, <code>import numpy</code>, <code>from django.db import models</code> when Django is not indexed, <code>import React from 'react'</code>, <code>lodash/merge</code>, <code>@scope/pkg</code></td><td>The standard library or an installed package. This is expected and is not a problem.</td></tr>
+<tr><td><strong>Local but unresolved</strong></td><td>Written as a path into the project (<code>.x</code>, <code>./x</code>, <code>../x</code>, <code>@/x</code>, <code>~/x</code>) and no indexed file matches</td><td><code>from .missing import x</code>, <code>import './old-name'</code></td><td>A broken import, a file that is excluded from the index, or a form fcs does not handle yet (see the support table)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The test for “written as a path into the project” is purely about the text:
+it starts with <code>.</code>, <code>@/</code>, <code>~/</code>, or Rust’s <code>crate::</code>, <code>self::</code>, <code>super::</code>.
+<code>import pkg.missing</code> written as an absolute Python name cannot be told
+apart from a package, so it counts as external.</p>
+<p>Two consequences follow from the rule.</p>
+<ul>
+<li><strong>What is indexed decides what is internal.</strong> Third-party code is not
+indexed by default: <code>node_modules</code>, <code>venv</code>, <code>.venv</code>, <code>build</code> and <code>dist</code>
+are excluded. So installed packages are external. If you index a
+dependency’s source tree on purpose (for example, Django next to your
+project), imports of it become internal edges, as long as the lookup
+rules below reach it.</li>
+<li><strong>fcs never guesses by name.</strong> If <code>import utils</code> cannot be found by the
+lookup rules, fcs does not settle for “some file called <code>utils.py</code>
+somewhere in the repository”. A missing edge is better than a wrong one,
+because a wrong edge silently corrupts “imported by N”, ranking and the
+dependency explorer.</li>
+</ul>
+<h2 id="the-pipeline"><a class="header" href="#the-pipeline">The pipeline</a></h2>
+<p>Both languages go through the same three steps.</p>
+<ol>
+<li><strong>Extract.</strong> Each file is parsed with its tree-sitter grammar, in the
+same pass that extracts symbols. Every import statement becomes an
+<em>import string</em> (the module text as written) and the line it is on.
+Nothing is executed and no interpreter or compiler is run.</li>
+<li><strong>Resolve.</strong> The import string is turned into candidate file paths
+using the language’s rules (below). A candidate counts only if it is an
+indexed file. The check is a lookup in the index’s path table; the disk
+is not consulted. The first candidate that is indexed becomes the edge.</li>
+<li><strong>Keep the rest.</strong> An import that resolves to nothing is kept,
+together with its file and line. When a file is indexed later (a new
+file, a rename, a watcher event), the imports that mention its name are
+tried again. So an edge appears as soon as its target exists, and order
+of indexing does not matter.</li>
+</ol>
+<h2 id="python"><a class="header" href="#python">Python</a></h2>
+<h3 id="what-is-extracted"><a class="header" href="#what-is-extracted">What is extracted</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Source</th><th>Import string(s)</th></tr>
+</thead>
+<tbody>
+<tr><td><code>import a.b</code></td><td><code>a.b</code></td></tr>
+<tr><td><code>import a, b as c</code></td><td><code>a</code>, <code>b</code> (one per module; the alias is ignored)</td></tr>
+<tr><td><code>from a.b import c, d</code></td><td><code>a.b.c</code>, <code>a.b.d</code> (one per name)</td></tr>
+<tr><td><code>from a import *</code></td><td><code>a</code></td></tr>
+<tr><td><code>from . import x</code></td><td><code>.x</code></td></tr>
+<tr><td><code>from ..pkg import x</code></td><td><code>..pkg.x</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>from a.b import c</code> gives <code>a.b.c</code> because <code>c</code> may be a submodule
+(<code>a/b/c.py</code>) or just a name defined in <code>a/b.py</code>. Resolution tries the
+submodule first and falls back to the module, which is what Python does.
+Imports inside functions, <code>if TYPE_CHECKING:</code> blocks and <code>try:</code> blocks are
+extracted like any other. <code>importlib.import_module("x")</code> and <code>__import__</code>
+are not, because their argument is a runtime value.</p>
+<h3 id="relative-imports-from-x-import-y"><a class="header" href="#relative-imports-from-x-import-y">Relative imports (<code>from .x import y</code>)</a></h3>
+<p>These are always internal or local-but-unresolved, never external.</p>
+<ol>
+<li>The dots choose the base folder. One dot is the importing file’s own
+folder (its package), and each extra dot goes one folder up.</li>
+<li>Under that base, fcs looks for the dotted name as a module or package,
+longest first. For <code>.a.b</code> it tries <code>a/b.py</code>, then <code>a/b/__init__.py</code>,
+then <code>a.py</code>, then <code>a/__init__.py</code>.</li>
+<li>A match must cover the whole name, or all of it but the last part
+(the last part may be a name defined in the module). Anything shorter is
+not accepted, because Python would fail that import too.</li>
+<li><code>from . import name</code>, where <code>name</code> is not a module, resolves to the
+package’s own <code>__init__.py</code>.</li>
+</ol>
+<pre><code class="language-text">pkg/__init__.py
+pkg/api.py           from .models import User   -&gt; pkg/models.py
+pkg/models.py        from . import api          -&gt; pkg/api.py
+pkg/sub/views.py     from ..models import User  -&gt; pkg/models.py
+                     from .missing import x     -&gt; unresolved (local)
+</code></pre>
+<h3 id="absolute-imports-import-ab-from-a-import-b"><a class="header" href="#absolute-imports-import-ab-from-a-import-b">Absolute imports (<code>import a.b</code>, <code>from a import b</code>)</a></h3>
+<p>Python 3 looks for an absolute import only on <code>sys.path</code>, never next to the
+importing file. fcs does not know your <code>sys.path</code>, so it works out the
+likely entries from the folder layout.</p>
+<ol>
+<li><strong>Find the roots.</strong> Walk up from the importing file’s folder, up to 8
+levels. A folder that contains <code>__init__.py</code> is part of a package, so it
+is <em>not</em> a root. Every other folder is a candidate root, and so is its
+<code>src/</code> subfolder (the “src layout”).</li>
+<li><strong>Look under each root</strong> for the dotted name, longest first, exactly as
+for relative imports: <code>a/b.py</code>, <code>a/b/__init__.py</code>, <code>a.py</code>,
+<code>a/__init__.py</code>. The same “whole name, or all but the last part” rule
+applies.</li>
+<li><strong>Pick the best root.</strong> A root where the whole name exists wins
+immediately. Otherwise the root that matches the most of the name wins,
+and the nearest root wins a tie.</li>
+<li><strong>Nothing found means external.</strong> <code>import os</code>, <code>import requests</code> and
+<code>from django.db import models</code> find nothing in the index (the standard
+library and site-packages are not under any of these roots), so they
+resolve to nothing.</li>
+</ol>
+<pre><code class="language-text">myproject/                  (no __init__.py: a root)
+  src/shop/__init__.py
+  src/shop/cart.py          from shop.models import Item  -&gt; src/shop/models.py
+  src/shop/models.py        import json                   -&gt; external (stdlib)
+  src/shop/json.py
+  tests/test_cart.py        from shop.cart import Cart    -&gt; src/shop/cart.py
+</code></pre>
+<p><code>import json</code> in <code>src/shop/models.py</code> does not resolve to the
+<code>src/shop/json.py</code> next to it. <code>src/shop/</code> is a package, so it is not on
+<code>sys.path</code>, and Python would load the standard library’s <code>json</code>. A
+<code>tests/test_cart.py</code> that imports <code>shop</code> finds it through the
+<code>myproject/src/</code> root.</p>
+<h3 id="python-limits"><a class="header" href="#python-limits">Python limits</a></h3>
+<ul>
+<li>Only the folder layout is used. <code>sys.path</code> entries from <code>pyproject.toml</code>,
+<code>setup.cfg</code>, <code>PYTHONPATH</code>, <code>.pth</code> files or editable installs are not
+read, so a package that lives somewhere these rules do not reach is
+external to fcs.</li>
+<li>Namespace packages (folders without <code>__init__.py</code>) work when they sit
+under a root, because each segment is a folder name.</li>
+<li><code>.pyi</code> stub files are indexed and their imports are extracted, but they
+are never the target of an import.</li>
+<li>A name that exists both in your project and in the standard library
+(say a top-level <code>logging.py</code> in a root) resolves to your file, as it
+would for Python with that root first on <code>sys.path</code>.</li>
+</ul>
+<h2 id="javascript-and-typescript"><a class="header" href="#javascript-and-typescript">JavaScript and TypeScript</a></h2>
+<h3 id="what-is-extracted-1"><a class="header" href="#what-is-extracted-1">What is extracted</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Source</th><th>Import string</th></tr>
+</thead>
+<tbody>
+<tr><td><code>import x from './a'</code>, <code>import './a'</code>, <code>import type { T } from './a'</code></td><td><code>./a</code></td></tr>
+<tr><td><code>export { x } from './a'</code>, <code>export * from './a'</code></td><td><code>./a</code></td></tr>
+<tr><td><code>require('./a')</code>, <code>require(`./a`)</code></td><td><code>./a</code></td></tr>
+<tr><td><code>import('./a')</code>, <code>import(/* chunk */ './a')</code></td><td><code>./a</code></td></tr>
+<tr><td><code>import data from './a.json' with { type: 'json' }</code> (or <code>assert</code>)</td><td><code>./a.json</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A template string with <code>${…}</code>, or any argument that is not a string
+literal, is a runtime value and is skipped. <code>import x = require('./a')</code>
+(TypeScript’s older form) is not extracted yet.</p>
+<h3 id="how-a-specifier-is-classified"><a class="header" href="#how-a-specifier-is-classified">How a specifier is classified</a></h3>
+<p>The specifier’s first characters decide which lookup applies:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Specifier</th><th>Lookup</th><th>If nothing is found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>./x</code>, <code>../x</code>, <code>.</code>, <code>..</code></td><td>Relative to the importing file’s folder</td><td>Local but unresolved</td></tr>
+<tr><td><code>@/x</code>, <code>~/x</code></td><td>From the nearest parent folder with a <code>package.json</code> or <code>tsconfig.json</code>: <code>src/x</code> first, then <code>x</code></td><td>Local but unresolved</td></tr>
+<tr><td>anything else (<code>react</code>, <code>lodash/merge</code>, <code>@scope/pkg</code>, <code>#internal</code>, a tsconfig <code>paths</code> alias)</td><td>None</td><td>External</td></tr>
+</tbody>
+</table>
+</div>
+<p>Bare specifiers are always external. That is right for npm packages, but
+it also covers aliases fcs does not understand yet: tsconfig <code>paths</code> and
+<code>baseUrl</code>, workspace packages imported by name, and <code>package.json</code>
+<code>imports</code> (<code>#name</code>). Those show up as missing edges, not as wrong ones.</p>
+<h3 id="finding-the-file"><a class="header" href="#finding-the-file">Finding the file</a></h3>
+<p>Given the folder path a specifier points at, fcs tries, in order:</p>
+<ol>
+<li><strong>The exact file</strong>, when the specifier has an extension.</li>
+<li><strong>The TypeScript extension swap.</strong> In TypeScript ESM code you write the
+extension of the compiled output, so <code>./a.js</code> can mean <code>a.ts</code> or
+<code>a.tsx</code>, <code>./a.jsx</code> can mean <code>a.tsx</code> or <code>a.ts</code>, <code>./a.mjs</code> means <code>a.mts</code>
+and <code>./a.cjs</code> means <code>a.cts</code>.</li>
+<li><strong>Appended extensions</strong>: <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code>, in that order.</li>
+<li><strong>A folder’s index file</strong>: <code>index.ts</code>, <code>index.tsx</code>, <code>index.js</code>,
+<code>index.jsx</code>, <code>index.mjs</code>, <code>index.cjs</code>.</li>
+</ol>
+<pre><code class="language-text">web/
+  package.json
+  src/app.tsx         import { api } from './api'      -&gt; src/api.ts
+                      import Button from '@/ui/Button'  -&gt; src/ui/Button/index.tsx
+                      import './styles.css'             -&gt; src/styles.css (if indexed)
+                      import React from 'react'         -&gt; external
+  src/api.ts          export * from './types.js'        -&gt; src/types.ts
+</code></pre>
+<p>Imports of stylesheets, <code>.vue</code> or <code>.svelte</code> components and other assets
+resolve when that file is indexed, because a bundler resolves them and
+they are real dependencies. TypeScript itself does not resolve them.</p>
+<h3 id="javascript-and-typescript-limits"><a class="header" href="#javascript-and-typescript-limits">JavaScript and TypeScript limits</a></h3>
+<ul>
+<li><code>tsconfig.json</code> and <code>jsconfig.json</code> are not parsed: no <code>paths</code>, no
+<code>baseUrl</code>, no <code>rootDirs</code>. The <code>@/</code> and <code>~/</code> aliases are hard-wired to the
+common convention.</li>
+<li><code>package.json</code> is used only as a marker for <code>@/</code> and <code>~/</code>. Its <code>main</code>,
+<code>exports</code> and <code>imports</code> fields are not read, and a workspace package
+imported by its name is external.</li>
+<li><code>index.mts</code>, <code>index.cts</code> and <code>index.d.ts</code> are not tried as a folder’s
+index file.</li>
+</ul>
+<h2 id="seeing-what-did-not-resolve"><a class="header" href="#seeing-what-did-not-resolve">Seeing what did not resolve</a></h2>
+<ul>
+<li>The dependency explorer’s folder map says how many imports written as
+project paths resolve to no file.</li>
+<li><code>GET /api/graph/modules</code> returns <code>unresolved_imports</code> (all of them,
+packages included) and <code>unresolved_local</code> (the ones written as project
+paths).</li>
+<li><code>GET /api/graph/imports?path=…</code> lists every import of a file with its
+line; unresolved ones have <code>target: null</code>.</li>
+<li>MCP’s <code>dependency_overview</code> gives both counts, and <code>file_dependencies</code>
+lists a file’s unresolved imports.</li>
+</ul>
+<p>A large <code>unresolved_local</code> count usually means a form from the limits
+above (tsconfig <code>paths</code>, for example) or files excluded from the index.</p>
+<h2 id="how-the-method-is-checked"><a class="header" href="#how-the-method-is-checked">How the method is checked</a></h2>
+<p>Rules like these are easy to get subtly wrong, so fcs compares its graph
+with each language’s own resolver, an <strong>oracle</strong> that knows nothing about
+fcs.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Oracle</th><th>How it runs</th></tr>
+</thead>
+<tbody>
+<tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a>, the import-graph library behind import-linter</td><td>Every package directly under the folder (or its <code>src/</code>) is given to grimp with that folder on <code>sys.path</code>. grimp parses imports statically and resolves them as Python would. External packages are left out.</td></tr>
+<tr><td>JavaScript, TypeScript</td><td>TypeScript’s own <code>ts.resolveModuleName</code></td><td>Every JS/TS file outside <code>node_modules</code>, <code>dist</code> and similar folders is pre-processed with <code>ts.preProcessFile</code>, and each import is resolved under the nearest <code>tsconfig.json</code> or <code>jsconfig.json</code>, with <code>extends</code>, <code>paths</code> and <code>baseUrl</code> applied (Bundler resolution when there is no config). A target in <code>node_modules</code> or outside the folder counts as external.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The comparison (<code>src/check/graph.rs</code>) works on edges between files:</p>
+<ul>
+<li>Only files the oracle analysed are compared.</li>
+<li>An edge the oracle draws and fcs does not is <strong>missing</strong>. An edge fcs
+draws and the oracle does not is <strong>extra</strong>, which means a wrong edge.</li>
+<li>Missing edges are grouped by the shape of the import (relative,
+<code>from pkg import name</code>, <code>@/</code> alias, bare name…), so each group points at
+one row of the support table.</li>
+<li>Edges from TypeScript files to stylesheets, components and assets are
+counted separately and not judged, since TypeScript cannot resolve them.</li>
+</ul>
+<p>CI runs both oracles on pinned public repositories and fails if a change
+adds a missing or extra edge:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Repository</th><th>Result</th></tr>
+</thead>
+<tbody>
+<tr><td>Python</td><td>Django 5.2 (grimp 3.17)</td><td>3,041 of 3,041 edges, none extra</td></tr>
+<tr><td>TypeScript</td><td>Vite 6.3.5 (TypeScript 5.9)</td><td>129 missing, 1 extra; 122 of the misses are tsconfig <code>paths</code> aliases</td></tr>
+</tbody>
+</table>
+</div>
+<p>To run the same comparison on your own code, run <code>fcs check</code> (see
+<a href="../benchmarks/correctness.html#on-your-own-code-fcs-check">Correctness against ripgrep</a>).
+It uses grimp if <code>pip install grimp</code> has been done, and TypeScript if it is
+in the repository’s <code>node_modules</code>. It reports missing and extra edges
+with examples, but does not fail on them: they are either a known gap from
+the limits above or a bug worth reporting.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../how-it-works/candidates.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../how-it-works/ranking.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../how-it-works/candidates.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../how-it-works/ranking.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../theme/mermaid-d2ae65e9.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

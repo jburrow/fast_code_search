@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d8de7e4f.js";
+            window.path_to_searchindex_js = "../searchindex-accb8136.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ff6984d8.js"></script>
+        <script src="../toc-5204d8cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Imports that resolve to no indexed file are counted, and the ones written
+as a path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>), which point at
+a broken import or an unsupported form, are called out: in the dependency
+explorer’s folder map, in <code>GET /api/graph/modules</code> (<code>unresolved_imports</code>,
+<code>unresolved_local</code>), in MCP’s <code>dependency_overview</code>, and per file in
+<code>file_dependencies</code>.</li>
+<li>Docs: “How the import graph is built” explains how Python and
+JavaScript/TypeScript imports are extracted and resolved, how an import
+is judged internal (resolves to an indexed file) or external, and how
+the method is checked against grimp and TypeScript.</li>
 <li><code>fcs check [PATH…]</code>: checks fcs on your own code. It indexes the folders
 in memory, compares queries made up from the files with <code>rg -F</code> (exit 1
 on any difference, with each differing query shrunk), and compares the
@@ -287,6 +297,9 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Python: <code>from .missing import x</code> (or <code>import pkg.missing.sub</code>) where the
+module does not exist no longer draws an edge to the package above it;
+the import is unresolved, as Python fails it.</li>
 <li>Case-insensitive search now folds case exactly as ripgrep’s <code>-i</code> does
 (Unicode simple case folding): <code>s</code> finds the long <code>ſ</code>, <code>k</code> the Kelvin
 sign, <code>μ</code> the micro sign <code>µ</code>, and the Greek symbol forms (<code>ϐ</code>, <code>ϑ</code>, …)

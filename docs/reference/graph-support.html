@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d8de7e4f.js";
+            window.path_to_searchindex_js = "../searchindex-accb8136.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ff6984d8.js"></script>
+        <script src="../toc-5204d8cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -187,7 +187,10 @@ MCP’s graph tools) understands, per language. An import that is not listed
 here produces no edge. If fcs misses an edge listed as supported, that is a
 bug; if it misses one listed as not handled, that is a known gap. Python
 and TypeScript are checked against their own resolvers (see the end of the
-page).</p>
+page).
+<a href="../how-it-works/dependency-graph.html">How the import graph is built</a>
+explains the method, including how an import is judged internal or
+external.</p>
 <p>Edges exist for <strong>Rust, Python and JavaScript/TypeScript</strong> only. Go, Java,
 C and C++ <code>#include</code>, C#, Ruby and every other language are searched and
 have symbols, but get no import edges.</p>
@@ -203,6 +206,12 @@ replaced by a wrong one.</li>
 file is indexed later, and <code>GET /api/graph/imports?path=…</code> lists every
 import of a file with its line, and <code>target: null</code> for the unresolved
 ones.</li>
+<li>The unresolved ones are counted. Most are packages, but one written as a
+path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>) is a broken import
+or a form listed below as not handled. The dependency explorer’s folder
+map gives that count, <code>GET /api/graph/modules</code> returns both
+(<code>unresolved_imports</code>, <code>unresolved_local</code>), MCP’s <code>dependency_overview</code>
+reports them, and <code>file_dependencies</code> lists a file’s unresolved imports.</li>
 </ul>
 <h2 id="rust-rs"><a class="header" href="#rust-rs">Rust (<code>.rs</code>)</a></h2>
 <div class="table-wrapper">
@@ -235,7 +244,7 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tbody>
 <tr><td><code>import a.b</code>, <code>import a, b as c</code></td><td>yes, one edge per module</td></tr>
 <tr><td><code>from a.b import c</code></td><td>yes: to <code>a/b/c.py</code> (or <code>a/b/c/__init__.py</code>) when <code>c</code> is a module, else to <code>a/b.py</code> or <code>a/b/__init__.py</code>, as Python does</td></tr>
-<tr><td><code>from .x import y</code>, <code>from ..x import y</code></td><td>yes: one dot is the file’s own package, each extra dot one level up</td></tr>
+<tr><td><code>from .x import y</code>, <code>from ..x import y</code></td><td>yes: one dot is the file’s own package, each extra dot one level up; when <code>x</code> does not exist the import is unresolved, as Python fails it</td></tr>
 <tr><td><code>from . import y</code></td><td>yes: to <code>y.py</code> when it is a module, else to the package’s <code>__init__.py</code></td></tr>
 <tr><td>Absolute imports</td><td>yes, as Python 3 does: from the ancestor folders that are not packages themselves (no <code>__init__.py</code>), so <code>import json</code> inside a package is the standard library, not a <code>json.py</code> next to it; where several could hold the module, the one that holds most of the dotted name wins</td></tr>
 <tr><td><code>src/</code> layouts (<code>tests/</code> importing <code>src/pkg</code>)</td><td>yes: each of those folders’ <code>src/</code> is tried too</td></tr>
