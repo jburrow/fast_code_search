@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Book page "Reference support": what the References mode finds in each
+  language, and what it misses. C and C++ record no references; Python
+  records calls only; TypeScript, Java and C# miss many type positions.
 - Imports that resolve to no indexed file are counted, and the ones written
   as a path into the project (`./x`, `.x`, `crate::`, `@/`), which point at
   a broken import or an unsupported form, are called out: in the dependency
