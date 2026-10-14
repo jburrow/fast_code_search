@@ -3894,7 +3894,10 @@ async fn setup_graph_server() -> Result<(String, TempDir)> {
         ("pkg/__init__.py", ""),
         ("pkg/util.py", "import pkg.service\n"),
         ("pkg/service.py", "import os\nimport pkg.util\n"),
-        ("pkg/api.py", "import pkg.service\n"),
+        (
+            "pkg/api.py",
+            "import pkg.service\nfrom .missing import thing\n",
+        ),
         ("tests/test_api.py", "import pytest\nimport pkg.api\n"),
         ("tests/test_util.py", "import pkg.util\n"),
     ];
@@ -4249,6 +4252,29 @@ async fn test_mcp_tools_answer_from_the_index() -> Result<()> {
     );
     assert!(text.contains("tests/ → "), "{text}");
     assert!(text.contains("pkg/: 2"), "{text}");
+
+    // Imports that resolve to nothing are counted, and the broken one
+    // written as a path into the project is called out.
+    assert!(
+        text.contains("3 imports resolve to no indexed file")
+            && text.contains("1 of them are written as paths"),
+        "{text}"
+    );
+    let modules = get_graph(&base, "modules", &[]).await?;
+    assert_eq!(modules["unresolved_imports"], 3, "{modules}");
+    assert_eq!(modules["unresolved_local"], 1, "{modules}");
+    let (err, text) = mcp_tool(
+        &base,
+        "file_dependencies",
+        serde_json::json!({"path": "pkg/api.py", "direction": "out"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(
+        text.contains("1 written as paths into the project"),
+        "{text}"
+    );
+    assert!(text.contains("pkg/api.py:2  .missing"), "{text}");
 
     // A bad path is a tool error the model can read, not a protocol error.
     let (err, text) = mcp_tool(&base, "read_file", serde_json::json!({"path": "nope.py"})).await?;

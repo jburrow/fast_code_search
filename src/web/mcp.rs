@@ -687,6 +687,9 @@ struct Hidden {
     folders: usize,
 }
 
+/// Unresolved imports listed per file by `dependencies`.
+const UNRESOLVED_SHOWN: usize = 20;
+
 #[derive(serde::Deserialize)]
 struct NodeSetJson {
     file: String,
@@ -697,6 +700,7 @@ struct NodeSetJson {
 #[derive(serde::Deserialize)]
 struct ImportLineJson {
     line: usize,
+    spec: String,
     target: Option<String>,
     containment: bool,
 }
@@ -740,13 +744,18 @@ async fn file_dependencies(state: &WebState, a: DepsArgs) -> ToolResult {
 
     // The line of each direct import, from the file itself.
     let mut import_lines: BTreeMap<String, usize> = BTreeMap::new();
+    // Imports with no indexed target, as (line, spec).
+    let mut unresolved: Vec<(usize, String)> = Vec::new();
     if show_out {
         let q = query(json!({ "file": set.file }))?;
         if let Ok(Json(imports)) = graph::imports_handler(State(state.clone()), q).await {
             let imports: ImportsJson = reshape(&imports)?;
             for i in imports.imports.into_iter().filter(|i| !i.containment) {
-                if let Some(t) = i.target {
-                    import_lines.entry(t).or_insert(i.line);
+                match i.target {
+                    Some(t) => {
+                        import_lines.entry(t).or_insert(i.line);
+                    }
+                    None => unresolved.push((i.line, i.spec)),
                 }
             }
         }
@@ -791,6 +800,27 @@ async fn file_dependencies(state: &WebState, a: DepsArgs) -> ToolResult {
     }
     if show_in {
         section("Imported by (hops away, path)", 1);
+    }
+    if !unresolved.is_empty() {
+        let local = unresolved
+            .iter()
+            .filter(|(_, s)| graph::is_local_spec(s))
+            .count();
+        let _ = writeln!(
+            out,
+            "\nImports that resolve to no indexed file (external packages, the standard library, or forms fcs does not resolve{}):",
+            if local > 0 {
+                format!("; {local} written as paths into the project, which usually means a broken import or an unsupported form")
+            } else {
+                String::new()
+            }
+        );
+        for (line, spec) in unresolved.iter().take(UNRESOLVED_SHOWN) {
+            let _ = writeln!(out, "  {}:{line}  {spec}", set.file);
+        }
+        if unresolved.len() > UNRESOLVED_SHOWN {
+            let _ = writeln!(out, "  … {} more", unresolved.len() - UNRESOLVED_SHOWN);
+        }
     }
     if !has_import_graph(&set.file) {
         let _ = writeln!(out, "\nNote: {GRAPH_COVERAGE}");
@@ -967,6 +997,8 @@ struct FolderEdgeJson {
 struct ModulesJson {
     folders: Vec<FolderJson>,
     edges: Vec<FolderEdgeJson>,
+    unresolved_imports: usize,
+    unresolved_local: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -1060,6 +1092,13 @@ async fn dependency_overview(state: &WebState, a: OverviewArgs) -> ToolResult {
         .collect();
     if !cyclic.is_empty() {
         let _ = writeln!(out, "\nFolders in import cycles: {}", cyclic.join(", "));
+    }
+    if modules.unresolved_imports > 0 {
+        let _ = writeln!(
+            out,
+            "\n{} imports resolve to no indexed file (external packages, the standard library, files outside the index); {} of them are written as paths into the project, which usually means a broken import or a form fcs does not resolve.",
+            modules.unresolved_imports, modules.unresolved_local
+        );
     }
 
     let q = query(json!({ "q": dir, "limit": n.min(15) }))?;

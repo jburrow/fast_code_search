@@ -23,6 +23,12 @@ have symbols, but get no import edges.
   file is indexed later, and `GET /api/graph/imports?path=…` lists every
   import of a file with its line, and `target: null` for the unresolved
   ones.
+- The unresolved ones are counted. Most are packages, but one written as a
+  path into the project (`./x`, `.x`, `crate::`, `@/`) is a broken import
+  or a form listed below as not handled. The dependency explorer's folder
+  map gives that count, `GET /api/graph/modules` returns both
+  (`unresolved_imports`, `unresolved_local`), MCP's `dependency_overview`
+  reports them, and `file_dependencies` lists a file's unresolved imports.
 
 ## Rust (`.rs`)
 
@@ -48,7 +54,7 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 |---|---|
 | `import a.b`, `import a, b as c` | yes, one edge per module |
 | `from a.b import c` | yes: to `a/b/c.py` (or `a/b/c/__init__.py`) when `c` is a module, else to `a/b.py` or `a/b/__init__.py`, as Python does |
-| `from .x import y`, `from ..x import y` | yes: one dot is the file's own package, each extra dot one level up |
+| `from .x import y`, `from ..x import y` | yes: one dot is the file's own package, each extra dot one level up; when `x` does not exist the import is unresolved, as Python fails it |
 | `from . import y` | yes: to `y.py` when it is a module, else to the package's `__init__.py` |
 | Absolute imports | yes, as Python 3 does: from the ancestor folders that are not packages themselves (no `__init__.py`), so `import json` inside a package is the standard library, not a `json.py` next to it; where several could hold the module, the one that holds most of the dotted name wins |
 | `src/` layouts (`tests/` importing `src/pkg`) | yes: each of those folders' `src/` is tried too |

@@ -377,7 +377,9 @@ function drawMap(full) {
     const hidden = map.hidden ? ` Showing the ${map.folders.length} most connected of ${full.folders.length.toLocaleString()} folders.` : '';
     return `<span class="summary"><b>${full.folders.length.toLocaleString()}</b> folders, layered so each one only imports folders to its left.${hidden} ${cyc.length
         ? `<b>${cyc.length}</b> folders form import cycles (red)${cyc.length <= 6 ? ': ' + cyc.map(f => `<b>${esc(name(f.folder))}</b>`).join(', ') : ''}.`
-        : 'No cycles between folders.'}</span>`;
+        : 'No cycles between folders.'}${full.unresolved_local
+        ? ` <span title="Imports written as a path into the project (./x, .x, crate::, @/) that resolve to no indexed file: a broken import or a form fcs does not resolve. ${(full.unresolved_imports || 0).toLocaleString()} imports in all resolve to no indexed file, most of them external packages.">${plural(full.unresolved_local, 'project import')} ${full.unresolved_local === 1 ? 'resolves' : 'resolve'} to no file.</span>`
+        : ''}</span>`;
 }
 
 async function openFolder(dir) {

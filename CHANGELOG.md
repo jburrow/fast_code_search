@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Imports that resolve to no indexed file are counted, and the ones written
+  as a path into the project (`./x`, `.x`, `crate::`, `@/`), which point at
+  a broken import or an unsupported form, are called out: in the dependency
+  explorer's folder map, in `GET /api/graph/modules` (`unresolved_imports`,
+  `unresolved_local`), in MCP's `dependency_overview`, and per file in
+  `file_dependencies`.
 - `fcs check [PATH…]`: checks fcs on your own code. It indexes the folders
   in memory, compares queries made up from the files with `rg -F` (exit 1
   on any difference, with each differing query shrunk), and compares the
@@ -101,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
+- Python: `from .missing import x` (or `import pkg.missing.sub`) where the
+  module does not exist no longer draws an edge to the package above it;
+  the import is unresolved, as Python fails it.
 - Case-insensitive search now folds case exactly as ripgrep's `-i` does
   (Unicode simple case folding): `s` finds the long `ſ`, `k` the Kelvin
   sign, `μ` the micro sign `µ`, and the Greek symbol forms (`ϐ`, `ϑ`, …)
