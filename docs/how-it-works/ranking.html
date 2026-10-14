@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-372cdb3b.js";
+            window.path_to_searchindex_js = "../searchindex-1b982611.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -217,11 +217,19 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.</p>
-<h2 id="diversity"><a class="header" href="#diversity">Diversity</a></h2>
-<p>Hits are ordered by their rank inside their file: every
-file’s best hit, then every file’s second hit, and so on. One file holding
-a hundred matches cannot fill the page. Ties break on score, then file,
-then line, so paging is deterministic.</p>
+<h2 id="result-order"><a class="header" href="#result-order">Result order</a></h2>
+<p>Results are in rank order with each file’s hits kept together: files in
+the order of their best hit, and every hit of a file, by score, before the
+next file. No hit waits behind other files’ hits; a file with a hundred
+matches takes as much of the page as it needs, as in ripgrep. Ties break
+on score, then file, then line, so paging is deterministic.</p>
+<p>(From v0.12.0 to v0.15.2 results were interleaved by file instead: every
+file’s best hit, then every file’s second, so a file’s later hits could be
+pages away. That was never asked for and was removed.)</p>
+<p>Every result carries <code>file_hits</code>, how many hits the search found in its
+file across all pages (<code>file_hits_capped</code> when the file reached the
+per-file cap and may hold more), so a file cut at a page boundary says
+“3 of 7 hits” in the web UI rather than “3 hits”.</p>
 <h2 id="fast-ranking"><a class="header" href="#fast-ranking">Fast ranking</a></h2>
 <p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read
 (<code>fast_rank_files</code>; a request may ask for more with <code>max_files</code>, up to

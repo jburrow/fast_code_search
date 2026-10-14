@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-372cdb3b.js";
+            window.path_to_searchindex_js = "searchindex-1b982611.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -555,6 +555,11 @@ scan was cut short by its budget. When a query could be in thousands of
 files, fast ranking opens only the most likely 2,000; the summary says
 “Searched 2,000 of N files” and <strong>SEARCH ALL FILES</strong> opens the rest (or
 as many as the server allows).</li>
+<li>Results are in rank order with each file’s hits together (see
+<a href="#result-order">Ranking</a>). A file cut at the
+end of a page says so: its badge reads “3 of 7 hits”, and <strong>Show 4 more
+hits in this file</strong> under its code fetches the rest in place. “7+” means
+the file reached the per-file cap and may hold more.</li>
 <li>Files whose <em>path</em> matches the query are listed in a <strong>FILES</strong> box above
 the results, so typing or pasting <code>src/web/api.rs</code> (or just <code>api.rs</code>)
 finds the file even when no line mentions it. File names rank first;
@@ -1483,6 +1488,7 @@ when the request timeout is hit.</p>
     "score": 12.5,
     "match_type": "SYMBOL_DEFINITION",
     "dependency_count": 2,
+    "file_hits": 3,
     "context_lines": ["…"], "context_start_line": 4
   }],
   "query": "helper_target",
@@ -1498,7 +1504,12 @@ truncated window of a long line, see <code>content_truncated</code>);
 <code>line_match_start</code>/<code>line_match_end</code> are byte offsets into the full line and
 <code>match_column</code> the 0-based character column, for placing an editor cursor.
 <code>line_number</code> is 0 for a filename match. <code>match_type</code> is <code>TEXT</code>,
-<code>SYMBOL_DEFINITION</code> or <code>SYMBOL_REFERENCE</code>. <code>total_matches</code> is present when
+<code>SYMBOL_DEFINITION</code> or <code>SYMBOL_REFERENCE</code>. <code>file_hits</code> is how many hits
+the search found in the result’s file across all pages (a file cut at a
+page boundary shows only some of them on this page);
+<code>file_hits_capped: true</code> means the file reached the per-file cap and may
+hold more. To fetch one file’s hits, repeat the search with <code>include</code> set to
+that path (glob metacharacters escaped as <code>[*]</code>). <code>total_matches</code> is present when
 the search ran to completion; otherwise <code>truncated_by_budget</code> is true and
 <code>has_more</code> means more may exist. <code>index</code> says how current the index is; see
 <a href="#index-freshness">Index freshness</a>.</p>
@@ -1596,8 +1607,8 @@ query minus its operators is searched for as written.</p>
 </tbody>
 </table>
 </div>
-<p>Hits are interleaved by file (every file’s best hit first) so one file
-cannot fill a page.</p>
+<p>Results are in rank order with each file’s hits kept together: files in
+the order of their best hit, then every hit of that file by score.</p>
 <h3 id="import-graph"><a class="header" href="#import-graph">Import graph</a></h3>
 <p>The dependency explorer (<code>/graph.html</code>) is built on these. Every endpoint
 answers from memory under the engine read lock. <code>file</code> accepts a display
@@ -3687,11 +3698,19 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.</p>
-<h2 id="diversity"><a class="header" href="#diversity">Diversity</a></h2>
-<p>Hits are ordered by their rank inside their file: every
-file’s best hit, then every file’s second hit, and so on. One file holding
-a hundred matches cannot fill the page. Ties break on score, then file,
-then line, so paging is deterministic.</p>
+<h2 id="result-order"><a class="header" href="#result-order">Result order</a></h2>
+<p>Results are in rank order with each file’s hits kept together: files in
+the order of their best hit, and every hit of a file, by score, before the
+next file. No hit waits behind other files’ hits; a file with a hundred
+matches takes as much of the page as it needs, as in ripgrep. Ties break
+on score, then file, then line, so paging is deterministic.</p>
+<p>(From v0.12.0 to v0.15.2 results were interleaved by file instead: every
+file’s best hit, then every file’s second, so a file’s later hits could be
+pages away. That was never asked for and was removed.)</p>
+<p>Every result carries <code>file_hits</code>, how many hits the search found in its
+file across all pages (<code>file_hits_capped</code> when the file reached the
+per-file cap and may hold more), so a file cut at a page boundary says
+“3 of 7 hits” in the web UI rather than “3 hits”.</p>
 <h2 id="fast-ranking"><a class="header" href="#fast-ranking">Fast ranking</a></h2>
 <p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read
 (<code>fast_rank_files</code>; a request may ask for more with <code>max_files</code>, up to
@@ -4638,6 +4657,19 @@ the same order.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li>Results are in rank order again, with each file’s hits together: files in
+the order of their best hit, then every hit of that file by score. Since
+v0.12.0 hits were interleaved by file (every file’s best hit before any
+file’s second), and since #147 regardless of score, so a file’s other
+hits could be pages away. This was never asked for. On the ranking
+suite, precision@5 goes from 0.90 to 1.00; precision@1 is unchanged.</li>
+<li>Web UI: a file’s hit badge counted only the hits on the page (“1 hit” for
+a file with seven). Each result now carries <code>file_hits</code> (and
+<code>file_hits_capped</code>) in the web API, gRPC and <code>fcs --json</code>. A file cut at
+a page boundary reads “3 of 7 hits”, and <strong>Show 4 more hits in this
+file</strong> fetches the rest in place, kept across <strong>Load more</strong>. The ripgrep
+backtest checks every first-page count against the full result and that
+each file’s hits are together.</li>
 <li>Dependency graph: TypeScript and JavaScript imports that go through a
 <code>tsconfig.json</code>/<code>jsconfig.json</code> <code>paths</code> alias or <code>baseUrl</code> (<code>@app/orders</code>,
 <code>components/Button</code>) now link to the file they name, including settings

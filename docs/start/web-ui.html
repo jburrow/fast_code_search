@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-372cdb3b.js";
+            window.path_to_searchindex_js = "../searchindex-1b982611.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -209,6 +209,11 @@ scan was cut short by its budget. When a query could be in thousands of
 files, fast ranking opens only the most likely 2,000; the summary says
 “Searched 2,000 of N files” and <strong>SEARCH ALL FILES</strong> opens the rest (or
 as many as the server allows).</li>
+<li>Results are in rank order with each file’s hits together (see
+<a href="../how-it-works/ranking.html#result-order">Ranking</a>). A file cut at the
+end of a page says so: its badge reads “3 of 7 hits”, and <strong>Show 4 more
+hits in this file</strong> under its code fetches the rest in place. “7+” means
+the file reached the per-file cap and may hold more.</li>
 <li>Files whose <em>path</em> matches the query are listed in a <strong>FILES</strong> box above
 the results, so typing or pasting <code>src/web/api.rs</code> (or just <code>api.rs</code>)
 finds the file even when no line mentions it. File names rank first;
