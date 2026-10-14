@@ -1,11 +1,15 @@
 use crate::config::IndexerConfig;
-use crate::search::{RankMode, SearchEngine, SearchLimits};
+use crate::search::{RankMode, SearchEngine, SearchMode, SearchSettings};
 use anyhow::Result;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
+
+/// gRPC response header naming the limits that cut a search short
+/// (comma-separated [`crate::search::SearchLimit::as_str`] names).
+pub const LIMITS_HIT_HEADER: &str = "fcs-limits-hit";
 
 // Include the generated protobuf code
 pub mod search_proto {
@@ -33,6 +37,8 @@ pub struct CodeSearchService {
     request_timeout: std::time::Duration,
     /// Only one `Index` RPC may run at a time.
     index_in_progress: Arc<tokio::sync::Mutex<()>>,
+    /// Fast-ranking file count and paging depth (`[server]` settings).
+    search_settings: SearchSettings,
 }
 
 impl CodeSearchService {
@@ -54,7 +60,14 @@ impl CodeSearchService {
             )),
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             index_in_progress: Arc::new(tokio::sync::Mutex::new(())),
+            search_settings: SearchSettings::default(),
         }
+    }
+
+    /// Apply the server's search settings (fast-ranking files, paging depth).
+    pub fn with_search_settings(mut self, settings: SearchSettings) -> Self {
+        self.search_settings = settings;
+        self
     }
 
     /// Share a search semaphore (with the REST router) and set the request
@@ -125,45 +138,30 @@ impl CodeSearch for CodeSearchService {
     ) -> Result<Response<Self::SearchStream>, Status> {
         let req = request.into_inner();
         let query = req.query.trim().to_string();
-        // proto3 default 0 = "unset": use the REST default page size rather
-        // than clamping to a single result.
-        let max_results = if req.max_results <= 0 {
-            50
-        } else {
-            req.max_results.min(1000) as usize
+        // Paging, caps and the deadline are the same for every front end
+        // (see `search::request`). proto3 has no "unset" for numbers or
+        // bools: 0 means the default, and `false` means "as the query says".
+        let mode = SearchMode::from_flags(req.is_regex, req.symbols_only, req.references)
+            .map_err(Status::invalid_argument)?;
+        let request = crate::search::SearchRequest {
+            query: query.clone(),
+            mode,
+            case_sensitive: req.case_sensitive.then_some(true),
+            whole_word: req.whole_word.then_some(true),
+            include: req.include_paths.join(";"),
+            exclude: req.exclude_paths.join(";"),
+            max_results: req.max_results.max(0) as usize,
+            offset: req.offset.max(0) as usize,
+            rank: RankMode::parse(&req.rank),
+            timeout: (req.deadline_ms > 0)
+                .then(|| std::time::Duration::from_millis(req.deadline_ms as u64)),
+            max_files: None,
+            path_matches: 0,
         };
-        let include_patterns = req.include_paths.join(";");
-        let exclude_patterns = req.exclude_paths.join(";");
-        let is_regex = req.is_regex;
-        let symbols_only = req.symbols_only;
-        let references = req.references;
-        if references && (is_regex || symbols_only) {
-            return Err(Status::invalid_argument(
-                "references cannot be combined with is_regex or symbols_only",
-            ));
-        }
-        let case_sensitive = req.case_sensitive;
-        let whole_word = req.whole_word;
-        let rank_mode = RankMode::parse(&req.rank);
-        let offset = req.offset.max(0) as usize;
-        if offset > SearchLimits::MAX_OFFSET {
-            return Err(Status::invalid_argument(format!(
-                "offset must be at most {}; narrow the query instead of paging deeper",
-                SearchLimits::MAX_OFFSET
-            )));
-        }
-        // Same deadline policy as /api/search: the client's deadline if
-        // given, capped by (and otherwise just under) the request timeout.
-        let default_timeout = self.request_timeout.mul_f32(0.9);
-        let timeout = if req.deadline_ms > 0 {
-            std::time::Duration::from_millis((req.deadline_ms as u64).min(30_000))
-                .min(default_timeout)
-        } else {
-            default_timeout
-        };
-        let limits = SearchLimits::new(max_results)
-            .with_offset(offset)
-            .with_timeout(timeout);
+        let max_results = request.page_size();
+        let limits = request
+            .limits(&self.search_settings, Some(self.request_timeout))
+            .map_err(Status::invalid_argument)?;
         {
             let span = tracing::Span::current();
             span.record("query", query.as_str());
@@ -190,7 +188,7 @@ impl CodeSearch for CodeSearchService {
             }
         };
         let engine_arc = std::sync::Arc::clone(&self.engine);
-        let matches = tokio::task::spawn_blocking(move || {
+        let (matches, limits_hit) = tokio::task::spawn_blocking(move || {
             // Held for the search's real lifetime, not the RPC future's.
             let _permit = permit;
             // Use try_read to avoid blocking when a write lock is held during indexing.
@@ -207,51 +205,10 @@ impl CodeSearch for CodeSearchService {
                 }
             };
 
-            // Same modes, syntax and limits as /api/search.
-            let mut parsed = crate::search::parse_query(&query);
-            if case_sensitive {
-                parsed.options.case_sensitive = true;
-            }
-            if whole_word {
-                parsed.options.whole_word = true;
-            }
-            let (matches, _info) = if references {
-                engine
-                    .search_references_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
-                    })?
-            } else if symbols_only {
-                engine
-                    .search_symbols_parsed(&parsed, &include_patterns, &exclude_patterns, limits)
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
-                    })?
-            } else if is_regex {
-                engine
-                    .search_regex_with_limits(
-                        &query,
-                        &include_patterns,
-                        &exclude_patterns,
-                        limits,
-                        rank_mode,
-                    )
-                    .map_err(|e| Status::invalid_argument(e.to_string()))?
-            } else {
-                engine
-                    .search_parsed(
-                        &parsed,
-                        &include_patterns,
-                        &exclude_patterns,
-                        limits,
-                        rank_mode,
-                    )
-                    .map_err(|e| {
-                        Status::invalid_argument(format!("Invalid filter pattern: {}", e))
-                    })?
-            };
-
-            Ok::<_, Status>(matches)
+            let outcome = engine
+                .run(&request, limits)
+                .map_err(Status::invalid_argument)?;
+            Ok::<_, Status>((outcome.matches, outcome.info.limits_hit))
         })
         .await
         .map_err(|e| Status::internal(format!("Search task panicked: {}", e)))??;
@@ -290,7 +247,16 @@ impl CodeSearch for CodeSearchService {
             }
         });
 
-        Ok(Response::new(ReceiverStream::new(rx)))
+        let mut response = Response::new(ReceiverStream::new(rx));
+        // The stream carries only hits, so the limits that cut the search
+        // travel in a response header: `fcs-limits-hit: max_files,timeout`.
+        if !limits_hit.is_empty() {
+            let names: Vec<&str> = limits_hit.iter().map(|l| l.as_str()).collect();
+            if let Ok(v) = names.join(",").parse() {
+                response.metadata_mut().insert(LIMITS_HIT_HEADER, v);
+            }
+        }
+        Ok(response)
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -449,10 +415,12 @@ pub fn create_server_with_engine_config_limits(
     config: &IndexerConfig,
     search_permits: Arc<tokio::sync::Semaphore>,
     request_timeout: std::time::Duration,
+    search_settings: SearchSettings,
 ) -> CodeSearchServer<CodeSearchService> {
     CodeSearchServer::new(
         CodeSearchService::with_engine_config(engine, config)
-            .with_limits(search_permits, request_timeout),
+            .with_limits(search_permits, request_timeout)
+            .with_search_settings(search_settings),
     )
 }
 

@@ -667,8 +667,8 @@ fn test_symbol_search_ranking_and_line_dedupe() {
     );
 }
 
-/// Roadmap 7: case-sensitive, whole-word, AND, exclusion and lang:/file:
-/// through the parsed-query entry point.
+/// Roadmap 7: case-sensitive, whole-word, phrases and lang:/file: through
+/// the parsed-query entry point.
 #[test]
 fn test_query_syntax_search() {
     use crate::search::query_syntax::parse;
@@ -725,16 +725,11 @@ fn test_query_syntax_search() {
             ("c.rs".into(), 1)
         ]
     );
-    // AND: both terms must be in the file; lines matching either are returned
-    assert_eq!(
-        run("cat dog"),
-        vec![("a.rs".into(), 1), ("a.rs".into(), 2), ("a.rs".into(), 3)]
-    );
-    // exclusion at file level
-    assert_eq!(
-        run("cat -dog"),
-        vec![("b.py".into(), 1), ("c.rs".into(), 1)]
-    );
+    // Several words are one phrase, as in `rg -F`.
+    assert!(run("cat dog").is_empty());
+    assert_eq!(run("dog here"), vec![("a.rs".into(), 3)]);
+    // A leading `-` is text, not an exclusion.
+    assert!(run("cat -dog").is_empty());
     // lang: / file:
     assert_eq!(run("cat lang:py"), vec![("b.py".into(), 1)]);
     assert_eq!(run("cat file:c.rs"), vec![("c.rs".into(), 1)]);
@@ -746,8 +741,9 @@ fn test_query_syntax_search() {
         run("cat -file:a.rs"),
         vec![("b.py".into(), 1), ("c.rs".into(), 1)]
     );
-    // quoted phrase
-    assert_eq!(run("\"dog here\""), vec![("a.rs".into(), 3)]);
+    // Quotes are text: `'CAT'` holds them, `"dog here"` is not in a file.
+    assert_eq!(run("'CAT'"), vec![("b.py".into(), 1)]);
+    assert!(run("\"dog here\"").is_empty());
 }
 
 /// Roadmap 7: a pattern that mentions a newline or sets the `s` flag is
@@ -1072,6 +1068,64 @@ fn test_match_budget_bounds_work_and_is_reported() {
     assert!(info.truncated_by_budget, "deadline must mark truncation");
 }
 
+/// Every capped result names the limit that cut it, and a complete one
+/// names none.
+#[test]
+fn test_limits_hit_name_each_limit() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut engine = SearchEngine::new();
+    for f in 0..20 {
+        let body: String = (0..30)
+            .map(|l| format!("let cap_needle_{l} = {f};\n"))
+            .collect();
+        let path = temp_dir.path().join(format!("c{f}.rs"));
+        fs::write(&path, body).unwrap();
+        engine.index_file(path).unwrap();
+    }
+    engine.finalize();
+    let run = |limits: SearchLimits, mode| {
+        engine
+            .search_ranked_with_limits("cap_needle", limits, mode)
+            .1
+    };
+    let unbounded = || SearchLimits::new(10).with_match_budget(usize::MAX);
+
+    let info = run(unbounded(), RankMode::Full);
+    assert!(info.limits_hit.is_empty(), "{info:?}");
+    assert_eq!(info.total_matches, Some(600));
+
+    let info = run(SearchLimits::new(10).with_match_budget(50), RankMode::Full);
+    assert_eq!(info.limits_hit, vec![SearchLimit::MatchBudget]);
+
+    let info = run(unbounded().with_per_doc_cap(5), RankMode::Full);
+    assert_eq!(info.limits_hit, vec![SearchLimit::PerFileCap]);
+    assert_eq!(info.total_matches, None);
+
+    // The file cap keeps the total exact for the files opened.
+    let info = run(unbounded().with_max_files(4), RankMode::Fast);
+    assert_eq!(info.limits_hit, vec![SearchLimit::FileCap]);
+    assert_eq!(info.total_matches, Some(120));
+    assert!(!info.truncated_by_budget);
+    assert!(SearchLimit::FileCap
+        .describe(&info)
+        .contains("best 4 of 20 candidate files"));
+
+    let info = run(
+        unbounded().with_deadline(std::time::Instant::now() - std::time::Duration::from_millis(1)),
+        RankMode::Full,
+    );
+    assert_eq!(info.limits_hit, vec![SearchLimit::Deadline]);
+
+    for l in [
+        SearchLimit::FileCap,
+        SearchLimit::MatchBudget,
+        SearchLimit::PerFileCap,
+        SearchLimit::Deadline,
+    ] {
+        assert_eq!(SearchLimit::parse(l.as_str()), Some(l));
+    }
+}
+
 /// Roadmap 3.6: ordering is deterministic under ties and paging with
 /// `offset` walks the same ordering without repeats or gaps.
 #[test]
@@ -1377,17 +1431,46 @@ fn test_symbol_search_uses_trigram_filtering() {
     );
 }
 
-/// Fix #6: FAST_RANKING_TOP_N should be large enough to not miss relevant results.
+/// Bug report: fast ranking always stopped at 2000 files. The number is
+/// a limit now (`max_files`), from the server's settings or the request.
 #[test]
-fn test_fast_ranking_top_n_is_sufficient() {
-    // Just verify the constant is reasonable (constant value is expected here)
-    #[allow(clippy::assertions_on_constants)]
-    {
-        assert!(
-            SearchEngine::FAST_RANKING_TOP_N >= 2000,
-            "FAST_RANKING_TOP_N should be at least 2000 to avoid dropping relevant files"
-        );
+fn test_fast_ranking_opens_max_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut engine = SearchEngine::new();
+    for i in 0..30 {
+        let p = temp_dir.path().join(format!("f{i}.rs"));
+        fs::write(&p, "needle\n").unwrap();
+        engine.index_file(&p).unwrap();
     }
+    engine.finalize();
+    let searched = |limits: SearchLimits| {
+        let (hits, info) = engine.search_ranked_with_limits("needle", limits, RankMode::Fast);
+        assert_eq!(info.total_candidates, 30);
+        assert_eq!(hits.len(), info.candidates_searched);
+        info.candidates_searched
+    };
+    assert_eq!(SearchLimits::new(100).max_files, 2000);
+    assert_eq!(searched(SearchLimits::new(100).with_max_files(10)), 10);
+    assert_eq!(searched(SearchLimits::new(100).with_max_files(0)), 30);
+
+    // Server settings: a default, a ceiling on what a request may ask for.
+    let settings = SearchSettings {
+        fast_rank_files: 10,
+        max_fast_rank_files: 20,
+        ..SearchSettings::default()
+    };
+    assert_eq!(searched(settings.apply(SearchLimits::new(100), None)), 10);
+    assert_eq!(
+        searched(settings.apply(SearchLimits::new(100), Some(15))),
+        15
+    );
+    assert_eq!(
+        searched(settings.apply(SearchLimits::new(100), Some(1000))),
+        20
+    );
+    let unlimited = SearchSettings::default();
+    assert_eq!(unlimited.fast_rank_files_for(Some(50_000)), 50_000);
+    assert_eq!(unlimited.fast_rank_files_for(None), 2000);
 }
 
 /// Filename-only matches: searching for the filename stem should return
@@ -1793,21 +1876,45 @@ fn test_make_display_path_multiple_roots() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_search_limits_offset_is_clamped_and_budget_capped() {
+fn test_search_limits_offset_budget() {
     let base = SearchLimits::new(50);
     assert_eq!(base.offset, 0);
 
-    // A deep offset is clamped and the derived budget stops growing.
-    let deep = SearchLimits::new(1000).with_offset(usize::MAX);
-    assert_eq!(deep.offset, SearchLimits::MAX_OFFSET);
-    assert_eq!(deep.match_budget, (SearchLimits::MAX_OFFSET + 1000) * 8);
-    assert!(deep.match_budget <= SearchLimits::MAX_DERIVED_BUDGET);
+    // The ranking headroom stops growing at MAX_DERIVED_BUDGET...
+    let mid = SearchLimits::new(1000).with_offset(20_000);
+    assert_eq!(mid.match_budget, SearchLimits::MAX_DERIVED_BUDGET);
+    // ...but a deeper page still gets a budget that reaches it (bug report:
+    // paging stopped at offset 10000).
+    let deep = SearchLimits::new(1000).with_offset(500_000);
+    assert_eq!(deep.offset, 500_000);
+    assert!(deep.match_budget > 501_000, "{}", deep.match_budget);
+    assert_eq!(
+        SearchLimits::new(10).with_offset(usize::MAX).match_budget,
+        usize::MAX
+    );
+
+    // Servers bound the depth with a setting (default 100000; 0 = none).
+    let settings = SearchSettings::default();
+    assert!(settings.check_offset(100_000).is_ok());
+    assert!(settings.check_offset(100_001).is_err());
 
     // A shallow offset still grows the budget proportionally.
     let shallow = SearchLimits::new(50).with_offset(100);
     assert_eq!(shallow.offset, 100);
     assert!(shallow.match_budget > base.match_budget);
     assert!(shallow.match_budget <= SearchLimits::MAX_DERIVED_BUDGET);
+
+    // Lists ending at 1000 or deeper share one budget and per-document cap,
+    // so offset pages past the API's 1000-result list rank the same sample.
+    let list = SearchLimits::new(1000);
+    for page in [
+        SearchLimits::new(50).with_offset(950),
+        SearchLimits::new(50).with_offset(1000),
+        SearchLimits::new(50).with_offset(40_000),
+    ] {
+        assert_eq!(page.match_budget, list.match_budget);
+        assert_eq!(page.doc_cap(), list.doc_cap());
+    }
 
     // An explicit override is still allowed to exceed the derived ceiling.
     let unbounded = SearchLimits::new(50).with_match_budget(usize::MAX);
@@ -2078,27 +2185,25 @@ fn test_references_survive_stale_positions() {
     assert_eq!(count(&engine), 0);
 }
 
-/// Review 1.5: with several terms, lines containing every term rank first
-/// and are emitted before the per-document cap, so `fn main` finds
-/// `fn main()` even in a file with hundreds of other `fn` lines; single-term
-/// queries keep their document-order, unscaled results.
+/// Bug report: several words were ANDed by file and every line holding
+/// any of them was returned. Like ripgrep, they are one phrase now: only
+/// lines holding `fn main` match, however many `fn` lines a file has.
 #[test]
-fn test_multi_term_lines_rank_by_terms_matched() {
+fn test_several_words_are_one_phrase() {
     use crate::search::query_syntax::parse;
     let temp_dir = TempDir::new().unwrap();
-    // 150 `fn` lines (only the first term), then the line with both terms,
-    // then one more `main` line (only the second term).
+    // 150 `fn` lines, then the phrase (beyond MAX_MATCHES_PER_DOC), then
+    // the two words apart.
     let mut big = String::new();
     for i in 0..150 {
         big.push_str(&format!("fn helper_{i}() {{}}\n"));
     }
     big.push_str("fn main() {}\n");
-    big.push_str("// main entry\n");
+    big.push_str("// main entry, fn below\n");
     fs::write(temp_dir.path().join("big.rs"), &big).unwrap();
-    // A second file where the first `fn` line comes before the joint line.
     fs::write(
         temp_dir.path().join("small.rs"),
-        "fn other() {}\nlet x = 1;\nfn main() { other() }\n",
+        "fn other() {}\nlet main = 1;\npub FN MAIN() { other() }\nfn  main()\n",
     )
     .unwrap();
     let mut engine = SearchEngine::new();
@@ -2106,84 +2211,38 @@ fn test_multi_term_lines_rank_by_terms_matched() {
     engine.index_file(temp_dir.path().join("small.rs")).unwrap();
     engine.finalize();
 
-    let (hits, _) = engine
-        .search_parsed(
-            &parse("fn main"),
-            "",
-            "",
-            SearchLimits::new(500),
-            RankMode::Full,
-        )
-        .unwrap();
-    let name = |h: &SearchMatch| h.file_path.rsplit('/').next().unwrap().to_string();
-    // The two lines holding both terms come first, ahead of every
-    // single-term line, and the capped big file still reports its joint
-    // line (line 151, beyond MAX_MATCHES_PER_DOC) and its `main`-only line.
-    assert!(hits.len() >= 2, "{}", hits.len());
-    let top: Vec<(String, usize)> = hits[..2].iter().map(|h| (name(h), h.line_number)).collect();
-    assert!(top.contains(&("big.rs".into(), 151)), "{top:?}");
-    assert!(top.contains(&("small.rs".into(), 3)), "{top:?}");
-    assert!(hits[..2].iter().all(|h| h.content.contains("fn main")));
-    let big_lines: Vec<usize> = hits
-        .iter()
-        .filter(|h| name(h) == "big.rs")
-        .map(|h| h.line_number)
-        .collect();
-    // The joint line plus a few single-term lines: with several terms the
-    // lowest tier is capped per document so it cannot exhaust the budget.
+    let run = |q: &str| {
+        let (hits, info) = engine
+            .search_parsed(&parse(q), "", "", SearchLimits::new(500), RankMode::Full)
+            .unwrap();
+        let mut found: Vec<(String, usize)> = hits
+            .iter()
+            .map(|h| {
+                (
+                    h.file_path.rsplit('/').next().unwrap().to_string(),
+                    h.line_number,
+                )
+            })
+            .collect();
+        found.sort();
+        (found, info)
+    };
+    let (found, info) = run("fn main");
+    // Case-insensitive by default; `fn  main` (two spaces) is not the phrase.
     assert_eq!(
-        big_lines.len(),
-        1 + SearchEngine::MAX_SINGLE_TERM_LINES_PER_DOC
+        found,
+        vec![("big.rs".into(), 151), ("small.rs".into(), 3)],
+        "{found:?}"
     );
-    assert_eq!(big_lines[0], 151, "joint line first");
-    // Single-term lines follow in document order and the cap applies to
-    // them, so the `main`-only line 152 is cut off like `fn` line 150.
-    assert!(!big_lines.contains(&152), "{big_lines:?}");
-    let mut rest = big_lines[1..].to_vec();
-    rest.sort_unstable();
-    assert_eq!(
-        rest,
-        (1..=SearchEngine::MAX_SINGLE_TERM_LINES_PER_DOC).collect::<Vec<usize>>()
-    );
-    // The multiplier is exactly the number of distinct terms on the line.
-    let joint = hits.iter().find(|h| h.line_number == 3).unwrap();
-    let single = hits
-        .iter()
-        .find(|h| name(h) == "small.rs" && h.line_number == 1)
-        .unwrap();
-    assert!(joint.score > single.score, "{joint:?} vs {single:?}");
-    let (only_fn, _) = engine
-        .search_parsed(&parse("fn"), "", "", SearchLimits::new(500), RankMode::Full)
-        .unwrap();
-    let small_fn_main = only_fn
-        .iter()
-        .find(|h| name(h) == "small.rs" && h.line_number == 3)
-        .unwrap();
-    // Tiering: at least the all-terms multiplier plus one tier step above
-    // the same line scored for the single term.
-    assert!(
-        joint.score >= small_fn_main.score * 2.0 + 100.0,
-        "{joint:?} vs {small_fn_main:?}"
-    );
-
-    // Single term: document order within the file, unscaled, capped (at
-    // the default cap of a first page; a longer list raises it).
-    let (only_fn, _) = engine
-        .search_parsed(
-            &parse("fn"),
-            "",
-            "",
-            SearchLimits::new(500).with_per_doc_cap(SearchEngine::MAX_MATCHES_PER_DOC),
-            RankMode::Full,
-        )
-        .unwrap();
-    let big_only: Vec<usize> = only_fn
-        .iter()
-        .filter(|h| name(h) == "big.rs")
-        .map(|h| h.line_number)
-        .collect();
-    assert_eq!(big_only.len(), SearchEngine::MAX_MATCHES_PER_DOC);
-    assert!(!big_only.contains(&151), "cut off by the cap, as before");
+    assert_eq!(info.total_matches, Some(2));
+    let (found, _) = run("fn main case:yes");
+    assert_eq!(found, vec![("big.rs".into(), 151)]);
+    // Spacing is exact, as in `rg -F`.
+    let (found, _) = run("fn  main");
+    assert_eq!(found, vec![("small.rs".into(), 4)]);
+    // A quoted phrase is searched with its quotes.
+    let (found, _) = run("\"fn main\"");
+    assert!(found.is_empty(), "{found:?}");
 }
 
 /// Review 1.10: a needle containing a newline matches across lines; the
@@ -2221,8 +2280,8 @@ fn test_needle_with_newline_is_clamped_to_first_line() {
             .unwrap()
             .0
     };
-    check(run("\"alpha\nbeta\" case:yes"), &[1]);
-    check(run("\"alpha\nbeta\" word:yes"), &[1, 4]);
+    check(run("alpha\nbeta case:yes"), &[1]);
+    check(run("alpha\nbeta word:yes"), &[1, 4]);
 }
 
 /// Review 1.10: a regex search must not drop a document whose symbol
@@ -2530,54 +2589,11 @@ fn test_regex_single_pass_keeps_per_line_semantics() {
     assert_eq!(run(r"fn\r\nmain\("), vec![(3, 0, 2)]);
 }
 
-/// Review 1.5 (follow-up): for a multi-term query the line holding the
-/// query as one phrase ranks first, then lines holding every term, then
-/// single-term lines — whatever the files' own scores — and the file with
-/// the phrase is opened even when fast ranking would not have sampled it.
-#[test]
-fn test_phrase_lines_outrank_all_term_and_single_term_lines() {
-    use crate::search::query_syntax::parse;
-    let temp_dir = TempDir::new().unwrap();
-    let src = temp_dir.path().join("src");
-    let tests = temp_dir.path().join("tests");
-    fs::create_dir_all(&src).unwrap();
-    fs::create_dir_all(&tests).unwrap();
-    // High-scoring location, terms on separate lines only.
-    fs::write(
-        src.join("lib.rs"),
-        "fn default() -> Self {}\nlet main_thread = 1;\nfn other() {}\n",
-    )
-    .unwrap();
-    // Both terms on one line, not as the phrase.
-    fs::write(src.join("mixed.rs"), "let main = fn_ptr; // fn\n").unwrap();
-    // The phrase, in a test file (penalised by the file score).
-    fs::write(tests.join("t.rs"), "fn main() {}\n").unwrap();
-
-    let mut engine = SearchEngine::new();
-    engine.add_root_path(temp_dir.path());
-    for f in ["src/lib.rs", "src/mixed.rs", "tests/t.rs"] {
-        engine.index_file(temp_dir.path().join(f)).unwrap();
-    }
-    engine.finalize();
-
-    for mode in [RankMode::Full, RankMode::Fast] {
-        let (hits, _) = engine
-            .search_parsed(&parse("fn main"), "", "", SearchLimits::new(10), mode)
-            .unwrap();
-        let files: Vec<&str> = hits.iter().map(|h| h.file_path.as_str()).collect();
-        assert!(files[0].ends_with("t.rs"), "{mode:?}: {files:?}");
-        assert!(files[1].ends_with("mixed.rs"), "{mode:?}: {files:?}");
-        assert!(files[2].ends_with("lib.rs"), "{mode:?}: {files:?}");
-        assert!(hits[0].score > hits[1].score && hits[1].score > hits[2].score);
-    }
-}
-
 /// Review 4.1 (result diversity): a file holding many hits no longer fills
-/// the page. Within a score tier every file's best hit comes first, then
-/// every file's second hit, and so on; tiers (phrase, all terms) still come
-/// before everything below them.
+/// the page: every file's best hit comes first, then every file's second
+/// hit, and so on.
 #[test]
-fn test_results_interleave_files_within_a_tier() {
+fn test_results_interleave_files() {
     use crate::search::query_syntax::parse;
     let temp_dir = TempDir::new().unwrap();
     let src = temp_dir.path().join("src");
@@ -2640,25 +2656,6 @@ fn test_results_interleave_files_within_a_tier() {
         .unwrap();
     let lines = |v: &[SearchMatch]| v.iter().map(|h| h.line_number).collect::<Vec<_>>();
     assert_eq!(lines(&page2), lines(&all[10..20]));
-
-    // Tiers beat interleaving: both phrase lines of one file precede a
-    // single-term line from another file.
-    fs::write(src.join("phrase.rs"), "fn main() {}\nfn main_two() {}\n").unwrap();
-    engine.index_file(src.join("phrase.rs")).unwrap();
-    engine.finalize();
-    let (hits, _) = engine
-        .search_parsed(
-            &parse("fn main"),
-            "",
-            "",
-            SearchLimits::new(10),
-            RankMode::Full,
-        )
-        .unwrap();
-    assert!(
-        hits[0].file_path.ends_with("phrase.rs") && hits[1].file_path.ends_with("phrase.rs"),
-        "{hits:?}"
-    );
 }
 
 /// Items wrapped in a brace-delimited macro invocation (tokio's `cfg_rt!`)
@@ -2870,32 +2867,6 @@ fn test_symbol_search_reports_filename_only_matches() {
     assert_eq!(names[0], ("defs.rs", 1), "a real definition ranks first");
 }
 
-/// Symbol mode ignored `-term`.
-#[test]
-fn test_symbol_search_honours_excluded_terms() {
-    let t = TempDir::new().unwrap();
-    let e = review_engine(
-        t.path(),
-        &[
-            ("a.rs", "fn widget() {}\n// legacy\n"),
-            ("b.rs", "fn widget() {}\n"),
-        ],
-    );
-    let (m, _) = e
-        .search_symbols_parsed(
-            &crate::search::query_syntax::parse("widget -legacy"),
-            "",
-            "",
-            SearchLimits::new(10),
-        )
-        .unwrap();
-    let files: Vec<&str> = m
-        .iter()
-        .map(|m| m.file_path.rsplit('/').next().unwrap())
-        .collect();
-    assert_eq!(files, vec!["b.rs"]);
-}
-
 /// `file:` / `-file:` words used to match the root folder's own name, so
 /// `-file:search` dropped every file of a root named `search_proj`.
 #[test]
@@ -2938,6 +2909,29 @@ fn test_filename_hit_obeys_case_and_word() {
     assert_eq!(n("case:yes WIDGET"), 0);
     assert_eq!(n("word:yes widg"), 0);
     assert_eq!(n("word:yes widget"), 1);
+}
+
+/// Whole word as ripgrep's `-w`: a match rejected for touching a word
+/// character does not hide an overlapping one, and combining marks are
+/// word characters (found by the backtest's generated queries).
+#[test]
+fn test_whole_word_overlaps_and_combining_marks() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[(
+            "w.txt",
+            "field}}}\nx\u{bb}\u{bb}\u{bb}\n\u{0938}\u{0947}\u{092a}\u{094d}\u{091f}\u{0947}\u{092e}\nTie\u{0302}\u{0323}t\"\n",
+        )],
+    );
+    let n = |q: &str| review_text(&e, q, SearchLimits::new(10)).0.len();
+    assert_eq!(n("word:yes case:yes }}"), 1);
+    assert_eq!(n("word:yes }}"), 1);
+    assert_eq!(n("word:yes \u{bb}\u{bb}"), 1);
+    // The virama before `ट` and the accents before `t` are word characters.
+    assert_eq!(n("word:yes \u{091f}\u{0947}\u{092e}"), 0);
+    assert_eq!(n("word:yes t\""), 0);
+    assert_eq!(n("t\""), 1);
 }
 
 /// Lowercasing turns a word-final `Σ` into `ς` and any other into `σ`, so
@@ -3117,4 +3111,173 @@ fn test_hidden_root_name_ignored_with_multiple_roots() {
     assert!(!engine.hides_root_name());
     assert_eq!(engine.make_display_path(&files[0]), "alpha/utils.rs");
     assert_eq!(engine.make_display_path(&files[1]), "beta/utils.rs");
+}
+
+/// A repo-like tree under a root named `repo`, indexed with that root.
+fn path_search_engine() -> (TempDir, SearchEngine) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().join("repo");
+    for (rel, body) in [
+        ("src/web/api.rs", "pub fn search_handler() {}\n"),
+        ("src/web/mod.rs", "mod api;\n"),
+        ("src/cli/api_client.rs", "fn call() {}\n"),
+        ("docs/api.md", "# The API\n"),
+        ("tests/web_api_tests.rs", "#[test] fn t() {}\n"),
+    ] {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, body).unwrap();
+    }
+    let root = root.canonicalize().unwrap();
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&root);
+    for rel in [
+        "src/web/api.rs",
+        "src/web/mod.rs",
+        "src/cli/api_client.rs",
+        "docs/api.md",
+        "tests/web_api_tests.rs",
+    ] {
+        engine.index_file(root.join(rel)).unwrap();
+    }
+    engine.finalize();
+    (temp_dir, engine)
+}
+
+fn path_hits(engine: &SearchEngine, q: &str) -> Vec<String> {
+    let parsed = crate::search::parse_query(q);
+    engine
+        .search_paths(PathQuery::Terms(&parsed), "", "", 50, None)
+        .unwrap()
+        .matches
+        .into_iter()
+        .map(|m| m.file_path)
+        .collect()
+}
+
+#[test]
+fn path_search_finds_a_typed_path() {
+    let (_t, engine) = path_search_engine();
+    assert_eq!(
+        path_hits(&engine, "src/web/api.rs"),
+        ["repo/src/web/api.rs"]
+    );
+    // Root-qualified, partial and Windows-style paths too.
+    assert_eq!(
+        path_hits(&engine, "repo/src/web/api.rs"),
+        ["repo/src/web/api.rs"]
+    );
+    assert_eq!(path_hits(&engine, "web/api.rs"), ["repo/src/web/api.rs"]);
+    assert_eq!(
+        path_hits(&engine, r"src\web\api.rs"),
+        ["repo/src/web/api.rs"]
+    );
+    // Content search is untouched: no line mentions the path.
+    assert!(engine.search("src/web/api.rs", 10).is_empty());
+}
+
+#[test]
+fn path_search_matches_a_pasted_absolute_path() {
+    let (t, engine) = path_search_engine();
+    let abs = t
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("repo/src/web/api.rs")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let parsed = crate::search::parse_query(&abs);
+    let found = engine
+        .search_paths(PathQuery::Terms(&parsed), "", "", 10, None)
+        .unwrap();
+    assert_eq!(found.total, 1);
+    let m = &found.matches[0];
+    assert_eq!(m.file_path, "repo/src/web/api.rs");
+    // The highlight covers the whole shown path.
+    assert_eq!(m.ranges, vec![(0, m.file_path.len())]);
+    // A prefix that stops above the indexed root matches nothing.
+    let above = t
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/")
+        + "/";
+    assert!(path_hits(&engine, &above).is_empty());
+}
+
+#[test]
+fn path_search_ranks_file_names_first() {
+    let (_t, engine) = path_search_engine();
+    let hits = path_hits(&engine, "api");
+    // Exact stem first (shorter path wins the tie), then a name prefix,
+    // then a name containing the term; `src/web/mod.rs` has no `api`.
+    assert_eq!(
+        hits,
+        [
+            "repo/docs/api.md",
+            "repo/src/web/api.rs",
+            "repo/src/cli/api_client.rs",
+            "repo/tests/web_api_tests.rs",
+        ]
+    );
+}
+
+#[test]
+fn path_search_honours_terms_filters_and_options() {
+    let (_t, engine) = path_search_engine();
+    // Every word must appear in the path.
+    assert_eq!(
+        path_hits(&engine, "web api"),
+        ["repo/src/web/api.rs", "repo/tests/web_api_tests.rs"]
+    );
+    // file:/lang: filter like content.
+    assert_eq!(
+        path_hits(&engine, "api lang:markdown"),
+        ["repo/docs/api.md"]
+    );
+    assert_eq!(
+        path_hits(&engine, "api -file:tests"),
+        [
+            "repo/docs/api.md",
+            "repo/src/web/api.rs",
+            "repo/src/cli/api_client.rs",
+        ]
+    );
+    // case:yes and word:yes as for content.
+    assert!(path_hits(&engine, "API case:yes").is_empty());
+    assert_eq!(
+        path_hits(&engine, "api word:yes"),
+        ["repo/docs/api.md", "repo/src/web/api.rs"]
+    );
+    // Ranges are byte offsets into the shown path.
+    let parsed = crate::search::parse_query("web api");
+    let m = &engine
+        .search_paths(PathQuery::Terms(&parsed), "", "", 1, None)
+        .unwrap()
+        .matches[0];
+    assert_eq!(m.ranges, vec![(9, 12), (13, 16)]);
+}
+
+#[test]
+fn path_search_regex_and_limit() {
+    let (_t, engine) = path_search_engine();
+    let found = engine
+        .search_paths(PathQuery::Regex(r"web/\w+\.rs$"), "", "", 1, None)
+        .unwrap();
+    assert_eq!(found.total, 2);
+    assert_eq!(found.matches.len(), 1);
+    assert!(engine
+        .search_paths(PathQuery::Regex("("), "", "", 1, None)
+        .is_err());
+}
+
+#[test]
+fn path_search_hides_the_root_name_when_configured() {
+    let (_t, mut engine) = path_search_engine();
+    engine.show_root_name = false;
+    engine.compute_all_file_metadata();
+    // The root name is not part of what is shown, so it does not match.
+    assert!(path_hits(&engine, "repo").is_empty());
+    assert_eq!(path_hits(&engine, "src/web/api.rs"), ["src/web/api.rs"]);
 }

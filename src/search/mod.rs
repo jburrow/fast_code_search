@@ -1,11 +1,14 @@
 pub mod background_indexer;
 pub mod engine;
 pub mod file_discovery;
+pub mod fold;
 pub mod incremental;
 pub mod path_filter;
 pub mod query_syntax;
 pub mod ranking;
 pub mod regex_search;
+pub mod request;
+pub mod watch_loop;
 pub mod watcher;
 
 pub use background_indexer::{
@@ -14,9 +17,10 @@ pub use background_indexer::{
 };
 pub use engine::{
     create_progress_broadcaster, unix_now_ms, IndexFreshness, IndexingProgress, IndexingStatus,
-    LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PreIndexedFile,
-    ProgressBroadcaster, QueryRun, RankMode, SearchEngine, SearchLimits, SearchMatch,
-    SearchRankingInfo, SearchStats, SharedIndexingProgress,
+    LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch, PathQuery,
+    PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine, SearchLimit,
+    SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings, SearchStats,
+    SharedIndexingProgress,
 };
 pub use file_discovery::{
     discover_files, EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator,
@@ -26,4 +30,6 @@ pub use path_filter::PathFilter;
 pub use query_syntax::{parse as parse_query, ParsedQuery, SearchOptions};
 pub use ranking::{FileScoreWeights, RankingWeights};
 pub use regex_search::{pattern_with_case as regex_pattern_with_case, RegexAnalysis};
+pub use request::{SearchMode, SearchOutcome, SearchRequest};
+pub use watch_loop::WatchLoopConfig;
 pub use watcher::{FileChange, FileWatcher, WatcherConfig};

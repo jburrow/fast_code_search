@@ -287,14 +287,14 @@ class SearchReadinessManager {
                     <div class="server-offline-state" style="
                         padding: 2.5rem 1.5rem;
                         text-align: center;
-                        font-family: 'JetBrains Mono', monospace;
-                        background: #fff;
-                        border: 1px solid #000;
-                        box-shadow: 2px 2px 0 #000;
+                        font-family: var(--font-mono);
+                        background: var(--surface);
+                        border: 1px solid var(--line-strong);
+                        box-shadow: var(--shadow-sm);
                     ">
                         <div style="font-size: 2rem; margin-bottom: 0.75rem; opacity: 0.45; line-height: 1;">&#9888;</div>
-                        <div style="font-weight: 700; font-size: 0.9rem; color: #1d1c0f; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.07em;">Server Not Running</div>
-                        <div style="color: #5f5d48; font-size: 0.76rem; max-width: 340px; margin: 0 auto; line-height: 1.65;">
+                        <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); margin-bottom: 0.5rem; text-transform: var(--label-case); letter-spacing: 0.07em;">Server Not Running</div>
+                        <div style="color: var(--text-3); font-size: 0.76rem; max-width: 340px; margin: 0 auto; line-height: 1.65;">
                             The search server could not be reached.<br>
                             Start the server and this page will reconnect automatically.
                         </div>
@@ -393,9 +393,9 @@ class SearchReadinessManager {
  */
 function createResultsSummary(count, latencyMs) {
     return `
-        <div style="margin-bottom: 0.5rem; color: var(--text-secondary); text-align: center; font-size: 0.85rem;">
-            Found <strong style="color: var(--accent);">${count}</strong> results 
-            in <strong style="color: var(--success);">${latencyMs}ms</strong>
+        <div style="margin-bottom: 0.5rem; color: var(--text-2); text-align: center; font-size: 0.85rem;">
+            Found <strong style="color: var(--accent-ink);">${count}</strong> results 
+            in <strong style="color: var(--info);">${latencyMs}ms</strong>
         </div>
     `;
 }
@@ -615,6 +615,17 @@ function syncUrlFromState(fields) {
 }
 
 /**
+ * The extension of a path's file name exactly as written ("rs", "YML"), or ''
+ * when the name has none ("Makefile", ".gitignore"). File names are never
+ * re-cased for display; lower-case it yourself only for lookups.
+ */
+function fileExtension(filePath) {
+    const name = String(filePath || '').split(/[\\/]/).pop();
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? name.slice(dot + 1) : '';
+}
+
+/**
  * Map a file path's extension to a CSS class suffix for language badge colouring.
  * Used by both keyword and semantic search result rendering.
  * Returns null for unknown/generic extensions.
@@ -688,13 +699,13 @@ function showSearchHistoryDropdown(dropdownEl, queryInput, storageKey, onSelectQ
     if (matches.length === 0) { dropdownEl.style.display = 'none'; return; }
 
     dropdownEl.innerHTML = matches.slice(0, 10).map((q, i) =>
-        `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-primary-container font-label text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
-            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="fill:#5f5d48;flex-shrink:0"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+        `<div class="history-item flex items-center gap-2 px-4 py-2 cursor-pointer hover:bg-hover font-mono text-xs text-on-surface" data-idx="${i}" data-query="${escapeHtml(q)}">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="fill:var(--text-3);flex-shrink:0"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
             <span class="flex-1 truncate">${escapeHtml(q)}</span>
-            <button type="button" class="history-delete ml-auto flex-shrink-0" style="color:#5f5d48;background:none;border:none;cursor:pointer;padding:0;display:flex" data-query="${escapeHtml(q)}" title="Remove from history" aria-label="Remove from history"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;pointer-events:none"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+            <button type="button" class="history-delete ml-auto flex-shrink-0" style="color:var(--text-3);background:none;border:none;cursor:pointer;padding:0;display:flex" data-query="${escapeHtml(q)}" title="Remove from history" aria-label="Remove from history"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;pointer-events:none"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
         </div>`
     ).join('') + `<div class="flex items-center justify-end px-4 py-1.5 border-t border-outline-variant">
-        <button id="clear-history-btn" class="font-label text-[10px] text-outline hover:text-black transition-colors">CLEAR ALL HISTORY</button>
+        <button id="clear-history-btn" class="font-label label-case text-[10px] text-outline hover:text-black transition-colors">Clear all history</button>
     </div>`;
     dropdownEl.style.display = 'block';
 
@@ -768,5 +779,6 @@ if (typeof module !== 'undefined' && module.exports) {
         loadStateFromUrl,
         syncUrlFromState,
         langClassForPath,
+        fileExtension,
     };
 }

@@ -93,7 +93,7 @@ fast_code_search/
 │   │   ├── watcher.rs          # notify-based file watcher
 │   │   ├── file_discovery.rs   # walk (walkdir / ignore crate), eligibility rules
 │   │   ├── path_filter.rs      # include/exclude globs
-│   │   ├── query_syntax.rs     # file:/lang:/-term/case:/word: parsing
+│   │   ├── query_syntax.rs     # literal text + file:/lang:/case:/word: parsing
 │   │   ├── ranking.rs          # RankingWeights / FileScoreWeights
 │   │   └── regex_search.rs     # regex -> trigram constraints
 │   ├── symbols/
@@ -206,13 +206,13 @@ cargo +nightly udeps
    a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
    back to back. Save streams bitmaps from the live map; load memory-maps the
    file, checks bounds and checksum, and deserializes bitmaps in parallel from
-   the mapping. `tests/fixtures/index-v7.fcsidx` pins the format byte for
+   the mapping. `tests/fixtures/index-v8.fcsidx` pins the format byte for
    byte; regenerate it with `FCS_WRITE_GOLDEN=1 cargo test golden` after a
    deliberate format change (and bump the version).
 
 ### Search Pipeline
 
-1. **Parse** (`query_syntax.rs`): terms, `-term`, `file:`/`lang:` globs, `case:`/`word:`.
+1. **Parse** (`query_syntax.rs`): the literal text, `file:`/`lang:` globs, `case:`/`word:`.
 2. **Candidates**: intersection of each term's trigram bitmaps (index is lowercase),
    then the path filter (precomputed display paths, no allocation).
 3. **`run_candidates`** (`engine/query.rs`): fast vs full mode, fast-mode ordering by
@@ -286,6 +286,41 @@ cargo build
 ```
 3. Update `src/server/service.rs` to implement new endpoints
 4. Update example client in `examples/client.rs`
+
+### Changing the web UI
+
+The pages in `static/` are embedded in the server binary, so rebuild the
+server to see a change.
+
+- **Header and navigation:** `static/shell.js` draws the header, the icon
+  sprite and the phone tab bar on every page. A page passes its own header
+  extras (stats, the compact search box) in `<template id="app-header-extra">`.
+- **Colours, shadows and fonts** are design tokens (`var(--accent)`,
+  `var(--shadow)`, …) defined once in `static/app.css`. Never write a colour
+  anywhere else: `static/tests/tokens.test.js` fails on a hex or `rgb()`
+  value outside `app.css`, and on a `var(--…)` that isn't defined.
+- **Themes:** the `:root, [data-theme="bold"]` block in `app.css` is the
+  default theme; `[data-theme="corporate"]` and `[data-theme="corporate-dark"]`
+  redefine every token (colours, radius, fonts, label case) so a preview of
+  one theme renders correctly inside a page in another. `static/theme.js`
+  applies the saved theme before the page paints and draws the header menu
+  and first-run picker. Adding a theme means a block in `app.css`, an entry
+  in `theme.js` and a `UiTheme` variant in `src/config.rs`; a test checks
+  all three agree and that every block sets every token.
+- **Labels and buttons:** write labels in sentence case ("Match case") and
+  give them the `label-case` class (or `text-transform: var(--label-case)`):
+  Bold shows them in capitals, the corporate themes as written. Never put a
+  file name, path or query inside one. Buttons use `.btn` / `.btn-primary`.
+  The token test fails on a literal `uppercase` or a hard-coded font name.
+- **Tailwind** colour names in `tailwind.config.js` point at the same tokens.
+  After changing classes or the config, run `npm run build:css` and commit
+  `static/tailwind.css` (CI checks it is up to date).
+- **Code:** `static/code-view.js` is the one code viewer (the file viewer,
+  the hover preview and the dependency explorer's source pane): line
+  numbers, highlighting, a window of lines with "Show more", and the ruler
+  of hits beside the scrollbar. Its pure parts are in
+  `static/lib/keyword-helpers.js` with tests.
+- Run the JavaScript tests with `node --test static/tests/*.test.js`.
 
 ### Performance Optimization Checklist
 

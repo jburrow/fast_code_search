@@ -1,6 +1,6 @@
 [package]
 name = "fast_code_search"
-version = "0.14.0"
+version = "0.15.2"
 edition = "2021"
 rust-version = "1.89"
 authors = ["James Burrow"]
@@ -82,7 +82,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"
 mime_guess = "2"
-notify-debouncer-full = "0.7"
+notify = "8.2"
 ndarray = { version = "0.15", optional = true } # semantic: vector operations
 hnsw_rs = { version = "0.3", optional = true }  # semantic: approximate nearest neighbour search
 fs2 = "0.4"

@@ -8,32 +8,18 @@
          Left false, no probe is made (a refused probe logs a console error). -->
     <meta name="fcs-semantic-enabled" content="false"/>
     <title>Fast Code Search</title>
+    <!-- Theme first, so the page paints in the right colours (theme.js) -->
+    <script src="/ui-config.js"></script>
+    <script src="/theme.js"></script>
     <link rel="stylesheet" href="/tailwind.css"/>
+    <link rel="stylesheet" href="/app.css"/>
     <link rel="stylesheet" href="/fonts.css"/>
-    <!-- The page is a hard-coded light theme (result code is on a white background),
-         so always use the light highlight.js theme. Loading the dark theme under
-         prefers-color-scheme:dark rendered pale tokens on white = unreadable. -->
-    <link rel="stylesheet" href="/highlight-light.min.css">
     <style>
-        /* Language badge color variables (from common.css) */
-        :root {
-            --lang-rs: #d44e38; --lang-py: #3d6fad; --lang-js: #d9a41a; --lang-ts: #2f6bbf;
-            --lang-go: #38a0b0; --lang-rb: #b83a28; --lang-java: #cc7a1a; --lang-cs: #2e7c4f;
-            --lang-cpp: #b84030; --lang-c: #5c4fbf; --lang-sh: #2e7c50; --lang-yaml: #8e3fad;
-            --lang-json: #b89010; --lang-css: #4040cc; --lang-proto: #7a28ad;
-            --lang-toml: #a06018; --lang-sql: #b07818; --lang-md: #4a5a6a;
-            --hl-line-bg: #fff900;
-            --hl-left-border: #646100;
-        }
         /* Inline SVG icons: sized by their width/height attributes, coloured by the text colour */
-        .icon { display: inline-block; fill: currentColor; vertical-align: middle; flex-shrink: 0; }
-        body {
-            background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%237a785f' fill-opacity='0.03' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E");
-        }
         /* Search hit highlight */
         mark.highlight, .code-highlight {
             background-color: var(--hl-line-bg);
-            color: #000;
+            color: var(--ink);
             padding: 0 2px;
             border-radius: 0;
             font-style: inherit;
@@ -42,22 +28,22 @@
         /* The matched line is the same yellow as a hit: outline hits there so
            the exact match still stands out. */
         .match-line mark.highlight, .file-line-highlight mark.highlight {
-            box-shadow: inset 0 0 0 1px #000;
+            box-shadow: inset 0 0 0 1px var(--ink);
         }
         /* Show code exactly as typed: JetBrains Mono would draw != as ≠ and
            => as an arrow, which misleads when searching for operators. */
-        .result-code, .file-code, .ctx-tooltip { font-variant-ligatures: none; }
+        .result-code, .ctx-tooltip { font-variant-ligatures: none; }
         /* Result code block — neutralise hljs background */
         .result-code, .result-code.hljs {
-            background: #fff !important;
+            background: var(--surface) !important;
             color: inherit;
             margin: 0;
-            padding: 0.625rem 1rem;
+            padding: 0.25rem 0;
             font-size: 0.78rem;
             line-height: 1.55;
             overflow-x: auto;
             white-space: pre;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: var(--font-mono);
         }
         /* Context tooltip */
         .ctx-tooltip {
@@ -66,29 +52,47 @@
             display: none;
             max-width: none;
             min-width: 280px;
-            background: #fff;
-            border: 1px solid #000;
+            background: var(--surface);
+            border: 1px solid var(--line-strong);
             overflow: hidden;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.85rem;
             flex-direction: column;
-            box-shadow: 4px 4px 0 #000;
+            box-shadow: var(--shadow);
         }
         .ctx-header {
-            padding: 0.35rem 0.75rem;
-            background: #dedac6;
-            border-bottom: 1px solid #000;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.3rem 0.5rem 0.3rem 0.75rem;
+            background: var(--surface-head);
+            border-bottom: 1px solid var(--line-strong);
             font-size: 0.72rem;
-            color: #494831;
-            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-2);
+            font-family: var(--font-mono);
+            flex-shrink: 0;
         }
+        .ctx-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ctx-nav { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+        .ctx-nav[hidden] { display: none; }
+        .ctx-header button {
+            background: var(--surface); border: 1px solid var(--line-strong); cursor: pointer;
+            font: inherit; color: var(--text); padding: 0.05rem 0.45rem;
+        }
+        .ctx-header button:hover, .ctx-header button:focus-visible { background: var(--hover); outline: none; }
+        /* The whole file scrolls inside the preview; the wheel never reaches
+           the page behind it (which used to scroll and close the preview). */
         .ctx-file-body {
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
             flex: 1;
+            min-height: 0;
         }
+        .ctx-current { box-shadow: inset 3px 0 0 var(--accent-ink); background: var(--accent-wash); }
         .ctx-loading {
             padding: 1rem;
-            color: #5f5d48;
+            color: var(--text-3);
         }
         /* Deps popover */
         .deps-popover {
@@ -97,18 +101,18 @@
             display: none;
             min-width: 200px;
             max-width: 360px;
-            background: #fff;
-            border: 1px solid #000;
-            box-shadow: 4px 4px 0 #000;
+            background: var(--surface);
+            border: 1px solid var(--line-strong);
+            box-shadow: var(--shadow);
             overflow: hidden;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.78rem;
         }
         .deps-popover-header {
             padding: 0.3rem 0.65rem;
-            background: #dedac6;
-            border-bottom: 1px solid #cbc8aa;
-            color: #494831;
+            background: var(--surface-head);
+            border-bottom: 1px solid var(--border);
+            color: var(--text-2);
             font-size: 0.72rem;
             white-space: nowrap;
             overflow: hidden;
@@ -118,13 +122,13 @@
             padding: 0.45rem 0.65rem 0.4rem;
         }
         .deps-popover-section + .deps-popover-section {
-            border-top: 1px solid #cbc8aa;
+            border-top: 1px solid var(--border);
         }
         .deps-section-title {
             font-size: 0.7rem;
             font-weight: 600;
-            color: #5f5d48;
-            text-transform: uppercase;
+            color: var(--text-3);
+            text-transform: var(--label-case);
             letter-spacing: 0.04em;
             margin-bottom: 0.3rem;
         }
@@ -137,7 +141,7 @@
             display: block;
             width: 100%;
             padding: 0.12rem 0;
-            color: #1d4f6e;
+            color: var(--link);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -151,14 +155,14 @@
         }
         .deps-popover-link:hover,
         .deps-popover-link:focus-visible {
-            color: #d44e38;
+            color: var(--link-hover);
             outline: none;
             text-decoration: underline;
         }
         .deps-more {
             display: inline-block;
             margin-top: 0.25rem;
-            color: #d44e38;
+            color: var(--link-hover);
             font-style: italic;
             cursor: pointer;
             font-size: 0.72rem;
@@ -167,28 +171,28 @@
         .deps-popover-explore {
             display: block;
             padding: 0.4rem 0.65rem;
-            border-top: 1px solid #cbc8aa;
-            color: #1e6868;
-            font-family: 'JetBrains Mono', monospace;
+            border-top: 1px solid var(--border);
+            color: var(--info);
+            font-family: var(--font-label);
             font-size: 0.72rem;
             text-decoration: none;
         }
         .deps-popover-explore:hover, .deps-popover-explore:focus-visible { text-decoration: underline; }
-        .deps-popover-loading { padding: 0.5rem 0.65rem; color: #5f5d48; font-size: 0.75rem; }
+        .deps-popover-loading { padding: 0.5rem 0.65rem; color: var(--text-3); font-size: 0.75rem; }
         /* File modal */
         .file-modal-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.65);
+            background: var(--overlay);
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 1500;
         }
         .file-modal-dialog {
-            background: #fff;
-            border: 1px solid #000;
-            box-shadow: 6px 6px 0 #000;
+            background: var(--surface);
+            border: 1px solid var(--line-strong);
+            box-shadow: var(--shadow-lg);
             width: 90vw;
             max-width: 1100px;
             max-height: 88vh;
@@ -197,8 +201,8 @@
             overflow: hidden;
         }
         .file-modal-header {
-            background: #dedac6;
-            border-bottom: 1px solid #000;
+            background: var(--surface-head);
+            border-bottom: 1px solid var(--line-strong);
             padding: 0.5rem 1rem;
             display: flex;
             justify-content: space-between;
@@ -206,29 +210,29 @@
             flex-shrink: 0;
         }
         .file-modal-path {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             font-size: 0.78rem;
             font-weight: 600;
-            color: #1d1c0f;
+            color: var(--text);
         }
         .file-modal-explore {
             margin-left: auto;
             margin-right: 0.75rem;
             padding: 0.15rem 0.5rem;
-            border: 1px solid #000;
-            background: #fff;
-            color: #1d1c0f;
-            font-family: 'JetBrains Mono', monospace;
+            border: 1px solid var(--line-strong);
+            background: var(--surface);
+            color: var(--text);
+            font-family: var(--font-label);
             font-size: 0.72rem;
             text-decoration: none;
             white-space: nowrap;
         }
-        .file-modal-explore:hover { background: #fff900; }
+        .file-modal-explore:hover { background: var(--hover); }
         .file-modal-explore + .file-modal-explore { margin-left: 0; }
         .file-modal-back { margin-left: 0; margin-right: 0.75rem; }
-        .file-meta-hint { float: right; color: #7a785f; }
+        .file-meta-hint { float: right; color: var(--text-4); }
         /* Go to definition: the name under the pointer while Ctrl/Cmd is held */
-        ::highlight(fcs-defn) { color: #0b57d0; text-decoration: underline; text-decoration-thickness: 2px; }
+        ::highlight(fcs-defn) { color: var(--defn); text-decoration: underline; text-decoration-thickness: 2px; }
         body.defn-hover .file-line-content,
         body.defn-hover .ctx-line-content,
         body.defn-hover pre.result-code { cursor: pointer; }
@@ -240,18 +244,18 @@
             max-width: min(640px, calc(100vw - 16px));
             max-height: 60vh;
             overflow-y: auto;
-            background: #fff;
-            border: 1px solid #000;
-            box-shadow: 2px 2px 0 #000;
-            font-family: 'JetBrains Mono', monospace;
+            background: var(--surface);
+            border: 1px solid var(--line-strong);
+            box-shadow: var(--shadow-sm);
+            font-family: var(--font-mono);
             font-size: 0.72rem;
         }
         .code-menu-title {
             padding: 0.3rem 0.6rem;
-            background: #dedac6;
-            border-bottom: 1px solid #000;
+            background: var(--surface-head);
+            border-bottom: 1px solid var(--line-strong);
             font-weight: 700;
-            color: #1d1c0f;
+            color: var(--text);
         }
         .code-menu button {
             display: flex;
@@ -263,17 +267,17 @@
             border: none;
             text-align: left;
             cursor: pointer;
-            color: #1d1c0f;
+            color: var(--text);
             font: inherit;
         }
-        .code-menu button + button { border-top: 1px solid #e3dec8; }
-        .code-menu button:hover, .code-menu button:focus-visible { background: #fff900; outline: none; }
-        .code-menu button code { color: #5f5d48; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+        .code-menu button + button { border-top: 1px solid var(--border-soft); }
+        .code-menu button:hover, .code-menu button:focus-visible { background: var(--hover); outline: none; }
+        .code-menu button code { color: var(--text-3); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
         .file-modal-body .file-line-num { cursor: pointer; }
-        .file-modal-body .file-line-num:hover { color: #1d1c0f; text-decoration: underline; }
+        .file-modal-body .file-line-num:hover { color: var(--text); text-decoration: underline; }
         .file-modal-close {
             background: none;
-            border: 1px solid #000;
+            border: 1px solid var(--line-strong);
             width: 1.75rem;
             height: 1.75rem;
             cursor: pointer;
@@ -282,210 +286,151 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #1d1c0f;
+            color: var(--text);
             transition: background 0.1s;
         }
-        .file-modal-close:hover { background: #fff900; }
+        .file-modal-close:hover { background: var(--hover); }
         .file-modal-body {
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
             flex: 1;
             padding: 0;
-            background: #fff;
+            background: var(--surface);
         }
-        /* File view lines */
-        .file-meta {
-            padding: 0.35rem 1rem;
-            background: #f2eed9;
-            border-bottom: 1px solid #cbc8aa;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.72rem;
-            color: #5f5d48;
-        }
-        .file-code { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
-        .file-line {
-            display: flex;
-            padding: 0 1rem;
-            line-height: 1.55;
-        }
-        .file-line:hover { background: #f8f4df; }
-        /* Matched line highlight */
-        .file-line-highlight { background: var(--hl-line-bg) !important; }
-        .file-line-num {
-            color: #5f5d48;
-            min-width: 3rem;
-            text-align: right;
-            padding-right: 1.25rem;
-            user-select: none;
-            flex-shrink: 0;
-        }
-        .file-line-content { white-space: pre; flex: 1; }
-        /* "Show more" controls at the edges of the rendered window */
-        .file-more:empty { display: none; }
-        .file-more { padding: 0.35rem 1rem; background: #f2eed9; border-top: 1px solid #cbc8aa; border-bottom: 1px solid #cbc8aa; }
-        .file-more-btn {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.72rem;
-            font-weight: 700;
-            padding: 0.3rem 0.75rem;
-            background: #fff;
-            color: #1d1c0f;
-            border: 1px solid #000;
-            box-shadow: 2px 2px 0 #000;
-            cursor: pointer;
-        }
-        .file-more-btn:hover { background: #fff900; }
         /* Empty / loading / error states */
         .empty-state {
             padding: 3rem 1.5rem;
             text-align: center;
-            color: #5f5d48;
-            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-3);
+            font-family: var(--font-label);
             font-size: 0.85rem;
-        }
-        .loading {
-            padding: 2rem;
-            text-align: center;
-            color: #5f5d48;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-        }
-        .loading-spinner {
-            width: 20px;
-            height: 20px;
-            border: 2px solid #cbc8aa;
-            border-top-color: #646100;
-            border-radius: 50%;
-            animation: spin 0.7s linear infinite;
-            margin: 0 auto 0.5rem;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .loading-index-state {
-            padding: 3rem;
-            text-align: center;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.82rem;
-            color: #5f5d48;
-        }
-        .loading-progress {
-            width: 200px;
-            height: 4px;
-            background: #e7e3ce;
-            border: 1px solid #000;
-            margin: 0.75rem auto 0;
-            overflow: hidden;
-        }
-        .loading-progress-bar {
-            height: 100%;
-            background: #fff900;
-            border-right: 1px solid #000;
-            transition: width 0.3s;
-        }
-        .error-message {
-            padding: 1rem 1.5rem;
-            background: #ffdad6;
-            border: 1px solid #ba1a1a;
-            color: #93000a;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.82rem;
         }
         /* Progress bar animation */
-        .progress-fill {
-            height: 100%;
-            background: #fff900;
-            transition: width 0.3s ease;
-        }
-        .progress-fill.completed { background: #646100; }
         /* Status badge */
-        .status-badge {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.7rem;
-            font-weight: 700;
-            padding: 0.1rem 0.4rem;
-            border: 1px solid #000;
-            background: #fff900;
-            color: #000;
-            text-transform: uppercase;
-        }
-        .status-badge.status-idle { background: #ebe77f; }
-        .status-badge.status-completed { background: #a9efed; }
-        .status-badge.status-loading_index,
-        .status-badge.status-indexing,
-        .status-badge.status-discovering { background: #fff900; }
         /* Search disabled state */
-        #query:disabled { opacity: 0.6; cursor: not-allowed; }
         /* Mode toggle "on" look — set only by syncToggleVisuals() in keyword.js */
-        .mode-toggle.toggle-on { background: #fff900; color: #000; }
+        .mode-toggle.toggle-on { background: var(--accent); color: var(--on-accent); }
         /* The checkbox inside is sr-only, so show keyboard focus on the label */
-        .mode-toggle:has(input:focus-visible) { outline: 2px solid #646100; outline-offset: -2px; }
+        .mode-toggle:has(input:focus-visible) { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
         /* Keyboard-selected result group (j/k) */
-        .result-group:focus-visible { outline: 3px solid #646100; outline-offset: 2px; }
-        /* Tailwind's outline colour (#5f5d48) is 4.2:1 on the #fefae4 ground and
-           3.2:1 on the #dedac6 result headers; #5f5d48 is 6.4:1 and 4.75:1. */
-        .text-outline { color: #5f5d48; }
+        .result-group:focus-visible { outline: 3px solid var(--accent-ink); outline-offset: 2px; }
+        /* Tailwind's outline colour (var(--text-3)) is 4.2:1 on the var(--page) ground and
+           3.2:1 on the var(--surface-head) result headers; var(--text-3) is 6.4:1 and 4.75:1. */
+        .text-outline { color: var(--text-3); }
         /* Render-on-demand marker: the rest of the results render as it nears the viewport */
         .render-sentinel { height: 1px; margin: 0 !important; }
         /* Paging */
         .load-more-row { display: flex; justify-content: center; padding: 0.5rem 0 1rem; }
         .load-more-btn {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.05em;
             padding: 0.6rem 1.5rem;
-            background: #fff900;
-            color: #000;
-            border: 1px solid #000;
-            box-shadow: 2px 2px 0 #000;
+            background: var(--accent);
+            color: var(--on-accent);
+            border: 1px solid var(--line-strong);
+            box-shadow: var(--shadow-sm);
             cursor: pointer;
+            text-transform: var(--label-case);
         }
-        .load-more-btn:hover { background: #000; color: #fff900; }
+        .load-more-btn:hover { background: var(--primary-hover); color: var(--on-primary-hover); }
         .load-more-btn:disabled { opacity: 0.6; cursor: wait; }
         /* Hit whose content was cut at the 500-byte window */
+        /* A result group: one header row (the file name opens the file;
+           copy and the dependency explorer show on hover), then each hit as
+           its code with the line numbers in a gutter. */
+        .group-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.75rem; background: var(--surface-head); border-bottom: 1px solid var(--line-strong); min-width: 0; }
+        .group-open { display: flex; align-items: center; gap: 0.5rem; min-width: 0; flex: 0 1 auto; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text); text-align: left; }
+        .group-path { font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .group-dir { color: var(--text-3); }
+        .group-name { color: var(--accent-ink); font-weight: 700; }
+        .group-open:hover .group-name, .group-open:focus-visible .group-name { text-decoration: underline; }
+        .result-badge { display: inline-flex; align-items: center; gap: 0.3rem; flex-shrink: 0; padding: 1px 6px; font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--text-2); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); white-space: nowrap; }
+        .lang-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .deps-badge { cursor: pointer; }
+        .deps-badge:hover { background: var(--hover); color: var(--text); }
+        .group-badges { display: flex; gap: 0.4rem; margin-left: auto; flex-shrink: 0; }
+        .group-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; opacity: 0; transition: opacity 0.1s; }
+        .group-actions a, .group-actions button { display: flex; color: var(--text-3); background: none; border: 0; padding: 0; cursor: pointer; }
+        .group-actions a:hover, .group-actions button:hover { color: var(--accent-ink); }
+        .result-group:hover .group-actions, .result-group:focus-within .group-actions, .result-group[aria-selected="true"] .group-actions { opacity: 1; }
+        @media (hover: none) { .group-actions { opacity: 1; } }
+        .result-code + .result-code { border-top: 1px dashed var(--border-faint); }
+        .hit-line { display: flex; align-items: baseline; border-left: 3px solid transparent; }
+        .hit-line.hit-match { background: var(--hl-line-bg); border-left-color: var(--hl-left-border); }
+        .hit-num { flex: 0 0 3.25rem; text-align: right; padding-right: 0.75rem; color: var(--text-3); font-size: 0.72rem; font-variant-numeric: tabular-nums; user-select: none; }
+        button.hit-num { background: none; border: 0; font-family: inherit; line-height: inherit; cursor: pointer; color: var(--text-2); font-weight: 700; border-radius: 0; }
+        button.hit-num:hover, button.hit-num:focus-visible { color: var(--text); text-decoration: underline; outline: none; }
+        .hit-line .ctx-line-content { flex: 1; min-width: 0; white-space: pre; overflow-x: auto; padding-right: 0.75rem; }
+        .hit-tags { display: flex; gap: 0.3rem; flex-shrink: 0; padding: 0 0.5rem; }
+        .hit-tag { font-family: var(--font-label); text-transform: var(--label-case); font-size: 9.5px; padding: 0 5px; line-height: 1.6; color: var(--on-info-soft); background: var(--info-soft); border: 1px solid var(--info); border-radius: var(--radius); }
+        /* Phone: the path gets the room; the badges go before it is cut */
+        @media (max-width: 639px) {
+            .group-badges, .group-count { display: none; }
+            .group-head { padding: 0.35rem 0.5rem; }
+            .hit-num { flex-basis: 2.5rem; padding-right: 0.5rem; }
+        }
         .truncated-badge {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             font-size: 10px;
             padding: 2px 6px;
-            background: #ffdad6;
-            color: #93000a;
-            border: 1px solid #ba1a1a;
+            background: var(--danger-soft);
+            color: var(--on-danger-soft);
+            border: 1px solid var(--danger);
             cursor: help;
             white-space: nowrap;
         }
         /* Copy-path button feedback (set briefly by setCopyButtonState) */
-        .copy-path-btn.copy-ok { color: #1e6868 !important; }
-        .copy-path-btn.copy-failed { color: #ba1a1a !important; }
+        .copy-path-btn.copy-ok { color: var(--info) !important; }
+        .copy-path-btn.copy-failed { color: var(--danger) !important; }
         /* Regex cheat-sheet and search suggestions */
-        #regex-help { display: none; background: #fff; border: 1px solid #000; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #1d1c0f; }
+        #regex-help { display: none; background: var(--surface); border: 1px solid var(--line-strong); padding: 1rem; font-family: var(--font-label); font-size: 0.78rem; color: var(--text); }
         #regex-help.open { display: block; }
         .regex-help-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
         .regex-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem 2rem; }
         .regex-help-title { font-weight: 700; margin-bottom: 0.4rem; }
         .regex-help-examples, .regex-help-rules { list-style: none; padding: 0; margin: 0 0 0.5rem; display: grid; gap: 0.35rem; }
-        .regex-help-examples button { background: #f2eed9; border: 1px solid #000; padding: 0.1rem 0.4rem; margin-right: 0.4rem; cursor: pointer; }
-        .regex-help-examples button:hover { background: #fff900; }
-        #regex-help code, .search-suggestions code, .regex-error code { background: #f2eed9; padding: 0 0.2rem; }
+        .regex-help-examples button { background: var(--surface-2); border: 1px solid var(--line-strong); padding: 0.1rem 0.4rem; margin-right: 0.4rem; cursor: pointer; }
+        .regex-help-examples button:hover { background: var(--hover); }
+        #regex-help code, .search-suggestions code, .regex-error code { background: var(--surface-2); padding: 0 0.2rem; }
         #regex-help a { text-decoration: underline; }
         .regex-help-link { background: none; border: none; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; color: inherit; }
         .search-suggestions { margin-top: 1rem; display: grid; gap: 0.6rem; justify-items: center; }
-        .suggestion-hint { color: #5f5d48; }
+        .suggestion-hint { color: var(--text-3); }
         .suggestion-list { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
-        .suggestion-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; max-width: 100%; text-align: left; background: #fff; color: #1d1c0f; border: 1px solid #000; box-shadow: 2px 2px 0 #000; padding: 0.4rem 0.7rem; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
-        .suggestion-btn:hover { background: #fff900; }
+        .suggestion-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; max-width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sm); padding: 0.4rem 0.7rem; cursor: pointer; font-family: var(--font-label); font-size: 0.75rem; }
+        .suggestion-btn:hover { background: var(--hover); }
         .suggestion-btn code { overflow-wrap: anywhere; }
         .suggestion-label { font-weight: 700; }
-        .suggestion-count { font-weight: 400; color: #5f5d48; }
-        .regex-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #fff; border: 1px solid #ba1a1a; padding: 0.5rem; margin: 0.5rem 0; color: #1d1c0f; }
+        .suggestion-count { font-weight: 400; color: var(--text-3); }
+        .regex-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--danger); padding: 0.5rem; margin: 0.5rem 0; color: var(--text); }
         .regex-error .suggestion-list { justify-content: flex-start; }
         /* Phone width: the toggles wrap instead of FILTER being cut off */
         @media (max-width: 767px) {
             #mode-toggle-group { flex-wrap: wrap; flex-shrink: 1; }
-            #mode-toggle-group > * { flex-grow: 1; justify-content: center; border-bottom: 1px solid #000; margin-bottom: -1px; }
+            #mode-toggle-group > * { flex-grow: 1; justify-content: center; border-bottom: 1px solid var(--line-strong); margin-bottom: -1px; }
         }
+        /* FILTER toggle: number of path filters set */
+        .filter-count { min-width: 1.1rem; padding: 0 0.3rem; background: var(--primary-hover); color: var(--on-primary-hover); font-size: 0.65rem; line-height: 1.1rem; text-align: center; }
+        .filter-toggle.toggle-on { background: var(--accent); color: var(--on-accent); }
+        /* Results bar: the path filters these results went through */
+        .active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-family: var(--font-mono); font-size: 0.72rem; }
+        .active-filters[hidden] { display: none; }
+        .active-filter { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 28rem; padding: 0.05rem 0.2rem 0.05rem 0.45rem; background: var(--surface); border: 1px solid var(--line-strong); }
+        .active-filter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .active-filter button { background: none; border: none; cursor: pointer; padding: 0 0.25rem; font: inherit; font-weight: 700; }
+        .active-filter button:hover { background: var(--hover); }
+        /* Corners follow the theme */
+        .ctx-tooltip, .deps-popover, .file-modal-dialog, .code-menu, #regex-help, .suggestion-btn,
+        .load-more-btn, .file-more-btn, .file-modal-explore, .file-modal-close, .active-filter,
+        .regex-help-examples button, .truncated-badge, .regex-error pre { border-radius: var(--radius); }
         /* Filter panel */
         #filter-panel { display: none; }
         #filter-panel.open { display: block; }
         /* Advanced options section */
-        .advanced-options { display: none; }
         /* Hide results-header visually when JS sets display:none — override Tailwind */
         #results-header[style*="display: none"] { display: none !important; }
         #progress-panel[style*="display: none"] { display: none !important; }
@@ -499,7 +444,7 @@
            (the links end near x=510; a 340px box centred at 512 starts at 342). */
         #nav-search {
             position: absolute;
-            right: 52px; /* 24px header padding + 20px help icon + 8px gap */
+            right: 70px; /* 24px header padding + 38px theme button + 8px gap */
             top: 50%;
             /* -10px: slides up from just below centre on enter; resting at -50% (true centre) */
             transform: translateY(calc(-50% - 10px));
@@ -508,9 +453,10 @@
             display: flex;
             align-items: stretch;
             height: 36px;
-            border: 1.5px solid #000;
-            background: #fff;
-            box-shadow: 3px 3px 0 #000;
+            border: 1.5px solid var(--line-strong);
+            background: var(--surface);
+            box-shadow: var(--shadow-sm);
+            border-radius: var(--radius);
             transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
                         transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
             z-index: 10;
@@ -541,43 +487,40 @@
             display: flex;
             align-items: center;
             padding: 0 0.5rem 0 0.6rem;
-            color: #5f5d48;
+            color: var(--text-3);
             flex-shrink: 0;
         }
         #nav-query {
             border: none;
             outline: none;
             background: transparent;
-            font-family: 'Space Grotesk', sans-serif;
+            font-family: var(--font-mono);
             font-size: 0.78rem;
-            font-weight: 500;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            color: #1d1c0f;
+            color: var(--text);
             padding: 0 0.4rem;
             width: 120px;
         }
         @media (min-width: 1024px) { #nav-query { width: 260px; } }
-        #nav-query::placeholder { color: #5f5d48; }
+        #nav-query::placeholder { color: var(--text-3); }
         #nav-search-btn {
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 0 0.65rem;
-            background: #fff900;
-            color: #000;
-            border-left: 1.5px solid #000;
+            background: var(--accent);
+            color: var(--on-accent);
+            border-left: 1.5px solid var(--line-strong);
             cursor: pointer;
             font-size: 0.65rem;
             font-weight: 700;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-label);
             letter-spacing: 0.06em;
-            text-transform: uppercase;
+            text-transform: var(--label-case);
             flex-shrink: 0;
             transition: background 0.1s;
             white-space: nowrap;
         }
-        #nav-search-btn:hover { background: #ebe77f; }
+        #nav-search-btn:hover { background: var(--accent-soft); color: var(--on-accent-soft); }
         @media (prefers-reduced-motion: reduce) {
             #nav-search { transition: opacity 0.01ms; }
         }
@@ -585,57 +528,27 @@
 </head>
 <body class="bg-background text-on-background font-body min-h-screen pb-16 md:pb-0">
 
-    <!-- Inline SVG icon sprite (Material Design icon paths, Apache-2.0); referenced
-         with <svg class="icon"><use href="#i-name"/></svg>. Replaces the 3.9 MB icon font. -->
-    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-        <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
-        <symbol id="i-code" viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></symbol>
-        <symbol id="i-function" viewBox="0 0 24 24"><path d="M18 4H6v2l6.5 6L6 18v2h12v-3h-7l5-5-5-5h7z"/></symbol>
-        <symbol id="i-link" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></symbol>
-        <symbol id="i-tune" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></symbol>
-        <symbol id="i-content-copy" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></symbol>
-        <symbol id="i-open-in-new" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></symbol>
-        <symbol id="i-help-outline" viewBox="0 0 24 24"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></symbol>
-        <symbol id="i-analytics" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></symbol>
-        <symbol id="i-account-tree" viewBox="0 0 24 24"><path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z"/></symbol>
-        <symbol id="i-description" viewBox="0 0 24 24"><path d="M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></symbol>
-        <symbol id="i-auto-awesome" viewBox="0 0 24 24"><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></symbol>
-        <symbol id="i-warning" viewBox="0 0 24 24"><path d="M12 5.99 19.53 19H4.47L12 5.99M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z"/></symbol>
-        <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
-        <symbol id="i-error" viewBox="0 0 24 24"><path d="M11 15h2v2h-2v-2zm0-8h2v6h-2V7zm.99-5C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/></symbol>
-        <symbol id="i-data-object" viewBox="0 0 24 24"><path d="M4 7v2c0 .55-.45 1-1 1H2v4h1c.55 0 1 .45 1 1v2c0 1.65 1.35 3 3 3h3v-2H7c-.55 0-1-.45-1-1v-2c0-1.3-.84-2.42-2-2.83v-.34C5.16 11.42 6 10.3 6 9V7c0-.55.45-1 1-1h3V4H7C5.35 4 4 5.35 4 7zm17 3c-.55 0-1-.45-1-1V7c0-1.65-1.35-3-3-3h-3v2h3c.55 0 1 .45 1 1v2c0 1.3.84 2.42 2 2.83v.34c-1.16.41-2 1.52-2 2.83v2c0 .55-.45 1-1 1h-3v2h3c1.65 0 3-1.35 3-3v-2c0-.55.45-1 1-1h1v-4h-1z"/></symbol>
-    </svg>
 
-    <!-- ===== TOP NAV ===== -->
-    <header class="bg-white text-on-background font-label uppercase tracking-tighter text-sm flex justify-between items-center w-full px-6 h-14 sticky top-0 z-50 border-b border-black">
-        <div class="flex items-center gap-6">
-            <div class="text-base font-bold font-label text-black bg-primary-container px-2 py-0.5 border border-black">FAST_CODE_SEARCH</div>
-            <nav class="hidden md:flex items-center gap-0 h-14">
-                <a class="h-full flex items-center px-3 bg-primary-container border-b-2 border-black text-black font-bold transition-colors duration-75" href="/">SEARCH</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/semantic.html">SEMANTIC</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/graph.html">GRAPH</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/diagnostics.html">INDEX</a>
-                <a class="h-full flex items-center px-3 text-outline hover:bg-primary-container hover:text-black hover:border-b-2 hover:border-black transition-colors duration-75" href="/docs.html">DOCS</a>
-            </nav>
-        </div>
-
+    <!-- Page-specific header content; shell.js moves it into the shared header. -->
+    <template id="app-header-extra">
         <!-- Compact search bar — slides into nav when main search scrolls out of view -->
         <div id="nav-search" role="search" aria-label="Quick search" aria-hidden="true">
             <span id="nav-search-icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg></span>
-            <input type="text" id="nav-query" placeholder="SEARCH..." autocomplete="off"
+            <input type="text" id="nav-query" placeholder="Search…" autocomplete="off"
                    tabindex="-1" aria-label="Quick search query"/>
-            <button id="nav-search-btn" tabindex="-1" title="Execute search">RUN ↵</button>
+            <button id="nav-search-btn" tabindex="-1" title="Run search" class="label-case">Run ↵</button>
         </div>
         <!-- Index stats row (hidden while the compact search occupies its track) -->
-        <div id="header-stats" class="hidden lg:flex items-center gap-4 text-[10px] font-label text-outline">
-            <span title="Total number of source files in the index">FILES: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
-            <span title="Total size of all indexed file content">CONTENT: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
-            <span title="File content currently mapped into memory by searches (grows as files are read, not the index size)">MAPPED: <span id="stat-size" class="text-on-surface font-bold">-</span></span>
-            <span title="Number of unique 3-character sequences">TRIGRAMS: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
-            <span title="Number of import/dependency edges used to boost relevance scoring">DEPS: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
+        <div id="header-stats" class="hidden lg:flex items-center gap-4 text-[10px] font-label label-case text-outline">
+            <span title="Total number of source files in the index">Files: <span id="stat-files" class="text-on-surface font-bold">-</span></span>
+            <span title="Total size of all indexed file content">Content: <span id="stat-content" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of unique 3-character sequences">Trigrams: <span id="stat-trigrams" class="text-on-surface font-bold">-</span></span>
+            <span title="Number of import/dependency edges used to boost relevance scoring">Deps: <span id="stat-deps" class="text-on-surface font-bold">-</span></span>
         </div>
-        <a href="/docs.html" class="text-outline hover:text-black transition-colors flex items-center" title="Documentation" aria-label="Documentation"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-help-outline"/></svg></a>
-    </header>
+        
+    </template>
+    <!-- Shared header, icon sprite and phone tab bar (shell.js) -->
+    <script src="/shell.js" data-page="search"></script>
 
     <!-- ===== PROGRESS PANEL ===== -->
     <div id="progress-panel" class="bg-surface-container-low border-b border-black px-6 py-2 items-center gap-4 text-xs font-label" style="display: none;">
@@ -652,8 +565,8 @@
         <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-warning"/></svg>
         <span id="backend-banner-msg" class="flex-1" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         <div class="flex items-center gap-2 flex-shrink-0">
-            <span id="keyword-status-badge" class="status-badge">KEYWORD</span>
-            <span id="semantic-status-badge" class="status-badge">SEMANTIC</span>
+            <span id="keyword-status-badge" class="status-badge">Keyword</span>
+            <span id="semantic-status-badge" class="status-badge">Semantic</span>
         </div>
     </div>
 
@@ -662,63 +575,72 @@
 
         <!-- Search Execution Section -->
         <section id="search-section" class="space-y-3">
-            <div class="flex flex-col md:flex-row gap-3">
+            <div class="flex flex-col lg:flex-row gap-3">
                 <!-- Search input -->
                 <div class="flex-grow relative">
                     <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
                         <span class="text-outline flex items-center"><svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-search"/></svg></span>
                     </div>
                     <label for="query" class="sr-only">Search query</label>
-                    <input type="text" id="query" placeholder="SEARCH REPOSITORY..." autocomplete="off" autofocus
-                        class="w-full bg-surface-container-lowest border border-black pl-12 pr-24 py-4 font-label text-base focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                    <input type="text" id="query" placeholder="Search the repository…" autocomplete="off" autofocus
+                        class="w-full bg-surface-container-lowest border border-black rounded pl-12 pr-4 lg:pr-24 py-4 font-mono text-base focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     <div class="absolute inset-y-0 right-4 flex items-center gap-2">
-                        <span class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label border border-outline-variant hidden sm:inline">CMD+K</span>
+                        <span id="focus-shortcut" class="bg-surface-container-high px-2 py-0.5 text-[10px] font-label label-case border border-outline-variant hidden lg:inline" title="Focus the search box">Ctrl+K</span>
                     </div>
                     <!-- Search history dropdown -->
                     <div id="search-history-dropdown" style="display:none" class="absolute top-full left-0 right-0 z-50 bg-white border border-black border-t-0 shadow-md max-h-64 overflow-y-auto"></div>
                 </div>
                 <!-- Toggle group -->
-                <div id="mode-toggle-group" class="flex gap-0 border border-black overflow-hidden flex-shrink-0">
+                <div id="mode-toggle-group" class="flex gap-0 border border-black rounded overflow-hidden flex-shrink-0">
                     <!-- Mode toggles: the "on" look comes from the .toggle-on class,
                          which keyword.js derives from the checkbox state
                          (syncToggleVisuals), so URL/storage/history changes
                          always look the way they behave. -->
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Enable regular expression syntax">
+                    <!-- Case is not a mode: it combines with any of them. Off = ignore
+                         case in every mode (regex included); on = match it exactly. -->
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Match case exactly (off: upper and lower case are the same, in every mode)">
+                        <input type="checkbox" id="case-mode" class="sr-only">
+                        <span aria-hidden="true" class="as-typed" style="font-family:var(--font-mono)">Aa</span>
+                        <span class="hidden xl:inline">Match case</span>
+                        <span class="sr-only xl:hidden">Match case</span>
+                    </label>
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Enable regular expression syntax">
                         <input type="checkbox" id="regex-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-code"/></svg>
-                        <span>REGEX</span>
+                        <span>Regex</span>
                     </label>
                     <button type="button" id="regex-help-btn" aria-expanded="false" aria-controls="regex-help" aria-label="Regex help and examples" title="Regex help and examples"
-                        class="flex items-center px-2 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors border-r border-black">
+                        class="flex items-center px-2 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors border-r border-black">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-help-outline"/></svg>
                     </button>
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Only match symbol definitions">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Only match symbol definitions">
                         <input type="checkbox" id="symbols-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-function"/></svg>
-                        <span>SYMBOLS</span>
+                        <span>Symbols</span>
                     </label>
-                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold border-r border-black" title="Find references (call sites, type mentions) of the identifier in the query">
+                    <label class="mode-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold border-r border-black" title="Find references (call sites, type mentions) of the identifier in the query">
                         <input type="checkbox" id="references-mode" class="sr-only">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-link"/></svg>
-                        <span>REFERENCES</span>
+                        <span>References</span>
                     </label>
-                    <!-- Always-visible FILTER toggle so filters can be set BEFORE the
-                         first search (the one in the results bar only appears after a search). -->
-                    <button type="button" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-primary-container transition-colors text-xs font-label font-bold" title="Show filter and ranking options">
+                    <!-- The one FILTER toggle. Its count shows how many path filters
+                         are set, so a filter left on is never invisible. -->
+                    <button type="button" id="filter-toggle-btn" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold" title="Show filter and ranking options" aria-expanded="false" aria-controls="filter-panel">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg>
-                        <span>FILTER</span>
+                        <span>Filter</span>
+                        <span id="filter-count" class="filter-count" hidden></span>
                     </button>
                 </div>
                 <!-- Execute button -->
-                <button id="search-btn" class="bg-primary-container text-black font-label font-bold px-8 py-4 border border-black hover:bg-black hover:text-primary-container transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
-                    EXECUTE_QUERY
+                <button id="search-btn" class="rounded bg-primary-container text-on-accent font-label label-case font-bold px-4 lg:px-8 py-4 border border-black hover:bg-primary-hover hover:text-on-primary-hover transition-all active:translate-x-[2px] active:translate-y-[2px] flex-shrink-0 whitespace-nowrap">
+                    Search
                 </button>
             </div>
 
             <!-- Regex cheat-sheet (toggled by the ? next to REGEX; keyword.js) -->
             <div id="regex-help" role="region" aria-label="Regex help">
                 <div class="regex-help-head">
-                    <strong>REGEX CHEAT-SHEET</strong>
+                    <strong class="label-case">Regex cheat sheet</strong>
                     <button type="button" id="regex-help-close" class="regex-help-link">Close</button>
                 </div>
                 <div class="regex-help-grid">
@@ -727,7 +649,7 @@
                         <ul class="regex-help-examples">
                             <li><button type="button" data-example="fn \w+\("><code>fn \w+\(</code></button> function definitions</li>
                             <li><button type="button" data-example="TODO|FIXME"><code>TODO|FIXME</code></button> either word</li>
-                            <li><button type="button" data-example="(?i)error"><code>(?i)error</code></button> ignore case</li>
+                            <li><button type="button" data-example="&quot;[^&quot;]*&quot;"><code>"[^"]*"</code></button> a quoted string</li>
                             <li><button type="button" data-example="\bconfig\b"><code>\bconfig\b</code></button> whole word only</li>
                             <li><button type="button" data-example="\{\s*&quot;success&quot;:\s*True"><code>\{\s*"success":\s*True</code></button> any spacing</li>
                             <li><button type="button" data-example="^import "><code>^import </code></button> at the start of a line</li>
@@ -738,11 +660,11 @@
                     <div>
                         <p class="regex-help-title">Things that catch people out</p>
                         <ul class="regex-help-rules">
-                            <li><strong>Case-sensitive.</strong> Plain search ignores case; regex does not. Start with <code>(?i)</code> to ignore it.</li>
+                            <li><strong>Case.</strong> Upper and lower case are the same unless <span class="label-case">Match case</span> is on, as in plain search.</li>
                             <li><strong>Special characters.</strong> <code>{ } ( ) [ ] . * + ? | ^ $ \</code> mean something. Put <code>\</code> before one to match it: <code>\{</code>, <code>\.</code>, <code>\(</code>.</li>
                             <li><strong>Spaces are exact.</strong> <code>a b</code> needs exactly one space. Use <code>\s*</code> (any, even none) or <code>\s+</code> (at least one).</li>
                             <li><strong>One line at a time.</strong> <code>.</code> and <code>\s</code> stop at the end of a line. Use <code>\n</code> or <code>(?s)</code> to match across lines.</li>
-                            <li><strong>Literal text?</strong> Turn REGEX off: plain search matches what you type, quotes included.</li>
+                            <li><strong>Literal text?</strong> Turn <span class="label-case">Regex</span> off: plain search matches what you type, quotes included.</li>
                         </ul>
                         <p><a href="/docs.html#regex-search">Full regex guide</a></p>
                     </div>
@@ -752,23 +674,21 @@
             <!-- Results meta bar (shown after search) -->
             <div id="results-header" class="flex justify-between items-center border-b border-outline-variant pb-2 px-1" style="display: none;">
                 <div class="flex gap-4 items-center flex-wrap" aria-live="polite" aria-atomic="true">
-                    <span id="results-count" class="font-label text-xs font-bold bg-black text-white px-2 py-0.5"></span>
+                    <span id="results-count" class="font-label label-case text-xs font-bold bg-black text-on-ink px-2 py-0.5"></span>
                     <span id="search-meta" class="font-label text-xs text-outline"></span>
+                    <button type="button" id="more-files-btn" class="font-label label-case text-xs font-bold underline hover:text-black" style="display: none;"></button>
                     <span id="index-freshness" class="font-label text-xs text-outline" style="display: none;"></span>
                 </div>
-                <div class="flex gap-3">
-                    <button id="filter-toggle-btn" class="filter-toggle flex items-center gap-1 font-label text-xs text-outline hover:text-black transition-colors">
-                        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg> FILTER
-                    </button>
-                </div>
+                <!-- Which path filters these results went through (keyword.js) -->
+                <div id="active-filters" class="active-filters" hidden></div>
             </div>
 
             <!-- Filter panel (hidden by default) -->
-            <div id="filter-panel" class="bg-surface-container-low border border-black p-4 space-y-3">
+            <div id="filter-panel" class="bg-surface-container-low border border-black rounded p-4 space-y-3">
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        MAX RESULTS
-                        <select id="max-results" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Max results
+                        <select id="max-results" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus">
                             <option value="25">25</option>
                             <option value="50" selected>50</option>
                             <option value="100">100</option>
@@ -777,17 +697,17 @@
                             <option value="1000">1000</option>
                         </select>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        RANKING
-                        <select id="rank-mode" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container">
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Ranking
+                        <select id="rank-mode" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus">
                             <option value="auto" selected>Auto</option>
                             <option value="fast">Fast</option>
                             <option value="full">Full</option>
                         </select>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        CONTEXT LINES
-                        <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary-container" title="Lines of code shown either side of each match">
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Context lines
+                        <select id="context-lines" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus" title="Lines of code shown either side of each match">
                             <option value="0" selected>Match only</option>
                             <option value="1">±1 line</option>
                             <option value="2">±2 lines</option>
@@ -796,18 +716,21 @@
                             <option value="5">±5 lines</option>
                         </select>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        INCLUDE (GLOB)
-                        <input type="text" id="include-filter" placeholder="src/**/*.rs;lib/**" autocomplete="off"
-                            class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Search only in
+                        <input type="text" id="include-filter" placeholder="src/**/*.rs, lib/**" autocomplete="off"
+                            class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     </label>
-                    <label class="flex flex-col gap-1 text-xs font-label text-outline">
-                        EXCLUDE (GLOB)
-                        <input type="text" id="exclude-filter" placeholder="**/test/**;**/vendor/**" autocomplete="off"
-                            class="bg-white border border-black px-2 py-1.5 font-label text-xs focus:outline-none focus:ring-1 focus:ring-primary-container placeholder:text-outline"/>
+                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
+                        Skip paths
+                        <input type="text" id="exclude-filter" placeholder="**/test/**, **/vendor/**" autocomplete="off"
+                            class="bg-white border border-black px-2 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-focus placeholder:text-outline"/>
                     </label>
                 </div>
-                <p class="text-[10px] font-label text-outline">Glob patterns (separated by <code class="bg-surface-container-highest px-1">;</code>) matched against workspace-relative paths. Use <code class="bg-surface-container-highest px-1">**</code> for recursive directories.</p>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <p class="text-[10px] font-label text-outline">Glob patterns, separated by <code class="bg-surface-container-highest px-1">,</code> or <code class="bg-surface-container-highest px-1">;</code>, matched against paths relative to the indexed folder. Use <code class="bg-surface-container-highest px-1">**</code> for any depth of folders.</p>
+                    <button type="button" id="clear-filters-btn" class="font-label text-xs font-bold underline hover:text-black" hidden>Clear path filters</button>
+                </div>
             </div>
 
             <!-- Keep for advanced-options querySelector compat (hidden) -->
@@ -815,6 +738,9 @@
                 <summary></summary>
             </details>
         </section>
+
+        <!-- Files whose path matches the query (above the content results) -->
+        <section id="file-matches" class="file-matches" aria-label="Files whose path matches" style="display: none;"></section>
 
         <!-- Results -->
         <section id="results" class="space-y-4">
@@ -825,44 +751,28 @@
 
     </main>
 
-    <!-- ===== MOBILE BOTTOM NAV ===== -->
-    <nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-14 bg-white font-label text-[10px] uppercase border-t border-black">
-        <a class="flex flex-col items-center justify-center bg-primary-container text-black px-4 py-1" href="/">
-            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-search"/></svg>
-            <span>Search</span>
-        </a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/semantic.html">
-            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-auto-awesome"/></svg>
-            <span>Semantic</span>
-        </a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/graph.html">
-            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-account-tree"/></svg>
-            <span>Graph</span>
-        </a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/diagnostics.html">
-            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-analytics"/></svg>
-            <span>Index</span>
-        </a>
-        <a class="flex flex-col items-center justify-center text-outline px-4 py-1 hover:bg-primary-container hover:text-black transition-all" href="/docs.html">
-            <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-description"/></svg>
-            <span>Docs</span>
-        </a>
-    </nav>
 
     <script src="/highlight.min.js"></script>
     <script src="/highlight-languages.min.js"></script>
     <script src="/common.js"></script>
     <script src="/lib/keyword-helpers.js"></script>
+    <script src="/code-view.js"></script>
     <script src="/keyword.js"></script>
     <script>
         // Filter panel toggle — bound to every .filter-toggle (the always-visible
         // one in the toggle group and the one in the results bar).
         document.querySelectorAll('.filter-toggle').forEach((btn) => {
             btn.addEventListener('click', () => {
-                document.getElementById('filter-panel')?.classList.toggle('open');
+                const open = document.getElementById('filter-panel')?.classList.toggle('open');
+                btn.setAttribute('aria-expanded', String(!!open));
+                btn.classList.toggle('toggle-on', !!open);
             });
         });
-        // CMD+K shortcut
+        // Ctrl+K (Cmd+K on a Mac) focuses the search box; the hint names the right key.
+        if (/Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || '')) {
+            const hint = document.getElementById('focus-shortcut');
+            if (hint) hint.textContent = '⌘K';
+        }
         document.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();

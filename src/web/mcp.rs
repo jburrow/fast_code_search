@@ -241,11 +241,13 @@ fn tool_definitions() -> Value {
             "search_code",
             "Search code",
             "Search the indexed code. Use instead of grep: it answers from an in-memory index. \
-             `query` takes the query syntax: several words must all appear in a file (lines \
-             holding the whole phrase rank first), \"exact phrase\", -term, file:PATTERN, \
+             In text mode `query` is a literal, like `rg -F`: several words are one phrase, and \
+             quotes and a leading - are part of the text. Operators: file:PATTERN, -file:PATTERN, \
              lang:rust, case:yes, word:yes. mode: text (default), regex (a Rust regex matched \
              per line), symbols (definitions only) or references (call sites and type mentions \
-             of an identifier). Returns path:line:column with the matching line."
+             of an identifier). Text ignores case and regex does not, unless case_sensitive is \
+             set. Returns path:line:column with the matching line; in text and regex mode, \
+             files whose path matches the query (e.g. a pasted path) are listed first."
                 .to_string(),
             json!({
                 "type": "object",
@@ -255,7 +257,8 @@ fn tool_definitions() -> Value {
                     "include": {"type": "string", "description": "Semicolon-separated path globs to search within, e.g. src/**/*.rs;lib/**"},
                     "exclude": {"type": "string", "description": "Semicolon-separated path globs to skip."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_LIMIT, "default": 20},
-                    "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "Lines of context around each match."}
+                    "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "Lines of context around each match."},
+                    "case_sensitive": {"type": "boolean", "description": "Match case exactly (true) or ignore it (false). Default: text ignores case, regex matches it."}
                 },
                 "required": ["query"]
             }),
@@ -398,6 +401,9 @@ fn limit(asked: Option<usize>, default: usize, max: usize) -> usize {
 
 // ------------------------------------------------------------- search_code
 
+/// Path matches listed above `search_code`'s content hits.
+const MCP_FILE_MATCHES: usize = 5;
+
 #[derive(serde::Deserialize)]
 struct SearchArgs {
     query: String,
@@ -410,6 +416,8 @@ struct SearchArgs {
     limit: Option<usize>,
     #[serde(default)]
     context: usize,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
 }
 
 async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
@@ -429,7 +437,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         }
     };
     let context = a.context.min(5);
-    let q = query(json!({
+    let mut params = json!({
         "q": a.query,
         "max": limit(a.limit, 20, MAX_SEARCH_LIMIT),
         "include": a.include,
@@ -438,11 +446,44 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         "symbols": symbols,
         "references": references,
         "context": context,
-    }))?;
+        "files": MCP_FILE_MATCHES,
+    });
+    if let Some(c) = a.case_sensitive {
+        params["case"] = json!(c);
+    }
+    let q = query(params)?;
     let Json(resp) = api::search_handler(State(state.clone()), q).await?;
     let mut out = String::new();
+    // Files whose path matches come first: an agent pasting a path wants
+    // the file, not lines that happen to mention it.
+    if !resp.files.is_empty() {
+        let total = resp.total_files.unwrap_or(resp.files.len());
+        let _ = writeln!(
+            out,
+            "Files whose path matches ({total}{}):",
+            if total > resp.files.len() {
+                format!(", showing {}", resp.files.len())
+            } else {
+                String::new()
+            }
+        );
+        for f in &resp.files {
+            let _ = writeln!(out, "{}", f.file_path);
+        }
+        out.push('\n');
+    }
     if resp.results.is_empty() {
-        let _ = writeln!(out, "No matches for {:?} ({mode} search).", resp.query);
+        let _ = writeln!(
+            out,
+            "No {}matches for {:?} ({mode} search).",
+            if resp.files.is_empty() {
+                ""
+            } else {
+                "content "
+            },
+            resp.query
+        );
+        push_limits_note(&mut out, &resp.limits_hit);
         push_freshness_note(&mut out, resp.index.as_ref());
         return Ok(out);
     }
@@ -460,6 +501,7 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
             ""
         }
     );
+    push_limits_note(&mut out, &resp.limits_hit);
     for r in &resp.results {
         let kind = match r.match_type.as_ref() {
             "SYMBOL_DEFINITION" => "  [definition]",
@@ -504,6 +546,14 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
 
 /// When no watcher keeps the index current, say how old it is, so an agent
 /// that just wrote a file knows a miss may only mean "not indexed yet".
+/// Name every limit that cut the search, so an agent never mistakes a
+/// capped result for a complete one.
+fn push_limits_note(out: &mut String, hits: &[super::api::LimitHitJson]) {
+    for hit in hits {
+        let _ = writeln!(out, "Results capped ({}): {}.", hit.limit, hit.detail);
+    }
+}
+
 fn push_freshness_note(out: &mut String, index: Option<&crate::search::IndexFreshness>) {
     if let Some(note) = index.and_then(|f| f.note(crate::search::unix_now_ms())) {
         let _ = writeln!(
@@ -637,6 +687,9 @@ struct Hidden {
     folders: usize,
 }
 
+/// Unresolved imports listed per file by `dependencies`.
+const UNRESOLVED_SHOWN: usize = 20;
+
 #[derive(serde::Deserialize)]
 struct NodeSetJson {
     file: String,
@@ -647,6 +700,7 @@ struct NodeSetJson {
 #[derive(serde::Deserialize)]
 struct ImportLineJson {
     line: usize,
+    spec: String,
     target: Option<String>,
     containment: bool,
 }
@@ -690,13 +744,18 @@ async fn file_dependencies(state: &WebState, a: DepsArgs) -> ToolResult {
 
     // The line of each direct import, from the file itself.
     let mut import_lines: BTreeMap<String, usize> = BTreeMap::new();
+    // Imports with no indexed target, as (line, spec).
+    let mut unresolved: Vec<(usize, String)> = Vec::new();
     if show_out {
         let q = query(json!({ "file": set.file }))?;
         if let Ok(Json(imports)) = graph::imports_handler(State(state.clone()), q).await {
             let imports: ImportsJson = reshape(&imports)?;
             for i in imports.imports.into_iter().filter(|i| !i.containment) {
-                if let Some(t) = i.target {
-                    import_lines.entry(t).or_insert(i.line);
+                match i.target {
+                    Some(t) => {
+                        import_lines.entry(t).or_insert(i.line);
+                    }
+                    None => unresolved.push((i.line, i.spec)),
                 }
             }
         }
@@ -741,6 +800,27 @@ async fn file_dependencies(state: &WebState, a: DepsArgs) -> ToolResult {
     }
     if show_in {
         section("Imported by (hops away, path)", 1);
+    }
+    if !unresolved.is_empty() {
+        let local = unresolved
+            .iter()
+            .filter(|(_, s)| graph::is_local_spec(s))
+            .count();
+        let _ = writeln!(
+            out,
+            "\nImports that resolve to no indexed file (external packages, the standard library, or forms fcs does not resolve{}):",
+            if local > 0 {
+                format!("; {local} written as paths into the project, which usually means a broken import or an unsupported form")
+            } else {
+                String::new()
+            }
+        );
+        for (line, spec) in unresolved.iter().take(UNRESOLVED_SHOWN) {
+            let _ = writeln!(out, "  {}:{line}  {spec}", set.file);
+        }
+        if unresolved.len() > UNRESOLVED_SHOWN {
+            let _ = writeln!(out, "  … {} more", unresolved.len() - UNRESOLVED_SHOWN);
+        }
     }
     if !has_import_graph(&set.file) {
         let _ = writeln!(out, "\nNote: {GRAPH_COVERAGE}");
@@ -917,6 +997,8 @@ struct FolderEdgeJson {
 struct ModulesJson {
     folders: Vec<FolderJson>,
     edges: Vec<FolderEdgeJson>,
+    unresolved_imports: usize,
+    unresolved_local: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -1010,6 +1092,13 @@ async fn dependency_overview(state: &WebState, a: OverviewArgs) -> ToolResult {
         .collect();
     if !cyclic.is_empty() {
         let _ = writeln!(out, "\nFolders in import cycles: {}", cyclic.join(", "));
+    }
+    if modules.unresolved_imports > 0 {
+        let _ = writeln!(
+            out,
+            "\n{} imports resolve to no indexed file (external packages, the standard library, files outside the index); {} of them are written as paths into the project, which usually means a broken import or a form fcs does not resolve.",
+            modules.unresolved_imports, modules.unresolved_local
+        );
     }
 
     let q = query(json!({ "q": dir, "limit": n.min(15) }))?;

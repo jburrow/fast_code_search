@@ -29,16 +29,73 @@ engine and Unicode case folding, so any difference is a real difference.
 See [Matching compared with grep and ripgrep](../reference/matching.md) for
 where fcs, ripgrep, grep and git grep behave differently, and why.
 
+## Generated queries
+
+The fixed set holds the cases someone thought of. `--generate N` adds N
+queries made up from the corpus itself: identifiers, substrings, whole
+lines, punctuation runs and non-ASCII text, each in random case, some with
+MATCH CASE and whole word set. Each runs through fcs and through `rg -F`
+(with `-i` and `-w` as set) and the lines must match. A query that differs
+is shrunk, dropping characters from either end while it still differs, and
+the report ends with the smallest forms as `[[query]]` blocks to add to
+`benches/rg_backtest.toml` with the fix.
+
+CI generates 500 per run: with a fixed seed on pull requests, and a new
+seed on every push to `main` and once a week, so the set keeps exploring.
+Rerun a failure locally with the seed from the report:
+
+```sh
+cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
+    tests/fixtures/backtest --generate 500 --seed SEED
+```
+
+Its first runs found two whole-word bugs, both now fixed and in the query
+set: a combining mark (an Indic vowel sign, a decomposed accent) was not
+counted as a word character, and with MATCH CASE a match rejected by the
+whole-word test skipped the overlapping one after it (`}}` in `field}}}`).
+
+## On your own code: `fcs check`
+
+The backtest and the graph oracles run on pinned open-source trees. `fcs check` runs the same
+checks on the folders you index, so a gap that only your code exposes
+shows up too:
+
+```sh
+fcs check                      # the configuration's paths, else the current folder
+fcs check ~/src/app --seed 42  # one folder; repeat a run with its seed
+```
+
+It indexes the folders afresh, in memory, with your configuration's
+settings, then:
+
+1. makes up 200 queries from your files (`--queries N`) and compares each
+   with `rg -F`, as above; any query that differs is shrunk and reported
+   with the lines only one side found;
+2. compares the import graph with grimp for Python and with TypeScript's
+   own resolver for JavaScript and TypeScript, when those are installed
+   (`pip install grimp`; `typescript` in the repository's `node_modules`),
+   grouping the missed edges by the kind of import. See
+   [Dependency graph support](../reference/graph-support.md) for which
+   misses are known gaps.
+
+The report is markdown on stdout, progress on stderr. The exit status is 1
+when a search differs from ripgrep: that is a bug, please report it with the
+shrunk query. Graph differences are reported but do not fail the run.
+`--no-search` and `--no-graph` skip either half.
+
+Its first run, on Django, found a real bug: case-insensitive search did not
+fold the long `ſ` to `s` (or the micro sign `µ` to `μ`) as ripgrep does.
+Search now uses Unicode simple case folding throughout (`src/search/fold.rs`,
+checked against regex-syntax's tables for every character).
+
 ## How a query is translated
 
 | fcs query | ripgrep run | Compared how |
 |---|---|---|
-| One term (`Runtime`) | `rg -F -i -e Runtime` | the same lines exactly |
+| Text (`Runtime`, `fn main`, `"x":`, `-Wall`) | `rg -F -i -e TEXT`, the text as typed minus operators | the same lines exactly |
 | `case:yes` | drops `-i` | the same lines exactly |
 | `word:yes` | adds `-w` | the same lines exactly |
-| Several terms (`fn main`) | one `rg -F` run per term | the files must be those holding every term; every line holding all terms must be reported; every reported line must hold at least one term (fcs keeps only a few single-term lines per file by design) |
-| `-term` | an rg run for `term`, then those files are removed | as above |
-| `file:` / `lang:` | the query's own `globs` (`-g`) | as above |
+| `file:` / `lang:` | the query's own `globs` (`-g`) | the same lines exactly |
 | Regex | `rg -e PATTERN`, plus `-U` when the pattern spans lines | the line where each match starts |
 
 rg always runs with `--no-config -uu --crlf`, one tree at a time. Only files
@@ -65,14 +122,14 @@ differences. File-name hits have no rg counterpart and are left out.
   changed mid-pattern, word boundaries next to punctuation, and matches that
   start on a newline.
 
-The query set, `benches/rg_backtest.toml`, has 124 queries. Each one says
+The query set, `benches/rg_backtest.toml`, has 126 queries. Each one says
 what it exercises (`why`). They cover literals, short terms, quotes, case
-and whole-word options, Unicode, path and language filters, several terms,
-negation and regex.
+and whole-word options, Unicode, path and language filters, phrases,
+leading dashes and regex.
 
 ## Beyond matching
 
-Two more checks run on every query:
+Three more checks run on every query:
 
 - **Repeatable.** The first page (50 results) is fetched three times and
   must be identical. A search that stops at its match budget must still
@@ -81,13 +138,23 @@ Two more checks run on every query:
   matches is loaded the way the web UI's LOAD MORE does it: the whole list
   again, 50 longer each time, while the server says more exist. Every match
   must end up shown exactly once.
+- **Default limits** (`--check-defaults`, on in CI). Everything above runs
+  without result limits, so it cannot see a problem the limits themselves
+  cause. This check walks each query with up to 20,000 matches
+  (`--defaults-max-hits`) the way a web UI user would with the server's
+  default settings, once with Auto ranking and once with Fast: the first
+  page, SEARCH ALL FILES if ranking skipped files, then LOAD MORE until
+  the server says there is no more (the whole list again up to 1000, then
+  50 at a time by `offset`). Every match must end up shown exactly once,
+  and a total given as an exact count must be the real one whenever every
+  candidate file was searched.
 
 ## Running it
 
 ```bash
 # what CI runs (the corpora are shallow clones; see .github/workflows/backtest.yml)
 cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
-    tests/fixtures/backtest --check-paging --markdown report.md --json report.json
+    tests/fixtures/backtest --check-paging --check-defaults --markdown report.md --json report.json
 
 # just the edge cases: no clones needed, a few seconds
 cargo run --release --example rg_backtest -- tests/fixtures/backtest
@@ -124,13 +191,25 @@ sigma were missed, that a regex able to match nothing reported a line past
 the end of a file, and that a byte order mark stopped `^` from matching
 line 1. All five are fixed (see the [changelog](../imported/changelog.md)).
 
+The default-limits check was added after fast ranking's 2,000-file cap and
+the old offset ceiling were found by hand, not by the backtest. On its first
+run it found that LOAD MORE past 1000 results repeated some matches and
+skipped others on broad queries (`self.assertEqual` over Django lost 1,213
+of 17,717), because each deeper page ranked a different sample. That is
+fixed too.
+
 ## What it does not cover
 
 - **Symbol and reference searches.** They have no grep equivalent.
 - **Ranking order.** That is the [ranking-quality
   suite](ranking-quality.md).
-- **API `offset` paging across a search that hit its budget.** It is not
-  stable (see [Matching compared with grep and
+- **API `offset` paging below 1000 results across a search that hit its
+  budget.** It is not stable (see [Matching compared with grep and
   ripgrep](../reference/matching.md#where-fcs-differs-from-all-of-them)).
-  Only the web UI's LOAD MORE is checked.
+  The web UI never pages that way; its LOAD MORE is checked.
+- **Queries with more than 20,000 matches** under the default limits. Each
+  deep page re-runs the search, so walking them all is slow; raise
+  `--defaults-max-hits` to include them.
+- **The search deadline.** The walk runs with no time limit. A search the
+  deadline stops is a sample of whatever was read in time.
 - **GNU grep's test suite.** It has not been mined yet.

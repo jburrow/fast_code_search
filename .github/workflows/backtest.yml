@@ -4,7 +4,12 @@ name: ripgrep backtest
 # query in benches/rg_backtest.toml through the engine and through rg over the
 # pinned corpora and tests/fixtures/backtest, and fails on any difference not
 # marked `known`. It also checks that a page is repeatable and that LOAD MORE
-# ends with every hit exactly once.
+# ends with every hit exactly once, also under the default limits (fast
+# ranking's file cap, offset pages past 1000) the way a web UI user pages.
+# On top of the fixed set it makes up 500 queries from the corpora
+# (--generate): with a fixed seed on pull requests, so a PR is not failed by
+# a query it did not cause, and with a new seed on every push to main and
+# every week, so the generated set keeps exploring.
 
 on:
   push:
@@ -19,6 +24,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/backtest.yml"
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 env:
@@ -63,7 +70,10 @@ jobs:
           rg --version | head -1
           cargo run --release --example rg_backtest -- \
             bench-corpus/tokio bench-corpus/django tests/fixtures/backtest \
-            --check-paging --markdown backtest.md --json backtest.json
+            --check-paging --check-defaults --generate 500 --seed "$SEED" \
+            --markdown backtest.md --json backtest.json
+        env:
+          SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
       - name: Report
         if: always()
         run: test -f backtest.md && cat backtest.md >> "$GITHUB_STEP_SUMMARY" || true

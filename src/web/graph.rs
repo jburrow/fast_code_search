@@ -507,6 +507,27 @@ pub struct ModulesResponse {
     /// Whether paths start with the indexed root folder's name (false when
     /// `show_root_name` hides it), so the UI knows whether to strip it.
     pub root_name_shown: bool,
+    /// Imports that resolve to no indexed file: external packages, the
+    /// standard library, files outside the index, and forms fcs does not
+    /// resolve.
+    pub unresolved_imports: usize,
+    /// Of those, the ones written as a path into the tree (see
+    /// [`is_local_spec`]): a broken import or a form fcs does not support.
+    pub unresolved_local: usize,
+}
+
+/// Whether an import is written as a path into the project rather than a
+/// package name: relative (`./x`, `../x`, Python `.x`), Rust `crate::`,
+/// `self::` or `super::`, or a `@/` / `~/` alias. One of these that does
+/// not resolve is a broken import or a gap in fcs, not an external package.
+pub fn is_local_spec(spec: &str) -> bool {
+    let s = spec.trim();
+    s.starts_with('.')
+        || s.starts_with("crate::")
+        || s.starts_with("self::")
+        || s.starts_with("super::")
+        || s.starts_with("@/")
+        || s.starts_with("~/")
 }
 
 fn build_modules(engine: &SearchEngine, containment: bool) -> ModulesResponse {
@@ -572,10 +593,14 @@ fn build_modules(engine: &SearchEngine, containment: bool) -> ModulesResponse {
         .collect();
     edges.sort_by(|x, y| x.from.cmp(&y.from).then_with(|| x.to.cmp(&y.to)));
     folders.sort_by(|x, y| x.folder.cmp(&y.folder));
+    let waiting = engine.waiting_imports_by_file();
+    let unresolved = waiting.iter().flat_map(|(_, _, specs)| specs);
     ModulesResponse {
         folders,
         edges,
         root_name_shown: !engine.hides_root_name(),
+        unresolved_imports: unresolved.clone().count(),
+        unresolved_local: unresolved.filter(|s| is_local_spec(s)).count(),
     }
 }
 
@@ -648,7 +673,7 @@ pub async fn imports_handler(
         let statements = crate::symbols::SymbolExtractor::new_for_source(canonical, Some(&content))
             .extract_imports(&content)
             .unwrap_or_default();
-        let imports = statements
+        let mut imports: Vec<ImportLine> = statements
             .into_iter()
             .map(|s| {
                 let target_id = index
@@ -665,6 +690,10 @@ pub async fn imports_handler(
                 }
             })
             .collect();
+        // `from pkg import a, b` is one entry per name; show one row per
+        // line and target.
+        let mut seen = std::collections::HashSet::new();
+        imports.retain(|i| seen.insert((i.line, i.target.clone())));
         Ok(ImportsResponse {
             file: shown_path(engine, id, &q.file),
             imports,

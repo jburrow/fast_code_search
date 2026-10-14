@@ -124,6 +124,11 @@ pub fn apply_changes(
         }
     }
     outcome.removed += engine.prune_vanished_in(&dirs);
+    // Files that imported a removed file resolve their imports again (an
+    // import may now fall back to the package, or stay unresolved).
+    if outcome.removed > 0 {
+        engine.resolve_imports_incremental();
+    }
     if outcome.changed() {
         engine.updated_at_ms = Some(crate::search::unix_now_ms());
     }
@@ -161,20 +166,7 @@ struct PathPlan {
 
 fn plan_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) -> PathPlan {
     if path.is_dir() {
-        let discovery = FileDiscoveryConfig {
-            paths: vec![path.to_string_lossy().to_string()],
-            exclude_patterns: config.exclude_patterns.clone(),
-            include_extensions: config.include_extensions.clone(),
-            max_file_size: Some(effective_max_size(config)),
-            respect_gitignore: config.respect_gitignore,
-            ..Default::default()
-        };
-        return PathPlan {
-            files: FileDiscoveryIterator::new(&discovery)
-                .filter(|file| !config.is_file_excluded(file))
-                .collect(),
-            removed: 0,
-        };
+        return reconcile_dir(engine, path, config);
     }
 
     if !path.is_file() {
@@ -195,6 +187,47 @@ fn plan_path(engine: &mut SearchEngine, path: &Path, config: &IndexerConfig) -> 
     PathPlan {
         files: vec![path.to_path_buf()],
         removed: 0,
+    }
+}
+
+/// Bring everything under directory `dir` in line with the disk: index
+/// eligible files that are new or changed (by size and mtime), and drop
+/// indexed files under it that are gone or no longer eligible.
+///
+/// A directory hint means "something under here may have changed": it was
+/// created, renamed in, or events for it were lost. Files whose size and
+/// mtime match what was indexed are left alone, so reconciling a large
+/// unchanged tree costs a walk and a stat per file, not a re-index.
+fn reconcile_dir(engine: &mut SearchEngine, dir: &Path, config: &IndexerConfig) -> PathPlan {
+    let discovery = FileDiscoveryConfig {
+        paths: vec![dir.to_string_lossy().to_string()],
+        exclude_patterns: config.exclude_patterns.clone(),
+        include_extensions: config.include_extensions.clone(),
+        max_file_size: Some(effective_max_size(config)),
+        respect_gitignore: config.respect_gitignore,
+        ..Default::default()
+    };
+    let mut keep = std::collections::HashSet::new();
+    let mut files = Vec::new();
+    for file in FileDiscoveryIterator::new(&discovery).filter(|f| !config.is_file_excluded(f)) {
+        match engine.find_file_id_exact(&file) {
+            Some(id) => {
+                keep.insert(id);
+                if !engine.is_unchanged_on_disk(id, &file) {
+                    files.push(file);
+                }
+            }
+            None => files.push(file),
+        }
+    }
+    let gone: Vec<u32> = engine
+        .file_ids_under(dir)
+        .into_iter()
+        .filter(|id| !keep.contains(id))
+        .collect();
+    PathPlan {
+        files,
+        removed: engine.remove_files_by_ids(&gone),
     }
 }
 

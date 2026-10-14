@@ -9,6 +9,32 @@ backtest](../benchmarks/correctness.md) checks this on every engine change.
 It runs a fixed set of searches through both tools and fails on any line one
 finds and the other does not.
 
+## Every search, as ripgrep would run it
+
+The contract in one table: for each kind of fcs search, the ripgrep run
+that finds the same lines. "Same lines" is what the backtest checks; fcs
+then ranks them and may cap how many it reads (see *Ranked, and capped*
+below, and `limits_hit` in every response).
+
+| fcs search | Same lines as | Checked by |
+|---|---|---|
+| `foo bar` (plain text) | `rg -F -i 'foo bar'` | backtest, generated queries |
+| `foo case:yes` (or MATCH CASE, `fcs -s`) | `rg -F 'foo'` | backtest, generated queries |
+| `foo word:yes` (or `fcs -w`) | `rg -F -i -w 'foo'` | backtest, generated queries |
+| `foo case:yes word:yes` | `rg -F -w 'foo'` | backtest, generated queries |
+| Regex on the API or `fcs -e` | `rg 'PATTERN'` (`rg -U` when it mentions `\n`) | backtest |
+| Regex with `case=false`, `(?i)` or `fcs -e -i` | `rg -i 'PATTERN'` | backtest |
+| `lang:rust foo` | `rg -F -i -t rust 'foo'` | backtest (with `globs`) |
+| `file:*.py foo` / `-file:tests foo` | `rg -F -i -g '*.py' 'foo'` / `-g '!tests'`; a bare word such as `file:parser` matches anywhere in the path, which `-g` has no exact form for | backtest (with `globs`) |
+| A text search's filename hits (no line number) | none; closest is `rg --files \| rg -i 'foo'` | not compared |
+| Path matches (`files=N`, the FILES box) | none; closest is `rg --files \| rg -i` with every word required | unit tests |
+| Symbols (SYMBOLS, `fcs symbols`) | none: definitions come from tree-sitter, not from text | engine tests |
+| References (REFERENCES, `fcs refs`) | none: call sites come from tree-sitter, not from text | engine tests |
+
+`fcs` on the command line, the web UI, the API, gRPC and MCP all run one
+shared request path, and a test runs the same searches through web, gRPC
+and offline `fcs` and requires identical hits (`tests/frontend_parity.rs`).
+
 ## Where fcs agrees with ripgrep and differs from grep and git grep
 
 | Behaviour | fcs | ripgrep | GNU grep | git grep |
@@ -17,7 +43,7 @@ finds and the other does not.
 | Byte order mark at the start of a file | ignored, so `^` matches line 1 | ignored (kept with `-E none`) | part of line 1, so `^` misses it | part of line 1, so `^` misses it |
 | `$` on a line ending in CRLF | matches before the `\r` | only with `--crlf` | no | no |
 | Pattern that mentions `\n` | runs over the whole file and reports the line where the match starts | needs `-U` | not supported | not supported |
-| Case-insensitive folding | Unicode simple case folding: `Σ`, `σ` and `ς` are the same letter; `ß` is not `ss` | the same | depends on the locale | depends on the locale |
+| Case-insensitive folding | Unicode simple case folding: `Σ`, `σ` and `ς` are the same letter, so are `s` and the long `ſ`, `k` and the Kelvin sign `K`, the micro sign `µ` and `μ`; `ß` is not `ss` and `İ` is not `i` | the same | depends on the locale | depends on the locale |
 | Hidden files (`.github/`, `.env.example`) | searched | skipped unless `--hidden` | searched | searched if tracked |
 | Files searched | the indexed tree, honouring `.gitignore` | the tree, honouring `.gitignore` | what you name | tracked files only |
 
@@ -27,24 +53,32 @@ These were checked with GNU grep 3.11, git 2.43 and ripgrep 14.1.
 
 These follow from fcs being a code search server rather than a line filter.
 
-- **Case-insensitive by default.** Text searches ignore case unless the query
-  says `case:yes`. grep, git grep and ripgrep are case-sensitive by default.
-  A regex is case-sensitive unless it uses `(?i)` or the request sets the
-  case option. The backtest passes `-i` to ripgrep whenever fcs ignores
-  case.
-- **Several words are not a phrase.** `fn main` finds files that contain
-  both words, anywhere in the file. Lines holding the phrase rank first,
-  then lines holding both words, then at most three lines per file holding
-  only one of them. Quote the words (`"fn main"`) to search for the exact
-  phrase, as grep would.
-- **Operators.** `-term`, `file:`, `lang:`, `case:` and `word:` are query
-  syntax, not text. To search for one literally, quote it: `"-test"`,
-  `"file:"`. A `-` only negates before a letter, `_` or quote, so `->`,
-  `-1.5` and `--flag` are searched as written. See [Query
-  syntax](query-syntax.md).
+- **Case-insensitive by default.** Plain text ignores case unless the query
+  says `case:yes`; grep, git grep and ripgrep match case by default (`rg
+  -i` is the fcs default, `rg -s` is `case:yes`). On the API and in `fcs`
+  a regex matches case unless it uses `(?i)` or the request says
+  `case=false`; in the web UI the MATCH CASE toggle decides for both. The
+  backtest passes `-i` to ripgrep whenever fcs ignores case.
+- **Operators.** Plain text is a literal, like `rg -F`: several words are
+  one phrase, and quotes and a leading `-` are part of the text. The only
+  exceptions are whole words with an argument: `file:`, `-file:`,
+  `lang:`, `-lang:`, `case:` and `word:`. To search for one of those
+  literally, use a regex. The query is trimmed at both ends (`rg ' x'`
+  keeps its leading space). See [Query syntax](query-syntax.md).
 - **File names match too.** A text search also lists files whose *name*
   matches, as a hit without a line number. grep has no equivalent, so the
   backtest leaves these out of the comparison.
+- **Paths match, separately.** When asked (`files=N` on `/api/search`, the
+  web UI's **FILES** box, `fcs` on a terminal, MCP `search_code`), the files
+  whose *path* matches are returned apart from the content results, which
+  do not change. Here the text is split into words, and every word must
+  appear in the path as results show it, case-insensitively unless
+  `case:yes`; `\` counts as `/`; `word:yes`, `file:`, `lang:` and
+  include/exclude globs apply as they do to content. A term holding a `/` also matches the file's absolute path, so a
+  pasted `/home/me/repo/src/main.rs` works, but only when the match reaches
+  past the indexed folder (`/home/` alone lists nothing). A regex is
+  matched against the shown path. This is closest to `rg --files | rg
+  PATTERN`; it is not part of the backtest, which compares content only.
 - **One result per line.** A line with several matches is one result. For a
   multi-line match, the result is the line where it starts. ripgrep counts
   lines the same way (`rg -c`).
@@ -52,13 +86,23 @@ These follow from fcs being a code search server rather than a line filter.
   order. To keep a broad search fast, a request reads a bounded number of
   matches: by default 100 from one file on the first page, and a budget of
   about eight times the requested page. When either limit is reached, the
-  total is shown as "N+" rather than as a count. LOAD MORE in the web UI
+  total is shown as "N+" rather than as a count, and the response names
+  the limit (`limits_hit`: `match_budget`, `per_file_cap`, `timeout` or
+  `max_files`; `fcs` prints it, MCP adds a "Results capped" line, gRPC
+  sends an `fcs-limits-hit` header). When a query could be in
+  more than 5,000 files, Auto ranking opens only the 2,000 most likely
+  (`fast_rank_files`); the header then says "Searched 2,000 of N files"
+  and SEARCH ALL FILES opens the rest (up to `max_fast_rank_files`). LOAD MORE in the web UI
   fetches the whole list again at the bigger size, up to 1000 results, so
   every match ends up shown exactly once. Results already on screen can
   move when it does. Past 1000 results it fetches the next page instead.
-  An API client asking for `offset` pages of a search that hit its budget
-  can see a result repeated or skipped between pages. Asking again from
-  offset 0 with a larger `max` avoids that.
+  Every page that ends at result 1000 or later ranks the same sample (a
+  budget of 100,000 matches), so those pages fit together with no repeats
+  or gaps. Shorter pages use a smaller budget, so an API client asking for
+  `offset` pages below 1000 of a search that hit its budget can see a
+  result repeated or skipped between pages. Asking again from offset 0
+  with a larger `max` avoids that. Paging stops at offset 100,000 by
+  default (`max_page_offset`).
 - **Non-UTF-8 files are converted.** Files in Latin-1, Windows-1252,
   Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
   (`transcode_non_utf8`, on by default). ripgrep only does this for UTF-16

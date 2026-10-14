@@ -10,7 +10,7 @@ The narrative guide is [Command-line client](../imported/cli.md).
 ```text
 Search the code index kept by a running fast_code_search server.
 
-`fcs QUERY` is `fcs search QUERY`. The query syntax is the web UI's: several words must all appear in a file (lines with the phrase rank first), "quoted phrase", -term, file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes.
+`fcs QUERY` is `fcs search QUERY`. The query is the web UI's: literal text, like rg -F (several words are one phrase; quotes and a leading - are text), plus file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes. Put a query starting with - after --.
 
 Exit status: 0 = matches found, 1 = no matches, 2 = error.
 
@@ -22,6 +22,7 @@ Commands:
   symbols  Search symbol definitions (functions, types, classes, ...) only
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
+  check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -73,7 +74,8 @@ Options:
           Print version
 
 Examples:
-  fcs 'fn main'                 lines holding both words, phrase first
+  fcs 'fn main'                 lines holding the phrase
+  fcs -- -Wall                  a query starting with -
   fcs -e 'fn\s+\w+\(' -g '*.rs'  regex, Rust files only
   fcs refs SearchEngine         call sites and type mentions
   fcs symbols parse_query       definitions only
@@ -81,6 +83,7 @@ Examples:
   vim -q <(fcs --format vimgrep TODO)
   fcs status                    is the server up, what does it hold
   fcs mcp                       MCP over stdio, for coding agents
+  fcs check                     compare fcs with ripgrep and the import resolvers
 ```
 
 ## `fcs search --help`
@@ -92,7 +95,7 @@ Usage: fcs search [OPTIONS] <QUERY>...
 
 Arguments:
   <QUERY>...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -102,7 +105,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -117,13 +120,13 @@ Options:
           
           [default: 0]
 
-      --server <URL>
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
   -C, --context <N>
           Lines of context before and after each hit (0-10)
           
           [default: 0]
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
@@ -131,23 +134,28 @@ Options:
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --offline
-          Search the on-disk index directly instead of asking the server
-
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
 
+      --offline
+          Search the on-disk index directly instead of asking the server
+
       --no-offline
           Never fall back to the on-disk index when the server is unreachable
-
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
 
       --rank <RANK>
           Ranking: auto, fast (metadata only, big candidate sets), full
           
           [default: auto]
           [possible values: auto, fast, full]
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --timeout-ms <MS>
+          Stop scanning after this many milliseconds and return the best so far
+          
+          [default: 0]
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -157,10 +165,8 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --timeout-ms <MS>
-          Stop scanning after this many milliseconds and return the best so far
-          
-          [default: 0]
+      --max-files <N>
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
       --json
           Shorthand for --format json
@@ -193,7 +199,7 @@ Usage: fcs refs [OPTIONS] <QUERY>...
 
 Arguments:
   <QUERY>...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -203,7 +209,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -218,13 +224,13 @@ Options:
           
           [default: 0]
 
-      --server <URL>
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
   -C, --context <N>
           Lines of context before and after each hit (0-10)
           
           [default: 0]
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
@@ -232,23 +238,28 @@ Options:
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --offline
-          Search the on-disk index directly instead of asking the server
-
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
 
+      --offline
+          Search the on-disk index directly instead of asking the server
+
       --no-offline
           Never fall back to the on-disk index when the server is unreachable
-
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
 
       --rank <RANK>
           Ranking: auto, fast (metadata only, big candidate sets), full
           
           [default: auto]
           [possible values: auto, fast, full]
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --timeout-ms <MS>
+          Stop scanning after this many milliseconds and return the best so far
+          
+          [default: 0]
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -258,10 +269,8 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --timeout-ms <MS>
-          Stop scanning after this many milliseconds and return the best so far
-          
-          [default: 0]
+      --max-files <N>
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
       --json
           Shorthand for --format json
@@ -294,7 +303,7 @@ Usage: fcs symbols [OPTIONS] <QUERY>...
 
 Arguments:
   <QUERY>...
-          The query (web UI syntax; quote it if it has spaces)
+          The query (web UI syntax; several words are one phrase)
 
 Options:
   -e, --regex
@@ -304,7 +313,7 @@ Options:
           Match case exactly
 
   -i, --ignore-case
-          Ignore case (the default for plain text; useful to override case:yes)
+          Ignore case (the default for plain text; with -e, makes a regex ignore it too)
 
   -w, --word
           Match whole words only
@@ -319,13 +328,13 @@ Options:
           
           [default: 0]
 
-      --server <URL>
-          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
-
   -C, --context <N>
           Lines of context before and after each hit (0-10)
           
           [default: 0]
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
@@ -333,23 +342,28 @@ Options:
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
-      --offline
-          Search the on-disk index directly instead of asking the server
-
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
 
+      --offline
+          Search the on-disk index directly instead of asking the server
+
       --no-offline
           Never fall back to the on-disk index when the server is unreachable
-
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
 
       --rank <RANK>
           Ranking: auto, fast (metadata only, big candidate sets), full
           
           [default: auto]
           [possible values: auto, fast, full]
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --timeout-ms <MS>
+          Stop scanning after this many milliseconds and return the best so far
+          
+          [default: 0]
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -359,10 +373,8 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --timeout-ms <MS>
-          Stop scanning after this many milliseconds and return the best so far
-          
-          [default: 0]
+      --max-files <N>
+          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
 
       --json
           Shorthand for --format json
@@ -447,6 +459,82 @@ Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that 
 Usage: fcs mcp [OPTIONS]
 
 Options:
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --format <FORMAT>
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
+
+      --json
+          Shorthand for --format json
+
+  -l, --files-with-matches
+          Print only the files that match, one per line
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color <COLOR>
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `fcs check --help`
+
+```text
+Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
+
+Usage: fcs check [OPTIONS] [PATH]...
+
+Arguments:
+  [PATH]...
+          Folders to check (default: the configuration's indexed paths, else the current folder). They are indexed afresh, in memory
+
+Options:
+      --queries <N>
+          Queries made up from the files and compared with `rg -F`
+          
+          [default: 200]
+
+      --seed <N>
+          Seed for the queries, to repeat a run (default: a fresh one)
+
+      --rg <PATH>
+          The ripgrep binary
+          
+          [default: rg]
+
+      --no-search
+          Skip the search check
+
+      --no-graph
+          Skip the dependency graph check
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 

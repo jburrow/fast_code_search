@@ -10,8 +10,8 @@
 //!   known (from the configuration or `--index-path`), the on-disk index is
 //!   loaded in-process and searched read-only. It is a few seconds slower
 //!   and may be stale; a note says so on stderr.
-//! - **Same semantics as the web UI.** The query syntax (`file:`, `lang:`,
-//!   `-term`, `"phrase"`, `case:`, `word:`), modes (regex, symbols,
+//! - **Same semantics as the web UI.** The query syntax (a literal text
+//!   plus `file:`, `lang:`, `case:`, `word:`), modes (regex, symbols,
 //!   references) and result shape are the server's; offline searches go
 //!   through the same engine calls the server uses.
 //! - **Grep conventions.** `path:line:col:text` when piped (what editors'
@@ -36,7 +36,9 @@ pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 
 /// Subcommands `fcs` understands; anything else on the command line is a
 /// search query (see [`normalize_args`]).
-pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "mcp", "help"];
+pub const SUBCOMMANDS: &[&str] = &[
+    "search", "refs", "symbols", "status", "mcp", "check", "help",
+];
 
 #[derive(Parser, Debug)]
 #[command(
@@ -44,20 +46,22 @@ pub const SUBCOMMANDS: &[&str] = &["search", "refs", "symbols", "status", "mcp",
     version,
     about = "Search a fast_code_search index from the command line",
     long_about = "Search the code index kept by a running fast_code_search server.\n\n\
-                  `fcs QUERY` is `fcs search QUERY`. The query syntax is the web UI's: several \
-                  words must all appear in a file (lines with the phrase rank first), \
-                  \"quoted phrase\", -term, file:PATTERN, -file:PATTERN, lang:rust, \
-                  case:yes, word:yes.\n\n\
+                  `fcs QUERY` is `fcs search QUERY`. The query is the web UI's: literal text, \
+                  like rg -F (several words are one phrase; quotes and a leading - are text), \
+                  plus file:PATTERN, -file:PATTERN, lang:rust, case:yes, word:yes. Put a query \
+                  starting with - after --.\n\n\
                   Exit status: 0 = matches found, 1 = no matches, 2 = error.",
     after_help = "Examples:\n  \
-                  fcs 'fn main'                 lines holding both words, phrase first\n  \
+                  fcs 'fn main'                 lines holding the phrase\n  \
+                  fcs -- -Wall                  a query starting with -\n  \
                   fcs -e 'fn\\s+\\w+\\(' -g '*.rs'  regex, Rust files only\n  \
                   fcs refs SearchEngine         call sites and type mentions\n  \
                   fcs symbols parse_query       definitions only\n  \
                   fcs -l TODO | xargs $EDITOR   files containing TODO\n  \
                   vim -q <(fcs --format vimgrep TODO)\n  \
                   fcs status                    is the server up, what does it hold\n  \
-                  fcs mcp                       MCP over stdio, for coding agents"
+                  fcs mcp                       MCP over stdio, for coding agents\n  \
+                  fcs check                     compare fcs with ripgrep and the import resolvers"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -81,6 +85,34 @@ pub enum Command {
     /// Serve MCP over stdio by relaying to the server's /mcp endpoint (for
     /// agents that launch a command rather than connect to a URL)
     Mcp,
+    /// Check fcs against independent tools on your own code: generated
+    /// queries against ripgrep, and the import graph against Python's and
+    /// TypeScript's own resolvers when they are installed
+    Check(CheckArgs),
+}
+
+/// `fcs check`.
+#[derive(Args, Debug, Clone)]
+pub struct CheckArgs {
+    /// Folders to check (default: the configuration's indexed paths, else
+    /// the current folder). They are indexed afresh, in memory.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
+    /// Queries made up from the files and compared with `rg -F`
+    #[arg(long, default_value_t = 200, value_name = "N")]
+    pub queries: usize,
+    /// Seed for the queries, to repeat a run (default: a fresh one)
+    #[arg(long, value_name = "N")]
+    pub seed: Option<u64>,
+    /// The ripgrep binary
+    #[arg(long, default_value = "rg", value_name = "PATH")]
+    pub rg: String,
+    /// Skip the search check
+    #[arg(long)]
+    pub no_search: bool,
+    /// Skip the dependency graph check
+    #[arg(long)]
+    pub no_graph: bool,
 }
 
 /// How to reach the index.
@@ -147,7 +179,7 @@ pub enum Rank {
 /// What to search for.
 #[derive(Args, Debug, Clone, Default)]
 pub struct SearchArgs {
-    /// The query (web UI syntax; quote it if it has spaces)
+    /// The query (web UI syntax; several words are one phrase)
     #[arg(value_name = "QUERY", required = true, num_args = 1..)]
     pub query: Vec<String>,
     /// Treat the query as a regular expression
@@ -156,7 +188,7 @@ pub struct SearchArgs {
     /// Match case exactly
     #[arg(short = 's', long, conflicts_with = "ignore_case")]
     pub case_sensitive: bool,
-    /// Ignore case (the default for plain text; useful to override case:yes)
+    /// Ignore case (the default for plain text; with -e, makes a regex ignore it too)
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
     /// Match whole words only
@@ -183,6 +215,10 @@ pub struct SearchArgs {
     /// Stop scanning after this many milliseconds and return the best so far
     #[arg(long, default_value_t = 0, value_name = "MS")]
     pub timeout_ms: u64,
+    /// Files fast ranking may open when a query could be in very many
+    /// (default: the server's fast_rank_files, 2000)
+    #[arg(long, value_name = "N")]
+    pub max_files: Option<usize>,
 }
 
 /// Search mode, chosen by the subcommand.
@@ -208,6 +244,10 @@ pub struct SearchRequest {
     pub exclude: String,
     pub rank: Rank,
     pub timeout_ms: u64,
+    /// Files whose path matches to list too (0 = none).
+    pub files: usize,
+    /// Candidate files fast ranking may open (`None` = the server's default).
+    pub max_files: Option<usize>,
 }
 
 impl SearchRequest {
@@ -231,6 +271,8 @@ impl SearchRequest {
             exclude: args.excludes.join(";"),
             rank: args.rank,
             timeout_ms: args.timeout_ms,
+            files: 0,
+            max_files: args.max_files,
         }
     }
 
@@ -268,6 +310,12 @@ impl SearchRequest {
         }
         if self.timeout_ms > 0 {
             p.push(("timeout_ms", self.timeout_ms.to_string()));
+        }
+        if self.files > 0 {
+            p.push(("files", self.files.to_string()));
+        }
+        if let Some(n) = self.max_files {
+            p.push(("max_files", n.to_string()));
         }
         p
     }
@@ -522,7 +570,7 @@ impl Session {
     /// Load the persisted index in-process and run the same engine calls
     /// the server does. Read-only: nothing is saved back.
     fn search_offline(&self, req: &SearchRequest) -> Result<SearchResponse> {
-        use crate::search::{RankMode, SearchEngine, SearchLimits};
+        use crate::search::{RankMode, SearchEngine};
 
         let path = self.index_path().ok_or_else(|| {
             anyhow!(
@@ -563,59 +611,66 @@ impl Session {
             }
         ));
 
-        let mut parsed = crate::search::parse_query(&req.query);
-        if let Some(c) = req.case {
-            parsed.options.case_sensitive = c;
-        }
-        if let Some(w) = req.word {
-            parsed.options.whole_word = w;
-        }
-        let mut limits = SearchLimits::new(req.max).with_offset(req.offset);
-        if req.timeout_ms > 0 {
-            limits = limits.with_timeout(Duration::from_millis(req.timeout_ms.min(30_000)));
-        }
-        let rank_mode = match req.rank {
-            Rank::Auto => RankMode::Auto,
-            Rank::Fast => RankMode::Fast,
-            Rank::Full => RankMode::Full,
+        let mode = match req.mode {
+            Mode::References => crate::search::SearchMode::References,
+            Mode::Symbols => crate::search::SearchMode::Symbols,
+            Mode::Text if req.regex => crate::search::SearchMode::Regex,
+            Mode::Text => crate::search::SearchMode::Text,
         };
+        let request = crate::search::SearchRequest {
+            query: req.query.clone(),
+            mode,
+            case_sensitive: req.case,
+            whole_word: req.word,
+            include: req.include.clone(),
+            exclude: req.exclude.clone(),
+            max_results: req.max,
+            offset: req.offset,
+            rank: match req.rank {
+                Rank::Auto => RankMode::Auto,
+                Rank::Fast => RankMode::Fast,
+                Rank::Full => RankMode::Full,
+            },
+            timeout: (req.timeout_ms > 0).then(|| Duration::from_millis(req.timeout_ms)),
+            max_files: req.max_files,
+            path_matches: req.files,
+        };
+        let settings = self
+            .config
+            .as_ref()
+            .map(|c| crate::search::SearchSettings::from_config(&c.server))
+            .unwrap_or_default();
+        let limits = request.limits(&settings, None).map_err(|e| anyhow!(e))?;
         let search_started = std::time::Instant::now();
-        let (matches, info) = match req.mode {
-            Mode::References => {
-                engine.search_references_parsed(&parsed, &req.include, &req.exclude, limits)?
-            }
-            Mode::Symbols => {
-                engine.search_symbols_parsed(&parsed, &req.include, &req.exclude, limits)?
-            }
-            Mode::Text if req.regex => engine.search_regex_with_limits(
-                &crate::search::regex_pattern_with_case(&req.query, req.case),
-                &req.include,
-                &req.exclude,
-                limits,
-                rank_mode,
-            )?,
-            Mode::Text => {
-                engine.search_parsed(&parsed, &req.include, &req.exclude, limits, rank_mode)?
-            }
+        let outcome = engine.run(&request, limits).map_err(|e| anyhow!(e))?;
+        let has_more = outcome.has_more(req.offset);
+        let info = outcome.info;
+        let (files, total_files) = match outcome.paths {
+            Some(found) => (
+                crate::web::file_matches_to_json(found.matches),
+                Some(found.total),
+            ),
+            None => (Vec::new(), None),
         };
-        let results = crate::web::results_to_json(&engine, matches, req.context);
+        let results = crate::web::results_to_json(&engine, outcome.matches, req.context);
         let total_results = results.len();
         Ok(SearchResponse {
             results,
+            files,
+            total_files,
             index: None,
             query: req.query.clone(),
             total_results,
-            has_more: match info.total_matches {
-                Some(t) => req.offset + total_results < t,
-                None => true,
-            },
+            has_more,
             offset: req.offset,
             total_matches: info.total_matches,
             truncated_by_budget: info.truncated_by_budget,
+            limits_hit: crate::web::LimitHitJson::all(&info),
             elapsed_ms: search_started.elapsed().as_secs_f64() * 1000.0,
             rank_mode: Some(format!("{:?}", info.mode).to_lowercase()),
             total_candidates: Some(info.total_candidates),
             candidates_searched: Some(info.candidates_searched),
+            max_files_allowed: None,
         })
     }
 
@@ -725,6 +780,33 @@ pub fn main_with_args(args: Vec<std::ffi::OsString>) -> i32 {
     }
 }
 
+/// `fcs check`: see [`crate::check::run_check`].
+fn check(session: &Session, args: &CheckArgs) -> Result<i32> {
+    let mut indexer = session
+        .config
+        .as_ref()
+        .map(|c| c.indexer.clone())
+        .unwrap_or_default();
+    if !args.paths.is_empty() {
+        indexer.paths = args
+            .paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+    } else if indexer.paths.is_empty() {
+        indexer.paths = vec![".".into()];
+    }
+    let opts = crate::check::CheckOptions {
+        queries: if args.no_search { 0 } else { args.queries },
+        seed: args.seed,
+        rg: args.rg.clone(),
+        graph: !args.no_graph,
+        ..Default::default()
+    };
+    let mut stdout = std::io::stdout().lock();
+    crate::check::run_check(&indexer, &opts, &mut stdout, &|m| session.note(m))
+}
+
 fn run(cli: Cli) -> Result<i32> {
     let session = Session::new(cli.conn, cli.output)?;
     let (args, mode) = match cli.command {
@@ -736,13 +818,19 @@ fn run(cli: Cli) -> Result<i32> {
             mcp::run(&session.server)?;
             return Ok(0);
         }
+        Command::Check(a) => return check(&session, &a),
         Command::Search(a) => (a, Mode::Text),
         Command::Refs(a) => (a, Mode::References),
         Command::Symbols(a) => (a, Mode::Symbols),
     };
-    let req = SearchRequest::from_args(&args, mode);
+    let mut req = SearchRequest::from_args(&args, mode);
     if req.query.trim().is_empty() {
         bail!("empty query");
+    }
+    // On a terminal, files whose path matches are listed above the hits;
+    // piped output stays grep-shaped.
+    if session.format == Format::Grouped && !session.output.files_with_matches {
+        req.files = GROUPED_FILE_MATCHES;
     }
     let resp = session.search(&req)?;
     let mapper = session.path_mapper();
@@ -767,6 +855,10 @@ fn run(cli: Cli) -> Result<i32> {
     if session.format == Format::Grouped && !session.output.quiet {
         eprintln!("{}", format::summary(&resp));
     }
+    // A capped result must never pass for a complete one.
+    for hit in &resp.limits_hit {
+        session.note(&format!("results capped: {}", hit.detail));
+    }
     // Without a file watcher the server misses writes after its last scan.
     if let Some(note) = resp
         .index
@@ -775,8 +867,15 @@ fn run(cli: Cli) -> Result<i32> {
     {
         session.note(&note);
     }
-    Ok(if resp.results.is_empty() { 1 } else { 0 })
+    Ok(if resp.results.is_empty() && resp.files.is_empty() {
+        1
+    } else {
+        0
+    })
 }
+
+/// Path matches listed above the hits in grouped output.
+const GROUPED_FILE_MATCHES: usize = 5;
 
 #[cfg(test)]
 mod tests {

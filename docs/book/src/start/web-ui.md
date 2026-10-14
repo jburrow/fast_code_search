@@ -11,13 +11,30 @@ the binary.
 - Type and press Enter (or wait: the page searches as you type after a short
   pause). `Ctrl`/`Cmd`+`K` focuses the box from anywhere; `/` does too.
 - **REGEX**, **SYMBOLS** and **REFERENCES** switch modes; **FILTER** opens
-  page size, ranking mode, context lines and include/exclude globs.
-- The [query syntax](../reference/query-syntax.md) works in the box:
-  `"exact phrase"`, `-term`, `file:src/`, `lang:rust`, `case:yes`.
+  page size, ranking mode, context lines and the path filters (**SEARCH ONLY
+  IN** and **SKIP PATHS**: globs separated by `,` or `;`). While a path
+  filter is set, FILTER shows a count and the summary line shows each filter
+  with an × to remove it. Path filters are remembered between visits.
+- **MATCH CASE** (`Aa`) matches upper and lower case exactly, in every mode;
+  off, case is ignored in plain text and regex alike. The summary line
+  says which applied ("ignoring case" or "matching case").
+- What you type is searched for as written, like `rg -F`: several words are
+  one phrase, and quotes and a leading `-` are part of the text. The
+  [operators](../reference/query-syntax.md) `file:src/`, `lang:rust`,
+  `case:yes` and `word:yes` narrow it.
 - Results are grouped by file, best hit first, with every query term
   highlighted from the server's match offsets. **Load more** pages through
   the rest; the summary line says how many matches exist and whether the
-  scan was cut short by its budget.
+  scan was cut short by its budget. When a query could be in thousands of
+  files, fast ranking opens only the most likely 2,000; the summary says
+  "Searched 2,000 of N files" and **SEARCH ALL FILES** opens the rest (or
+  as many as the server allows).
+- Files whose *path* matches the query are listed in a **FILES** box above
+  the results, so typing or pasting `src/web/api.rs` (or just `api.rs`)
+  finds the file even when no line mentions it. File names rank first;
+  click a path to open the file. Five show at first, **Show more** lists
+  up to fifty. Text and regex searches only. The count above the results
+  includes them ("2 FILES · 1 RESULT").
 - The URL carries the query and modes, so a link reproduces a search; Back
   returns to the previous one.
 
@@ -43,10 +60,17 @@ lists every place it is used:
 
 ## Reading results
 
-- Hover a hit to preview the surrounding lines; click **View file** for the
-  whole file with the line highlighted (large files open in a window with
-  "Show more"). Click a line number to select that line; **Copy link**
-  copies a URL that reopens the search with the file at that line.
+- Each hit shows its line with the line number in a gutter (and the
+  context lines around it, if you asked for some). Definitions and
+  references are tagged. Click the bold line number to open the file there,
+  or hover it to preview the whole file. Click the file name to open the
+  file at its first hit; copy and the dependency explorer link show when
+  you hover the file.
+- The file viewer and the preview mark every line the query matches in a
+  strip beside the scrollbar; click the strip to jump to the nearest one.
+  Click a line number to select that line; **Copy link** copies a URL that
+  reopens the search with the file at that line. Large files open in a
+  window of lines with "Show more" at either end.
 - Ctrl+click (⌘+click on a Mac) a name in the file viewer or a result to
   open its definition; holding the key underlines what you can click. One
   definition opens directly, several open a list, and a name with no
@@ -73,8 +97,8 @@ its source. Pick a file on the left (most connected first) and switch view:
 - **Module map**: folders laid out so each only imports folders to its
   left; red marks import cycles.
 
-Click a box to read the file and a line to open the import statement it
-stands for; double-click (or Enter) to centre the graph on it. Import lines
+Click a box to read the file (import lines are marked beside its
+scrollbar) and a line to open the import statement it stands for; double-click (or Enter) to centre the graph on it. Import lines
 in the source are highlighted and link to their target; imports of
 packages and the standard library are marked *external*. **Search these
 files** runs a keyword search limited to the files on screen.
@@ -84,23 +108,23 @@ module) are hidden by default since they are structure rather than
 dependencies; **Show mod declarations** brings them back. Imports are
 resolved for Rust, Python and JavaScript/TypeScript.
 
-For JavaScript/TypeScript, relative imports (`./x`, `../x`) are probed
-with each extension, `index.*` and the `.js` to `.ts` swap. Non-relative
-imports go through the `paths` and `baseUrl` of the nearest `tsconfig.json`
-(or `jsconfig.json`), following relative `extends`, the way `tsc` does.
-Without a tsconfig, or with one that sets neither `baseUrl` nor `paths`,
-the repository root (the folder holding `.git`) is used as `baseUrl`, so
-`components/Button` finds `<repo>/components/Button.tsx`. An `@/` or `~/`
-import with no `paths` entry is tried under the package's `src/` and then
-its root (the repository root when there is no package.json). A package name that matches the `name` of an
-indexed `package.json` (a workspace package such as `@acme/shared`)
-resolves to that package's declared entry point (`types`, `source`,
-`module`, `main` or `exports`), then `src/index`, and a subpath
-(`@acme/shared/money`) to `src/money` or `money` under it. Anything else
-counts as an npm package and is marked external. The graph is built when
-files are indexed, so re-index after changing `paths` or package names.
+For JavaScript/TypeScript, tsconfig `paths` and `baseUrl`, workspace
+packages imported by name and, without a tsconfig, the repository root are
+followed; [How the import graph is built](../how-it-works/dependency-graph.md)
+has the details.
 
 <img src="https://raw.githubusercontent.com/jburrow/fast_code_search/main/docs/images/demos/graph.gif" alt="The dependency explorer centred on src/search/engine/mod.rs, previewing ranking.rs, then the Impact view" style="max-width:100%">
+
+## Themes
+
+The first time you open the UI it asks you to pick a theme; hover an option
+to try it on the page. **Bold** (the default) has capitalised labels and
+hard edges; **Corporate** and **Corporate dark** are quieter, with sentence
+case and rounded corners. Change it any time with the palette button in the
+header. The choice is kept in your browser. On a shared server,
+`default_theme` sets the theme for people who haven't chosen one and
+`theme_picker = false` skips the first-run question (see
+[Configuration](../guides/configuration.md)).
 
 ## Other pages
 
@@ -110,7 +134,8 @@ files are indexed, so re-index after changing `paths` or package names.
   index is saved (or that it is memory only or read-only), and any startup
   or storage problems. When there are some, the search page shows "Server
   started with N problems" with a link to it.
-- **Docs** (`/docs.html`): the REST reference with live examples.
+- **Docs** (`/docs.html`): a one-page cheat sheet (query operators, regex,
+  keys, `fcs` and MCP, the main API calls) with links into this book.
 
 The UI talks to the same `/api/search` you can call yourself, so anything
 it shows is available to scripts.

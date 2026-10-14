@@ -281,33 +281,17 @@ fn required_runs(subs: &[Hir], mut on_other: impl FnMut(&Hir)) -> Vec<String> {
 }
 
 /// If `class` matches exactly the case variants of one character, that
-/// character in lowercase.
-///
-/// `(?i)k` and `(?i)s` compile to classes that also contain the Kelvin sign
-/// (U+212A) and the long s (U+017F), whose *lowercase* is not `k` / `s`; a
-/// member is accepted when either its lowercase or the lowercase of its
-/// uppercase (the simple case fold) is the target. The pre-filter therefore
-/// treats a file spelled with a long s as not containing `s`; that character
-/// does not occur in source code, whereas rejecting the class broke every
-/// case-insensitive run at each `k` or `s` (`(?i)task`, `(?i)pass`) and
-/// turned those searches into full scans.
+/// character case-folded (`search::fold::fold_char`, the fold the trigram
+/// index stores). `(?i)k` and `(?i)s` compile to classes that also hold the
+/// Kelvin sign and the long s; they fold to `k` and `s` like the index's
+/// copy of them, so the class is still one literal character.
 fn single_char_class_lower(class: &regex_syntax::hir::Class) -> Option<char> {
+    use crate::search::fold::fold_char;
     use regex_syntax::hir::Class;
-    fn single(mut it: impl Iterator<Item = char>) -> Option<char> {
-        let c = it.next()?;
-        it.next().is_none().then_some(c)
-    }
     let mut lower: Option<char> = None;
     let mut consider = |c: char| -> bool {
-        let l = single(c.to_lowercase());
-        let via_upper = single(c.to_uppercase()).and_then(|u| single(u.to_lowercase()));
-        match lower {
-            None => {
-                lower = l.or(via_upper);
-                lower.is_some()
-            }
-            Some(existing) => l == Some(existing) || via_upper == Some(existing),
-        }
+        let f = fold_char(c);
+        *lower.get_or_insert(f) == f
     };
     match class {
         Class::Unicode(u) => {

@@ -5,7 +5,10 @@ mod graph;
 mod mcp;
 pub mod metrics;
 
-pub use api::{results_to_json, ErrorResponse, SearchResponse, SearchResultJson};
+pub use api::{
+    file_matches_to_json, results_to_json, ErrorResponse, FileMatchJson, LimitHitJson,
+    SearchResponse, SearchResultJson, MAX_FILE_MATCHES,
+};
 
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
 use axum::{
@@ -57,6 +60,52 @@ pub struct WebState {
     /// Cross-origin callers allowed by configuration; `/mcp` also accepts
     /// these as browser origins.
     pub cors_origins: Arc<Vec<String>>,
+    /// Fast-ranking file count and paging depth (`[server]` settings).
+    pub search_settings: crate::search::SearchSettings,
+    /// Theme settings the pages read from `/ui-config.js`.
+    pub ui_settings: UiSettings,
+}
+
+/// Web UI settings the pages load as `/ui-config.js` before they paint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct UiSettings {
+    /// Theme for people who haven't picked one in their browser.
+    pub default_theme: crate::config::UiTheme,
+    /// Ask for a theme on a person's first visit.
+    pub theme_picker: bool,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            default_theme: crate::config::UiTheme::default(),
+            theme_picker: true,
+        }
+    }
+}
+
+impl From<&crate::config::ServerConfig> for UiSettings {
+    fn from(c: &crate::config::ServerConfig) -> Self {
+        Self {
+            default_theme: c.default_theme,
+            theme_picker: c.theme_picker,
+        }
+    }
+}
+
+/// `/ui-config.js`: the settings as a script that `static/theme.js` reads
+/// synchronously, so the first paint already uses the right theme.
+pub fn ui_config_response(ui: &UiSettings) -> Response<Body> {
+    let json = serde_json::to_string(ui).unwrap_or_else(|_| "{}".to_string());
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(format!("window.FCS_UI = {json};\n")))
+        .unwrap()
 }
 
 /// Knobs for [`create_router_with_options`].
@@ -77,6 +126,10 @@ pub struct RouterOptions {
     /// service so both surfaces share `max_concurrent_searches`; `None`
     /// creates a private one sized from `max_concurrent_searches`.
     pub search_permits: Option<Arc<tokio::sync::Semaphore>>,
+    /// Fast-ranking file count and paging depth.
+    pub search_settings: crate::search::SearchSettings,
+    /// Default theme and first-run picker (`/ui-config.js`).
+    pub ui_settings: UiSettings,
 }
 
 impl Default for RouterOptions {
@@ -88,6 +141,8 @@ impl Default for RouterOptions {
             body_limit: 64 * 1024,
             indexer_config: None,
             search_permits: None,
+            search_settings: crate::search::SearchSettings::default(),
+            ui_settings: UiSettings::default(),
         }
     }
 }
@@ -98,6 +153,8 @@ impl From<&crate::config::ServerConfig> for RouterOptions {
             cors_origins: c.cors_origins.clone(),
             max_concurrent_searches: c.max_concurrent_searches,
             request_timeout: std::time::Duration::from_secs(c.request_timeout_secs.max(1)),
+            search_settings: crate::search::SearchSettings::from_config(c),
+            ui_settings: UiSettings::from(c),
             ..Default::default()
         }
     }
@@ -156,6 +213,8 @@ pub fn create_router_with_options(
         last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         graph_cache: Arc::default(),
         cors_origins: Arc::new(opts.cors_origins.clone()),
+        search_settings: opts.search_settings,
+        ui_settings: opts.ui_settings,
     };
 
     let router = Router::new()
@@ -182,6 +241,7 @@ pub fn create_router_with_options(
         // WebSocket for progress streaming
         .route("/ws/progress", get(api::ws_progress_handler))
         // Static files
+        .route("/ui-config.js", get(ui_config_handler))
         .route("/", get(index_handler))
         .route("/{*file}", get(static_handler));
     let router = match cors {
@@ -316,6 +376,10 @@ fn build_cors_layer(cors_origins: &[String]) -> Option<CorsLayer> {
 }
 
 /// Serve index.html
+async fn ui_config_handler(State(state): State<WebState>) -> Response<Body> {
+    ui_config_response(&state.ui_settings)
+}
+
 async fn index_handler(
     State(state): State<WebState>,
     headers: header::HeaderMap,
@@ -451,6 +515,8 @@ mod tests {
             last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             graph_cache: Arc::default(),
             cors_origins: Arc::default(),
+            search_settings: crate::search::SearchSettings::default(),
+            ui_settings: UiSettings::default(),
         };
         let router = Router::new()
             .route(

@@ -31,15 +31,15 @@ q = "QuerySet"
 
 [[query]]
 q = "def __init__"
-why = "two terms: AND by file, phrase lines"
+why = "two words are one phrase, as in rg -F"
 
 [[query]]
 q = "fn main"
-why = "two terms, includes `fn  main` and `fn\\tmain` variants"
+why = "one phrase: `fn  main` and `fn\\tmain` must not match"
 
 [[query]]
 q = "\"fn main\""
-why = "quoted phrase is one literal term"
+why = "quotes are text: finds `\"fn main\"` with its quotes"
 
 [[query]]
 q = "self.assertEqual"
@@ -67,7 +67,15 @@ why = "negative number is a term"
 
 [[query]]
 q = "-Wall gcc"
-why = "-Wall negates: files with gcc but not Wall"
+why = "a leading - is text, not an exclusion"
+
+[[query]]
+q = "-Wall"
+why = "bug report: a leading - was dropped as negation"
+
+[[query]]
+q = "fn  main"
+why = "spacing inside the text is exact"
 
 # Short terms (fewer than 3 bytes: no trigrams, every file is a candidate).
 [[query]]
@@ -132,6 +140,26 @@ q = "word:yes self"
 [[query]]
 q = "case:yes word:yes Ok"
 
+[[query]]
+q = "word:yes case:yes }}"
+why = "found by --generate: in `field}}}` the first `}}` touches `d`; the next one starts one byte on, not after it"
+
+[[query]]
+q = "word:yes »»"
+why = "the same overlap on the Unicode case-folding path"
+
+[[query]]
+q = "word:yes .\""
+why = "found by --generate: a combining mark (the Malayalam virama) is a word character in \\w, so `.` after it is not a word start"
+
+[[query]]
+q = "word:yes टेम"
+why = "found by --generate: a Devanagari virama before the match is a word character"
+
+[[query]]
+q = "word:yes t\""
+why = "found by --generate: a decomposed accent before `t` is a word character"
+
 # ---------------------------------------------------------------- Unicode
 
 [[query]]
@@ -156,11 +184,31 @@ why = "neither side maps ß to ss (simple case folding)"
 
 [[query]]
 q = "ΟΣ"
-why = "a word-final Σ lowercases to ς, so the query is `ος` while `ΟΣΑ` is indexed as `οσα`"
+why = "Σ, σ and ς fold to one letter on both sides, wherever Σ sits in the word"
 
 [[query]]
 q = "k"
-why = "short ASCII term; the corpus has a Kelvin sign (U+212A), which neither side folds to k"
+why = "short ASCII term; the corpus has a Kelvin sign (U+212A), which both sides fold to k"
+
+[[query]]
+q = "GAST"
+why = "the long s (U+017F) folds to s: found by fcs check"
+
+[[query]]
+q = "300 k"
+why = "the Kelvin sign (U+212A) folds to k, in a trigram"
+
+[[query]]
+q = "5 µs"
+why = "the micro sign (U+00B5) and μ (U+03BC) are case variants"
+
+[[query]]
+q = "5 μs"
+why = "the micro sign (U+00B5) and μ (U+03BC) are case variants"
+
+[[query]]
+q = "ϐ and"
+why = "the Greek symbol ϐ folds to β"
 
 # ------------------------------------------------------- operators / paths
 
@@ -187,14 +235,14 @@ globs = ["*.txt"]
 
 [[query]]
 q = "\"file:\""
-why = "quoted operator is a literal term"
+why = "quotes are text, and `\"file:\"` is not an operator"
 
 [[query]]
 q = "file:notanoperator"
 globs = ["*notanoperator*", "**/*notanoperator*/**"]
 why = "a file: filter with nothing to search: fcs returns nothing"
 
-# --------------------------------------------------------- several terms
+# ------------------------------------------- several words (one phrase)
 
 [[query]]
 q = "async fn spawn"
@@ -207,6 +255,7 @@ q = "import os sys"
 
 [[query]]
 q = "Runtime -test"
+why = "the phrase `Runtime -test`, not an exclusion"
 
 [[query]]
 q = "needle -needle_1"
@@ -397,7 +446,7 @@ why = "rg #1176: regex metacharacters in a text query"
 
 [[query]]
 q = "\"-test\""
-why = "rg #270: a quoted leading dash is a term, not negation"
+why = "rg #270: a leading dash is text (here with quotes, also text)"
 
 [[query]]
 q = "test123"

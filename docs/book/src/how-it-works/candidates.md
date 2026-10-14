@@ -5,13 +5,15 @@ set** from the trigram index, then reads only those files.
 
 ## Plain text
 
-The query is lowercased and split into overlapping three-byte windows;
+The query is case-folded (Unicode simple case folding, the fold ripgrep's
+`-i` uses, which is lowercase except for a few letters such as `ſ` and
+`µ`; the index stores folded text) and split into overlapping three-byte
+windows;
 `parse_query` yields `par`, `ars`, `rse`, `se_`, `e_q`, `_qu`, `que`,
 `uer`, `ery`. Each trigram has a posting list (a Roaring bitmap of file
 ids); intersecting them gives every file that could contain the query,
-independent of corpus size. For several terms the intersection covers
-every term, and the phrase's own trigrams select the subset that may
-contain the phrase.
+independent of corpus size. Several words are one phrase, so their
+trigrams (spaces included) are intersected the same way.
 
 Queries shorter than three characters have no trigrams and fall back to
 all files, bounded by the match budget and ranking mode.
@@ -46,5 +48,6 @@ against the current content.
 Every search runs under a `QueryRun`: a match budget derived from the page
 size and offset (capped), and a deadline just under the request timeout.
 When either stops the scan the response says so
-(`truncated_by_budget`), and paging beyond 10,000 hits is refused rather
-than allowed to grow the budget without bound.
+(`truncated_by_budget`). A deep page gets a budget that reaches it, so
+paging past `max_page_offset` (100,000 by default) is refused rather than
+allowed to grow the budget without bound.

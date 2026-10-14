@@ -283,68 +283,80 @@ function mergeRanges(ranges) {
     return out;
 }
 
+// ---------- Path matches (the "Files" group) ----------
+
+/**
+ * Split a path into runs for display: `hit` marks the server's matched byte
+ * ranges (`match_ranges` of a path match), `name` the file name part.
+ * @param {string} path
+ * @param {Array<[number, number]>} byteRanges
+ * @returns {Array<{text: string, hit: boolean, name: boolean}>}
+ */
+function pathMatchRuns(path, byteRanges) {
+    const hits = mergeRanges((byteRanges || []).map(r => byteRangeToCharRange(path, r[0], r[1])));
+    const nameStart = path.lastIndexOf('/') + 1;
+    const cuts = new Set([0, path.length, nameStart]);
+    for (const [s, e] of hits) { cuts.add(s); cuts.add(e); }
+    const points = [...cuts].filter(i => i >= 0 && i <= path.length).sort((a, b) => a - b);
+    const runs = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+        const [s, e] = [points[i], points[i + 1]];
+        if (e <= s) continue;
+        runs.push({
+            text: path.slice(s, e),
+            hit: hits.some(([hs, he]) => s >= hs && e <= he),
+            name: s >= nameStart,
+        });
+    }
+    return runs;
+}
+
+/** Header of the Files group: "1 path matches" / "12 paths match". */
+function fileMatchesLabel(total) {
+    const n = Number(total).toLocaleString('en-US');
+    return total === 1 ? `${n} path matches` : `${n} paths match`;
+}
+
 // ---------- Query syntax (mirrors src/search/query_syntax.rs) ----------
 
 function isYesToken(v) {
     return ['yes', 'y', 'true', '1', 'on'].includes(String(v).toLowerCase());
 }
 
+const QUERY_OPERATORS = ['-file:', 'file:', '-lang:', 'lang:', 'case:', 'word:'];
+
 /**
- * Split on whitespace, keeping "quoted phrases" together (quotes removed).
- * Each token records where its first quote stood (`quoteAt`), which decides
- * whether a leading `-` negates and whether an operator prefix counts.
- * A `"` opens a phrase only at the start of a token, after a negating `-`
- * or right after an operator's colon, and the phrase ends at the next `"`
- * when whitespace or the end follows it; any other quote is an ordinary
- * character (`{ "success": True` keeps its quotes).
- * @returns {Array<{text: string, quoteAt: number|null}>}
+ * Split on whitespace, like src/search/query_syntax.rs. Each token keeps its
+ * `[start, end)` in the query, the operator prefix it starts with (`op`, or
+ * '') and that operator's argument (`arg`, null when there is none). An
+ * operator's argument may be quoted to hold spaces (`file:"my dir"`); any
+ * other quote is text.
+ * @returns {Array<{start: number, end: number, op: string, arg: string|null}>}
  */
 function tokenizeQuery(raw) {
-    const chars = Array.from(String(raw || ''));
+    const s = String(raw || '');
     const out = [];
-    let cur = '';
-    let quoteAt = null;
-    for (let i = 0; i < chars.length; i++) {
-        const c = chars[i];
-        if (c === '"' && phraseCanOpen(cur)) {
-            const end = chars.indexOf('"', i + 1);
-            const closes = end > i + 1 && (end + 1 === chars.length || /\s/.test(chars[end + 1]));
-            if (closes) {
-                if (quoteAt === null) quoteAt = cur.length;
-                cur += chars.slice(i + 1, end).join('');
-                i = end;
+    let i = 0;
+    while (i < s.length) {
+        if (/\s/.test(s[i])) { i++; continue; }
+        const start = i;
+        const op = QUERY_OPERATORS.find(o => s.startsWith(o, start)) || '';
+        const afterOp = start + op.length;
+        if (op && s[afterOp] === '"') {
+            const close = s.indexOf('"', afterOp + 1);
+            if (close > afterOp + 1 && (close + 1 === s.length || /\s/.test(s[close + 1]))) {
+                out.push({ start, end: close + 1, op, arg: s.slice(afterOp + 1, close) });
+                i = close + 1;
                 continue;
             }
         }
-        if (/\s/.test(c)) {
-            if (cur) {
-                out.push({ text: cur, quoteAt });
-                cur = '';
-            }
-            quoteAt = null;
-        } else {
-            cur += c;
-        }
+        let end = start;
+        while (end < s.length && !/\s/.test(s[end])) end++;
+        const arg = s.slice(afterOp, end);
+        out.push({ start, end, op, arg: op && arg ? arg : null });
+        i = end;
     }
-    if (cur) out.push({ text: cur, quoteAt });
     return out;
-}
-
-/** Can a phrase start after `cur`, the token text read so far? */
-function phraseCanOpen(cur) {
-    const op = cur.startsWith('-') ? cur.slice(1) : cur;
-    return op === '' || ['file:', 'lang:', 'case:', 'word:'].includes(op);
-}
-
-/**
- * Does a leading `-` negate this token? Only when a letter, `_` or a quote
- * follows it: `-Wall` and `-"a b"` negate, `->`, `-1.5` and `"-foo"` do not.
- */
-function tokenNegates(token) {
-    if (!token.text.startsWith('-')) return false;
-    if (token.quoteAt === 0) return false; // `"-foo"` is the literal term `-foo`
-    if (token.quoteAt === 1) return true;  // `-"a b"`
-    return /^[A-Za-z_]/.test(token.text.slice(1));
 }
 
 /** Language names the server knows (others are accepted when alphanumeric). */
@@ -360,46 +372,35 @@ function isKnownLang(name) {
 }
 
 /**
- * Parse a plain-text query exactly like src/search/query_syntax.rs:
- * whitespace-separated tokens, "quoted phrases" kept together (quotes
- * removed); `file:`/`lang:`/`-file:`/`-lang:` become path filters (dropped
- * here), `case:`/`word:` set options, `-term` excludes. A `-` negates only
- * before a letter, `_` or a quote, so `->`, `-1.5` and a lone `-` are
- * terms; a quoted token is literal (`"file:"` is the term `file:`) while a
- * quote after the colon still belongs to the operator (`file:"my dir"`).
- * An operator without an argument, or `lang:` with a name the server
- * rejects, is a plain term.
- * @returns {{terms: string[], excludeTerms: string[], caseSensitive: boolean, wholeWord: boolean}}
+ * Parse a plain-text query exactly like src/search/query_syntax.rs: the
+ * `file:`/`lang:`/`-file:`/`-lang:` filters are dropped here, `case:` and
+ * `word:` set options, and everything else is one literal, as typed
+ * (quotes and a leading `-` included). Runs of text separated by operators
+ * are joined by one space. An operator without an argument, or `lang:`
+ * with a name the server rejects, is text.
+ * @returns {{text: string, terms: string[], caseSensitive: boolean, wholeWord: boolean}}
  */
 function parseQueryTerms(raw) {
-    const terms = [];
-    const excludeTerms = [];
+    const s = String(raw || '');
+    const runs = [];
+    let runOpen = false;
     let caseSensitive = false;
     let wholeWord = false;
-
-    for (const token of tokenizeQuery(raw)) {
-        const negated = tokenNegates(token);
-        const body = negated ? token.text.slice(1) : token.text;
-        const quoteAt = negated && token.quoteAt !== null ? token.quoteAt - 1 : token.quoteAt;
-        // `prefix` is an operator only when no quote precedes its colon and
-        // an argument follows it.
-        const operator = (prefix) => {
-            if (!body.startsWith(prefix)) return null;
-            const arg = body.slice(prefix.length);
-            if (quoteAt !== null && quoteAt < prefix.length) return null;
-            return arg ? arg : null;
-        };
-        if (operator('file:') !== null) continue;
-        const lang = operator('lang:');
-        if (lang !== null && isKnownLang(lang)) continue;
-        const cs = operator('case:');
-        if (cs !== null) { caseSensitive = isYesToken(cs); continue; }
-        const ww = operator('word:');
-        if (ww !== null) { wholeWord = isYesToken(ww); continue; }
-        if (negated) excludeTerms.push(body);
-        else if (body) terms.push(body);
+    for (const t of tokenizeQuery(s)) {
+        let isOp = t.arg !== null;
+        if (isOp && (t.op === 'lang:' || t.op === '-lang:')) isOp = isKnownLang(t.arg);
+        if (isOp) {
+            if (t.op === 'case:') caseSensitive = isYesToken(t.arg);
+            if (t.op === 'word:') wholeWord = isYesToken(t.arg);
+            runOpen = false;
+            continue;
+        }
+        if (runOpen) runs[runs.length - 1][1] = t.end;
+        else runs.push([t.start, t.end]);
+        runOpen = true;
     }
-    return { terms, excludeTerms, caseSensitive, wholeWord };
+    const text = runs.map(([a, b]) => s.slice(a, b)).join(' ');
+    return { text, terms: text ? [text] : [], caseSensitive, wholeWord };
 }
 
 // ---------- Regex and term matching ----------
@@ -439,17 +440,17 @@ function compileRustRegex(pattern) {
 function buildQueryMatcher(query, opts = {}) {
     if (!query) return null;
     if (opts.regex) {
-        const re = compileRustRegex(query);
+        // MATCH CASE off sends the server `case=false`, i.e. `(?i)`.
+        const re = compileRustRegex(opts.caseSensitive === false ? `(?i)${query}` : query);
         return re ? { re } : null;
     }
     // A references query is one identifier, matched exactly and case-sensitively.
     const parsed = opts.references
         ? { terms: [query.trim()], caseSensitive: true, wholeWord: true }
         : parseQueryTerms(query);
+    if (opts.caseSensitive) parsed.caseSensitive = true;
     const terms = parsed.terms.filter(Boolean);
     if (!terms.length) return null;
-    // Longest first so "foobar" wins over "foo" in the alternation.
-    terms.sort((a, b) => b.length - a.length);
     let src = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     if (parsed.wholeWord) src = `(?<![A-Za-z0-9_])(?:${src})(?![A-Za-z0-9_])`;
     try {
@@ -475,6 +476,79 @@ function matcherRanges(text, matcher) {
     return out;
 }
 
+// ---------- Code viewer ----------
+
+/**
+ * The 1-based numbers of the lines in `text` that `matcher` matches, for the
+ * viewer's scrollbar marks and match stepping. Worked out from the file text,
+ * not the DOM, since the viewer lays out only a window of lines. Stops after
+ * `cap` lines so a huge file with a common term stays cheap.
+ * @returns {number[]} ascending
+ */
+function matchLineNumbers(text, matcher, cap = 10000) {
+    if (!matcher || !text) return [];
+    const re = matcher.re;
+    const out = [];
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length && out.length < cap; i++) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(lines[i])) !== null) {
+            if (m[0].length) { out.push(i + 1); break; }
+            re.lastIndex++;
+        }
+    }
+    re.lastIndex = 0;
+    return out;
+}
+
+/**
+ * Scrollbar marks for `lines` in a file of `total` lines: at most one per
+ * bucket (the ruler is only so many pixels tall), each with its position as
+ * a percentage of the file and the first line it stands for.
+ * @returns {{line: number, pct: number}[]}
+ */
+function rulerMarks(lines, total, buckets = 400) {
+    const out = [];
+    let last = -1;
+    const span = Math.max(1, total - 1);
+    for (const line of lines) {
+        const pct = ((line - 1) / span) * 100;
+        const bucket = Math.min(buckets - 1, Math.floor((pct / 100) * buckets));
+        if (bucket === last) continue;
+        last = bucket;
+        out.push({ line, pct: Math.round(pct * 100) / 100 });
+    }
+    return out;
+}
+
+/** The entry of ascending `lines` closest to `line` (null when empty). */
+function nearestLine(lines, line) {
+    if (!lines.length) return null;
+    let lo = 0;
+    let hi = lines.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (lines[mid] < line) lo = mid + 1; else hi = mid;
+    }
+    const after = lines[lo];
+    const before = lo > 0 ? lines[lo - 1] : after;
+    return line - before <= after - line ? before : after;
+}
+
+/**
+ * The lines to lay out so `line` is visible, given the window [from, to]
+ * already rendered: grow it by up to `step` lines when `line` is that close
+ * (like "Show more"), otherwise start a new window of `size` lines each side.
+ * @returns {{from: number, to: number, fresh: boolean}}
+ */
+function windowFor(line, from, to, total, size, step) {
+    if (line >= from && line <= to) return { from, to, fresh: false };
+    if (line < from && from - line <= step) return { from: Math.max(1, Math.min(line, from - step)), to, fresh: false };
+    if (line > to && line - to <= step) return { from, to: Math.min(total, Math.max(line, to + step)), fresh: false };
+    return { from: Math.max(1, line - size), to: Math.min(total, line + size), fresh: true };
+}
+
 // ---------- Results header ----------
 
 /**
@@ -487,22 +561,49 @@ function matcherRanges(text, matcher) {
  * @returns {{text: string, title: string}}
  */
 function resultsCountLabel(data, n) {
+    const files = Array.isArray(data.files) && data.files.length
+        ? (typeof data.total_files === 'number' ? data.total_files : data.files.length)
+        : 0;
+    const label = contentCountLabel(data, n);
+    if (!files) return label;
+    // Path matches sit above the content results; count them too, or
+    // "1 result" over a box of two files reads as wrong.
+    const f = `${Number(files).toLocaleString('en-US')} file${files !== 1 ? 's' : ''}`;
+    return { text: `${f} · ${label.text}`, title: label.title };
+}
+
+function contentCountLabel(data, n) {
     const num = (k) => Number(k).toLocaleString('en-US');
-    const plural = (k) => `${num(k)} RESULT${k !== 1 ? 'S' : ''}`;
+    const plural = (k) => `${num(k)} result${k !== 1 ? 's' : ''}`;
     if (typeof data.total_matches === 'number') {
         return n < data.total_matches
-            ? { text: `${num(n)} OF ${plural(data.total_matches)}`, title: 'Use LOAD MORE to fetch the next page' }
+            ? { text: `${num(n)} of ${plural(data.total_matches)}`, title: 'Load more fetches the next page' }
             : { text: plural(n), title: '' };
     }
     if (data.truncated_by_budget) {
+        const why = limitsHitDetail(data, ['match_budget', 'per_file_cap', 'timeout']);
         return {
-            text: `${num(n)}+ RESULTS`,
-            title: 'The search stopped at its match limit or time limit, so the total is unknown. LOAD MORE runs it again with a higher limit.',
+            text: `${num(n)}+ results`,
+            title: why
+                ? `The total is unknown: ${why}. Load more runs it again with a higher limit.`
+                : 'The search stopped at its match limit or time limit, so the total is unknown. Load more runs it again with a higher limit.',
         };
     }
     return data.has_more
-        ? { text: `${num(n)}+ RESULTS`, title: 'More results are available' }
+        ? { text: `${num(n)}+ results`, title: 'More results are available' }
         : { text: plural(n), title: '' };
+}
+
+/**
+ * The server's own words for the limits that cut a search
+ * (`limits_hit`), joined, keeping only the named limits. '' when none.
+ * @param {object} data search response
+ * @param {string[]} names e.g. ['timeout']
+ * @returns {string}
+ */
+function limitsHitDetail(data, names) {
+    const hits = Array.isArray(data?.limits_hit) ? data.limits_hit : [];
+    return hits.filter((h) => names.includes(h.limit)).map((h) => h.detail).join('; ');
 }
 
 /**
@@ -533,16 +634,21 @@ function formatDurationMs(ms) {
 }
 
 /**
- * The muted text beside the count. Normally just the time ("36 ms"): the
- * ranking mode and candidate-file count are internals, so they live in the
- * tooltip. The one case worth showing is fast ranking skipping files, since
- * results may then be missing ("Searched 2,000 of 12,000 files · 36 ms").
+ * The muted text beside the count: the time and whether case was ignored
+ * ("36 ms · ignoring case"). The ranking mode and candidate-file count are
+ * internals, so they live in the tooltip. The one case worth showing is fast
+ * ranking skipping files, since results may then be missing ("Searched 2,000
+ * of 12,000 files · 36 ms · ignoring case").
  * @param {object} data search response
  * @param {number} durationMs
+ * @param {boolean} [ignoresCase] omitted = say nothing about case
  * @returns {{text: string, title: string}}
  */
-function searchMetaLabel(data, durationMs) {
-    const time = formatDurationMs(durationMs);
+function searchMetaLabel(data, durationMs, ignoresCase) {
+    const caseNote = ignoresCase === undefined ? '' : (ignoresCase ? ' · ignoring case' : ' · matching case');
+    // A time limit is the one cut Load more cannot undo, so it is shown.
+    const timedOut = limitsHitDetail(data, ['timeout']) ? ' · stopped at time limit' : '';
+    const time = formatDurationMs(durationMs) + caseNote + timedOut;
     const total = data.total_candidates;
     if (typeof total !== 'number') return { text: time, title: '' };
     const searched = typeof data.candidates_searched === 'number' ? data.candidates_searched : total;
@@ -550,13 +656,58 @@ function searchMetaLabel(data, durationMs) {
     if (searched < total) {
         return {
             text: `Searched ${num(searched)} of ${num(total)} files · ${time}`,
-            title: 'Fast ranking only opened the most likely files. Set Ranking to Full under FILTER to search them all.',
+            title: 'Fast ranking only opened the most likely files. Search more files opens more of them; Ranking: Full under Filter opens them all.',
         };
     }
     return {
         text: time,
         title: `${num(total)} file${total !== 1 ? 's' : ''} could contain the query`,
     };
+}
+
+/**
+ * What SEARCH MORE FILES asks for when fast ranking skipped files: every
+ * candidate, or as many as the server allows (`max_files_allowed`). Null
+ * when nothing was skipped or the server's limit is already reached.
+ * @param {object} data search response
+ * @returns {{maxFiles: number, label: string}|null}
+ */
+function moreFilesRequest(data) {
+    const total = data?.total_candidates;
+    const searched = data?.candidates_searched;
+    if (typeof total !== 'number' || typeof searched !== 'number' || searched >= total) return null;
+    const allowed = typeof data.max_files_allowed === 'number' ? data.max_files_allowed : Infinity;
+    if (searched >= allowed) return null;
+    const n = Math.min(total, allowed);
+    return {
+        maxFiles: n,
+        label: n === total ? 'Search all files' : `Search ${n.toLocaleString('en-US')} files`,
+    };
+}
+
+/**
+ * The `case` parameter for a search: 'true' with MATCH CASE on; with it
+ * off, 'false' for a regex (the server matches a regex's case by default)
+ * and null otherwise (plain text ignores case unless the query says
+ * `case:yes`; references are always exact).
+ * @param {{matchCase?: boolean, isRegex?: boolean, symbolsOnly?: boolean, isReferences?: boolean}} s
+ * @returns {'true'|'false'|null}
+ */
+function searchCaseParam(s) {
+    if (s.matchCase) return 'true';
+    if (s.isRegex && !s.symbolsOnly && !s.isReferences) return 'false';
+    return null;
+}
+
+/**
+ * Does this search ignore case? For the results header, so it is always
+ * clear which way case went.
+ * @param {{query: string, matchCase?: boolean, isRegex?: boolean, isReferences?: boolean}} s
+ */
+function searchIgnoresCase(s) {
+    if (s.matchCase || s.isReferences) return false;
+    if (s.isRegex) return true;
+    return !parseQueryTerms(s.query).caseSensitive;
 }
 
 /** "just now", "6 min ago", "2 h 5 min ago", "3 days ago". */
@@ -738,9 +889,10 @@ function looksLikeRegex(query) {
  * find something.
  * @param {string} query
  * @param {boolean} isRegex
+ * @param {boolean} [matchCase] MATCH CASE on (default true: suggest ignoring case)
  * @returns {Array<{label: string, query: string, regex: boolean}>}
  */
-function noResultSuggestions(query, isRegex) {
+function noResultSuggestions(query, isRegex, matchCase = true) {
     const q = String(query || '').trim();
     if (!q) return [];
     const out = [];
@@ -756,7 +908,8 @@ function noResultSuggestions(query, isRegex) {
         return out;
     }
     const relaxed = relaxRegexSpacing(q);
-    const caseable = /[A-Za-z]/.test(q) && !regexIgnoresCase(q);
+    // With MATCH CASE off the regex already ignores case.
+    const caseable = matchCase && /[A-Za-z]/.test(q) && !regexIgnoresCase(q);
     if (relaxed) add('Flexible spacing', relaxed, true);
     if (caseable) add('Ignore case', `(?i)${q}`, true);
     if (relaxed && caseable) add('Flexible spacing, ignore case', `(?i)${relaxed}`, true);
@@ -778,6 +931,23 @@ function regexErrorSuggestions(pattern) {
     return out;
 }
 
+/**
+ * A path-filter box's text as the API's `;`-separated list. The box also
+ * takes commas, except inside `{…}` where a comma is glob alternation
+ * (`*.{rs,toml}`). Only the web UI accepts commas; the API, CLI and MCP keep
+ * `;`, so a comma there stays literal as in ripgrep's -g.
+ */
+function pathFilterParam(text) {
+    let depth = 0;
+    let out = '';
+    for (const ch of String(text || '')) {
+        if (ch === '{') depth++;
+        else if (ch === '}' && depth > 0) depth--;
+        out += ch === ',' && depth === 0 ? ';' : ch;
+    }
+    return out.split(';').map(s => s.trim()).filter(Boolean).join(';');
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         MAX_RESULTS_LIMIT,
@@ -795,13 +965,21 @@ if (typeof module !== 'undefined' && module.exports) {
         contrastRatio,
         byteRangeToCharRange,
         mergeRanges,
+        pathMatchRuns,
+        fileMatchesLabel,
         isYesToken,
         tokenizeQuery,
-        tokenNegates,
         parseQueryTerms,
+        moreFilesRequest,
+        searchCaseParam,
+        searchIgnoresCase,
         compileRustRegex,
         buildQueryMatcher,
         matcherRanges,
+        matchLineNumbers,
+        rulerMarks,
+        nearestLine,
+        windowFor,
         splitHighlightedHtml,
         snippetHighlightPrefix,
         fileViewHash,
@@ -810,6 +988,7 @@ if (typeof module !== 'undefined' && module.exports) {
         rankDefinitions,
         parseFileViewHash,
         resultsCountLabel,
+        limitsHitDetail,
         loadMoreRequest,
         formatDurationMs,
         searchMetaLabel,
@@ -822,5 +1001,6 @@ if (typeof module !== 'undefined' && module.exports) {
         looksLikeRegex,
         noResultSuggestions,
         regexErrorSuggestions,
+        pathFilterParam,
     };
 }

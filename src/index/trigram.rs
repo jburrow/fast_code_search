@@ -41,17 +41,17 @@ pub fn extract_unique_trigrams(text: &str) -> FxHashSet<Trigram> {
     unique_trigrams_folded(text.as_bytes(), false)
 }
 
-/// Unique trigrams of `text` **lowercased the way the index expects**
-/// (`str::to_lowercase`), without materializing a lowercase copy of the
-/// whole buffer when the text is ASCII (the overwhelmingly common case:
-/// the fold happens per byte during extraction). Non-ASCII text still goes
-/// through `to_lowercase()` so multi-byte case mappings match the query
-/// side exactly.
+/// Unique trigrams of `text` **case-folded the way the index expects**
+/// (`search::fold::fold_str`, Unicode simple case folding), without
+/// materializing a folded copy of the whole buffer when the text is ASCII
+/// (the overwhelmingly common case: the fold happens per byte during
+/// extraction). Non-ASCII text goes through `fold_str` so it matches the
+/// query side exactly.
 pub fn extract_unique_trigrams_lowercase(text: &str) -> FxHashSet<Trigram> {
     if text.is_ascii() {
         unique_trigrams_folded(text.as_bytes(), true)
     } else {
-        unique_trigrams_folded(text.to_lowercase().as_bytes(), false)
+        unique_trigrams_folded(crate::search::fold::fold_str(text).as_bytes(), false)
     }
 }
 
@@ -309,12 +309,12 @@ mod tests {
     use super::*;
 
     /// Roadmap 6.4: the bitset/fold extractor must equal the reference
-    /// (hash-set over `to_lowercase()`), for ASCII and non-ASCII input, and
+    /// (hash-set over `fold_str`), for ASCII and non-ASCII input, and
     /// leave the thread-local bitset clean between calls.
     #[test]
     fn test_lowercase_extraction_matches_reference() {
         let reference = |t: &str| -> Vec<Trigram> {
-            let lower = t.to_lowercase();
+            let lower = crate::search::fold::fold_str(t);
             let mut v: Vec<Trigram> = extract_unique_trigrams(&lower).into_iter().collect();
             v.sort_by_key(|t| t.0);
             v
@@ -322,6 +322,7 @@ mod tests {
         for text in [
             "Hello, World! HELLO again.",
             "ÜBER über Straße",
+            "ſ\u{212A}µ ΟΣ",
             "ab",
             "",
             "aaaa\nAAAA",

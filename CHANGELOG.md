@@ -8,6 +8,232 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Imports that resolve to no indexed file are counted, and the ones written
+  as a path into the project (`./x`, `.x`, `crate::`, `@/`), which point at
+  a broken import or an unsupported form, are called out: in the dependency
+  explorer's folder map, in `GET /api/graph/modules` (`unresolved_imports`,
+  `unresolved_local`), in MCP's `dependency_overview`, and per file in
+  `file_dependencies`.
+- Docs: "How the import graph is built" explains how Python and
+  JavaScript/TypeScript imports are extracted and resolved, how an import
+  is judged internal (resolves to an indexed file) or external, and how
+  the method is checked against grimp and TypeScript.
+- `fcs check [PATH…]`: checks fcs on your own code. It indexes the folders
+  in memory, compares queries made up from the files with `rg -F` (exit 1
+  on any difference, with each differing query shrunk), and compares the
+  import graph with grimp (Python) and TypeScript's own resolver when they
+  are installed. The graph oracles' scripts moved to `src/check/oracle/`.
+- Web UI: the file viewer, the hover preview and the dependency explorer's
+  source pane mark every hit in the whole file in a strip beside the
+  scrollbar (query matches; import lines in the explorer). Click the strip
+  to jump to the nearest one, including lines not laid out yet (#141). The
+  preview's ↑/↓ now step through every match in the file, not only the
+  lines on screen.
+- Web UI themes: Bold (the existing look, still the default), Corporate and
+  Corporate dark. On a first visit the UI asks which to use, previewing each
+  live; the palette button in the header (replacing the `?` link, which
+  went to the Docs page also in the navigation) changes it later. The choice
+  is kept per browser. New `[server]` settings: `default_theme` (`"bold"`,
+  `"corporate"` or `"corporate-dark"`) for people who haven't chosen, and
+  `theme_picker = false` to skip the first-run question on a shared server.
+- The ripgrep backtest's `--check-defaults` (on in CI) walks every query
+  the way a web UI user pages through it under the server's default
+  limits, with Auto and Fast ranking: SEARCH ALL FILES when files were
+  skipped, then LOAD MORE to the end. Every match must be shown exactly
+  once.
+- The ripgrep backtest makes up queries from the corpus (`--generate N
+  --seed S`), checks them against `rg -F` and shrinks any that differ to
+  the smallest form. CI runs 500 per run.
+- Dependency-graph oracles: `examples/graph_oracle.rs` compares the
+  import graph with grimp on Django and with TypeScript's own resolver on
+  Vite, listing every edge fcs misses or draws wrongly. CI fails on any
+  regression. Django now matches grimp exactly; Vite's remaining misses
+  are tsconfig `paths`.
+- Capped results say which limit cut them. Search responses carry
+  `limits_hit` (`max_files`, `match_budget`, `per_file_cap`, `timeout`,
+  each with a sentence for people); gRPC sends the names in the
+  `fcs-limits-hit` response header, `fcs` prints a "results capped" note
+  on stderr, MCP's `search_code` adds a "Results capped" line (also when
+  nothing was found), and the web UI names the limit in the count's
+  tooltip and shows "stopped at time limit" beside the time.
+
+### Changed
+- Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
+  keyboard shortcuts, `fcs` and MCP, the main API calls) with links into
+  the documentation book. It used to be a hand-kept copy of the API
+  reference that had drifted from the book. It shows the server's version
+  and uses the server's own address in the MCP example.
+- Web UI: denser results, about twice as many hits per screen. A hit is its
+  code with the line number in a gutter instead of a header row above it;
+  the kind shows as a small tag on definitions and references; the line
+  number opens the file there (and previews it on hover), the file name
+  opens the file, and copy and the explorer link show on hover. Language
+  and dependency badges are quiet outlines, and on a phone they hide so the
+  file name isn't cut off.
+- Web UI: one code viewer for the file viewer, the hover preview and the
+  dependency explorer, so line numbers, highlighting and "Show more" look
+  and work the same in each.
+- Web UI: one rule for labels and buttons. Labels are written in sentence
+  case and the theme decides whether they show in capitals (Bold does), so
+  buttons, toggles and headings on every page now look alike. The search
+  button reads SEARCH instead of EXECUTE_QUERY. The Index pages lost their
+  emoji (SVG icons instead) and use the same cards and buttons as the rest,
+  and the dependency explorer's buttons and chips match the search page.
+- Web UI: file names are never re-cased. The dependency explorer's pane
+  title, extension badges and the compact search box in the header showed
+  them in capitals; they now show as written.
+- Web UI: one FILTER button (the duplicate in the results bar is gone). It
+  shows how many path filters are set, the results bar lists them with an
+  × to remove each, and the panel has *Clear path filters*. The boxes are
+  now called SEARCH ONLY IN and SKIP PATHS and take `,` as well as `;`
+  (a comma inside `{…}` is still glob alternation). The API, CLI and MCP
+  still separate patterns with `;` only.
+- Web UI: the results count includes path matches ("2 FILES · 1 RESULT"),
+  the per-hit ranking score moved to the line number's tooltip, and the
+  dependency badge reads "imported by N" instead of "N deps".
+- Web UI: the indexing bar no longer flashes on every page load (it moved
+  the search box), the focus hint says Ctrl+K or ⌘K to match the platform,
+  and MAPPED is gone from the header stats (it read 0 B until searches ran).
+- Web UI: the SEMANTIC page served by the keyword server says semantic
+  search runs as a separate server, instead of claiming the keyword server
+  is down (it probed a hard-coded port 8080).
+- The INDEX page's sample files are shown relative to the indexed folder.
+- Web UI internals: all six pages share one header (`static/shell.js`) and
+  one stylesheet of design tokens (`static/app.css`); every colour, shadow
+  and font is a token, Tailwind's colours point at the same tokens, and a
+  test fails on hard-coded colours. This is groundwork for themes and
+  should look the same, apart from the navigation links on the non-search
+  pages now matching the search page. The semantic pages use the same SVG
+  icons as the rest, so the 3.9 MB icon font is gone.
+- A burst of file changes is applied once the tree has been quiet for
+  200 ms (at most two seconds), instead of after a fixed two-second
+  debounce, so edits show up in search sooner.
+- The web API, the gRPC service and offline `fcs` now run every search
+  through one shared request path (`search::request`): the same default
+  page size, caps, deadline and offset limit, and the same dispatch to
+  the engine. Offline `fcs` now enforces `server.max_page_offset` like the
+  server does. A new test checks that all three return the same hits in
+  the same order.
+
+### Fixed
+- Dependency graph: TypeScript and JavaScript imports that go through a
+  `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
+  `components/Button`) now link to the file they name, including settings
+  inherited through `extends`. They were treated as npm packages, so repos
+  that rely on aliases had few edges. Imports of a workspace package by its
+  package.json `name` (`@acme/shared`) now link to that package's entry
+  point. With no tsconfig `baseUrl` or `paths`, imports are also tried
+  from the repository root. `import x = require('./x')` is picked up.
+- Python: `from .missing import x` (or `import pkg.missing.sub`) where the
+  module does not exist no longer draws an edge to the package above it;
+  the import is unresolved, as Python fails it.
+- Case-insensitive search now folds case exactly as ripgrep's `-i` does
+  (Unicode simple case folding): `s` finds the long `ſ`, `k` the Kelvin
+  sign, `μ` the micro sign `µ`, and the Greek symbol forms (`ϐ`, `ϑ`, …)
+  their letters. The index stores folded text, so the on-disk index format
+  is now version 8 and an existing index is rebuilt once on upgrade. Found
+  by `fcs check` on Django.
+- LOAD MORE past 1000 results repeated some results and skipped others on
+  broad searches, because each deeper page ranked a different sample of
+  the matches. Every page that ends at result 1000 or later now ranks the
+  same sample, so the pages fit together.
+- Web UI: the hover preview shows the whole file and scrolls. It used to
+  fetch 12 lines either side of the hit, so a FILES-box row (previewed from
+  line 1) showed 13 lines in a window-tall panel, and the mouse wheel
+  scrolled the page behind it, which closed it. It now opens at the hit
+  (or the top of the file, with no line marked, for a file row), scrolls
+  inside itself, has ↑/↓ buttons to step through the query's matches in the
+  file, and an Open button for the file viewer. Recently viewed files are
+  cached, so hovering again or opening the file doesn't re-fetch it.
+- File watching no longer leaves deleted files in the index. Moving a file
+  into a directory and deleting that directory soon after left the file's
+  old name indexed forever, because the two events were merged into one
+  that named only the directory. Watch events are now hints: every path an
+  event names is checked against the disk, directories are reconciled, and
+  when events are lost (an OS queue overflow) the watched folders are
+  reconciled instead.
+- Files changed while the initial index was being built could be indexed
+  with old content, or stay indexed after being deleted or moved. Content
+  that is no longer on disk is now never merged into the index.
+- Python imports resolve the way Python 3 does. `from pkg import
+  submodule` and `from . import submodule` now point at the submodule,
+  not at the package's `__init__.py`. An absolute import no longer
+  resolves to a same-named file next to the importer (`import json`
+  inside a package reaches a sibling `json.py` no more, and `from django
+  import …` inside `backends/` no longer means `backends/django.py`).
+  `src/` layouts resolve. On Django the graph went from 87% to 100% of
+  grimp's edges, with 287 wrong edges removed.
+- The dependency graph of a watched index now ends up the same as a fresh
+  build's. Every file's imports are kept, and a change resolves again the
+  imports it can affect: a file that appears takes over imports that had
+  fallen back to its package, a file that goes hands them back, and an
+  edit that removes an import no longer leaves its edge behind when the
+  imported file is saved in the same burst. The initial build also
+  resolves every import once more at the end, so the graph no longer
+  depends on the order files were indexed in.
+- JavaScript/TypeScript: `import(/* comment */ './x')`, imports with the
+  older `assert { type: 'json' }` and `.cjs` written for a `.cts` file now
+  give edges.
+- Whole-word search now uses the same word characters as ripgrep's `-w`
+  (Unicode `\w`): combining marks such as Indic vowel signs and decomposed
+  accents count as part of a word, so `word:yes` no longer matches inside
+  Hindi, Malayalam or Telugu words.
+- Whole-word search with MATCH CASE no longer misses a match that overlaps
+  a rejected one (`}}` at the end of `field}}}`), and the same on the
+  Unicode case-folding path.
+
+## [0.15.2] - 2026-10-13
+
+**Search works differently in this release.** Plain-text search is now a
+literal, like `rg -F`: several words are one phrase, quotes and a leading
+`-` are part of the text, and the `-term` exclusion and quoted phrases are
+gone. In the web UI, a regex ignores case unless MATCH CASE is on. See
+*Changed* below before upgrading scripts or saved queries.
+
+### Added
+- Search finds files by path. Typing or pasting a path (`src/web/api.rs`,
+  `api.rs`, an absolute path, Windows `\` separators) lists the matching
+  files in a **FILES** box above the results in the web UI, first in MCP
+  `search_code`, and above the hits in `fcs` on a terminal. File names rank
+  above directories. Content results are unchanged. API: `files=N` on
+  `/api/search` adds `files` and `total_files` to the response.
+- Web UI: **MATCH CASE** toggle. It means the same in every mode: off,
+  upper and lower case are the same in plain text and regex alike; on,
+  they are matched exactly. The results header says which applied
+  ("ignoring case" or "matching case"). MCP `search_code` takes
+  `case_sensitive`.
+- Web UI: **SEARCH ALL FILES**. When a query could be in more than 5,000
+  files, fast ranking opens only the 2,000 most likely ("Searched 2,000 of
+  N files"); the button opens the rest. API: `max_files` on `/api/search`,
+  `fcs --max-files`.
+- Configuration: `fast_rank_files` (default 2000) sets how many files fast
+  ranking opens, `max_fast_rank_files` (default 0, no limit) caps what a
+  request may ask for, and `max_page_offset` (default 100000, 0 = no limit)
+  sets how deep a client may page. Responses report the cap as
+  `max_files_allowed` when one is set.
+
+### Changed
+- **Plain-text search is a literal, like `rg -F`.** Several words are one
+  phrase: `fn main` finds lines holding `fn main`, not every line holding
+  `fn` or `main` in files that contain both. Quotes and a leading `-` are
+  part of the text: `"fn main"` finds the words with their quotes and
+  `-Wall` finds `-Wall`. The `-term` exclusion and quoted phrases are gone;
+  `file:`, `-file:`, `lang:`, `-lang:`, `case:` and `word:` still work. On
+  the command line, put a query starting with `-` after `--`.
+- Paging is no longer refused past offset 10,000: the limit is
+  `max_page_offset` (100,000 by default), and a deep page gets a match
+  budget that reaches it.
+- Web UI: with MATCH CASE off a regex ignores case, like plain search. The
+  API and `fcs -e` keep matching a regex's case by default, as ripgrep does.
+- The search row stacks below 1024 px wide so the input keeps its room.
+
+## [0.15.1] - 2026-10-13
+
+Same changes as 0.15.0, with the version number set correctly. The v0.15.0
+tag was pushed before the version bump, so its binaries report 0.14.0 and
+its release has no changelog notes. Use 0.15.1.
+
+### Added
 - Web UI: go to definition. Ctrl+click (⌘+click on a Mac) a name in the
   file viewer or a result snippet to open where it is defined (a list when
   there are several, a text search when there are none), with **Back**
@@ -36,14 +262,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check the files it just wrote.
 
 ### Fixed
-- Dependency graph: TypeScript and JavaScript imports that go through a
-  `tsconfig.json`/`jsconfig.json` `paths` alias or `baseUrl` (`@app/orders`,
-  `components/Button`) now link to the file they name, including settings
-  inherited through `extends`. They were treated as npm packages, so repos
-  that rely on aliases had few edges. Imports of a workspace package by its
-  package.json `name` (`@acme/shared`) now link to that package's entry
-  point. With no tsconfig `baseUrl` or `paths`, imports are also tried
-  from the repository root. `import x = require('./x')` is picked up.
 - Web UI: search result context and hover previews are syntax-highlighted in
   one pass, so doc comments and other multi-line comments are shown as
   comments instead of having their words coloured as code (also when the
@@ -1146,7 +1364,9 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2
+[0.15.1]: https://github.com/jburrow/fast_code_search/compare/v0.14.0...v0.15.1
 [0.14.0]: https://github.com/jburrow/fast_code_search/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/jburrow/fast_code_search/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/jburrow/fast_code_search/compare/v0.12.0...v0.12.1

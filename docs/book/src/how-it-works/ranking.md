@@ -24,10 +24,6 @@ flowchart LR
     line --> S((score))
     file --> S
     codebase --> S
-    S --> T{tier}
-    T -->|whole phrase| T1[first]
-    T -->|every term| T2[then]
-    T -->|some terms| T3[last]
 ```
 
 ## Line-level signals
@@ -46,30 +42,18 @@ The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.
 
-## Multi-term tiers
-
-For `fn main`, every line holding at least one term is a hit, but they are
-sorted into tiers before any score is compared:
-
-1. lines holding the phrase `fn main` as written;
-2. lines holding every term;
-3. lines holding fewer of them.
-
-Each tier adds a step larger than any single-term score, so tiers never
-interleave. Within a file the best-tier lines are emitted first, so the
-per-file cap and the match budget cannot cut them off; and files whose
-trigrams contain the phrase are always opened, even under fast ranking.
-
 ## Diversity
 
-Within a tier, hits are ordered by their rank inside their file: every
+Hits are ordered by their rank inside their file: every
 file's best hit, then every file's second hit, and so on. One file holding
 a hundred matches cannot fill the page. Ties break on score, then file,
 then line, so paging is deterministic.
 
 ## Fast ranking
 
-Above 5,000 candidates (`rank=auto`) only the top 2,000 files are read,
+Above 5,000 candidates (`rank=auto`) only the top 2,000 files are read
+(`fast_rank_files`; a request may ask for more with `max_files`, up to
+`max_fast_rank_files`),
 chosen by a per-file score that needs no I/O: base, `src/`/`lib/`, code
 extension, `log2(symbol count)` (capped), `log2(dependents)` (capped),
 ×0.7 for test and example paths, ×5 when the query matches the file's
@@ -87,9 +71,9 @@ ranks them with the same file-level signals.
 
 | Query | First result | Why |
 |---|---|---|
-| `fn main` | `fn main() {` | phrase tier; a definition; start of line |
+| `fn main` | `fn main() {` | a definition; start of line |
 | `SearchEngine` | `pub struct SearchEngine {` | definition (3×) in `src/` (1.5×) with many importers |
-| `impl SearchEngine` | `impl SearchEngine {` | phrase tier over lines that only say `impl` |
+| `impl SearchEngine` | `impl SearchEngine {` | the phrase at the start of the line, in `src/` |
 | `fcs refs prune_vanished_in` | the call in `incremental.rs` | the reference table, not text matching |
 | `Widget` in a tree with a `widget_test.rs` | the definition, then the importers, then the test | test paths are demoted |
 

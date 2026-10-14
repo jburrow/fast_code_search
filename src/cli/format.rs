@@ -146,6 +146,31 @@ fn render_grouped(
     path_of: &dyn Fn(&str) -> String,
 ) -> String {
     let mut out = String::new();
+    if !resp.files.is_empty() {
+        let total = resp.total_files.unwrap_or(resp.files.len());
+        let _ = writeln!(
+            out,
+            "{}",
+            style.bold(&format!(
+                "Files ({total} path{} match{})",
+                if total == 1 { "" } else { "s" },
+                if total == 1 { "es" } else { "" }
+            ))
+        );
+        for f in &resp.files {
+            let _ = writeln!(out, "{}", style.path(&path_of(&f.file_path)));
+        }
+        if total > resp.files.len() {
+            let _ = writeln!(
+                out,
+                "{}",
+                style.dim(&format!("  … {} more", total - resp.files.len()))
+            );
+        }
+        if !resp.results.is_empty() {
+            out.push('\n');
+        }
+    }
     let mut current: Option<&str> = None;
     for r in &resp.results {
         if current != Some(r.file_path.as_str()) {
@@ -226,6 +251,8 @@ pub fn response_from(query: &str, results: Vec<SearchResultJson>) -> SearchRespo
     let n = results.len();
     SearchResponse {
         results,
+        files: Vec::new(),
+        total_files: None,
         index: None,
         query: query.to_string(),
         total_results: n,
@@ -233,10 +260,12 @@ pub fn response_from(query: &str, results: Vec<SearchResultJson>) -> SearchRespo
         offset: 0,
         total_matches: Some(n),
         truncated_by_budget: false,
+        limits_hit: Vec::new(),
         elapsed_ms: 0.0,
         rank_mode: None,
         total_candidates: None,
         candidates_searched: None,
+        max_files_allowed: None,
     }
 }
 
@@ -278,6 +307,29 @@ mod tests {
             out,
             "proj/src/a.rs:3:4:fn main() {}\nproj/src/b.rs:10:3:  main();\n"
         );
+    }
+
+    #[test]
+    fn grouped_output_lists_path_matches_first() {
+        let mut resp = response_from("api", vec![hit("a.rs", 3, "use api;", 4, 7)]);
+        resp.files = ["src/api.rs", "docs/api.md"]
+            .iter()
+            .map(|p| crate::web::FileMatchJson {
+                file_path: p.to_string(),
+                score: 9.0,
+                match_ranges: vec![],
+            })
+            .collect();
+        resp.total_files = Some(3);
+        let plain = Style { color: false };
+        let out = render(&resp, Format::Grouped, &plain, false, &|p| p.to_string());
+        assert!(
+            out.starts_with("Files (3 paths match)\nsrc/api.rs\ndocs/api.md\n  … 1 more\n\na.rs\n"),
+            "{out}"
+        );
+        // Piped output stays grep-shaped.
+        let out = render(&resp, Format::Vimgrep, &plain, false, &|p| p.to_string());
+        assert_eq!(out, "a.rs:3:5:use api;\n");
     }
 
     #[test]

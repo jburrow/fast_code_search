@@ -8,6 +8,14 @@
 //! **extra**. Any difference fails the run unless the query is marked
 //! `known` with the reason.
 //!
+//! With `--generate N`, N more queries are made up from the corpus itself
+//! (identifiers, substrings, whole lines, punctuation and non-ASCII text,
+//! in random case, some with MATCH CASE and whole word set), seeded by
+//! `--seed` so a run can be repeated. Each is compared with `rg -F` the
+//! same way; a query that differs is shrunk (characters dropped from either
+//! end while it still differs) and the report gives the smallest form as a
+//! `[[query]]` block to add to the query set.
+//!
 //!     cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
 //!         tests/fixtures/backtest [--set benches/rg_backtest.toml] [--markdown FILE] \
 //!         [--json FILE] [--only SUBSTRING] [--samples 5]
@@ -19,12 +27,10 @@
 //!   one hit per line where a match *starts*; rg's JSON gives each
 //!   submatch's start, so both sides are compared on start lines.
 //! - `mode = "text"` (default): the query is parsed with fcs's own parser,
-//!   and each term becomes `rg -F -e TERM`, with `-i` unless `case:yes` and
-//!   `-w` for `word:yes`. One term: the line sets must be equal. Several
-//!   terms (file-level AND): the files must be those holding every term and
-//!   none of the `-term`s, every fcs line must hold at least one term, and
-//!   every line holding all of them must be reported (fcs keeps only a few
-//!   single-term lines per file by design, so those are not required).
+//!   and its text (everything but the `file:`, `lang:`, `case:` and `word:`
+//!   operators, spaces, quotes and dashes included) becomes
+//!   `rg -F -e TEXT`, with `-i` unless `case:yes` and `-w` for `word:yes`.
+//!   The line sets must be equal.
 //! - `file:` / `lang:` operators are fcs syntax with no rg equivalent;
 //!   such a query must say what it means in rg terms with `globs`
 //!   (rg `-g` globs, relative to each tree, `!` to exclude), which keeps
@@ -41,22 +47,32 @@
 //! is also loaded the way the web UI's LOAD MORE does (the whole list again,
 //! 50 longer each time, while `has_more` as `/api/search` computes it), and
 //! every hit must end up shown exactly once.
+//!
+//! With `--check-defaults`, each query is also walked the way a web UI user
+//! sees it with the server's default settings, once with auto ranking and
+//! once with fast ranking: the first page, SEARCH ALL FILES when fast
+//! ranking skipped files, then LOAD MORE until `has_more` is false (the
+//! whole list again up to 1000, offset pages past that). The walk must end
+//! with every hit exactly once, and an exact total on a search that opened
+//! every candidate file must be the real count. Everything else in the
+//! backtest runs without limits, which is how the defaults' own gaps (a
+//! file cap, an offset ceiling) went unnoticed.
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use fast_code_search::config::IndexerConfig;
-use fast_code_search::search::engine::{RankMode, SearchLimits, SearchMatch};
-use fast_code_search::search::regex_search::needs_multiline;
-use fast_code_search::search::{
-    parse_query, FileDiscoveryConfig, FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile,
-    SearchEngine,
+use fast_code_search::check::search::{
+    count, flatten, generate, line_text, rg_hits, shrink, Hits, RgFlags, TextQuery,
 };
-use rayon::prelude::*;
+use fast_code_search::check::Corpus;
+use fast_code_search::search::engine::{
+    RankMode, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
+};
+use fast_code_search::search::regex_search::needs_multiline;
+use fast_code_search::search::{parse_query, ParsedQuery, SearchEngine};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -82,9 +98,26 @@ struct Args {
     /// longer each time) and fail when a hit is repeated or skipped.
     #[arg(long)]
     check_paging: bool,
+    /// Also walk each query as the web UI does under the server's default
+    /// settings (auto and fast ranking): SEARCH ALL FILES, then LOAD MORE to
+    /// the end. Fails when a hit is repeated, skipped or out of reach, or an
+    /// exact total is wrong.
+    #[arg(long)]
+    check_defaults: bool,
+    /// `--check-defaults` walks only queries with at most this many hits
+    /// (deep offset pages each re-run the search).
+    #[arg(long, default_value_t = 20_000)]
+    defaults_max_hits: usize,
     /// The ripgrep binary.
     #[arg(long, default_value = "rg")]
     rg: String,
+    /// Also make up this many text queries from the corpus and check them
+    /// against `rg -F` (no paging checks).
+    #[arg(long, default_value_t = 0)]
+    generate: usize,
+    /// Seed for `--generate`.
+    #[arg(long, default_value_t = 1)]
+    seed: u64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -111,14 +144,48 @@ struct Query {
     /// What the query exercises (kept in the report).
     #[serde(default)]
     why: String,
+    /// Match case, as the API's `case` parameter sets it (overrides
+    /// `case:` in `q`). A text query only.
+    #[serde(default)]
+    case: Option<bool>,
+    /// Whole word, as the API's `word` parameter sets it. A text query only.
+    #[serde(default)]
+    word: Option<bool>,
+    /// Made up by `--generate`.
+    #[serde(skip)]
+    generated: bool,
+}
+
+impl Query {
+    /// The query as the engine sees it: parsed, with `case` / `word` on top
+    /// (as `SearchRequest` applies the API's parameters).
+    fn parsed(&self) -> ParsedQuery {
+        let mut p = parse_query(&self.q);
+        if let Some(c) = self.case {
+            p.options.case_sensitive = c;
+        }
+        if let Some(w) = self.word {
+            p.options.whole_word = w;
+        }
+        p
+    }
+
+    /// `case` / `word` for the report.
+    fn flags(&self) -> String {
+        let mut f = Vec::new();
+        if self.case == Some(true) {
+            f.push("case");
+        }
+        if self.word == Some(true) {
+            f.push("word");
+        }
+        f.join(", ")
+    }
 }
 
 fn default_mode() -> String {
     "text".to_string()
 }
-
-/// display path -> 1-based line numbers.
-type Hits = BTreeMap<String, BTreeSet<usize>>;
 
 #[derive(Serialize)]
 struct Row {
@@ -134,60 +201,6 @@ struct Row {
     filename_hits: usize,
     known: Option<String>,
     note: String,
-}
-
-struct Corpus {
-    engine: SearchEngine,
-    roots: Vec<PathBuf>,
-    /// Display paths of every indexed file.
-    indexed: HashSet<String>,
-}
-
-fn build(roots: &[PathBuf]) -> Result<Corpus> {
-    let root_strs: Vec<String> = roots
-        .iter()
-        .map(|r| r.to_string_lossy().into_owned())
-        .collect();
-    let config = IndexerConfig {
-        paths: root_strs.clone(),
-        ..Default::default()
-    };
-    let discovery = FileDiscoveryConfig {
-        paths: root_strs,
-        exclude_patterns: config.exclude_patterns.clone(),
-        include_extensions: config.include_extensions.clone(),
-        max_file_size: Some(config.max_file_size),
-        respect_gitignore: config.respect_gitignore,
-        ..Default::default()
-    };
-    let files: Vec<PathBuf> = FileDiscoveryIterator::new(&discovery).collect();
-    let mut engine = SearchEngine::new();
-    for r in roots {
-        engine.add_root_path(r);
-    }
-    let mut indexed_paths = Vec::new();
-    for chunk in files.chunks(500) {
-        let pre: Vec<PreIndexedFile> = chunk
-            .par_iter()
-            .filter_map(|p| {
-                PartialIndexedFile::process(p, config.transcode_non_utf8, config.max_file_size)
-                    .map(|(partial, _)| PreIndexedFile::from_partial(partial, true))
-            })
-            .collect();
-        indexed_paths.extend(pre.iter().map(|p| p.path.clone()));
-        engine.index_batch(pre);
-    }
-    engine.resolve_imports();
-    engine.finalize();
-    let indexed = indexed_paths
-        .iter()
-        .map(|p| engine.make_display_path(&p.canonicalize().unwrap_or_else(|_| p.clone())))
-        .collect();
-    Ok(Corpus {
-        engine,
-        roots: roots.to_vec(),
-        indexed,
-    })
 }
 
 /// fcs hits for `q`, every one of them; filename hits counted apart.
@@ -216,12 +229,21 @@ fn run(
     q: &Query,
     limits: SearchLimits,
 ) -> Result<(Vec<SearchMatch>, Option<usize>)> {
-    let (m, info) = match q.mode.as_str() {
-        "text" => engine.search_parsed(&parse_query(&q.q), "", "", limits, RankMode::Full)?,
-        "regex" => engine.search_regex_with_limits(&q.q, "", "", limits, RankMode::Full)?,
-        other => bail!("unknown mode {other:?}"),
-    };
+    let (m, info) = run_ranked(engine, q, limits, RankMode::Full)?;
     Ok((m, info.total_matches))
+}
+
+fn run_ranked(
+    engine: &SearchEngine,
+    q: &Query,
+    limits: SearchLimits,
+    rank: RankMode,
+) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
+    Ok(match q.mode.as_str() {
+        "text" => engine.search_parsed(&q.parsed(), "", "", limits, rank)?,
+        "regex" => engine.search_regex_with_limits(&q.q, "", "", limits, rank)?,
+        other => bail!("unknown mode {other:?}"),
+    })
 }
 
 /// `None` when the first page is identical over three runs. A search that
@@ -291,122 +313,97 @@ fn paging_problem(engine: &SearchEngine, q: &Query) -> Result<Option<String>> {
     )))
 }
 
-#[derive(Default, Clone, Copy)]
-struct RgFlags {
-    fixed: bool,
-    ignore_case: bool,
-    word: bool,
-    multiline: bool,
-}
+/// `None` when a web UI user with the server's default settings can reach
+/// every hit exactly once, else what went wrong. Emulates keyword.js: the
+/// first page; SEARCH ALL FILES (`moreFilesRequest`) when fast ranking
+/// skipped candidate files; then LOAD MORE (`loadMoreRequest`) while
+/// `has_more`: below 1000 shown, the whole list again `PAGE` longer from
+/// offset 0, past it the next `PAGE` at `offset`. Also checks that an exact
+/// total from a search that opened every candidate is the real count.
+fn defaults_problem(
+    engine: &SearchEngine,
+    q: &Query,
+    rank: RankMode,
+    max_hits: usize,
+) -> Result<Option<String>> {
+    let key = |m: &SearchMatch| (m.file_path.clone(), m.line_number);
+    let settings = SearchSettings::default();
+    let (all, _) = run(engine, q, SearchLimits::exhaustive())?;
+    if all.len() > max_hits {
+        return Ok(None);
+    }
+    let want: BTreeSet<(String, usize)> = all.iter().map(key).collect();
+    let page = |offset: usize, max: usize, files: Option<usize>| {
+        let limits = settings.apply(SearchLimits::new(max).with_offset(offset), files);
+        run_ranked(engine, q, limits, rank)
+    };
+    let label = format!("{rank:?}").to_lowercase();
+    let mut problems = Vec::new();
+    let honest_total = |info: &SearchRankingInfo, problems: &mut Vec<String>| {
+        if let Some(t) = info.total_matches {
+            if info.candidates_searched >= info.total_candidates && t != want.len() {
+                problems.push(format!("total says {t}, there are {}", want.len()));
+            }
+        }
+    };
 
-/// rg hits for one pattern: the start line of every match, per file,
-/// restricted to the files fcs indexed.
-fn rg_hits(c: &Corpus, rg: &str, pattern: &str, f: RgFlags, globs: &[String]) -> Result<Hits> {
-    let mut hits = Hits::new();
-    for root in &c.roots {
-        let mut cmd = Command::new(rg);
-        cmd.current_dir(root)
-            .args(["--json", "--no-config", "-uu", "--crlf", "--no-messages"]);
-        if f.fixed {
-            cmd.arg("-F");
+    let (_, first) = page(0, PAGE, None)?;
+    honest_total(&first, &mut problems);
+    let files =
+        (first.candidates_searched < first.total_candidates).then_some(first.total_candidates);
+
+    let mut shown: Vec<(String, usize)> = Vec::new();
+    let mut stuck = None;
+    for _ in 0..=(want.len() / PAGE + 2) {
+        let (offset, max) = if shown.len() < PAGING_MAX_HITS {
+            (0, (shown.len() + PAGE).min(PAGING_MAX_HITS))
+        } else {
+            (shown.len(), PAGE)
+        };
+        if settings.check_offset(offset).is_err() {
+            stuck = Some(format!("offset {offset} is past server.max_page_offset"));
+            break;
         }
-        if f.ignore_case {
-            cmd.arg("-i");
+        let (list, info) = page(offset, max, files)?;
+        if offset == 0 && shown.is_empty() {
+            honest_total(&info, &mut problems);
         }
-        if f.word {
-            cmd.arg("-w");
+        let before = shown.len();
+        if offset == 0 {
+            shown = list.iter().map(key).collect();
+        } else {
+            shown.extend(list.iter().map(key));
         }
-        if f.multiline {
-            cmd.arg("-U");
+        let has_more = match info.total_matches {
+            Some(t) => offset + list.len() < t,
+            None => true,
+        };
+        if !has_more {
+            break;
         }
-        for g in globs {
-            cmd.args(["-g", g]);
-        }
-        cmd.args(["-e", pattern, "--", "."]);
-        let out = cmd
-            .output()
-            .with_context(|| format!("running {rg} (is ripgrep installed?)"))?;
-        // 0 = matches, 1 = none, 2 = error (unreadable files are fine:
-        // --no-messages, and only indexed files count anyway).
-        if out.status.code() == Some(2) && out.stdout.is_empty() {
-            bail!(
-                "rg failed for {pattern:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-        for line in out.stdout.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_slice(line)?;
-            if v["type"] != "match" {
-                continue;
-            }
-            let d = &v["data"];
-            let Some(rel) = d["path"]["text"].as_str() else {
-                continue; // non-UTF-8 path
-            };
-            let rel = rel.strip_prefix("./").unwrap_or(rel);
-            let path = root.join(rel);
-            let display = c.engine.make_display_path(&path);
-            if !c.indexed.contains(&display) {
-                continue;
-            }
-            let first = d["line_number"].as_u64().unwrap_or(0) as usize;
-            let text = d["lines"]["text"].as_str().unwrap_or("");
-            let set = hits.entry(display).or_default();
-            for sm in d["submatches"].as_array().into_iter().flatten() {
-                let start = sm["start"].as_u64().unwrap_or(0) as usize;
-                let before = text.get(..start).unwrap_or("");
-                set.insert(first + before.bytes().filter(|&b| b == b'\n').count());
-            }
+        if shown.len() <= before {
+            stuck = Some(format!("LOAD MORE stopped growing at {}", shown.len()));
+            break;
         }
     }
-    hits.retain(|_, v| !v.is_empty());
-    Ok(hits)
-}
-
-fn flatten(h: &Hits) -> BTreeSet<(String, usize)> {
-    h.iter()
-        .flat_map(|(f, ls)| ls.iter().map(move |l| (f.clone(), *l)))
-        .collect()
-}
-
-fn count(h: &Hits) -> usize {
-    h.values().map(BTreeSet::len).sum()
-}
-
-/// The text of `file:line`, for the report.
-fn line_text(
-    c: &Corpus,
-    cache: &mut HashMap<String, Vec<String>>,
-    file: &str,
-    line: usize,
-) -> String {
-    let lines = cache.entry(file.to_string()).or_insert_with(|| {
-        // Display paths start with the root's own name.
-        let (root_name, rel) = file.split_once('/').unwrap_or(("", file));
-        c.roots
-            .iter()
-            .find(|r| {
-                r.file_name()
-                    .is_some_and(|n| n.to_string_lossy() == root_name)
-            })
-            .and_then(|r| std::fs::read(r.join(rel)).ok())
-            .map(|b| {
-                String::from_utf8_lossy(&b)
-                    .lines()
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
-    });
-    let t = lines
-        .get(line.wrapping_sub(1))
-        .map(|s| s.trim())
-        .unwrap_or("");
-    let t: String = t.chars().take(120).collect();
-    format!("{file}:{line}: {t}")
+    let distinct: BTreeSet<_> = shown.iter().cloned().collect();
+    let dups = shown.len() - distinct.len();
+    let invented = distinct.iter().filter(|k| !want.contains(*k)).count();
+    let lost: Vec<_> = want.iter().filter(|k| !distinct.contains(*k)).collect();
+    if dups > 0 || invented > 0 || !lost.is_empty() {
+        problems.push(format!(
+            "{} lost, {dups} repeated, {invented} not in the full result{}",
+            lost.len(),
+            lost.first()
+                .map(|(f, l)| format!(" (first lost: {f}:{l})"))
+                .unwrap_or_default()
+        ));
+    }
+    problems.extend(stuck);
+    if problems.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("defaults ({label}): {}", problems.join(", "))))
 }
 
 struct Outcome {
@@ -436,7 +433,7 @@ fn compare_regex(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome>
 }
 
 fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> {
-    let parsed = parse_query(&q.q);
+    let parsed = q.parsed();
     if (!parsed.include_globs.is_empty() || !parsed.exclude_globs.is_empty()) && q.globs.is_empty()
     {
         bail!("query {:?} uses file:/lang: but gives no rg `globs`", q.q);
@@ -447,77 +444,22 @@ fn compare_text(c: &Corpus, rg: &str, q: &Query, fcs: &Hits) -> Result<Outcome> 
         word: parsed.options.whole_word,
         multiline: false,
     };
-    let terms: Vec<&String> = parsed
-        .terms
-        .iter()
-        .filter(|t| !t.trim().is_empty())
-        .collect();
-    if terms.is_empty() {
+    if parsed.text.trim().is_empty() {
         let f = flatten(fcs);
         return Ok(Outcome {
             expected: Hits::new(),
             missing: BTreeSet::new(),
             extra: f,
-            note: "no terms: fcs should return nothing".into(),
+            note: "no text: fcs should return nothing".into(),
         });
     }
-    let per_term: Vec<Hits> = terms
-        .iter()
-        .map(|t| rg_hits(c, rg, t, flags, &q.globs))
-        .collect::<Result<_>>()?;
-    // Files holding every term and no excluded one.
-    let mut files: BTreeSet<String> = per_term[0].keys().cloned().collect();
-    for h in &per_term[1..] {
-        files.retain(|f| h.contains_key(f));
-    }
-    for x in &parsed.exclude_terms {
-        let xh = rg_hits(c, rg, x, flags, &q.globs)?;
-        files.retain(|f| !xh.contains_key(f));
-    }
-    // Lines holding any term (what may be reported) and all terms (what
-    // must be).
-    let mut any = Hits::new();
-    let mut all = Hits::new();
-    for f in &files {
-        let sets: Vec<&BTreeSet<usize>> = per_term.iter().map(|h| &h[f]).collect();
-        let union: BTreeSet<usize> = sets.iter().flat_map(|s| s.iter().copied()).collect();
-        let inter: BTreeSet<usize> = union
-            .iter()
-            .copied()
-            .filter(|l| sets.iter().all(|s| s.contains(l)))
-            .collect();
-        any.insert(f.clone(), union);
-        all.insert(f.clone(), inter);
-    }
-    let fcs_flat = flatten(fcs);
-    if terms.len() == 1 {
-        let e = flatten(&any);
-        return Ok(Outcome {
-            missing: e.difference(&fcs_flat).cloned().collect(),
-            extra: fcs_flat.difference(&e).cloned().collect(),
-            expected: any,
-            note: String::new(),
-        });
-    }
-    let any_flat = flatten(&any);
-    let all_flat = flatten(&all);
-    let fcs_files: BTreeSet<&String> = fcs.keys().collect();
-    let mut missing: BTreeSet<(String, usize)> = all_flat.difference(&fcs_flat).cloned().collect();
-    // A file with every term but none of them on one line still has to
-    // be reported (by some line).
-    for f in &files {
-        if !fcs_files.contains(f) {
-            if let Some(l) = any[f].iter().next() {
-                missing.insert((f.clone(), *l));
-            }
-        }
-    }
-    let extra = fcs_flat.difference(&any_flat).cloned().collect();
+    let expected = rg_hits(c, rg, &parsed.text, flags, &q.globs)?;
+    let (e, f) = (flatten(&expected), flatten(fcs));
     Ok(Outcome {
-        expected: all,
-        missing,
-        extra,
-        note: format!("{} terms: AND by file", terms.len()),
+        missing: e.difference(&f).cloned().collect(),
+        extra: f.difference(&e).cloned().collect(),
+        expected,
+        note: String::new(),
     })
 }
 
@@ -537,7 +479,7 @@ fn main() -> Result<()> {
         })
         .collect::<Result<_>>()?;
     let started = std::time::Instant::now();
-    let corpus = build(&roots)?;
+    let corpus = Corpus::build_default(&roots)?;
     eprintln!(
         "indexed {} files from {} trees in {:.1} s",
         corpus.indexed.len(),
@@ -545,13 +487,33 @@ fn main() -> Result<()> {
         started.elapsed().as_secs_f64()
     );
 
+    let mut queries = set.query.clone();
+    if args.generate > 0 {
+        let made: Vec<Query> = generate(&corpus, args.generate, args.seed)
+            .into_iter()
+            .map(|t| Query {
+                q: t.q,
+                mode: default_mode(),
+                globs: Vec::new(),
+                known: None,
+                why: t.why,
+                case: t.case,
+                word: t.word,
+                generated: true,
+            })
+            .collect();
+        eprintln!("generated {} queries (seed {})", made.len(), args.seed);
+        queries.extend(made);
+    }
     let mut rows = Vec::new();
     let mut cache = HashMap::new();
-    for q in &set.query {
-        if args
-            .only
-            .as_ref()
-            .is_some_and(|o| !q.q.contains(o.as_str()))
+    let mut shrunk = Vec::new();
+    for q in &queries {
+        if !q.generated
+            && args
+                .only
+                .as_ref()
+                .is_some_and(|o| !q.q.contains(o.as_str()))
         {
             continue;
         }
@@ -560,12 +522,40 @@ fn main() -> Result<()> {
             "regex" => compare_regex(&corpus, &args.rg, q, &fcs)?,
             _ => compare_text(&corpus, &args.rg, q, &fcs)?,
         };
-        let paging = match repeat_problem(&corpus.engine, q)? {
+        // Generated queries check the line sets only.
+        let paging = if q.generated {
+            None
+        } else {
+            match repeat_problem(&corpus.engine, q)? {
+                Some(p) => Some(p),
+                None if args.check_paging => paging_problem(&corpus.engine, q)?,
+                None => None,
+            }
+        };
+        let paging = match paging {
             Some(p) => Some(p),
-            None if args.check_paging => paging_problem(&corpus.engine, q)?,
+            None if args.check_defaults && !q.generated => {
+                let mut found = None;
+                for rank in [RankMode::Auto, RankMode::Fast] {
+                    found = defaults_problem(&corpus.engine, q, rank, args.defaults_max_hits)?;
+                    if found.is_some() {
+                        break;
+                    }
+                }
+                found
+            }
             None => None,
         };
         let differs = !out.missing.is_empty() || !out.extra.is_empty() || paging.is_some();
+        if differs && q.generated {
+            let t = TextQuery {
+                q: q.q.clone(),
+                case: q.case,
+                word: q.word,
+                why: q.why.clone(),
+            };
+            shrunk.push(shrink(&corpus, &args.rg, &t)?);
+        }
         let status = match (differs, q.known.is_some()) {
             (false, false) => "pass",
             (false, true) => "pass (known no longer differs)",
@@ -590,11 +580,16 @@ fn main() -> Result<()> {
             extra_count: out.extra.len(),
             filename_hits,
             known: q.known.clone(),
-            note: [paging.as_deref().unwrap_or(""), &q.why, &out.note]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("; "),
+            note: [
+                paging.as_deref().unwrap_or(""),
+                &q.flags(),
+                &q.why,
+                &out.note,
+            ]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("; "),
         });
     }
 
@@ -640,6 +635,7 @@ fn main() -> Result<()> {
         r.missing_count + r.extra_count > 0
             || r.note.starts_with("paging:")
             || r.note.starts_with("repeat:")
+            || r.note.starts_with("defaults")
     }) {
         writeln!(md)?;
         writeln!(
@@ -671,6 +667,17 @@ fn main() -> Result<()> {
                 writeln!(md, "```")?;
             }
         }
+    }
+    if !shrunk.is_empty() {
+        writeln!(md)?;
+        writeln!(
+            md,
+            "### Generated queries that differ, shrunk\n\nAdd these to the query set once fixed:\n\n```toml"
+        )?;
+        for q in &shrunk {
+            writeln!(md, "{}", q.toml())?;
+        }
+        writeln!(md, "```")?;
     }
     eprint!("{md}");
     if let Some(p) = &args.markdown {

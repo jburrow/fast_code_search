@@ -751,6 +751,48 @@ async fn test_http_search_concurrency_limit() -> Result<()> {
     Ok(())
 }
 
+/// `/ui-config.js` hands the pages the server's theme settings before they
+/// paint (static/theme.js reads `window.FCS_UI`).
+#[tokio::test]
+async fn test_http_ui_config_script() -> Result<()> {
+    use fast_code_search::config::UiTheme;
+    use fast_code_search::web::{create_router_with_options, RouterOptions, UiSettings};
+
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let progress_tx = create_progress_broadcaster();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let opts = RouterOptions {
+        ui_settings: UiSettings {
+            default_theme: UiTheme::CorporateDark,
+            theme_picker: false,
+        },
+        ..Default::default()
+    };
+    let router = create_router_with_options(engine, progress, progress_tx, None, &opts);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let resp = reqwest::get(format!("http://{addr}/ui-config.js")).await?;
+    assert_eq!(resp.status(), 200);
+    let content_type = resp.headers()["content-type"].to_str()?.to_string();
+    assert!(
+        content_type.starts_with("application/javascript"),
+        "{content_type}"
+    );
+    let body = resp.text().await?;
+    assert_eq!(
+        body.trim(),
+        r#"window.FCS_UI = {"default_theme":"corporate-dark","theme_picker":false};"#
+    );
+    Ok(())
+}
+
 /// Roadmap 1.9: `/api/context` must cap the window and never overflow.
 /// `context=usize::MAX` used to compute `match_idx + context + 1` (a panic in
 /// debug builds, a wrapped index in release) and could otherwise return the
@@ -2774,7 +2816,6 @@ async fn test_real_watcher_events_end_to_end() -> Result<()> {
     let mut engine = SearchEngine::new();
     let watcher = FileWatcher::new(WatcherConfig {
         paths: vec![root.clone()],
-        debounce_duration: Duration::from_millis(150),
         exclude_patterns: Vec::new(),
     })?;
 
@@ -3579,7 +3620,7 @@ async fn test_http_search_rejects_deep_offset() -> Result<()> {
 
     let resp = client
         .get(format!("{}/api/search", ctx.http_url))
-        .query(&[("q", "find_me_in_search"), ("offset", "10001")])
+        .query(&[("q", "find_me_in_search"), ("offset", "100001")])
         .send()
         .await?;
     assert_eq!(resp.status(), 400);
@@ -3589,13 +3630,16 @@ async fn test_http_search_rejects_deep_offset() -> Result<()> {
         "expected an offset error, got {body}"
     );
 
-    // The boundary itself is accepted.
-    let resp = client
-        .get(format!("{}/api/search", ctx.http_url))
-        .query(&[("q", "find_me_in_search"), ("offset", "10000")])
-        .send()
-        .await?;
-    assert_eq!(resp.status(), 200);
+    // The boundary itself is accepted, and so is paging past 10000 (bug
+    // report: the old limit).
+    for offset in ["100000", "10001"] {
+        let resp = client
+            .get(format!("{}/api/search", ctx.http_url))
+            .query(&[("q", "find_me_in_search"), ("offset", offset)])
+            .send()
+            .await?;
+        assert_eq!(resp.status(), 200, "offset {offset}");
+    }
     Ok(())
 }
 
@@ -3621,7 +3665,7 @@ async fn test_grpc_search_rejects_deep_offset() -> Result<()> {
         .search(SearchRequest {
             query: "find_me_in_search".to_string(),
             max_results: 10,
-            offset: 10_001,
+            offset: 100_001,
             ..Default::default()
         })
         .await
@@ -3726,7 +3770,6 @@ fn test_watcher_skips_excluded_directories_and_follows_new_ones() -> Result<()> 
     std::fs::create_dir_all(root.join("node_modules/pkg"))?;
     let mut watcher = FileWatcher::new(WatcherConfig {
         paths: vec![root.clone()],
-        debounce_duration: Duration::from_millis(150),
         exclude_patterns: vec!["**/node_modules/**".to_string()],
     })?;
     std::thread::sleep(Duration::from_millis(200));
@@ -3782,13 +3825,79 @@ fn test_watcher_skips_excluded_directories_and_follows_new_ones() -> Result<()> 
 
 /// A small Python package: api -> service <-> util (a cycle), and tests
 /// importing api and util.
+/// A path typed into search finds the file: `files=N` adds path matches,
+/// apart from the (unchanged) content results; MCP lists them first.
+#[tokio::test]
+async fn test_search_finds_files_by_path() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let get = |q: &'static str| {
+        let base = base.clone();
+        async move {
+            reqwest::Client::new()
+                .get(format!("{base}/api/search"))
+                .query(&[("q", q), ("files", "10")])
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await
+        }
+    };
+
+    let search = get("pkg/api.py").await?;
+    assert_eq!(search["total_files"], 1, "{search}");
+    let file = &search["files"][0];
+    let path = file["file_path"].as_str().unwrap();
+    assert!(path.ends_with("pkg/api.py"), "{search}");
+    let range = file["match_ranges"][0].as_array().unwrap();
+    assert_eq!(
+        &path[range[0].as_u64().unwrap() as usize..range[1].as_u64().unwrap() as usize],
+        "pkg/api.py"
+    );
+    // No line mentions the path, so content results stay empty.
+    assert_eq!(search["results"].as_array().unwrap().len(), 0, "{search}");
+
+    // File names rank above directories; both `test_api.py` and `api.py`.
+    let search = get("api").await?;
+    let paths: Vec<&str> = search["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["file_path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths.len(), 2, "{search}");
+    assert!(paths[0].ends_with("pkg/api.py"), "{paths:?}");
+    assert!(paths[1].ends_with("tests/test_api.py"), "{paths:?}");
+
+    // Not asked for: no `files` key, so existing clients see no change.
+    let plain: serde_json::Value = reqwest::get(format!("{base}/api/search?q=api"))
+        .await?
+        .json()
+        .await?;
+    assert!(plain.get("files").is_none(), "{plain}");
+    assert!(plain.get("total_files").is_none(), "{plain}");
+
+    let (err, text) = mcp_tool(
+        &base,
+        "search_code",
+        serde_json::json!({"query": "pkg/util.py"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(text.starts_with("Files whose path matches (1):"), "{text}");
+    assert!(text.contains("No content matches"), "{text}");
+    Ok(())
+}
+
 async fn setup_graph_server() -> Result<(String, TempDir)> {
     let temp_dir = TempDir::new()?;
     let files = [
         ("pkg/__init__.py", ""),
         ("pkg/util.py", "import pkg.service\n"),
         ("pkg/service.py", "import os\nimport pkg.util\n"),
-        ("pkg/api.py", "import pkg.service\n"),
+        (
+            "pkg/api.py",
+            "import pkg.service\nfrom .missing import thing\n",
+        ),
         ("tests/test_api.py", "import pytest\nimport pkg.api\n"),
         ("tests/test_util.py", "import pkg.util\n"),
     ];
@@ -4143,6 +4252,29 @@ async fn test_mcp_tools_answer_from_the_index() -> Result<()> {
     );
     assert!(text.contains("tests/ → "), "{text}");
     assert!(text.contains("pkg/: 2"), "{text}");
+
+    // Imports that resolve to nothing are counted, and the broken one
+    // written as a path into the project is called out.
+    assert!(
+        text.contains("3 imports resolve to no indexed file")
+            && text.contains("1 of them are written as paths"),
+        "{text}"
+    );
+    let modules = get_graph(&base, "modules", &[]).await?;
+    assert_eq!(modules["unresolved_imports"], 3, "{modules}");
+    assert_eq!(modules["unresolved_local"], 1, "{modules}");
+    let (err, text) = mcp_tool(
+        &base,
+        "file_dependencies",
+        serde_json::json!({"path": "pkg/api.py", "direction": "out"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
+    assert!(
+        text.contains("1 written as paths into the project"),
+        "{text}"
+    );
+    assert!(text.contains("pkg/api.py:2  .missing"), "{text}");
 
     // A bad path is a tool error the model can read, not a protocol error.
     let (err, text) = mcp_tool(&base, "read_file", serde_json::json!({"path": "nope.py"})).await?;
