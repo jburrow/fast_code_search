@@ -22,6 +22,7 @@ included, is part of the text.
 | `deps:app/main.py` | Only that file and the files it imports. |
 | `case:yes` | Match case exactly (the default is case-insensitive). |
 | `word:yes` | Whole words only. |
+| `kind:call`, `-kind:attribute` | References only: keep / drop references of that kind (`call`, `type`, `value`, `attribute`). See [Reference kinds](#reference-kinds-kind). |
 
 Operators can be combined: `Widget file:src/ -lang:ts case:yes`. Filters
 of different kinds narrow each other (`file:src/ lang:rust` is the Rust
@@ -32,6 +33,29 @@ Operators between words join the words with one space, so `fn file:src/
 main` searches for `fn main` under `src/`. The ends of the query are
 trimmed; spaces inside it are kept. To search for operator-looking text
 such as `file:x`, use a regex.
+
+## Reference kinds: `kind:`
+
+Each reference is one of four kinds, shown on the result (in the web
+UI's tag, as `[call]` in `fcs refs`, as `reference_kind` in the API's
+JSON and as `[reference: call]` in MCP):
+
+| Kind | Is | Example, for `size` or `Item` |
+|---|---|---|
+| `call` | a call, or a decorator | `x.size()`, `@cached` |
+| `type` | a type or class mention: an annotation, a base class, `new T`, an implemented interface | `def f(x: Item)`, `class A(Item)` |
+| `value` | a function or class used as a value: passed, assigned, compared, returned | `isinstance(x, Item)`, `cb = size` |
+| `attribute` | an attribute that is read, without a call: a property, a method passed along | `n = other.size` |
+
+`refs size kind:call` keeps the calls only; `kind:call,type` (or
+`kind:call kind:type`) keeps either; `-kind:attribute` keeps everything
+but attribute reads, the usual way to leave out properties of other
+classes that share the name. `attr` is short for `attribute`. Which kinds a
+language records is on [Reference support](reference-support.md):
+`value` and `attribute` are Python only for now, and every other
+language's references are calls and types. `kind:` with a text or
+symbol search is an error rather than being ignored; a regex is not
+parsed for operators.
 
 ## Search by imports: `deps:` and `rdeps:`
 
@@ -114,7 +138,7 @@ case").
 | References | REFERENCES / `fcs refs` / `references=true` | Call sites and type mentions of the identifier |
 
 References are exact and case-sensitive on the identifier; `file:` and
-`lang:` still narrow the files. Which positions count as a reference
+`lang:` still narrow the files, and `kind:` the kinds of use. Which positions count as a reference
 differs by language, and C and C++ record none: see
 [Reference support](reference-support.md).
 

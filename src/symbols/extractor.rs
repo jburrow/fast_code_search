@@ -37,6 +37,85 @@ pub struct Symbol {
     pub is_definition: bool,
 }
 
+/// What kind of use a reference is, from the tags query's capture name.
+/// The `kind:` query operator filters on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RefKind {
+    /// A call: `f()`, `obj.method()`, a decorator (`@reference.call`,
+    /// `@reference.send`).
+    Call = 0,
+    /// A type or class mention: an annotation, a base class, `new T`, an
+    /// implemented interface (`@reference.class`, `.type`, `.interface`,
+    /// `.implementation`).
+    Type = 1,
+    /// A function or class used as a value: passed, assigned, compared,
+    /// returned (`@reference.value`).
+    Value = 2,
+    /// An attribute that is read: `obj.name`, a property (`@reference.attribute`).
+    Attribute = 3,
+}
+
+impl RefKind {
+    pub const ALL: [RefKind; 4] = [Self::Call, Self::Type, Self::Value, Self::Attribute];
+
+    /// The kind of a `reference.*` capture name (without the prefix).
+    pub fn from_capture(kind: &str) -> Self {
+        match kind {
+            "class" | "type" | "interface" | "implementation" => Self::Type,
+            "value" => Self::Value,
+            "attribute" => Self::Attribute,
+            _ => Self::Call,
+        }
+    }
+
+    /// The name used in queries and results: `call`, `type`, `value`,
+    /// `attribute`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Call => "call",
+            Self::Type => "type",
+            Self::Value => "value",
+            Self::Attribute => "attribute",
+        }
+    }
+
+    /// Parse a query's kind name (`attr` is short for `attribute`).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "call" | "calls" => Some(Self::Call),
+            "type" | "types" | "class" => Some(Self::Type),
+            "value" | "values" => Some(Self::Value),
+            "attribute" | "attributes" | "attr" => Some(Self::Attribute),
+            _ => None,
+        }
+    }
+
+    /// When two patterns capture the same name, the more specific kind
+    /// wins: `self.helper()` is a call, not an attribute read.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Call => 3,
+            Self::Type => 2,
+            Self::Value => 1,
+            Self::Attribute => 0,
+        }
+    }
+
+    /// One bit per kind, for a set of kinds.
+    pub fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+
+    fn from_bits(bits: u32) -> Self {
+        match bits {
+            1 => Self::Type,
+            2 => Self::Value,
+            3 => Self::Attribute,
+            _ => Self::Call,
+        }
+    }
+}
+
 /// A use of a name that the grammar's tags query marks as a reference
 /// (`@reference.call`, `@reference.class`, `@reference.implementation`, ...):
 /// a call site, a type mention, an implemented interface. Positions are the
@@ -46,15 +125,41 @@ pub struct SymbolRef {
     pub name: String,
     pub line: u32,
     pub column: u32,
+    pub kind: RefKind,
 }
 
 /// A reference as the engine stores it: the name interned to an id, so a
-/// call site costs 12 bytes rather than a `String`.
+/// call site costs 12 bytes rather than a `String`. The kind shares the
+/// column's word (top 4 bits), so the persisted layout is the one indexes
+/// saved before kinds existed, where every reference reads as a call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackedRef {
     pub name: u32,
     pub line: u32,
-    pub column: u32,
+    column_and_kind: u32,
+}
+
+impl PackedRef {
+    const KIND_SHIFT: u32 = 28;
+    const COLUMN_MASK: u32 = (1 << Self::KIND_SHIFT) - 1;
+
+    /// A column past 2^28 bytes is clamped: the position check at query
+    /// time then drops it rather than reporting the wrong place.
+    pub fn new(name: u32, line: u32, column: u32, kind: RefKind) -> Self {
+        Self {
+            name,
+            line,
+            column_and_kind: column.min(Self::COLUMN_MASK) | ((kind as u32) << Self::KIND_SHIFT),
+        }
+    }
+
+    pub fn column(&self) -> u32 {
+        self.column_and_kind & Self::COLUMN_MASK
+    }
+
+    pub fn kind(&self) -> RefKind {
+        RefKind::from_bits(self.column_and_kind >> Self::KIND_SHIFT)
+    }
 }
 
 /// Represents an import statement found in source code
@@ -503,8 +608,11 @@ impl SymbolExtractor {
         let mut matches = cursor.matches(query, *root, source.as_bytes());
         let mut seen_defs: std::collections::HashSet<(usize, usize)> =
             std::collections::HashSet::new();
-        let mut seen_refs: std::collections::HashSet<(usize, usize)> =
-            std::collections::HashSet::new();
+        // Index in `refs` of the reference at each byte range, so a second
+        // pattern capturing the same name can only make its kind more
+        // specific (see `RefKind::rank`).
+        let mut seen_refs: std::collections::HashMap<(usize, usize), usize> =
+            std::collections::HashMap::new();
         // Byte range of each reference pushed below, so references that
         // coincide with a definition's name (a bare `(type_identifier)`
         // pattern also matches `struct Foo`) can be dropped afterwards,
@@ -514,15 +622,15 @@ impl SymbolExtractor {
         while let Some(m) = matches.next() {
             let mut name_node: Option<tree_sitter::Node> = None;
             let mut def: Option<(&str, tree_sitter::Node)> = None;
-            let mut is_ref = false;
+            let mut ref_kind: Option<RefKind> = None;
             for cap in m.captures {
                 let cap_name = names[cap.index as usize];
                 if cap_name == "name" {
                     name_node = Some(cap.node);
                 } else if let Some(kind) = cap_name.strip_prefix("definition.") {
                     def = Some((kind, cap.node));
-                } else if cap_name.starts_with("reference.") {
-                    is_ref = true;
+                } else if let Some(kind) = cap_name.strip_prefix("reference.") {
+                    ref_kind = Some(RefKind::from_capture(kind));
                 }
             }
             let Some(name_node) = name_node else {
@@ -547,15 +655,20 @@ impl SymbolExtractor {
                     column: start.column,
                     is_definition: true,
                 });
-            } else if is_ref {
-                if !seen_refs.insert((range.start, range.end)) {
+            } else if let Some(kind) = ref_kind {
+                if let Some(&i) = seen_refs.get(&(range.start, range.end)) {
+                    if kind.rank() > refs[i].kind.rank() {
+                        refs[i].kind = kind;
+                    }
                     continue;
                 }
+                seen_refs.insert((range.start, range.end), refs.len());
                 ref_ranges.push((range.start, range.end));
                 refs.push(SymbolRef {
                     name: name.to_string(),
                     line: start.row as u32,
                     column: start.column as u32,
+                    kind,
                 });
             }
         }

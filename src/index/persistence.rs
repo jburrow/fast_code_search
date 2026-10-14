@@ -894,11 +894,12 @@ mod tests {
         ];
         let references = vec![
             vec![],
-            vec![PackedRef {
-                name: 0,
-                line: 5,
-                column: 4,
-            }],
+            vec![PackedRef::new(
+                0,
+                5,
+                4,
+                crate::symbols::extractor::RefKind::Call,
+            )],
         ];
         let idx = PersistedIndex::new(
             "golden-fingerprint".to_string(),

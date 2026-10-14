@@ -247,7 +247,8 @@ fn tool_definitions() -> Value {
              imports / what imports it (Rust, Python, JS/TS), e.g. rdeps=src/a.rs:2 finds uses \
              among the code that could break when a.rs changes. mode: text (default), regex (a Rust regex matched \
              per line), symbols (definitions only) or references (call sites and type mentions \
-             of an identifier). Text ignores case and regex does not, unless case_sensitive is \
+             of an identifier; kind:call, kind:type, kind:value or kind:attribute keeps one \
+             kind, -kind:attribute drops one, and each hit says its kind). Text ignores case and regex does not, unless case_sensitive is \
              set. Returns path:line:column with the matching line; in text and regex mode, \
              files whose path matches the query (e.g. a pasted path) are listed first."
                 .to_string(),
@@ -514,10 +515,11 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
     );
     push_limits_note(&mut out, &resp.limits_hit);
     for r in &resp.results {
-        let kind = match r.match_type.as_ref() {
-            "SYMBOL_DEFINITION" => "  [definition]",
-            "SYMBOL_REFERENCE" => "  [reference]",
-            _ => "",
+        let kind = match (r.match_type.as_ref(), r.reference_kind.as_deref()) {
+            ("SYMBOL_DEFINITION", _) => "  [definition]".to_string(),
+            ("SYMBOL_REFERENCE", Some(k)) => format!("  [reference: {k}]"),
+            ("SYMBOL_REFERENCE", None) => "  [reference]".to_string(),
+            _ => String::new(),
         };
         let kind = match r.hops {
             Some(1) => format!("{kind}  [1 hop]"),

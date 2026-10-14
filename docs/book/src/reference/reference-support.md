@@ -18,7 +18,9 @@ those positions. Two consequences hold for every language:
   search the plain text as well.
 
 A definition is never its own reference, and references are exact and
-case-sensitive on the identifier.
+case-sensitive on the identifier. Each reference is a `call`, `type`, `value` or `attribute`,
+and `kind:` filters on it (see
+[Reference kinds](query-syntax.md#reference-kinds-kind)).
 
 If fcs misses a form listed as found, that is a bug; if it misses one
 listed as not found, that is a known gap.
@@ -80,6 +82,12 @@ which resolves each name to its definition (see the end of the page).
 | `import`, `from … import` | **no** |
 | Annotations written as strings: `x: "Item"` | **no** |
 | Other value positions: lambda bodies, `yield x`, `*args` unpacking, f-string `{x}` | **no** |
+
+Each Python reference has a kind: decorators and calls are `call`;
+annotations, base classes and exceptions `type`; functions and classes
+used as values `value`; attribute reads `attribute`. `-kind:attribute`
+leaves out property reads (see
+[Reference kinds](query-syntax.md#reference-kinds-kind)).
 
 Because references are names, `fcs refs get` also returns every `.get(…)`
 on a dictionary, and `fcs refs status_code` returns reads of every
@@ -190,12 +198,12 @@ functions or classes, where Jedi resolves the name to something else, is
 Where Jedi cannot resolve a name at all (an untyped receiver), neither side
 is counted.
 
-| Repository | Found | Precision | Before October 2026 |
-|---|---|---|---|
-| pallets/flask | 98.1% | 87.3% | 57.4% found, 90.9% precision |
-| psf/requests | 100% | 90.2% | 74.4%, 88.9% |
-| pallets/click | 97.1% | 91.3% | 65.5%, 93.6% |
-| encode/httpx | 99.5% | 80.5% | 59.0%, 86.6% |
+| Repository | Found | Precision | With `-kind:attribute` | Before October 2026 |
+|---|---|---|---|---|
+| pallets/flask | 98.1% | 87.3% | 88.4% found, 93.8% precision | 57.4% found, 90.9% precision |
+| psf/requests | 100% | 90.2% | 93.6%, 90.9% | 74.4%, 88.9% |
+| pallets/click | 97.1% | 91.3% | 92.7%, 95.6% | 65.5%, 93.6% |
+| encode/httpx | 99.5% | 80.5% | 77.9%, 90.1% | 59.0%, 86.6% |
 
 CI runs it on Flask and Click (`.github/workflows/ref-oracle.yml`) and
 fails if a change misses or adds more references than that.
@@ -204,6 +212,7 @@ fails if a change misses or adds more references than that.
 pip install jedi==0.20.1
 python3 src/check/oracle/py_refs.py bench-corpus/flask > flask.json
 cargo run --release --example ref_oracle -- --oracle flask.json
+cargo run --release --example ref_oracle -- --oracle flask.json --drop-kind attribute
 ```
 
 The report groups misses and extras by the syntax around the name, which

@@ -76,7 +76,8 @@ pub struct Cli {
 pub enum Command {
     /// Search file contents (the default; `fcs QUERY` works too)
     Search(SearchArgs),
-    /// Find references (call sites, type mentions) of an identifier
+    /// Find references (call sites, type mentions) of an identifier;
+    /// `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
     Refs(SearchArgs),
     /// Search symbol definitions (functions, types, classes, ...) only
     Symbols(SearchArgs),

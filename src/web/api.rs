@@ -218,6 +218,9 @@ pub struct SearchResultJson {
     pub match_column: usize,
     pub score: f64,
     pub match_type: std::borrow::Cow<'static, str>,
+    /// For a reference: `call`, `type`, `value` or `attribute`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_kind: Option<std::borrow::Cow<'static, str>>,
     pub dependency_count: u32,
     /// Context lines before and after the match (only present when context > 0)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -749,6 +752,9 @@ pub fn results_to_json(
                 } else {
                     "TEXT"
                 }),
+                reference_kind: m
+                    .reference_kind
+                    .map(|k| std::borrow::Cow::Borrowed(k.as_str())),
                 dependency_count: m.dependency_count,
                 context_lines: ctx_lines,
                 context_start_line: ctx_start,

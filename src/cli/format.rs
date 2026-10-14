@@ -180,10 +180,11 @@ fn render_grouped(
             let _ = writeln!(out, "{}", style.path(&path_of(&r.file_path)));
             current = Some(r.file_path.as_str());
         }
-        let kind = match r.match_type.as_ref() {
-            "SYMBOL_DEFINITION" => " [def]",
-            "SYMBOL_REFERENCE" => " [ref]",
-            _ => "",
+        let kind = match (r.match_type.as_ref(), r.reference_kind.as_deref()) {
+            ("SYMBOL_DEFINITION", _) => " [def]".to_string(),
+            ("SYMBOL_REFERENCE", Some(k)) => format!(" [{k}]"),
+            ("SYMBOL_REFERENCE", None) => " [ref]".to_string(),
+            _ => String::new(),
         };
         if let (Some(ctx), Some(start)) = (&r.context_lines, r.context_start_line) {
             for (i, line) in ctx.iter().enumerate() {
@@ -193,7 +194,7 @@ fn render_grouped(
                         out,
                         "{}{}: {}",
                         style.bold(&format!("{:>5}", n)),
-                        style.dim(kind),
+                        style.dim(&kind),
                         highlight(&r.content, r.match_start, r.match_end, style)
                     );
                 } else {
@@ -213,7 +214,7 @@ fn render_grouped(
                 out,
                 "{}{}: {}",
                 style.bold(&format!("{:>5}", r.line_number)),
-                style.dim(kind),
+                style.dim(&kind),
                 highlight(&r.content, r.match_start, r.match_end, style)
             );
         }
@@ -303,6 +304,7 @@ mod tests {
             match_column: content[..s].chars().count(),
             score: 1.0,
             match_type: "TEXT".into(),
+            reference_kind: None,
             dependency_count: 0,
             context_lines: None,
             context_start_line: None,

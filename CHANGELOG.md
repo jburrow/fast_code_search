@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Reference kinds: each reference is a `call`, `type`, `value` or
+  `attribute`, shown on the result (web UI tag, `fcs refs` `[call]`, API
+  `reference_kind`, MCP `[reference: call]`), and the `kind:` operator
+  filters on it: `refs size kind:call`, `-kind:attribute` to leave out
+  property reads. The index file format is unchanged (the kind shares the
+  column's word); symbols re-extract once on the first start.
 - Search by imports: `rdeps:PATH` limits a search to that file and the
   files that import it, `deps:PATH` to the file and what it imports
   (`:N` hops, `:*` for any distance, `-rdeps:` / `-deps:` to leave them

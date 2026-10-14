@@ -787,11 +787,12 @@ impl SearchEngine {
         limits: SearchLimits,
     ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
         let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
-        Ok(self.run_references(name, path_filter, limits))
+        Ok(self.run_references(name, None, path_filter, limits))
     }
 
     /// [`Self::search_references`] for a parsed query: the text is the
-    /// identifier, `file:` / `lang:` operators narrow the files.
+    /// identifier, `file:` / `lang:` operators narrow the files and `kind:`
+    /// the kinds of reference.
     pub fn search_references_parsed(
         &self,
         parsed: &ParsedQuery,
@@ -805,12 +806,13 @@ impl SearchEngine {
         }
         let limits = self.limits_with_query_scope(parsed, limits)?;
         let path_filter = merged_path_filter(parsed, include_patterns, exclude_patterns)?;
-        Ok(self.run_references(name, path_filter, limits))
+        Ok(self.run_references(name, parsed.ref_kinds, path_filter, limits))
     }
 
     fn run_references(
         &self,
         name: &str,
+        kinds: Option<u8>,
         path_filter: PathFilter,
         limits: SearchLimits,
     ) -> (Vec<SearchMatch>, SearchRankingInfo) {
@@ -829,7 +831,7 @@ impl SearchEngine {
             RankMode::Full,
             limits,
             |_, meta| meta.base_score,
-            |doc_id, run| self.references_in_document(doc_id, name_id, name, run),
+            |doc_id, run| self.references_in_document(doc_id, name_id, name, kinds, run),
         )
     }
 
@@ -846,12 +848,15 @@ impl SearchEngine {
         doc_id: u32,
         name_id: u32,
         name: &str,
+        kinds: Option<u8>,
         run: &QueryRun,
     ) -> Option<Vec<SearchMatch>> {
+        let wanted =
+            |r: &PackedRef| r.name == name_id && kinds.is_none_or(|k| k & r.kind().bit() != 0);
         // Consult the reference list before touching file content: most
         // candidates mention the text without referencing the symbol.
         let refs = self.references_of(doc_id);
-        if !refs.iter().any(|r| r.name == name_id) {
+        if !refs.iter().any(wanted) {
             return None;
         }
         let file = self.file_store.get(doc_id)?;
@@ -868,7 +873,7 @@ impl SearchEngine {
         let lines: Vec<&str> = content.lines().collect();
         let mut matches = Vec::new();
         let mut last_line = usize::MAX;
-        for r in refs.iter().filter(|r| r.name == name_id) {
+        for r in refs.iter().filter(|r| wanted(r)) {
             let line_num = r.line as usize;
             if line_num == last_line {
                 continue; // one result per line
@@ -877,7 +882,7 @@ impl SearchEngine {
                 continue; // file changed under us; the watcher will refresh it
             };
             // tree-sitter columns are byte offsets into the line as indexed.
-            let start = r.column as usize;
+            let start = r.column() as usize;
             let end = start + name.len();
             if line.get(start..end) != Some(name) {
                 continue; // stale position: the content moved under it
@@ -901,6 +906,7 @@ impl SearchEngine {
                 score,
                 is_symbol: false,
                 is_reference: true,
+                reference_kind: Some(r.kind()),
                 dependency_count,
             });
         }
@@ -1001,6 +1007,7 @@ impl SearchEngine {
                     score: RankingWeights::DEFAULT.filename_hit * dependency_boost,
                     is_symbol: true,
                     is_reference: false,
+                    reference_kind: None,
                     dependency_count,
                 });
                 continue;
@@ -1090,6 +1097,7 @@ impl SearchEngine {
                 score,
                 is_symbol: true,
                 is_reference: false,
+                reference_kind: None,
                 dependency_count,
             });
         }
@@ -1228,6 +1236,7 @@ impl SearchEngine {
                     score,
                     is_symbol,
                     is_reference: false,
+                    reference_kind: None,
                     dependency_count,
                 });
                 true
@@ -1365,6 +1374,7 @@ impl SearchEngine {
                     score: RankingWeights::DEFAULT.filename_hit * dependency_boost,
                     is_symbol: true,
                     is_reference: false,
+                    reference_kind: None,
                     dependency_count,
                 });
             }
@@ -1477,6 +1487,7 @@ impl SearchEngine {
                     score,
                     is_symbol,
                     is_reference: false,
+                    reference_kind: None,
                     dependency_count,
                 });
                 true
@@ -1517,6 +1528,7 @@ impl SearchEngine {
                     score: RankingWeights::DEFAULT.filename_hit * dependency_boost, // Symbol def boost (3×) for filename matches
                     is_symbol: true,
                     is_reference: false,
+                    reference_kind: None,
                     dependency_count,
                 });
             }

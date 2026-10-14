@@ -151,6 +151,10 @@ impl SearchEngine {
         if let Some(w) = req.whole_word {
             parsed.options.whole_word = w;
         }
+        if parsed.ref_kinds.is_some() && matches!(req.mode, SearchMode::Text | SearchMode::Symbols)
+        {
+            return Err("kind: filters references; turn on references to use it".to_string());
+        }
         let pattern = regex_pattern_with_case(&req.query, req.case_sensitive);
         // A regex is all pattern: `deps:` inside it is text to match.
         let mut graph = if req.mode == SearchMode::Regex {

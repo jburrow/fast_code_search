@@ -3480,3 +3480,56 @@ fn test_rdeps_through_a_package_entry_needs_a_name_from_the_anchor() {
         vec!["uses_helper.py", "uses_thing.py"]
     );
 }
+
+/// `kind:` keeps references of the named kinds: a property read is an
+/// attribute, `self.helper()` a call, `isinstance(x, Item)` a value and
+/// `x: Item` a type. Results carry their kind; text search rejects `kind:`.
+#[test]
+fn test_reference_kind_filter() {
+    let temp_dir = TempDir::new().unwrap();
+    let a = temp_dir.path().join("a.py");
+    fs::write(
+        &a,
+        "class Item:\n    def size(self):\n        return 1\n\n\
+         def run(x: Item, other):\n    x.size()\n    n = other.size\n    isinstance(other, Item)\n",
+    )
+    .unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&a).unwrap();
+    engine.finalize();
+    let refs = |q: &str| -> Vec<(usize, String)> {
+        let req = crate::search::SearchRequest {
+            query: q.to_string(),
+            mode: crate::search::SearchMode::References,
+            ..Default::default()
+        };
+        let mut v: Vec<(usize, String)> = engine
+            .run(&req, SearchLimits::new(50))
+            .unwrap()
+            .matches
+            .iter()
+            .map(|m| {
+                (
+                    m.line_number,
+                    m.reference_kind.unwrap().as_str().to_string(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        refs("size"),
+        vec![(6, "call".into()), (7, "attribute".into())]
+    );
+    assert_eq!(refs("size kind:call"), vec![(6, "call".into())]);
+    assert_eq!(refs("size -kind:attribute"), vec![(6, "call".into())]);
+    assert_eq!(refs("size kind:attr"), vec![(7, "attribute".into())]);
+    assert_eq!(refs("Item"), vec![(5, "type".into()), (8, "value".into())]);
+    assert_eq!(refs("Item kind:type,value").len(), 2);
+    assert_eq!(refs("Item kind:call"), vec![]);
+    let Err(err) = engine.run(&text("size kind:call"), SearchLimits::new(50)) else {
+        panic!("text search accepted kind:");
+    };
+    assert!(err.contains("references"), "{err}");
+}

@@ -54,6 +54,9 @@ pub struct SearchMatch {
     /// The match is a symbol *reference* (call site, type mention) found by
     /// [`SearchEngine::search_references`], not a text or definition hit.
     pub is_reference: bool,
+    /// For a reference: what kind of use it is (call, type, value,
+    /// attribute).
+    pub reference_kind: Option<crate::symbols::extractor::RefKind>,
     pub dependency_count: u32,
 }
 
@@ -2016,11 +2019,7 @@ impl SearchEngine {
     pub(super) fn store_references(&mut self, id: u32, refs: Vec<SymbolRef>) {
         let packed: Vec<PackedRef> = refs
             .into_iter()
-            .map(|r| PackedRef {
-                name: self.intern_ref_name(&r.name),
-                line: r.line,
-                column: r.column,
-            })
+            .map(|r| PackedRef::new(self.intern_ref_name(&r.name), r.line, r.column, r.kind))
             .collect();
         while self.reference_cache.len() <= id as usize {
             self.reference_cache.push(Vec::new());
