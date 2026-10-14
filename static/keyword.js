@@ -1650,6 +1650,10 @@ function renderGroupHtml(group) {
                 ? `<span class="hit-tag truncated-badge" title="The line is longer than the 500-byte content window; open the file to see all of it">… truncated</span>`
                 : '');
         const title = `${isFilenameHit ? 'File name match' : `Line ${result.line_number}`} · ${matchType.text.toLowerCase()} · ranking score ${result.score.toFixed(2)}&#10;Click to open the file here; hover to preview it`;
+        // The preview icon at the end of the match line: hover it to preview
+        // the file, click it to open the file at this line.
+        const openBtn = `<button type="button" class="hit-open view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
+            aria-label="View file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}" title="Preview the file (click to open it)">${iconSvg('open_in_new', 16)}</button>`;
         const matchNum = `<button type="button" class="hit-num view-file-btn" data-file-path="${escapeHtml(result.file_path)}" data-line-number="${viewLine}"
             aria-label="Open file at ${isFilenameHit ? 'the top' : 'line ' + result.line_number}" title="${title}">${isFilenameHit ? 'file' : result.line_number}</button>`;
 
@@ -1671,6 +1675,7 @@ function renderGroupHtml(group) {
                 (isMatch ? matchNum : `<span class="hit-num">${n}</span>`) +
                 `<span class="ctx-line-content${isMatch ? ' match-line' : ''}"${offsets}>${escapeHtml(text)}</span>` +
                 (isMatch && tags ? `<span class="hit-tags">${tags}</span>` : '') +
+                (isMatch ? openBtn : '') +
                 `</div>`;
         }).join('');
 

@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Web UI: the preview icon is back at the end of each match line: hover it
+  to preview the file, click it to open the file there (#153 had moved the
+  preview to the line number, with nothing to show it).
 - Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
   keyboard shortcuts, `fcs` and MCP, the main API calls) with links into
   the documentation book. It used to be a hand-kept copy of the API
