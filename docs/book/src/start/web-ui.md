@@ -60,12 +60,14 @@ lists every place it is used:
 
 ## Reading results
 
-- Each hit shows its line with the line number in a gutter (and the
-  context lines around it, if you asked for some). Definitions and
-  references are tagged. Click the bold line number to open the file there,
-  or hover it to preview the whole file. Click the file name to open the
-  file at its first hit; copy and the dependency explorer link show when
-  you hover the file.
+- Each hit shows its line with the line number in a gutter and one line of
+  context either side (change it under **Filter**: *Match only* up to ±5;
+  the browser remembers your choice). Definitions and references are
+  tagged. Hover the ↗ icon at the end of a hit to preview the whole file;
+  click the icon to keep the preview open until Escape, a click outside it
+  or its ×. Click the line number to open the file there, or the file name
+  to open it at its first hit; copy and the dependency explorer link show
+  when you hover the file.
 - The file viewer and the preview mark every line the query matches in a
   strip beside the scrollbar; click the strip to jump to the nearest one.
   Click a line number to select that line; **Copy link** copies a URL that

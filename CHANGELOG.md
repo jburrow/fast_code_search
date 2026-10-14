@@ -61,6 +61,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
+- Web UI: the preview icon is back at the end of each match line (#153 had
+  moved the preview to the line number, with nothing to show it). Hovering
+  the icon previews the file; clicking it pins the preview, which then
+  stays open until Escape, a click outside it or its ×, as does clicking
+  or scrolling inside it. The line number opens the file and no longer
+  previews it on hover.
+- Web UI: results show one line of context either side of each hit by
+  default (was the match line only). Filter → Context lines still sets it
+  and is remembered once you pick a value; `context=0` in a link shows the
+  match line only.
 - Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
   keyboard shortcuts, `fcs` and MCP, the main API calls) with links into
   the documentation book. It used to be a hand-kept copy of the API
