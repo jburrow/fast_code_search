@@ -730,3 +730,20 @@ test('scopedSearchUrl: keeps the query and names the direction', () => {
     assert.equal(H.scopedSearchUrl('rdeps', 'src/a b.rs', 'Weight'), '/?q=Weight&rdeps=src%2Fa+b.rs');
     assert.equal(H.scopedSearchUrl('deps', 'x.py', ''), '/?deps=x.py');
 });
+
+test('historyWith: newest first, no duplicates, capped', () => {
+    assert.deepStrictEqual(H.historyWith(['b', 'aa'], 'aa', null, 50), ['aa', 'b']);
+    assert.deepStrictEqual(H.historyWith(['bb', 'cc'], 'dd', null, 2), ['dd', 'bb']);
+    assert.deepStrictEqual(H.historyWith(['bb'], 'x', null, 50), ['bb'], 'one-character queries are not kept');
+});
+
+test('historyWith: a settled query that keeps being edited is replaced, not stacked', () => {
+    // Paused on "Trigr", then finished the word.
+    assert.deepStrictEqual(H.historyWith(['Trigr', 'fn main'], 'TrigramIndex', 'Trigr', 50), ['TrigramIndex', 'fn main']);
+    // Paused, then cut it back.
+    assert.deepStrictEqual(H.historyWith(['TrigramIndex', 'fn main'], 'Trigram', 'TrigramIndex', 50), ['Trigram', 'fn main']);
+    // A different query keeps the settled one.
+    assert.deepStrictEqual(H.historyWith(['Trigr', 'fn main'], 'parse', 'Trigr', 50), ['parse', 'Trigr', 'fn main']);
+    // An Enter-recorded query (replace = null) is never replaced.
+    assert.deepStrictEqual(H.historyWith(['Trigr'], 'TrigramIndex', null, 50), ['TrigramIndex', 'Trigr']);
+});
