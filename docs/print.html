@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-06031358.js";
+            window.path_to_searchindex_js = "searchindex-372cdb3b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -1773,6 +1773,7 @@ included, is part of the text.</p>
 <tr><td><code>deps:app/main.py</code></td><td>Only that file and the files it imports.</td></tr>
 <tr><td><code>case:yes</code></td><td>Match case exactly (the default is case-insensitive).</td></tr>
 <tr><td><code>word:yes</code></td><td>Whole words only.</td></tr>
+<tr><td><code>kind:call</code>, <code>-kind:attribute</code></td><td>References only: keep / drop references of that kind (<code>call</code>, <code>type</code>, <code>value</code>, <code>attribute</code>). See <a href="#reference-kinds-kind">Reference kinds</a>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -1784,6 +1785,32 @@ whole words with an argument: <code>file:</code> alone, or <code>url=file:x</cod
 Operators between words join the words with one space, so <code>fn file:src/ main</code> searches for <code>fn main</code> under <code>src/</code>. The ends of the query are
 trimmed; spaces inside it are kept. To search for operator-looking text
 such as <code>file:x</code>, use a regex.</p>
+<h2 id="reference-kinds-kind"><a class="header" href="#reference-kinds-kind">Reference kinds: <code>kind:</code></a></h2>
+<p>Each reference is one of four kinds, shown on the result (in the web
+UI’s tag, as <code>[call]</code> in <code>fcs refs</code>, as <code>reference_kind</code> in the API’s
+JSON and as <code>[reference: call]</code> in MCP):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Kind</th><th>Is</th><th>Example, for <code>size</code> or <code>Item</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>call</code></td><td>a call, or a decorator</td><td><code>x.size()</code>, <code>@cached</code></td></tr>
+<tr><td><code>type</code></td><td>a type or class mention: an annotation, a base class, <code>new T</code>, an implemented interface</td><td><code>def f(x: Item)</code>, <code>class A(Item)</code></td></tr>
+<tr><td><code>value</code></td><td>a function or class used as a value: passed, assigned, compared, returned</td><td><code>isinstance(x, Item)</code>, <code>cb = size</code></td></tr>
+<tr><td><code>attribute</code></td><td>an attribute that is read, without a call: a property, a method passed along</td><td><code>n = other.size</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>refs size kind:call</code> keeps the calls only; <code>kind:call,type</code> (or
+<code>kind:call kind:type</code>) keeps either; <code>-kind:attribute</code> keeps everything
+but attribute reads, the usual way to leave out properties of other
+classes that share the name. <code>attr</code> is short for <code>attribute</code>. Which kinds a
+language records is on <a href="#reference-support">Reference support</a>:
+<code>value</code> and <code>attribute</code> are Python only for now, and every other
+language’s references are calls and types. <code>kind:</code> with a text or
+symbol search is an error rather than being ignored; a regex is not
+parsed for operators.</p>
 <h2 id="search-by-imports-deps-and-rdeps"><a class="header" href="#search-by-imports-deps-and-rdeps">Search by imports: <code>deps:</code> and <code>rdeps:</code></a></h2>
 <p>These limit a search to the files the import graph connects to one file,
 so the question “where is this used, among the code a change to this file
@@ -1872,7 +1899,7 @@ case”).</p>
 </table>
 </div>
 <p>References are exact and case-sensitive on the identifier; <code>file:</code> and
-<code>lang:</code> still narrow the files. Which positions count as a reference
+<code>lang:</code> still narrow the files, and <code>kind:</code> the kinds of use. Which positions count as a reference
 differs by language, and C and C++ record none: see
 <a href="#reference-support">Reference support</a>.</p>
 <h2 id="regex-notes"><a class="header" href="#regex-notes">Regex notes</a></h2>
@@ -2168,7 +2195,9 @@ even though a text search finds it. When references look incomplete,
 search the plain text as well.</li>
 </ul>
 <p>A definition is never its own reference, and references are exact and
-case-sensitive on the identifier.</p>
+case-sensitive on the identifier. Each reference is a <code>call</code>, <code>type</code>, <code>value</code> or <code>attribute</code>,
+and <code>kind:</code> filters on it (see
+<a href="#reference-kinds-kind">Reference kinds</a>).</p>
 <p>If fcs misses a form listed as found, that is a bug; if it misses one
 listed as not found, that is a known gap.</p>
 <h2 id="at-a-glance"><a class="header" href="#at-a-glance">At a glance</a></h2>
@@ -2241,6 +2270,11 @@ which resolves each name to its definition (see the end of the page).</p>
 </tbody>
 </table>
 </div>
+<p>Each Python reference has a kind: decorators and calls are <code>call</code>;
+annotations, base classes and exceptions <code>type</code>; functions and classes
+used as values <code>value</code>; attribute reads <code>attribute</code>. <code>-kind:attribute</code>
+leaves out property reads (see
+<a href="#reference-kinds-kind">Reference kinds</a>).</p>
 <p>Because references are names, <code>fcs refs get</code> also returns every <code>.get(…)</code>
 on a dictionary, and <code>fcs refs status_code</code> returns reads of every
 attribute called <code>status_code</code>, whichever class it belongs to. On the
@@ -2374,13 +2408,13 @@ is counted.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Repository</th><th>Found</th><th>Precision</th><th>Before October 2026</th></tr>
+<tr><th>Repository</th><th>Found</th><th>Precision</th><th>With <code>-kind:attribute</code></th><th>Before October 2026</th></tr>
 </thead>
 <tbody>
-<tr><td>pallets/flask</td><td>98.1%</td><td>87.3%</td><td>57.4% found, 90.9% precision</td></tr>
-<tr><td>psf/requests</td><td>100%</td><td>90.2%</td><td>74.4%, 88.9%</td></tr>
-<tr><td>pallets/click</td><td>97.1%</td><td>91.3%</td><td>65.5%, 93.6%</td></tr>
-<tr><td>encode/httpx</td><td>99.5%</td><td>80.5%</td><td>59.0%, 86.6%</td></tr>
+<tr><td>pallets/flask</td><td>98.1%</td><td>87.3%</td><td>88.4% found, 93.8% precision</td><td>57.4% found, 90.9% precision</td></tr>
+<tr><td>psf/requests</td><td>100%</td><td>90.2%</td><td>93.6%, 90.9%</td><td>74.4%, 88.9%</td></tr>
+<tr><td>pallets/click</td><td>97.1%</td><td>91.3%</td><td>92.7%, 95.6%</td><td>65.5%, 93.6%</td></tr>
+<tr><td>encode/httpx</td><td>99.5%</td><td>80.5%</td><td>77.9%, 90.1%</td><td>59.0%, 86.6%</td></tr>
 </tbody>
 </table>
 </div>
@@ -2389,6 +2423,7 @@ fails if a change misses or adds more references than that.</p>
 <pre><code class="language-sh">pip install jedi==0.20.1
 python3 src/check/oracle/py_refs.py bench-corpus/flask &gt; flask.json
 cargo run --release --example ref_oracle -- --oracle flask.json
+cargo run --release --example ref_oracle -- --oracle flask.json --drop-kind attribute
 </code></pre>
 <p>The report groups misses and extras by the syntax around the name, which
 says which row of the Python table each one is.</p>
@@ -2433,7 +2468,7 @@ Usage: fcs [OPTIONS] &lt;COMMAND&gt;
 
 Commands:
   search   Search file contents (the default; `fcs QUERY` works too)
-  refs     Find references (call sites, type mentions) of an identifier
+  refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
   symbols  Search symbol definitions (functions, types, classes, ...) only
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
@@ -2608,7 +2643,7 @@ Options:
           Print help (see a summary with '-h')
 </code></pre>
 <h2 id="fcs-refs---help"><a class="header" href="#fcs-refs---help"><code>fcs refs --help</code></a></h2>
-<pre><code class="language-text">Find references (call sites, type mentions) of an identifier
+<pre><code class="language-text">Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
 
 Usage: fcs refs [OPTIONS] &lt;QUERY&gt;...
 
@@ -4438,6 +4473,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Reference kinds: each reference is a <code>call</code>, <code>type</code>, <code>value</code> or
+<code>attribute</code>, shown on the result (web UI tag, <code>fcs refs</code> <code>[call]</code>, API
+<code>reference_kind</code>, MCP <code>[reference: call]</code>), and the <code>kind:</code> operator
+filters on it: <code>refs size kind:call</code>, <code>-kind:attribute</code> to leave out
+property reads. The index file format is unchanged (the kind shares the
+column’s word); symbols re-extract once on the first start.</li>
 <li>Search by imports: <code>rdeps:PATH</code> limits a search to that file and the
 files that import it, <code>deps:PATH</code> to the file and what it imports
 (<code>:N</code> hops, <code>:*</code> for any distance, <code>-rdeps:</code> / <code>-deps:</code> to leave them

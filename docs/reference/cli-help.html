@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-06031358.js";
+            window.path_to_searchindex_js = "../searchindex-372cdb3b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -196,7 +196,7 @@ Usage: fcs [OPTIONS] &lt;COMMAND&gt;
 
 Commands:
   search   Search file contents (the default; `fcs QUERY` works too)
-  refs     Find references (call sites, type mentions) of an identifier
+  refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
   symbols  Search symbol definitions (functions, types, classes, ...) only
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
@@ -371,7 +371,7 @@ Options:
           Print help (see a summary with '-h')
 </code></pre>
 <h2 id="fcs-refs---help"><a class="header" href="#fcs-refs---help"><code>fcs refs --help</code></a></h2>
-<pre><code class="language-text">Find references (call sites, type mentions) of an identifier
+<pre><code class="language-text">Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
 
 Usage: fcs refs [OPTIONS] &lt;QUERY&gt;...
 

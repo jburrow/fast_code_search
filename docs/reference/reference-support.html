@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-06031358.js";
+            window.path_to_searchindex_js = "../searchindex-372cdb3b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -199,7 +199,9 @@ even though a text search finds it. When references look incomplete,
 search the plain text as well.</li>
 </ul>
 <p>A definition is never its own reference, and references are exact and
-case-sensitive on the identifier.</p>
+case-sensitive on the identifier. Each reference is a <code>call</code>, <code>type</code>, <code>value</code> or <code>attribute</code>,
+and <code>kind:</code> filters on it (see
+<a href="query-syntax.html#reference-kinds-kind">Reference kinds</a>).</p>
 <p>If fcs misses a form listed as found, that is a bug; if it misses one
 listed as not found, that is a known gap.</p>
 <h2 id="at-a-glance"><a class="header" href="#at-a-glance">At a glance</a></h2>
@@ -272,6 +274,11 @@ which resolves each name to its definition (see the end of the page).</p>
 </tbody>
 </table>
 </div>
+<p>Each Python reference has a kind: decorators and calls are <code>call</code>;
+annotations, base classes and exceptions <code>type</code>; functions and classes
+used as values <code>value</code>; attribute reads <code>attribute</code>. <code>-kind:attribute</code>
+leaves out property reads (see
+<a href="query-syntax.html#reference-kinds-kind">Reference kinds</a>).</p>
 <p>Because references are names, <code>fcs refs get</code> also returns every <code>.get(…)</code>
 on a dictionary, and <code>fcs refs status_code</code> returns reads of every
 attribute called <code>status_code</code>, whichever class it belongs to. On the
@@ -405,13 +412,13 @@ is counted.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Repository</th><th>Found</th><th>Precision</th><th>Before October 2026</th></tr>
+<tr><th>Repository</th><th>Found</th><th>Precision</th><th>With <code>-kind:attribute</code></th><th>Before October 2026</th></tr>
 </thead>
 <tbody>
-<tr><td>pallets/flask</td><td>98.1%</td><td>87.3%</td><td>57.4% found, 90.9% precision</td></tr>
-<tr><td>psf/requests</td><td>100%</td><td>90.2%</td><td>74.4%, 88.9%</td></tr>
-<tr><td>pallets/click</td><td>97.1%</td><td>91.3%</td><td>65.5%, 93.6%</td></tr>
-<tr><td>encode/httpx</td><td>99.5%</td><td>80.5%</td><td>59.0%, 86.6%</td></tr>
+<tr><td>pallets/flask</td><td>98.1%</td><td>87.3%</td><td>88.4% found, 93.8% precision</td><td>57.4% found, 90.9% precision</td></tr>
+<tr><td>psf/requests</td><td>100%</td><td>90.2%</td><td>93.6%, 90.9%</td><td>74.4%, 88.9%</td></tr>
+<tr><td>pallets/click</td><td>97.1%</td><td>91.3%</td><td>92.7%, 95.6%</td><td>65.5%, 93.6%</td></tr>
+<tr><td>encode/httpx</td><td>99.5%</td><td>80.5%</td><td>77.9%, 90.1%</td><td>59.0%, 86.6%</td></tr>
 </tbody>
 </table>
 </div>
@@ -420,6 +427,7 @@ fails if a change misses or adds more references than that.</p>
 <pre><code class="language-sh">pip install jedi==0.20.1
 python3 src/check/oracle/py_refs.py bench-corpus/flask &gt; flask.json
 cargo run --release --example ref_oracle -- --oracle flask.json
+cargo run --release --example ref_oracle -- --oracle flask.json --drop-kind attribute
 </code></pre>
 <p>The report groups misses and extras by the syntax around the name, which
 says which row of the Python table each one is.</p>

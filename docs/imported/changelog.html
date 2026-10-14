@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-06031358.js";
+            window.path_to_searchindex_js = "../searchindex-372cdb3b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -188,6 +188,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Reference kinds: each reference is a <code>call</code>, <code>type</code>, <code>value</code> or
+<code>attribute</code>, shown on the result (web UI tag, <code>fcs refs</code> <code>[call]</code>, API
+<code>reference_kind</code>, MCP <code>[reference: call]</code>), and the <code>kind:</code> operator
+filters on it: <code>refs size kind:call</code>, <code>-kind:attribute</code> to leave out
+property reads. The index file format is unchanged (the kind shares the
+column’s word); symbols re-extract once on the first start.</li>
 <li>Search by imports: <code>rdeps:PATH</code> limits a search to that file and the
 files that import it, <code>deps:PATH</code> to the file and what it imports
 (<code>:N</code> hops, <code>:*</code> for any distance, <code>-rdeps:</code> / <code>-deps:</code> to leave them
