@@ -1019,6 +1019,27 @@ function scopedSearchUrl(kind, path, query) {
     return '/?' + params.toString();
 }
 
+// ---------- Search history ----------
+
+/**
+ * The history list after recording `query` (newest first, no duplicates,
+ * at most `max`). `replace` is a query recorded earlier without an Enter
+ * (the live search settled on it); when the new query extends it or cuts
+ * it back (still typing), it takes that entry's place instead of adding
+ * a near-duplicate, so pausing mid-word doesn't leave "Trigr" behind.
+ * @param {string[]} history
+ * @param {string} query - trimmed
+ * @param {string|null} replace
+ * @param {number} max
+ * @returns {string[]}
+ */
+function historyWith(history, query, replace, max) {
+    if (!query || query.length < 2) return history.slice(0, max);
+    const editing = replace && replace !== query && (query.startsWith(replace) || replace.startsWith(query));
+    const rest = history.filter(q => q !== query && !(editing && q === replace));
+    return [query, ...rest].slice(0, max);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         groupHitsLabel,
@@ -1077,5 +1098,6 @@ if (typeof module !== 'undefined' && module.exports) {
         pathFilterParam,
         scopeLabel,
         scopedSearchUrl,
+        historyWith,
     };
 }

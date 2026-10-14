@@ -216,9 +216,30 @@ function loadHistory() {
     return loadSearchHistory(LS_HISTORY_KEY);
 }
 
-function saveToHistory(query) {
-    saveSearchHistory(LS_HISTORY_KEY, query, MAX_HISTORY);
+// The last query recorded because the live search settled on it (no
+// Enter); a later edit of it replaces it rather than piling up prefixes.
+let _settledQuery = null;
+// How long the box must sit unchanged before a typed search counts.
+const HISTORY_SETTLE_MS = 2000;
+
+function saveToHistory(query, { settled = false } = {}) {
+    try {
+        const next = historyWith(loadHistory(), query, _settledQuery, MAX_HISTORY);
+        localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(next));
+    } catch (_) { /* storage unavailable */ }
+    _settledQuery = settled ? query : null;
 }
+
+/**
+ * Searches run as you type, so most never see an Enter. Record the query
+ * once it settles: the box sits unchanged for HISTORY_SETTLE_MS, or focus
+ * leaves it (into the results, a preview, the filters).
+ */
+function recordSettledQuery() {
+    const q = queryInput.value.trim();
+    if (q && q !== loadHistory()[0]) saveToHistory(q, { settled: true });
+}
+const settleHistory = debounce(recordSettledQuery, HISTORY_SETTLE_MS);
 
 function clearHistory() {
     clearSearchHistory(LS_HISTORY_KEY);
@@ -1962,6 +1983,7 @@ function optionChanged() {
  */
 function submitSearch() {
     debouncedSearch.cancel();
+    settleHistory.cancel();
     const q = queryInput.value.trim();
     if (q) saveToHistory(q);
     performSearch({ trigger: 'submit' });
@@ -2892,6 +2914,7 @@ function runInitialSearchFromUrl() {
 
 queryInput.addEventListener('input', (e) => {
     debouncedSearch();
+    settleHistory();
     showHistoryDropdown(e.target.value.trim());
 });
 queryInput.addEventListener('keydown', (e) => {
@@ -2914,6 +2937,10 @@ queryInput.addEventListener('keydown', (e) => {
         // Explicit submit: cancels the pending debounce and records history.
         submitSearch();
     }
+});
+queryInput.addEventListener('blur', () => {
+    settleHistory.cancel();
+    recordSettledQuery();
 });
 queryInput.addEventListener('focus', () => {
     showHistoryDropdown(queryInput.value.trim());

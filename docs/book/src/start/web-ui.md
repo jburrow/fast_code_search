@@ -10,6 +10,9 @@ the binary.
 
 - Type and press Enter (or wait: the page searches as you type after a short
   pause). `Ctrl`/`Cmd`+`K` focuses the box from anywhere; `/` does too.
+  Focusing the box lists recent searches (kept in this browser): one
+  counts once you press Enter, pause for two seconds or move on to the
+  results.
 - **REGEX**, **SYMBOLS** and **REFERENCES** switch modes; **FILTER** opens
   page size, ranking mode, context lines and the path filters (**SEARCH ONLY
   IN** and **SKIP PATHS**: globs separated by `,` or `;`). While a path
