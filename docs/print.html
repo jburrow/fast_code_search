@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b3575302.js";
+            window.path_to_searchindex_js = "searchindex-d8de7e4f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ff6984d8.js"></script>
@@ -646,7 +646,8 @@ Its <strong>Service</strong> card says whether the web UI and gRPC started, wher
 index is saved (or that it is memory only or read-only), and any startup
 or storage problems. When there are some, the search page shows “Server
 started with N problems” with a link to it.</li>
-<li><strong>Docs</strong> (<code>/docs.html</code>): the REST reference with live examples.</li>
+<li><strong>Docs</strong> (<code>/docs.html</code>): a one-page cheat sheet (query operators, regex,
+keys, <code>fcs</code> and MCP, the main API calls) with links into this book.</li>
 </ul>
 <p>The UI talks to the same <code>/api/search</code> you can call yourself, so anything
 it shows is available to scripts.</p>
@@ -3793,6 +3794,11 @@ tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li>Web UI: the Docs page is a one-page cheat sheet (query operators, regex,
+keyboard shortcuts, <code>fcs</code> and MCP, the main API calls) with links into
+the documentation book. It used to be a hand-kept copy of the API
+reference that had drifted from the book. It shows the server’s version
+and uses the server’s own address in the MCP example.</li>
 <li>Web UI: denser results, about twice as many hits per screen. A hit is its
 code with the line number in a gutter instead of a header row above it;
 the kind shows as a small tag on definitions and references; the line
