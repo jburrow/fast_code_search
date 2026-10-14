@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-accb8136.js";
+            window.path_to_searchindex_js = "../searchindex-2d889c6e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-5204d8cd.js"></script>
+        <script src="../toc-84d94ec6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Book page “Reference support”: what the References mode finds in each
+language, and what it misses. C and C++ record no references; Python
+records calls only; TypeScript, Java and C# miss many type positions.</li>
 <li>Imports that resolve to no indexed file are counted, and the ones written
 as a path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>), which point at
 a broken import or an unsupported form, are called out: in the dependency

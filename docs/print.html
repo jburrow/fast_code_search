@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-accb8136.js";
+            window.path_to_searchindex_js = "searchindex-2d889c6e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-5204d8cd.js"></script>
+        <script src="toc-84d94ec6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -995,7 +995,7 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tr><td>“Searched 2,000 of N files”</td><td>Fast ranking opened only the most likely files</td><td>Click SEARCH ALL FILES (<code>max_files</code> on the API, <code>fcs --max-files</code>); raise <code>fast_rank_files</code> to change the default</td></tr>
 <tr><td>A regex finds nothing that plain search finds</td><td><code>{ ( .</code> are syntax; outside the web UI a regex is also case-sensitive</td><td>Escape special characters with <code>\</code>, use <code>\s*</code> for spacing, start with <code>(?i)</code> (or <code>fcs -e -i</code>); the web UI’s suggestions under an empty result do this for you</td></tr>
 <tr><td>A regex is slow</td><td>No required literal, so every file is scanned</td><td>Anchor it with a literal (<code>fn\s+main</code> rather than <code>\w+\s+\w+</code>)</td></tr>
-<tr><td><code>references</code> finds nothing for a name</td><td>Language without call-site capture, or the index predates extraction changes</td><td>Rust, Python, JavaScript, TypeScript capture calls; the index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
+<tr><td><code>references</code> finds nothing, or misses a use, for a name</td><td>The use is in a position that language does not record (C and C++ record none), or the index predates extraction changes</td><td><a href="#reference-support">Reference support</a> lists what each language finds; search the plain text for the rest. The index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>
 <tr><td><code>gRPC API NOT started</code> / <code>Web UI ... NOT started</code> at startup</td><td>Port already in use by another instance (perhaps started by hand)</td><td>The server keeps running on the other API; <code>ss -ltnp | grep :PORT</code> finds the holder. Stop it, change <code>address</code> / <code>web_address</code>, or set <code>enable_grpc = false</code></td></tr>
 <tr><td>Nothing indexed, <code>paths_count=0</code></td><td>No config file found: without <code>--config</code> only <code>$FCS_CONFIG</code>, <code>./fast_code_search.toml</code> and <code>~/.config/fast_code_search/config.toml</code> are read</td><td>Pass <code>--config FILE</code>; the <code>Configuration source</code> log line says which file was used. Add <code>--verbose</code> (or <code>RUST_LOG=debug</code>) to see each path and ignore file</td></tr>
 <tr><td><code>Index NOT writable: another fast_code_search server is already using this index</code></td><td>Two servers share one <code>index_path</code> (often an old one still running)</td><td>The log names the other PID and ports. Stop it, or give each config its own <code>index_path</code>; until then this server loads the index read-only</td></tr>
@@ -1793,7 +1793,9 @@ case”).</p>
 </table>
 </div>
 <p>References are exact and case-sensitive on the identifier; <code>file:</code> and
-<code>lang:</code> still narrow the files.</p>
+<code>lang:</code> still narrow the files. Which positions count as a reference
+differs by language, and C and C++ record none: see
+<a href="#reference-support">Reference support</a>.</p>
 <h2 id="regex-notes"><a class="header" href="#regex-notes">Regex notes</a></h2>
 <ul>
 <li>Literals in the pattern pre-filter through the trigram index; a pattern
@@ -2059,6 +2061,233 @@ cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json
 <a href="#on-your-own-code-fcs-check">Correctness against ripgrep</a>).
 It runs whichever oracles are installed: Python’s needs <code>pip install grimp</code>, TypeScript’s needs <code>typescript</code> in the repository’s
 <code>node_modules</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reference-support"><a class="header" href="#reference-support">Reference support</a></h1>
+<p>What the <strong>References</strong> mode (REFERENCES in the web UI, <code>fcs refs</code>,
+<code>references=true</code>, MCP <code>mode: "references"</code>) finds, per language.</p>
+<p>References are search-based, not compiler-based. While indexing, each file
+is parsed with tree-sitter, and the grammar’s tags query marks some names
+as references: call sites, type mentions, <code>new</code> expressions, base classes.
+A reference search returns the lines where the identifier appears in one of
+those positions. Two consequences hold for every language:</p>
+<ul>
+<li><strong>Names, not symbols.</strong> <code>fcs refs parse</code> returns every call of anything
+called <code>parse</code>, whichever class or module it belongs to. Nothing tells two
+functions with the same name apart.</li>
+<li><strong>Only the listed positions.</strong> A use in any other position (a function
+passed as a value, an import line, a property read) is not a reference,
+even though a text search finds it. When references look incomplete,
+search the plain text as well.</li>
+</ul>
+<p>A definition is never its own reference, and references are exact and
+case-sensitive on the identifier.</p>
+<p>If fcs misses a form listed as found, that is a bug; if it misses one
+listed as not found, that is a known gap.</p>
+<h2 id="at-a-glance"><a class="header" href="#at-a-glance">At a glance</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Calls</th><th>Method calls</th><th>Type mentions</th><th><code>new</code> / constructors</th><th>Base classes</th><th>Not found (main gaps)</th></tr>
+</thead>
+<tbody>
+<tr><td>Rust</td><td>yes</td><td>yes</td><td>yes</td><td>n/a</td><td><code>impl Trait for T</code></td><td>anything inside a macro’s arguments, the <code>Type</code> in <code>Type::new()</code>, enum variants (<code>Item::A</code>), <code>use</code> lines, functions as values</td></tr>
+<tr><td>Python</td><td>yes</td><td>yes</td><td><strong>no</strong></td><td>yes (a call)</td><td><strong>no</strong></td><td>type annotations, base classes, bare <code>@decorator</code>, functions as values, attribute reads, imports</td></tr>
+<tr><td>JavaScript</td><td>yes</td><td>yes</td><td>n/a</td><td>yes</td><td><strong>no</strong></td><td><code>extends</code>, <code>instanceof</code>, functions as values, property reads, imports</td></tr>
+<tr><td>TypeScript</td><td>yes</td><td>yes</td><td>partly</td><td>yes</td><td><strong>no</strong></td><td><code>Foo[]</code>, <code>Foo&lt;T&gt;</code>, <code>A | B</code>, <code>ns.Type</code>, type arguments, <code>type</code> aliases, <code>extends</code> and <code>implements</code>, <code>instanceof</code>, imports</td></tr>
+<tr><td>Go</td><td>yes</td><td>yes</td><td>yes</td><td>composite literals (<code>Item{}</code>)</td><td>n/a</td><td>functions as values (<code>Run: helper</code>, <code>cb := helper</code>), field reads, imports</td></tr>
+<tr><td>Java</td><td>yes</td><td>yes</td><td><strong>partly</strong></td><td>yes</td><td>yes</td><td>field, parameter, local and generic types, annotations, <code>Foo.class</code>, <code>Foo::bar</code>, the class in <code>Util.f()</code>, casts, imports</td></tr>
+<tr><td>C#</td><td><strong>member calls only</strong></td><td>yes</td><td>partly</td><td>yes</td><td>yes</td><td>plain calls <code>Helper()</code>, generic calls <code>Make&lt;T&gt;()</code>, parameter and generic types, attributes, <code>typeof</code>, casts, the class in <code>Util.F()</code>, <code>using</code></td></tr>
+<tr><td>C</td><td><strong>no</strong></td><td><strong>no</strong></td><td><strong>no</strong></td><td>n/a</td><td>n/a</td><td>everything: no references are recorded</td></tr>
+<tr><td>C++</td><td><strong>no</strong></td><td><strong>no</strong></td><td><strong>no</strong></td><td><strong>no</strong></td><td><strong>no</strong></td><td>everything: no references are recorded</td></tr>
+<tr><td>Ruby</td><td>yes</td><td>yes</td><td>constants</td><td><code>Item.new</code></td><td>yes</td><td>see below: also returns local variables</td></tr>
+<tr><td>PHP</td><td><strong>no</strong> (plain <code>f()</code>)</td><td>yes</td><td><strong>no</strong></td><td><strong>no</strong></td><td><code>implements</code> only</td><td>plain function calls, <code>new Item()</code>, <code>extends</code>, parameter and return types, <code>use</code></td></tr>
+<tr><td>Bash and other languages</td><td>no</td><td>no</td><td>no</td><td>no</td><td>no</td><td>not parsed for references</td></tr>
+</tbody>
+</table>
+</div>
+<p>“Partly” is spelled out in the language’s section below.</p>
+<h2 id="rust-rs-1"><a class="header" href="#rust-rs-1">Rust (<code>.rs</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>helper(x)</code>, <code>self.helper()</code>, <code>crate::a::helper()</code>, <code>Type::new()</code> (the <code>new</code>)</td><td>yes</td></tr>
+<tr><td><code>helper::&lt;T&gt;()</code>, <code>a::helper::&lt;T&gt;()</code></td><td>yes</td></tr>
+<tr><td>Types in fields, parameters, returns and generics (<code>Result&lt;Item, Error&gt;</code>), <code>impl Trait for S</code></td><td>yes</td></tr>
+<tr><td>The <code>Type</code> in <code>Type::new()</code> or <code>Item::default()</code></td><td><strong>no</strong></td></tr>
+<tr><td>Enum variants and paths in patterns (<code>Item::A</code>)</td><td><strong>no</strong></td></tr>
+<tr><td>Anything inside a macro call (<code>println!("{}", helper(x))</code>, <code>assert!(…)</code>)</td><td><strong>no</strong>: macro arguments are not parsed</td></tr>
+<tr><td><code>use crate::a::{Engine, helper};</code></td><td><strong>no</strong></td></tr>
+<tr><td>Functions as values (<code>let cb = helper;</code>, <code>.map(helper)</code>)</td><td><strong>no</strong></td></tr>
+<tr><td>Field reads (<code>self.prop</code>)</td><td><strong>no</strong></td></tr>
+<tr><td><code>#[derive(Debug)]</code></td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>The macro gap matters most in tests: calls inside <code>assert_eq!(…)</code> are not
+references.</p>
+<h2 id="python-py-pyi-pyw-1"><a class="header" href="#python-py-pyi-pyw-1">Python (<code>.py</code>, <code>.pyi</code>, <code>.pyw</code>)</a></h2>
+<p>Python records <strong>calls only</strong>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>helper(x)</code>, <code>self.helper()</code>, <code>pkg.util.do_thing()</code>, <code>Foo()</code></td><td>yes</td></tr>
+<tr><td><code>@app.route("/x")</code> (the <code>route</code>)</td><td>yes, it is a call</td></tr>
+<tr><td>Bare <code>@decorator</code></td><td><strong>no</strong></td></tr>
+<tr><td>Base classes: <code>class Foo(Base, Mixin)</code></td><td><strong>no</strong></td></tr>
+<tr><td>Type annotations: <code>item: Item</code>, <code>-&gt; Result</code>, <code>list[Item]</code></td><td><strong>no</strong></td></tr>
+<tr><td>Classes and functions passed as values: <code>isinstance(x, Item)</code>, <code>cb = helper</code>, <code>return Result</code></td><td><strong>no</strong></td></tr>
+<tr><td>Attribute reads: <code>self.prop</code>, <code>obj.CONSTANT</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>import</code>, <code>from … import</code></td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="javascript-js-jsx-mjs-cjs"><a class="header" href="#javascript-js-jsx-mjs-cjs">JavaScript (<code>.js</code>, <code>.jsx</code>, <code>.mjs</code>, <code>.cjs</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>helper(x)</code>, <code>this.helper()</code>, <code>z.string()</code></td><td>yes</td></tr>
+<tr><td><code>new Foo()</code></td><td>yes</td></tr>
+<tr><td><code>require("x")</code></td><td>no, on purpose</td></tr>
+<tr><td><code>class Foo extends Base</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>x instanceof Item</code></td><td><strong>no</strong></td></tr>
+<tr><td>Functions as values (<code>const cb = helper</code>, <code>arr.map(helper)</code>)</td><td><strong>no</strong></td></tr>
+<tr><td>Property reads (<code>this.prop</code>) and object keys</td><td><strong>no</strong></td></tr>
+<tr><td><code>import { helper } from "./x"</code></td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="typescript-ts-mts-cts-tsx"><a class="header" href="#typescript-ts-mts-cts-tsx">TypeScript (<code>.ts</code>, <code>.mts</code>, <code>.cts</code>, <code>.tsx</code>)</a></h2>
+<p>Everything JavaScript finds, plus some type mentions:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td>A plain type in an annotation: <code>item: Item</code>, <code>): Result</code></td><td>yes</td></tr>
+<tr><td>Arrays, generics and unions: <code>Item[]</code>, <code>Map&lt;string, Item&gt;</code>, <code>Item | null</code></td><td><strong>no</strong></td></tr>
+<tr><td>Qualified types: <code>z.ZodType</code>, <code>ns.Item</code></td><td><strong>no</strong></td></tr>
+<tr><td>Type arguments: <code>generic&lt;Item&gt;(x)</code>, <code>Promise&lt;Item&gt;</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>type T = Item &amp; Other</code>, <code>interface A extends B</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>class Foo extends Base implements Iface</code></td><td><strong>no</strong></td></tr>
+<tr><td>Decorators</td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="go-go"><a class="header" href="#go-go">Go (<code>.go</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>helper(x)</code>, <code>s.helper()</code>, <code>pkg.DoThing()</code></td><td>yes</td></tr>
+<tr><td>Types anywhere (<code>e *Engine</code>, <code>[]Item</code>, <code>map[string]Item</code>, <code>Item{}</code>)</td><td>yes, built-in types such as <code>string</code> and <code>error</code> too</td></tr>
+<tr><td>Functions as values: <code>cb := helper</code>, <code>Command{Run: helper}</code>, <code>sort.Slice(x, less)</code></td><td><strong>no</strong></td></tr>
+<tr><td>Field reads (<code>s.prop</code>)</td><td><strong>no</strong></td></tr>
+<tr><td>The package in <code>pkg.DoThing()</code>, <code>import</code> lines</td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="java-java"><a class="header" href="#java-java">Java (<code>.java</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>helper(x)</code>, <code>this.helper()</code>, <code>Util.doThing()</code> (the <code>doThing</code>)</td><td>yes</td></tr>
+<tr><td><code>new Item()</code></td><td>yes</td></tr>
+<tr><td><code>extends Base</code>, <code>implements Iface</code></td><td>yes</td></tr>
+<tr><td>Field, parameter, return, local and generic types: <code>private Engine e;</code>, <code>run(Engine e, List&lt;Item&gt; xs)</code>, <code>Item x</code></td><td><strong>no</strong></td></tr>
+<tr><td>The class in <code>Util.doThing()</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>Item.class</code>, <code>S::helper</code>, casts <code>(Result) x</code></td><td><strong>no</strong></td></tr>
+<tr><td>Annotations (<code>@Annot</code>)</td><td><strong>no</strong></td></tr>
+<tr><td><code>import</code> lines</td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="c-cs"><a class="header" href="#c-cs">C# (<code>.cs</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>this.Helper()</code>, <code>Util.DoThing()</code> (the <code>DoThing</code>)</td><td>yes</td></tr>
+<tr><td><code>new Item()</code>, <code>Item x = …</code>, field types</td><td>yes</td></tr>
+<tr><td><code>class S : Base, IFace</code></td><td>yes</td></tr>
+<tr><td>Plain calls: <code>Helper(e)</code></td><td><strong>no</strong></td></tr>
+<tr><td>Generic calls and generic types: <code>Make&lt;Item&gt;()</code>, <code>List&lt;Item&gt;</code></td><td><strong>no</strong></td></tr>
+<tr><td>Parameter and return types</td><td><strong>no</strong></td></tr>
+<tr><td>The class in <code>Util.DoThing()</code></td><td><strong>no</strong></td></tr>
+<tr><td>Attributes (<code>[Serializable]</code>), <code>typeof(Item)</code>, casts</td><td><strong>no</strong></td></tr>
+<tr><td><code>using</code> lines</td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="c-and-c"><a class="header" href="#c-and-c">C and C++</a></h2>
+<p>No references are recorded. The C and C++ grammars’ tags queries define
+symbols only, so <code>fcs refs</code> finds nothing in <code>.c</code>, <code>.h</code>, <code>.cpp</code>, <code>.cc</code>,
+<code>.hpp</code> and the other C and C++ extensions. Use a plain or whole-word text
+search instead.</p>
+<h2 id="ruby-rb-rake-gemspec"><a class="header" href="#ruby-rb-rake-gemspec">Ruby (<code>.rb</code>, <code>.rake</code>, <code>.gemspec</code>)</a></h2>
+<p>Calls, method calls, constants (<code>Item.new</code>, <code>Util.do_thing</code>), base classes
+and <code>include Mixin</code> are found. Ruby’s tags query is meant to skip local
+variables, but fcs does not apply that filter, so <strong>local variables and
+parameters are returned as references too</strong> (<code>x</code> in <code>x = Item.new</code>).</p>
+<h2 id="php-php-phtml"><a class="header" href="#php-php-phtml">PHP (<code>.php</code>, <code>.phtml</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>Found</th></tr>
+</thead>
+<tbody>
+<tr><td><code>$this-&gt;helper()</code>, <code>Util::doThing()</code> (the <code>doThing</code>)</td><td>yes</td></tr>
+<tr><td><code>implements IFace</code></td><td>yes</td></tr>
+<tr><td>Plain calls: <code>helper($e)</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>new Item()</code></td><td><strong>no</strong></td></tr>
+<tr><td><code>extends Base</code>, parameter and return types, <code>use</code> lines</td><td><strong>no</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="how-complete-this-is"><a class="header" href="#how-complete-this-is">How complete this is</a></h2>
+<p>There is no reference oracle yet (the import graph has one, see
+<a href="#dependency-graph-support">Dependency graph support</a>). Each form above is checked
+with a small file per language. To give a sense of scale, a one-off count
+in October 2026 took every function, method and type defined in a public
+repository and counted how many of its uses in code fall on a reference.
+The count is rough: some of those uses are not references at all (a
+local variable that shares a type’s name, an import line).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Language</th><th>Repository</th><th>Uses found as references</th></tr>
+</thead>
+<tbody>
+<tr><td>Go</td><td>spf13/cobra</td><td>90%</td></tr>
+<tr><td>Rust</td><td>fast_code_search <code>src/</code></td><td>53%</td></tr>
+<tr><td>Python</td><td>psf/requests</td><td>53%</td></tr>
+<tr><td>Java</td><td>google/gson</td><td>52%</td></tr>
+<tr><td>C#</td><td>JamesNK/Newtonsoft.Json</td><td>50%</td></tr>
+<tr><td>Python</td><td>pallets/flask</td><td>44%</td></tr>
+<tr><td>TypeScript</td><td>colinhacks/zod</td><td>40%</td></tr>
+<tr><td>TypeScript</td><td>sindresorhus/ky</td><td>38%</td></tr>
+<tr><td>C</td><td>DaveGamble/cJSON</td><td>0%</td></tr>
+<tr><td>C++</td><td>fmtlib/fmt</td><td>0%</td></tr>
+</tbody>
+</table>
+</div>
+<p>Closing these gaps is on the <a href="#roadmap">roadmap</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="fcs-command-line"><a class="header" href="#fcs-command-line"><code>fcs</code> command line</a></h1>
 <!-- Generated by scripts/docs/generate-reference.sh from `fcs --help`; do not edit. -->
@@ -3281,7 +3510,8 @@ name. <code>rank=full</code> reads every candidate.</p>
 substrings, with variables and constants slightly below types and
 functions of the same name. Reference search returns call sites and type
 mentions of an identifier, verified against the current file content, and
-ranks them with the same file-level signals.</p>
+ranks them with the same file-level signals. What counts as a reference
+differs by language; see <a href="#reference-support">Reference support</a>.</p>
 <h2 id="worked-examples"><a class="header" href="#worked-examples">Worked examples</a></h2>
 <div class="table-wrapper">
 <table>
@@ -4048,6 +4278,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD">Unreleased</a></a></h2>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li>Book page “Reference support”: what the References mode finds in each
+language, and what it misses. C and C++ record no references; Python
+records calls only; TypeScript, Java and C# miss many type positions.</li>
 <li>Imports that resolve to no indexed file are counted, and the ones written
 as a path into the project (<code>./x</code>, <code>.x</code>, <code>crate::</code>, <code>@/</code>), which point at
 a broken import or an unsupported form, are called out: in the dependency
@@ -5540,7 +5773,9 @@ configured. Still open: the first crates.io publish and the tap
 repository itself.</li>
 <li><strong>Visual identity</strong>: architecture and ranking diagrams are in the book;
 still open: a wordmark and a demo recording.</li>
-<li><strong>Reference capture</strong> for more languages (Go, Java, C# call sites) and
+<li><strong>Reference capture</strong>: C and C++ record no references, and C#, Java,
+TypeScript and Python miss common forms (see
+<a href="#reference-support">Reference support</a>); plus
 cross-language import resolution improvements.</li>
 </ul>
 <h2 id="done-recently"><a class="header" href="#done-recently">Done recently</a></h2>
