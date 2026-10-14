@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
+            window.path_to_searchindex_js = "../searchindex-06031358.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -193,8 +193,8 @@ those positions. Two consequences hold for every language:</p>
 <li><strong>Names, not symbols.</strong> <code>fcs refs parse</code> returns every call of anything
 called <code>parse</code>, whichever class or module it belongs to. Nothing tells two
 functions with the same name apart.</li>
-<li><strong>Only the listed positions.</strong> A use in any other position (a function
-passed as a value, an import line, a property read) is not a reference,
+<li><strong>Only the listed positions.</strong> A use in any other position (an import
+line; outside Python, a function passed as a value) is not a reference,
 even though a text search finds it. When references look incomplete,
 search the plain text as well.</li>
 </ul>
@@ -210,7 +210,7 @@ listed as not found, that is a known gap.</p>
 </thead>
 <tbody>
 <tr><td>Rust</td><td>yes</td><td>yes</td><td>yes</td><td>n/a</td><td><code>impl Trait for T</code></td><td>anything inside a macro’s arguments, the <code>Type</code> in <code>Type::new()</code>, enum variants (<code>Item::A</code>), <code>use</code> lines, functions as values</td></tr>
-<tr><td>Python</td><td>yes</td><td>yes</td><td><strong>no</strong></td><td>yes (a call)</td><td><strong>no</strong></td><td>type annotations, base classes, bare <code>@decorator</code>, functions as values, attribute reads, imports</td></tr>
+<tr><td>Python</td><td>yes</td><td>yes</td><td>yes</td><td>yes (a call)</td><td>yes</td><td>imports, string annotations, a few value positions; also returns uses of other things with the same name (see below)</td></tr>
 <tr><td>JavaScript</td><td>yes</td><td>yes</td><td>n/a</td><td>yes</td><td><strong>no</strong></td><td><code>extends</code>, <code>instanceof</code>, functions as values, property reads, imports</td></tr>
 <tr><td>TypeScript</td><td>yes</td><td>yes</td><td>partly</td><td>yes</td><td><strong>no</strong></td><td><code>Foo[]</code>, <code>Foo&lt;T&gt;</code>, <code>A | B</code>, <code>ns.Type</code>, type arguments, <code>type</code> aliases, <code>extends</code> and <code>implements</code>, <code>instanceof</code>, imports</td></tr>
 <tr><td>Go</td><td>yes</td><td>yes</td><td>yes</td><td>composite literals (<code>Item{}</code>)</td><td>n/a</td><td>functions as values (<code>Run: helper</code>, <code>cb := helper</code>), field reads, imports</td></tr>
@@ -248,7 +248,8 @@ listed as not found, that is a known gap.</p>
 <p>The macro gap matters most in tests: calls inside <code>assert_eq!(…)</code> are not
 references.</p>
 <h2 id="python-py-pyi-pyw"><a class="header" href="#python-py-pyi-pyw">Python (<code>.py</code>, <code>.pyi</code>, <code>.pyw</code>)</a></h2>
-<p>Python records <strong>calls only</strong>.</p>
+<p>Python is checked against <a href="https://github.com/davidhalter/jedi">Jedi</a>,
+which resolves each name to its definition (see the end of the page).</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -256,16 +257,26 @@ references.</p>
 </thead>
 <tbody>
 <tr><td><code>helper(x)</code>, <code>self.helper()</code>, <code>pkg.util.do_thing()</code>, <code>Foo()</code></td><td>yes</td></tr>
-<tr><td><code>@app.route("/x")</code> (the <code>route</code>)</td><td>yes, it is a call</td></tr>
-<tr><td>Bare <code>@decorator</code></td><td><strong>no</strong></td></tr>
-<tr><td>Base classes: <code>class Foo(Base, Mixin)</code></td><td><strong>no</strong></td></tr>
-<tr><td>Type annotations: <code>item: Item</code>, <code>-&gt; Result</code>, <code>list[Item]</code></td><td><strong>no</strong></td></tr>
-<tr><td>Classes and functions passed as values: <code>isinstance(x, Item)</code>, <code>cb = helper</code>, <code>return Result</code></td><td><strong>no</strong></td></tr>
-<tr><td>Attribute reads: <code>self.prop</code>, <code>obj.CONSTANT</code></td><td><strong>no</strong></td></tr>
+<tr><td>Decorators: <code>@login_required</code>, <code>@app.route("/x")</code>, <code>@bp.before_app_request</code>, <code>@name.setter</code></td><td>yes</td></tr>
+<tr><td>Base classes: <code>class Foo(Base, Mixin)</code></td><td>yes</td></tr>
+<tr><td>Type annotations: <code>item: Item</code>, <code>-&gt; Result</code>, <code>list[Item]</code>, <code>Item | None</code>, <code>Callable[[A], B]</code>, <code>t.Optional[Item]</code></td><td>yes</td></tr>
+<tr><td>Functions and classes as values: <code>isinstance(x, Item)</code>, <code>cb = helper</code>, <code>return Result</code>, <code>register(self.on_done)</code>, <code>(a, b)</code>, <code>{"k": helper}</code>, <code>x == helper</code></td><td>yes</td></tr>
+<tr><td>Any attribute that is read: <code>self.prop</code>, <code>obj.CONSTANT</code>, <code>request.form</code></td><td>yes</td></tr>
+<tr><td>A class used through an attribute: <code>Item.from_dict()</code> (the <code>Item</code>, when it starts with a capital)</td><td>yes</td></tr>
+<tr><td><code>except Oops as e:</code>, <code>raise Failed</code></td><td>yes</td></tr>
+<tr><td>Assigning an attribute: <code>self.prop = 1</code></td><td>no, on purpose: it sets <code>prop</code>, it does not use it</td></tr>
+<tr><td>A parameter or local variable with the same name as a function (<code>def view(request, app): app.run()</code>)</td><td>no, on purpose: Python makes a name bound anywhere in a function local to it, unless it is declared <code>global</code> or <code>nonlocal</code></td></tr>
 <tr><td><code>import</code>, <code>from … import</code></td><td><strong>no</strong></td></tr>
+<tr><td>Annotations written as strings: <code>x: "Item"</code></td><td><strong>no</strong></td></tr>
+<tr><td>Other value positions: lambda bodies, <code>yield x</code>, <code>*args</code> unpacking, f-string <code>{x}</code></td><td><strong>no</strong></td></tr>
 </tbody>
 </table>
 </div>
+<p>Because references are names, <code>fcs refs get</code> also returns every <code>.get(…)</code>
+on a dictionary, and <code>fcs refs status_code</code> returns reads of every
+attribute called <code>status_code</code>, whichever class it belongs to. On the
+repositories below, between one Python reference in ten and one in five
+is such a use of something else with the same name.</p>
 <h2 id="javascript-js-jsx-mjs-cjs"><a class="header" href="#javascript-js-jsx-mjs-cjs">JavaScript (<code>.js</code>, <code>.jsx</code>, <code>.mjs</code>, <code>.cjs</code>)</a></h2>
 <div class="table-wrapper">
 <table>
@@ -380,8 +391,40 @@ parameters are returned as references too</strong> (<code>x</code> in <code>x = 
 </table>
 </div>
 <h2 id="how-complete-this-is"><a class="header" href="#how-complete-this-is">How complete this is</a></h2>
-<p>There is no reference oracle yet (the import graph has one, see
-<a href="graph-support.html">Dependency graph support</a>). Each form above is checked
+<h3 id="python-against-jedi"><a class="header" href="#python-against-jedi">Python, against Jedi</a></h3>
+<p><code>examples/ref_oracle.rs</code> compares the references fcs records in a
+repository with the ones <a href="https://github.com/davidhalter/jedi">Jedi</a> 0.20
+finds (<code>src/check/oracle/py_refs.py</code>): every name Jedi resolves to a
+function, class or property defined in the repository, other than the
+definition itself and import lines. A reference Jedi lists and fcs does not
+is <strong>missing</strong>. A reference fcs records, under the name of one of those
+functions or classes, where Jedi resolves the name to something else, is
+<strong>extra</strong>: almost always a use of something else with the same name.
+Where Jedi cannot resolve a name at all (an untyped receiver), neither side
+is counted.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Repository</th><th>Found</th><th>Precision</th><th>Before October 2026</th></tr>
+</thead>
+<tbody>
+<tr><td>pallets/flask</td><td>98.1%</td><td>87.3%</td><td>57.4% found, 90.9% precision</td></tr>
+<tr><td>psf/requests</td><td>100%</td><td>90.2%</td><td>74.4%, 88.9%</td></tr>
+<tr><td>pallets/click</td><td>97.1%</td><td>91.3%</td><td>65.5%, 93.6%</td></tr>
+<tr><td>encode/httpx</td><td>99.5%</td><td>80.5%</td><td>59.0%, 86.6%</td></tr>
+</tbody>
+</table>
+</div>
+<p>CI runs it on Flask and Click (<code>.github/workflows/ref-oracle.yml</code>) and
+fails if a change misses or adds more references than that.</p>
+<pre><code class="language-sh">pip install jedi==0.20.1
+python3 src/check/oracle/py_refs.py bench-corpus/flask &gt; flask.json
+cargo run --release --example ref_oracle -- --oracle flask.json
+</code></pre>
+<p>The report groups misses and extras by the syntax around the name, which
+says which row of the Python table each one is.</p>
+<h3 id="other-languages"><a class="header" href="#other-languages">Other languages</a></h3>
+<p>There is no oracle for the other languages yet. Each form above is checked
 with a small file per language. To give a sense of scale, a one-off count
 in October 2026 took every function, method and type defined in a public
 repository and counted how many of its uses in code fall on a reference.
@@ -395,10 +438,8 @@ local variable that shares a type’s name, an import line).</p>
 <tbody>
 <tr><td>Go</td><td>spf13/cobra</td><td>90%</td></tr>
 <tr><td>Rust</td><td>fast_code_search <code>src/</code></td><td>53%</td></tr>
-<tr><td>Python</td><td>psf/requests</td><td>53%</td></tr>
 <tr><td>Java</td><td>google/gson</td><td>52%</td></tr>
 <tr><td>C#</td><td>JamesNK/Newtonsoft.Json</td><td>50%</td></tr>
-<tr><td>Python</td><td>pallets/flask</td><td>44%</td></tr>
 <tr><td>TypeScript</td><td>colinhacks/zod</td><td>40%</td></tr>
 <tr><td>TypeScript</td><td>sindresorhus/ky</td><td>38%</td></tr>
 <tr><td>C</td><td>DaveGamble/cJSON</td><td>0%</td></tr>

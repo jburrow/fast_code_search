@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b5b44921.js";
+            window.path_to_searchindex_js = "../searchindex-06031358.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-84d94ec6.js"></script>
@@ -203,6 +203,14 @@ everywhere, plus <code>deps</code> / <code>rdeps</code> on the API, gRPC, MCP <c
 and <code>fcs --deps</code> / <code>--rdeps</code> (the only way to scope a regex), the web
 UI’s FILTER panel, the dependency popover and the explorer’s
 <strong>Search importers</strong> / <strong>Search its imports</strong> buttons.</li>
+<li>Python references find far more uses: decorators, base classes, type
+annotations, functions and classes used as values, attribute reads and
+exceptions, where they used to find calls only (Flask: 57% of the uses
+Jedi finds, now 98%). Parameters and local variables that share a
+function’s name are no longer listed as its references. Existing indexes
+re-extract symbols once on the first start.</li>
+<li><code>examples/ref_oracle.rs</code> and <code>src/check/oracle/py_refs.py</code> compare Python
+references with Jedi’s; CI runs them on Flask and Click.</li>
 <li>Book page “Reference support”: what the References mode finds in each
 language, and what it misses. C and C++ record no references; Python
 records calls only; TypeScript, Java and C# miss many type positions.</li>
