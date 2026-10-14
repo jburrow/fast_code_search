@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-76196a4e.js";
+            window.path_to_searchindex_js = "searchindex-3046fade.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-84d94ec6.js"></script>
@@ -3785,31 +3785,45 @@ the index. Before a batch is merged each file is checked again: content
 that is no longer on disk is never installed, a deleted file is skipped,
 and a rewritten one is read again.</p>
 <h2 id="applying-a-batch"><a class="header" href="#applying-a-batch">Applying a batch</a></h2>
-<p>A batch is applied under one write lock in three phases:</p>
+<p>A batch is applied in three steps, and only the last one takes the write
+lock, so searches keep being answered while a batch is read from disk:</p>
 <ol>
-<li><strong>Deletes and renames-away</strong> are collected and removed with a single
-pass over every posting list.</li>
-<li><strong>Modified and created paths</strong> are planned (directories reconciled
-as above; vanished or newly ineligible paths dropped), then
-re-indexed together: their old postings stripped in one pass, the files
-read and parsed in parallel, and installed under their existing ids so
-nothing else has to be renumbered. Edges <em>into</em> a modified file are
-kept; a file that was deleted and comes back regains its dependents.</li>
-<li><strong>Sibling check.</strong> As a last safety net, the parent directories of
-every changed path are checked and entries whose file is gone are
-removed.</li>
-<li><strong>Imports.</strong> Every file’s imports are kept as written. Once the whole
-batch is back in the index, the files whose imports could resolve
-differently now are resolved again: those that imported a removed file,
-and those with an import naming a file that appeared. That covers an
-import that fell back to a package (<code>from . import m</code> reaching
-<code>__init__.py</code> while <code>m.py</code> is missing) moving to the new file, and
-back. The dependency graph is therefore a function of the files on
-disk, the same as a fresh build would draw.</li>
+<li><strong>Plan</strong> (under a read lock, which searches share). Events are
+coalesced per path. Deleted paths and directories are looked up;
+modified paths are checked against the disk (directories reconciled as
+above; vanished or newly ineligible paths dropped). As a safety net for
+backends that lose the delete half of a rename, the parent directory of
+every changed path is listed and entries whose file is gone are
+dropped. The index keeps its files by directory, so all of this costs
+the size of the batch and the directories it touches, not the size of
+the index.</li>
+<li><strong>Read and parse</strong> (no lock). The files to (re)index are read and
+parsed in parallel on the watcher’s own threads (half the cores), so
+the searches running on the shared thread pool are not queued behind
+a burst.</li>
+<li><strong>Install</strong> (write lock, in steps). The removals go first, with a
+single pass over every posting list; then the parsed files, at most
+512 per step, each step under its own write lock with a short pause
+between steps for the searches that arrived meanwhile. A modified file
+keeps its id; edges <em>into</em> it are kept, and a file that was deleted
+and comes back regains its dependents. A path is looked up again at
+install time, since the index may have changed since it was planned
+(the initial build can run alongside), and a file that changed again
+since it was read has an event of its own on the way.</li>
 </ol>
-<p>Between batches searches run normally; a search that arrives while the
-lock is held gets a 503 with <code>Retry-After: 1</code>, which <code>fcs</code> and the web UI
-retry on their own.</p>
+<p><strong>Imports.</strong> Every file’s imports are kept as written. After each step
+the files whose imports could resolve differently now are resolved again:
+those that imported a removed file, and those with an import naming a
+file that appeared. That covers an import that fell back to a package
+(<code>from . import m</code> reaching <code>__init__.py</code> while <code>m.py</code> is missing) moving
+to the new file, and back. The dependency graph is therefore a function
+of the files on disk, the same as a fresh build would draw.</p>
+<p>A search that arrives during an install step waits for it (up to five
+seconds) instead of being turned away. Only if the lock is still held
+after that does it get a 503 with <code>Retry-After: 1</code> (gRPC: <code>UNAVAILABLE</code>),
+which <code>fcs</code> and the web UI retry on their own. On a generated tree of one
+million Python files with 2,000 files rewritten a second, no search was
+turned away and the slowest took 0.2 s (see <code>examples/watch_load.rs</code>).</p>
 <h2 id="saving"><a class="header" href="#saving">Saving</a></h2>
 <p>After <code>save_after_updates</code> file changes the index is saved; it is also
 saved on shutdown when anything changed since the last save, so an edit
@@ -3823,7 +3837,15 @@ dozens of changes, changes during the initial build), then compares the
 live index with a fresh index of the same disk: the file set, every hit
 for every vocabulary word, symbol definitions and dependency edges. The
 random sequences print their seed; replay one with
-<code>FCS_WATCH_SEED=&lt;seed&gt; cargo test --test watch_harness</code>.</p>
+<code>FCS_WATCH_SEED=&lt;seed&gt; cargo test --test watch_harness</code>. Another test
+searches continuously while a burst of changes is applied and fails if a
+search is turned away or waits too long.</p>
+<p>For larger trees, <code>examples/watch_load.rs</code> generates a tree of small
+scripts (a million, if you like), streams rewrites, creates and deletes
+into it through the real watch loop while threads search, and reports how
+many searches were answered or turned away and the latency percentiles:</p>
+<pre><code class="language-text">cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="persistence"><a class="header" href="#persistence">Persistence</a></h1>
 <p>A saved index turns a restart into a load of a few seconds. The
@@ -4688,6 +4710,17 @@ repository root or no folder above it holds an indexed file.</li>
 ones submitted with Enter. A query counts once the box sits unchanged for
 two seconds or you move on (into the results, a preview or a filter);
 carrying on typing replaces that entry rather than leaving prefixes.</li>
+<li>Watch mode on large trees no longer answers searches with “index is
+being updated” while changes stream in. Applying a batch held the write
+lock for its whole duration, including reading and parsing the files,
+and a per-directory scan of every indexed path made that seconds long on
+big trees (15 s for one batch on 200,000 files). Now only installing the
+parsed files takes the write lock, in steps of at most 512 files with a
+pause between them; directory lookups cost the size of the directory;
+the watcher parses on its own threads instead of the pool searches use;
+and a search waits up to five seconds for a step to finish instead of
+failing at once. On one million files with 2,000 files rewritten a
+second, no search was turned away and the slowest took 0.2 s.</li>
 <li>Results are in rank order again, with each file’s hits together: files in
 the order of their best hit, then every hit of that file by score. Since
 v0.12.0 hits were interleaved by file (every file’s best hit before any
