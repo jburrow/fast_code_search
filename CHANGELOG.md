@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-10-14
+
+Watch mode keeps answering searches on very large trees, and Python
+projects whose imports were listed as external now resolve. Re-index a
+Python project to pick up the import fixes.
+
+### Changed
+- Web UI: Semantic is no longer in the header nav, since semantic search
+  is not being developed for now. The page still works at
+  `/semantic.html` (and shows its tab while open).
+
+### Fixed
+- Watch mode on large trees no longer answers searches with "index is
+  being updated" while changes stream in. Applying a batch held the write
+  lock for its whole duration, including reading and parsing the files,
+  and a per-directory scan of every indexed path made that seconds long on
+  big trees (15 s for one batch on 200,000 files). Now only installing the
+  parsed files takes the write lock, in steps of at most 512 files with a
+  pause between them; directory lookups cost the size of the directory;
+  the watcher parses on its own threads instead of the pool searches use;
+  and a search waits up to five seconds for a step to finish instead of
+  failing at once. On one million files with 2,000 files rewritten a
+  second, no search was turned away and the slowest took 0.2 s.
+- Python: an absolute import (`import pkg.mod`, `from pkg import x`) in a
+  file nested more than 8 folders below its package root resolved to
+  nothing, so the dependency explorer listed the project's own modules as
+  external packages. Every ancestor folder is now tried. A package in a
+  sibling folder put on `PYTHONPATH` (`lib/mypkg` imported from `apps/`)
+  is still not found; the graph support page lists it as a known gap.
+- Python: in a repository whose root folder has an `__init__.py` (run with
+  that folder on `sys.path`), every absolute import of the project's own
+  packages was listed as external, because a package folder is never a
+  root. The outermost package folder is now tried as a root when it is the
+  repository root or no folder above it holds an indexed file.
+- Web UI: search history now records searches made by typing, not only
+  ones submitted with Enter. A query counts once the box sits unchanged for
+  two seconds or you move on (into the results, a preview or a filter);
+  carrying on typing replaces that entry rather than leaving prefixes.
+
+## [0.16.1] - 2026-10-14
+
+**Existing indexes are rebuilt once on the first start.** The on-disk
+index format is now version 8 (case-insensitive search folds case like
+`rg -i`), and symbols are re-extracted for the new reference kinds and
+Python references; the rebuild also picks up the dependency-graph fixes
+for TypeScript, Python and Rust. Results are
+now in rank order with each file's hits together. The v0.16.1 binaries
+report their version as 0.16.0.
+
 ### Added
 - Reference kinds: each reference is a `call`, `type`, `value` or
   `attribute`, shown on the result (web UI tag, `fcs refs` `[call]`, API
@@ -91,14 +140,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and shows "stopped at time limit" beside the time.
 
 ### Changed
-- Web UI: Semantic is no longer in the header nav, since semantic search
-  is not being developed for now. The page still works at
-  `/semantic.html` (and shows its tab while open).
 - Import graph: a Rust path into the crate used without a `use`
   (`crate::a::b::f()`, `super::x::Y`) is an import of the module it names,
   so the dependency explorer, rankings and `rdeps:` see it. Rebuild the
-  index to pick it up (the v8 format is unreleased, so upgrading from
-  0.15.x rebuilds anyway).
+  index to pick it up (upgrading from 0.15.x rebuilds it anyway).
 - `file:` and `lang:` narrow each other: `file:src/ lang:rust` is the Rust
   files under `src/`, where it used to be every file under `src/` plus
   every Rust file. Repeating one operator still widens it.
@@ -175,32 +220,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same order.
 
 ### Fixed
-- Python: an absolute import (`import pkg.mod`, `from pkg import x`) in a
-  file nested more than 8 folders below its package root resolved to
-  nothing, so the dependency explorer listed the project's own modules as
-  external packages. Every ancestor folder is now tried. A package in a
-  sibling folder put on `PYTHONPATH` (`lib/mypkg` imported from `apps/`)
-  is still not found; the graph support page lists it as a known gap.
-- Python: in a repository whose root folder has an `__init__.py` (run with
-  that folder on `sys.path`), every absolute import of the project's own
-  packages was listed as external, because a package folder is never a
-  root. The outermost package folder is now tried as a root when it is the
-  repository root or no folder above it holds an indexed file.
-- Web UI: search history now records searches made by typing, not only
-  ones submitted with Enter. A query counts once the box sits unchanged for
-  two seconds or you move on (into the results, a preview or a filter);
-  carrying on typing replaces that entry rather than leaving prefixes.
-- Watch mode on large trees no longer answers searches with "index is
-  being updated" while changes stream in. Applying a batch held the write
-  lock for its whole duration, including reading and parsing the files,
-  and a per-directory scan of every indexed path made that seconds long on
-  big trees (15 s for one batch on 200,000 files). Now only installing the
-  parsed files takes the write lock, in steps of at most 512 files with a
-  pause between them; directory lookups cost the size of the directory;
-  the watcher parses on its own threads instead of the pool searches use;
-  and a search waits up to five seconds for a step to finish instead of
-  failing at once. On one million files with 2,000 files rewritten a
-  second, no search was turned away and the slowest took 0.2 s.
 - Results are in rank order again, with each file's hits together: files in
   the order of their best hit, then every hit of that file by score. Since
   v0.12.0 hits were interleaved by file (every file's best hit before any
@@ -1462,7 +1481,9 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/jburrow/fast_code_search/compare/v0.16.1...v0.16.2
+[0.16.1]: https://github.com/jburrow/fast_code_search/compare/v0.15.2...v0.16.1
 [0.15.2]: https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/jburrow/fast_code_search/compare/v0.14.0...v0.15.1
 [0.14.0]: https://github.com/jburrow/fast_code_search/compare/v0.13.0...v0.14.0
