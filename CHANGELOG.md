@@ -7,15 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Fixes from the 2026-10-15 review of what fcs promises against what it does.
-Paging is now consistent, busy files show their best hits, and several
-silent cut-offs now say so.
+## [0.18.0] - 2026-10-15
 
-**Upgrading:** no re-index is needed. A file with many matches now shows
+Fixes from the 2026-10-15 review of what fcs promises against what it does.
+Paging is now consistent, busy files show their best hits, several silent
+cut-offs now say so, and the server keeps its index current by default.
+
+**Upgrading:** file watching is now on by default. A config without a
+`watch` key now watches its folders; add `watch = false` under `[indexer]`
+to keep the old behaviour. No re-index is needed. A file with many matches now shows
 its best-scoring hits rather than its first ones, so result order changes
 for broad searches. `search.per_file_matches` now defaults to 1,000 (was
 100). Files that were skipped as binary only because of control
 characters, and SVG files, are now indexed, as ripgrep searches them.
+
+### Changed
+- **`watch` defaults to `true`.** The server follows edits, renames and
+  deletes unless the config says `watch = false`, matching what the README
+  and guides describe. `--init` writes `watch = true`. The `build/` and
+  `dist/` default excludes stay, and remain listed as a difference from
+  ripgrep in the matching reference.
 
 ### Fixed
 - **Offset paging no longer repeats or skips hits.** The per-file cap and
@@ -1602,7 +1613,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/jburrow/fast_code_search/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jburrow/fast_code_search/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/jburrow/fast_code_search/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/jburrow/fast_code_search/compare/v0.15.2...v0.16.1

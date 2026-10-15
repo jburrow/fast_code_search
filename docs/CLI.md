@@ -134,7 +134,7 @@ HTTP can use `http://127.0.0.1:8080/mcp` directly. The tools are listed in
 
 ## When the index is behind
 
-A server running with `watch = false` (the default) only knows the files as
+A server running with `watch = false` (watching is on by default) only knows the files as
 they were at its last scan. `fcs` then ends a search with a note on stderr,
 such as `fcs: Index last synced with disk 2 h 0 min ago (…); file watching is
 off, so files written since then may be missing or out of date.` `-q` hides

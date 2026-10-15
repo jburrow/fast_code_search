@@ -177,6 +177,25 @@ fn describe_diff(live: &Snapshot, want: &Snapshot) -> String {
 // ---------------------------------------------------------------------------
 // The harness.
 
+/// Run a directory operation, retrying briefly when Windows refuses it
+/// because the indexer or watcher has a file under it open (a sharing
+/// violation, "Access is denied"), as editors and git do.
+fn retry_sharing(mut op: impl FnMut() -> std::io::Result<()>) {
+    for attempt in 0.. {
+        match op() {
+            Ok(()) => return,
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempt < 50 =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+}
+
 fn indexer_config(root: &Path) -> IndexerConfig {
     IndexerConfig {
         paths: vec![root.to_string_lossy().to_string()],
@@ -345,12 +364,14 @@ impl Harness {
     }
 
     fn rename_dir(&mut self, from: &str, to: &str) {
-        std::fs::rename(self.path(from), self.path(to)).unwrap();
+        let (from_path, to_path) = (self.path(from), self.path(to));
+        retry_sharing(|| std::fs::rename(&from_path, &to_path));
         self.note(format!("rename dir {from} -> {to}"));
     }
 
     fn delete_dir(&mut self, rel: &str) {
-        std::fs::remove_dir_all(self.path(rel)).unwrap();
+        let path = self.path(rel);
+        retry_sharing(|| std::fs::remove_dir_all(&path));
         self.note(format!("delete dir {rel}"));
     }
 
