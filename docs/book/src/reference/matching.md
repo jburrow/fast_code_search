@@ -87,39 +87,59 @@ These follow from fcs being a code search server rather than a line filter.
   lines the same way (`rg -c`).
 - **Ranked, and capped.** Results come back best first rather than in file
   order. To keep a broad search fast, a request reads a bounded number of
-  matches: by default 100 from one file on the first page, and a budget of
-  32,768 matches (eight times the page end for longer pages, up to
-  100,000). Files are read best first, so the budget keeps the hits of the
-  most likely files. When either limit is reached, the
-  total is shown as "N+" rather than as a count, and the response names
-  the limit (`limits_hit`: `match_budget`, `per_file_cap`, `timeout` or
-  `max_files`; `fcs` prints it, MCP adds a "Results capped" line, gRPC
-  sends an `fcs-limits-hit` header). A server may also cap the files read
+  matches: a budget of 32,768 for every page that ends before result 1000,
+  and 100,000 for every page from there on. One file contributes at most
+  its best 1,000 hits (by score, not its first 1,000 lines) before result
+  1000, and up to the budget after it. Files are read best first, so the
+  budget keeps the hits of the most likely files. Because every page in
+  each range ranks the same sample, paging with `offset` (MCP's
+  `search_code`, `fcs --offset`, the API) returns each hit once, with no
+  repeats or gaps; only the switch at result 1000 can differ, and only for
+  a search that hit its budget. When a limit is reached, the total is
+  shown as "N+" rather than as a count, and the response names the limit
+  (`limits_hit`: `match_budget`, `per_file_cap`, `timeout`, `max_files`
+  or `indexing`; `fcs` prints it, MCP adds a "Results capped" line, gRPC
+  sends an `fcs-limits-hit` header). `indexing` means the server was
+  still building or reconciling its index, so files not indexed yet
+  could not match. A server may also cap the files read
   (`search.fast_rank_files`, off by default); the header then says
   "Searched N of M files" and SEARCH ALL FILES opens the rest (up to
-  `search.max_fast_rank_files`). LOAD MORE in the web UI
-  fetches the whole list again at the bigger size, up to 1000 results
-  (`search.max_page_size`), so
-  every match ends up shown exactly once. Results already on screen can
-  move when it does. Past 1000 results it fetches the next page instead.
-  Every page that ends at result 1000 or later ranks the same sample (a
-  budget of 100,000 matches), so those pages fit together with no repeats
-  or gaps. Shorter pages use a smaller budget, so an API client asking for
-  `offset` pages below 1000 of a search that hit its budget can see a
-  result repeated or skipped between pages. Asking again from offset 0
-  with a larger `max` avoids that. Paging stops at offset 100,000 by
-  default (`search.max_page_offset`). ripgrep has none of these limits; each
-  is reported when it applies, and [Search limits](../benchmarks/search-limits.md)
-  gives the measurements behind the defaults.
+  `search.max_fast_rank_files`). Symbol search reads the files holding
+  the best-matching symbols (at least 200); when there are more, it says
+  so in the same way, and SEARCH ALL FILES, MCP's `max_files` or
+  `rank=full` read them all. LOAD MORE in the web UI fetches the whole
+  list again at the bigger size, up to 1000 results
+  (`search.max_page_size`), so every match ends up shown exactly once.
+  Results already on screen can move when it does. Past 1000 results it
+  fetches the next page instead. Paging stops at offset 100,000 by
+  default (`search.max_page_offset`). ripgrep has none of these limits;
+  each is reported when it applies, and [Search
+  limits](../benchmarks/search-limits.md) gives the measurements behind
+  the defaults.
+- **Filters need text.** A query made only of filters (`lang:rust`,
+  `file:///etc`) is answered with an error saying there is no text to
+  find, not an empty result. `case:` and `word:` take `yes` or `no`
+  (also `y`/`n`, `true`/`false`, `1`/`0`, `on`/`off`); with any other
+  argument the token is text, so `word:count` searches for `word:count`.
 - **Non-UTF-8 files are converted.** Files in Latin-1, Windows-1252,
   Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
   (`transcode_non_utf8`, on by default). ripgrep only does this for UTF-16
   with a byte order mark, or when given `-E`. grep and git grep match raw
-  bytes. Binary files are not indexed.
+  bytes. A file with a NUL byte in its first 8 KB is binary and not
+  indexed (ripgrep's test is the same NUL byte, but it looks wherever it
+  reads, so a NUL further in makes rg stop at it while fcs searches the
+  whole file). Files with these extensions are not read at all: images
+  (`png`, `jpg`, `gif`, `ico`, `bmp`, `webp`), archives, fonts, office
+  documents, media, compiled objects and bytecode
+  (`indexer.extra_binary_extensions` adds more). SVG is text and is
+  indexed.
 - **Index scope.** Files over `max_file_size` (10 MB by default) and paths
   matching `exclude_patterns` (`node_modules`, `target`, `.git`, `build`,
   `dist`, Python virtual environments) are not indexed, so they are never
-  searched.
+  searched, even when git tracks them (ripgrep searches a tracked
+  `build/`). Ignore files apply as in ripgrep: `.gitignore`, `.ignore`,
+  `.git/info/exclude` and your global git excludes (`core.excludesFile`),
+  at startup and for files the watcher sees change.
 
 ## Known differences
 

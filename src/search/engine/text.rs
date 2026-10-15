@@ -56,18 +56,6 @@ pub(super) fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> b
     false
 }
 
-/// Fast byte substring search using memchr's memmem for SIMD acceleration
-#[inline]
-pub(super) fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if haystack.len() < needle.len() {
-        return false;
-    }
-    memmem::find(haystack, needle).is_some()
-}
-
 /// Maximum length of content to return per match (in bytes)
 const MAX_CONTENT_LENGTH: usize = 500;
 
@@ -327,12 +315,22 @@ impl<'a> SymbolLineMaps<'a> {
         }
     }
 
-    pub(super) fn is_definition_line(&self, line: usize) -> bool {
-        if self.use_set {
+    /// Whether `line` (0-based, with its current text) holds a definition.
+    /// Symbols are captured at index time; when the file has changed on
+    /// disk since (file watching off, or not caught up) a recorded line may
+    /// now hold something else. It only counts while a symbol name
+    /// recorded for it is still on it, so an edit above a definition drops
+    /// the boost instead of moving it onto an unrelated line.
+    pub(super) fn is_definition_line(&self, line: usize, text: &str) -> bool {
+        let recorded = if self.use_set {
             self.def_set.contains(&line)
         } else {
             self.def_lines.contains(&line)
-        }
+        };
+        recorded
+            && self
+                .names_on_line(line)
+                .is_some_and(|names| names.iter().any(|n| text.contains(n)))
     }
 
     pub(super) fn names_on_line(&self, line: usize) -> Option<&Vec<&'a str>> {
@@ -722,10 +720,17 @@ pub(super) fn calculate_score_regex_inline(
     regex: &Regex,
     is_symbol_def: bool,
     is_src_lib: bool,
+    is_test_path: bool,
     dependency_boost: f64,
 ) -> f64 {
     let w = &RankingWeights::DEFAULT;
     let mut score = 1.0;
+
+    // Test, example and fixture paths rank below shipped code, as in a
+    // plain-text search.
+    if is_test_path {
+        score *= w.test_path;
+    }
 
     // Boost for symbol definitions (pre-computed)
     if is_symbol_def {

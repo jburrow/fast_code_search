@@ -155,7 +155,7 @@ pub struct OutputArgs {
     /// Shorthand for --format json
     #[arg(long, global = true)]
     pub json: bool,
-    /// Print only the files that match, one per line
+    /// Print every file that matches, once, best first (pages through all hits)
     #[arg(short = 'l', long, global = true)]
     pub files_with_matches: bool,
     /// Print absolute paths (needs the roots from the configuration)
@@ -195,9 +195,10 @@ pub struct SearchArgs {
     /// Match whole words only
     #[arg(short = 'w', long)]
     pub word: bool,
-    /// Maximum hits to print (1 to the server's search.max_page_size, 1000)
-    #[arg(short = 'n', long, default_value_t = 50, value_name = "N")]
-    pub max: usize,
+    /// Maximum hits to print (1 to the server's search.max_page_size, 1000;
+    /// default 50). With -l, the most files to list (default: every file)
+    #[arg(short = 'n', long, value_name = "N")]
+    pub max: Option<usize>,
     /// Skip the first N hits (paging; ordering is deterministic)
     #[arg(long, default_value_t = 0, value_name = "N")]
     pub offset: usize,
@@ -276,7 +277,7 @@ impl SearchRequest {
                 None
             },
             word: args.word.then_some(true),
-            max: args.max.clamp(1, 1000),
+            max: args.max.unwrap_or(DEFAULT_HITS).clamp(1, 1000),
             offset: args.offset,
             context: args.context.min(10),
             include: args.globs.join(";"),
@@ -408,19 +409,58 @@ pub fn server_url(flag: Option<&str>, env: Option<&str>, config: Option<&Config>
 /// Map a display path (`root/dir/file`) back to an absolute path using the
 /// configured roots: the first component is a root's directory name.
 pub fn absolute_path(display: &str, roots: &[String]) -> Option<PathBuf> {
-    let mut parts = display.splitn(2, '/');
-    let first = parts.next()?;
-    let rest = parts.next().unwrap_or("");
-    let root = roots.iter().map(Path::new).find(|r| {
-        r.file_name()
-            .map(|n| n.to_string_lossy() == first)
-            .unwrap_or(false)
+    // The server shows each root under its folder name, or more folders
+    // when two roots share a name (`crate::utils::root_labels`).
+    let labels = crate::utils::root_labels(roots);
+    let (root, rest) = roots.iter().zip(&labels).find_map(|(root, label)| {
+        if label.is_empty() {
+            return None;
+        }
+        if display == label {
+            return Some((root, ""));
+        }
+        display
+            .strip_prefix(label.as_str())
+            .and_then(|r| r.strip_prefix('/'))
+            .map(|rest| (root, rest))
     })?;
+    let root = Path::new(root);
     Some(if rest.is_empty() {
         root.to_path_buf()
     } else {
         root.join(rest.replace('/', std::path::MAIN_SEPARATOR_STR))
     })
+}
+
+/// `abs` as a path that opens from `cwd`: relative when it is under it,
+/// absolute otherwise.
+pub fn openable_path(abs: &Path, cwd: Option<&Path>) -> String {
+    cwd.and_then(|c| abs.strip_prefix(c).ok())
+        .filter(|rel| !rel.as_os_str().is_empty())
+        .map(|rel| rel.to_string_lossy().into_owned())
+        .unwrap_or_else(|| abs.to_string_lossy().into_owned())
+}
+
+/// What `fcs` says on stderr when the hits printed are not all there are.
+fn more_note(resp: &SearchResponse, req: &SearchRequest, files_only: bool) -> String {
+    let shown = resp.results.len();
+    let of = resp
+        .total_matches
+        .map(|t| format!(" of {t}"))
+        .unwrap_or_default();
+    if files_only {
+        let files = resp
+            .results
+            .iter()
+            .map(|r| r.file_path.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        return format!("listed {files} files; more match (raise -n to list more)");
+    }
+    format!(
+        "showing {shown} hits{of}; more exist: raise -n (up to 1000) or page with --offset {}",
+        req.offset + shown
+    )
 }
 
 /// Load the configuration named by `--config`, or the default locations.
@@ -441,6 +481,9 @@ pub struct Session {
     pub output: OutputArgs,
     pub style: Style,
     pub format: Format,
+    /// The on-disk index, loaded once for every offline search this run
+    /// makes (`fcs -l` walks several pages).
+    offline_engine: std::cell::OnceCell<crate::search::SearchEngine>,
 }
 
 impl Session {
@@ -473,6 +516,7 @@ impl Session {
             output,
             style: Style { color },
             format,
+            offline_engine: std::cell::OnceCell::new(),
         })
     }
 
@@ -492,20 +536,88 @@ impl Session {
     }
 
     fn path_mapper(&self) -> Box<dyn Fn(&str) -> String + '_> {
+        let roots: Vec<String> = self
+            .config
+            .as_ref()
+            .map(|c| c.indexer.paths.clone())
+            .unwrap_or_default();
         if self.output.absolute {
-            let roots: Vec<String> = self
-                .config
-                .as_ref()
-                .map(|c| c.indexer.paths.clone())
-                .unwrap_or_default();
             Box::new(move |p: &str| {
                 absolute_path(p, &roots)
                     .map(|a| a.to_string_lossy().into_owned())
                     .unwrap_or_else(|| p.to_string())
             })
+        } else if self.format == Format::Vimgrep || self.output.files_with_matches {
+            // Output meant for an editor or `xargs`: paths that open from
+            // here, like grep's and rg's (relative to the current folder
+            // when the file is under it, else absolute). Without the
+            // configuration's roots, the server's paths are all there is.
+            let cwd = std::env::current_dir().ok();
+            Box::new(move |p: &str| match absolute_path(p, &roots) {
+                Some(abs) => openable_path(&abs, cwd.as_deref()),
+                None => p.to_string(),
+            })
         } else {
             Box::new(|p: &str| p.to_string())
         }
+    }
+
+    /// Every file the search matches (`fcs -l`), walking the results a
+    /// server page at a time; at most `max_files` files when given.
+    fn search_all_files(
+        &self,
+        req: &SearchRequest,
+        max_files: Option<usize>,
+    ) -> Result<SearchResponse> {
+        let mut page_req = req.clone();
+        page_req.max = FILES_ONLY_PAGE;
+        let mut first = self.search(&page_req)?;
+        let mut seen: std::collections::HashSet<String> =
+            first.results.iter().map(|r| r.file_path.clone()).collect();
+        let enough = |n: usize| max_files.is_some_and(|m| n >= m);
+        while first.has_more && !first.results.is_empty() && !enough(seen.len()) {
+            page_req.offset = req.offset + first.results.len();
+            let next = match self.search(&page_req) {
+                Ok(r) => r,
+                // The server's deepest offset (search.max_page_offset):
+                // stop there, still saying more exist.
+                Err(e) => {
+                    self.note(&format!("stopped listing files: {e:#}"));
+                    break;
+                }
+            };
+            for r in &next.results {
+                seen.insert(r.file_path.clone());
+            }
+            first.has_more = next.has_more;
+            first.total_matches = next.total_matches;
+            for l in next.limits_hit {
+                if !first.limits_hit.iter().any(|h| h.limit == l.limit) {
+                    first.limits_hit.push(l);
+                }
+            }
+            if next.results.is_empty() {
+                break;
+            }
+            first.results.extend(next.results);
+        }
+        if let Some(m) = max_files {
+            // Keep the hits of the first `m` files, in rank order.
+            let mut kept: Vec<String> = Vec::new();
+            first.results.retain(|r| {
+                if kept.contains(&r.file_path) {
+                    return true;
+                }
+                if kept.len() < m {
+                    kept.push(r.file_path.clone());
+                    return true;
+                }
+                first.has_more = true;
+                false
+            });
+        }
+        first.total_results = first.results.len();
+        Ok(first)
     }
 
     /// Run a search against the server, or offline, and return the response.
@@ -589,9 +701,9 @@ impl Session {
 
     /// Load the persisted index in-process and run the same engine calls
     /// the server does. Read-only: nothing is saved back.
-    fn search_offline(&self, req: &SearchRequest) -> Result<SearchResponse> {
-        use crate::search::{RankMode, SearchEngine};
-
+    /// Load the on-disk index for offline searches.
+    fn load_offline_engine(&self) -> Result<crate::search::SearchEngine> {
+        use crate::search::SearchEngine;
         let path = self.index_path().ok_or_else(|| {
             anyhow!(
                 "no index file to search offline: set index_path in the configuration or pass --index-path"
@@ -630,6 +742,20 @@ impl Session {
                 format!(" ({} changed files re-read)", stale.len())
             }
         ));
+
+        Ok(engine)
+    }
+
+    fn search_offline(&self, req: &SearchRequest) -> Result<SearchResponse> {
+        use crate::search::RankMode;
+
+        let engine = match self.offline_engine.get() {
+            Some(e) => e,
+            None => {
+                let e = self.load_offline_engine()?;
+                self.offline_engine.get_or_init(|| e)
+            }
+        };
 
         let mode = match req.mode {
             Mode::References => crate::search::SearchMode::References,
@@ -679,7 +805,7 @@ impl Session {
             None => (Vec::new(), None),
         };
         let results = crate::web::results_to_json(
-            &engine,
+            engine,
             outcome.matches,
             req.context,
             outcome.scope.as_deref(),
@@ -867,7 +993,13 @@ fn run(cli: Cli) -> Result<i32> {
     if session.format == Format::Grouped && !session.output.files_with_matches {
         req.files = GROUPED_FILE_MATCHES;
     }
-    let resp = session.search(&req)?;
+    let resp = if session.output.files_with_matches && session.format != Format::Json {
+        // Like `rg -l`: every file that matches, not the files of the first
+        // page of hits (which listed 50 of 120 files without a word).
+        session.search_all_files(&req, args.max)?
+    } else {
+        session.search(&req)?
+    };
     let mapper = session.path_mapper();
     let text = format::render(
         &resp,
@@ -894,6 +1026,10 @@ fn run(cli: Cli) -> Result<i32> {
     for hit in &resp.limits_hit {
         session.note(&format!("results capped: {}", hit.detail));
     }
+    // Nor a page for the whole result, piped or not.
+    if resp.has_more && session.format != Format::Json {
+        session.note(&more_note(&resp, &req, session.output.files_with_matches));
+    }
     // Without a file watcher the server misses writes after its last scan.
     if let Some(note) = resp
         .index
@@ -911,6 +1047,12 @@ fn run(cli: Cli) -> Result<i32> {
 
 /// Path matches listed above the hits in grouped output.
 const GROUPED_FILE_MATCHES: usize = 5;
+
+/// Hits printed when `-n` is not given.
+const DEFAULT_HITS: usize = 50;
+
+/// Page size `fcs -l` walks the results with (the server's largest).
+const FILES_ONLY_PAGE: usize = 1000;
 
 #[cfg(test)]
 mod tests {

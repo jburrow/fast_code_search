@@ -101,32 +101,21 @@ pub fn transcode_to_utf8(bytes: &[u8]) -> Result<Option<TranscodeResult>, &'stat
     }))
 }
 
-/// Check if raw bytes appear to be binary content.
-///
-/// Similar to `is_binary_content` but operates on raw `&[u8]` instead of `&str`.
-/// Checks the first 8KB for null bytes or high ratio of non-printable characters.
+/// Check if raw bytes appear to be binary content: a NUL byte in the
+/// first 8 KB, ripgrep's own test (see [`is_binary_content`]).
 pub fn is_binary_bytes(bytes: &[u8]) -> bool {
-    let check_len = bytes.len().min(8192);
-    let sample = &bytes[..check_len];
-
-    let mut non_text_count = 0;
-    for &byte in sample {
-        if byte == 0 {
-            return true;
-        }
-        if byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r') {
-            non_text_count += 1;
-        }
-    }
-
-    check_len > 0 && non_text_count > check_len / 10
+    bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0)
 }
+
+/// How much of a file the binary test looks at.
+const BINARY_SNIFF_BYTES: usize = 8192;
 
 /// Binary file extensions to skip during indexing.
 /// These are common binary formats that don't contain searchable text.
 pub const BINARY_EXTENSIONS: &[&str] = &[
     "exe", "dll", "so", "dylib", "bin", "o", "a", "lib", // Executables and libraries
-    "png", "jpg", "jpeg", "gif", "ico", "bmp", "webp", "svg", // Images
+    // Not `svg`: it is XML text, and ripgrep searches it.
+    "png", "jpg", "jpeg", "gif", "ico", "bmp", "webp", // Images
     "zip", "tar", "gz", "7z", "rar", "xz", "bz2", // Archives
     "woff", "woff2", "ttf", "eot", "otf", // Fonts
     "pdf", "doc", "docx", "xls", "xlsx", // Documents
@@ -149,33 +138,16 @@ pub fn has_binary_extension(path: &Path) -> bool {
     }
 }
 
-/// Check if content appears to be binary (contains null bytes or high ratio of non-printable chars).
+/// Check if content appears to be binary: a NUL byte in its first 8 KB.
 ///
-/// This checks the first 8KB of content for binary indicators:
-/// - Null bytes are a strong indicator of binary content
-/// - More than 10% non-printable characters suggests binary content
+/// That is ripgrep's test (a NUL byte), so a file rg searches is indexed.
+/// A second rule, more than 10% control bytes, used to drop text files rg
+/// searches (logs and snapshots full of ANSI colour codes) without saying
+/// so.
 pub fn is_binary_content(content: &str) -> bool {
-    // Check first 8KB for binary indicators.
-    // Operate on the byte slice directly to avoid panicking when
-    // position 8192 falls inside a multi-byte UTF-8 character.
-    let bytes = content.as_bytes();
-    let check_len = bytes.len().min(8192);
-    let sample = &bytes[..check_len];
-
-    let mut non_text_count = 0;
-    for &byte in sample {
-        // Null bytes are a strong indicator of binary content
-        if byte == 0 {
-            return true;
-        }
-        // Count non-printable, non-whitespace characters (excluding common control chars)
-        if byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r') {
-            non_text_count += 1;
-        }
-    }
-
-    // If more than 10% non-text characters, likely binary
-    non_text_count > check_len / 10
+    // Operate on the byte slice so a multi-byte character at the 8 KB
+    // boundary cannot cause a panic.
+    is_binary_bytes(content.as_bytes())
 }
 
 /// Maximum line length (bytes) before we consider a file unsafe for tree-sitter parsing.
@@ -241,6 +213,49 @@ pub fn tree_sitter_safety_check(content: &str) -> Option<&'static str> {
 }
 
 /// Format a number with underscore separators for readability (e.g., 89210 -> "89_210")
+/// The name each indexed root is shown under in result paths: its folder
+/// name (`/code/app` -> `app`), or, when several roots share that name,
+/// as many trailing folders as it takes to tell them apart
+/// (`/one/app` -> `one/app`, `/two/app` -> `two/app`). Two roots shown under
+/// one name gave identical paths, and opening either hit showed the same
+/// file. A root with no folder name (`/`) gets an empty label.
+pub fn root_labels<P: AsRef<Path>>(roots: &[P]) -> Vec<String> {
+    let parts: Vec<Vec<String>> = roots
+        .iter()
+        .map(|r| {
+            r.as_ref()
+                .components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    let label = |i: usize, depth: usize| -> String {
+        let p = &parts[i];
+        let from = p.len().saturating_sub(depth);
+        p[from..].join("/")
+    };
+    let mut depth = vec![1usize; roots.len()];
+    // Lengthen every clashing label by one folder until none clash (or a
+    // path runs out of folders).
+    loop {
+        let labels: Vec<String> = (0..roots.len()).map(|i| label(i, depth[i])).collect();
+        let mut grew = false;
+        for i in 0..roots.len() {
+            let clashes = (0..roots.len()).any(|j| j != i && labels[j] == labels[i]);
+            if clashes && depth[i] < parts[i].len() {
+                depth[i] += 1;
+                grew = true;
+            }
+        }
+        if !grew {
+            return labels;
+        }
+    }
+}
+
 pub fn format_number(n: usize) -> String {
     let s = n.to_string();
     let mut result = String::new();
@@ -301,6 +316,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn root_labels_tell_same_named_roots_apart() {
+        assert_eq!(root_labels(&["/code/app", "/srv/lib"]), vec!["app", "lib"]);
+        assert_eq!(
+            root_labels(&["/one/app", "/two/app", "/x/other"]),
+            vec!["one/app", "two/app", "other"]
+        );
+        // Clashing two folders up as well.
+        assert_eq!(
+            root_labels(&["/a/w/app", "/b/w/app"]),
+            vec!["a/w/app", "b/w/app"]
+        );
+        assert_eq!(root_labels(&["/"]), vec![""]);
+    }
+
+    #[test]
     fn test_normalize_windows_path() {
         assert_eq!(
             normalize_path_for_comparison("C:\\Users\\Developer\\project"),
@@ -359,9 +389,12 @@ mod tests {
         // Binary content with null byte
         assert!(is_binary_content("Hello\0World"));
 
-        // Content with many control characters (simulating binary)
+        // Control characters (it holds a NUL) are binary...
         let binary_like = (0..100).map(|i| (i % 32) as u8 as char).collect::<String>();
         assert!(is_binary_content(&binary_like));
+        // ...but text dense with ANSI colour codes is not: rg searches it.
+        let ansi = "\x1b[31mE\x1b[0m \x1b[1mx\x1b[0m\n".repeat(50);
+        assert!(!is_binary_content(&ansi));
     }
 
     #[test]

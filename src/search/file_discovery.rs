@@ -200,10 +200,14 @@ impl EligibilityProbe {
         if let Some(gi) = gitignore_for_dir(dir) {
             chain.push(gi);
         }
-        if !dir.join(".git").exists() {
-            if let Some(parent) = dir.parent() {
+        match dir.parent() {
+            Some(parent) if !dir.join(".git").exists() => {
                 chain.extend(self.ignore_chain(parent).iter().cloned());
             }
+            // The repository root (or the top of a tree that is not in
+            // one): the user's global excludes (`core.excludesFile`) apply
+            // last, as in the initial walk.
+            _ => chain.extend(global_gitignore_for_repo(dir)),
         }
         let chain = Arc::new(chain);
         if let Ok(mut map) = self.ignore_chains.write() {
@@ -246,7 +250,8 @@ impl FileDiscoveryIterator {
                             .hidden(false)
                             .git_ignore(true)
                             .git_exclude(true)
-                            .git_global(false)
+                            // The user's global excludes, as rg and git apply.
+                            .git_global(true)
                             .ignore(true)
                             .parents(true)
                             // Honour .gitignore in trees that are not git
@@ -420,11 +425,9 @@ pub fn is_gitignored(path: &Path) -> bool {
         cur = d.parent();
     }
     // Check from the file's own directory outwards; the nearest explicit
-    // decision (ignore or whitelist) wins.
-    for dir in dirs {
-        let Some(gi) = gitignore_for_dir(dir) else {
-            continue;
-        };
+    // decision (ignore or whitelist) wins, then the user's global excludes.
+    let global = dirs.last().copied().and_then(global_gitignore_for_repo);
+    for gi in dirs.into_iter().filter_map(gitignore_for_dir).chain(global) {
         match gi.matched_path_or_any_parents(path, false) {
             ignore::Match::Ignore(_) => return true,
             ignore::Match::Whitelist(_) => return false,
@@ -432,6 +435,27 @@ pub fn is_gitignored(path: &Path) -> bool {
         }
     }
     false
+}
+
+/// The user's global git excludes (`core.excludesFile`, by default
+/// `~/.config/git/ignore`), rooted at the repository `root` so they match
+/// its files. ripgrep and git apply them; `None` when there are none.
+fn global_gitignore_for_repo(root: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
+    static CACHE: OnceLock<
+        Mutex<std::collections::HashMap<PathBuf, Option<Arc<ignore::gitignore::Gitignore>>>>,
+    > = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(gi) = guard.get(root) {
+            return gi.clone();
+        }
+    }
+    let (gi, _err) = ignore::gitignore::GitignoreBuilder::new(root).build_global();
+    let gi = (!gi.is_empty()).then(|| Arc::new(gi));
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(root.to_path_buf(), gi.clone());
+    }
+    gi
 }
 
 /// Matchers applying to one directory, nearest first (see
@@ -445,7 +469,11 @@ type IgnoreChain = Vec<Arc<ignore::gitignore::Gitignore>>;
 /// pattern; doing that for every ancestor on every watcher event cost about
 /// 10 ms per event on a repository with a typical root `.gitignore`. A
 /// changed ignore file is picked up because its mtime is part of the key.
-type IgnoreKey = (Option<std::time::SystemTime>, Option<std::time::SystemTime>);
+type IgnoreKey = (
+    Option<std::time::SystemTime>,
+    Option<std::time::SystemTime>,
+    Option<std::time::SystemTime>,
+);
 type IgnoreCache =
     std::collections::HashMap<PathBuf, (IgnoreKey, Arc<ignore::gitignore::Gitignore>)>;
 static IGNORE_CACHE: OnceLock<Mutex<IgnoreCache>> = OnceLock::new();
@@ -457,8 +485,16 @@ fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
             .filter(|m| m.is_file())
             .and_then(|m| m.modified().ok())
     };
-    let key: IgnoreKey = (mtime(".gitignore"), mtime(".ignore"));
-    if key.0.is_none() && key.1.is_none() {
+    // A repository root's `.git/info/exclude` applies like a `.gitignore`
+    // there, as the initial walk (`git_exclude`) and git itself apply it:
+    // without it the watcher indexed an excluded file once it changed, and
+    // the next restart dropped it again.
+    let key: IgnoreKey = (
+        mtime(".gitignore"),
+        mtime(".ignore"),
+        mtime(".git/info/exclude"),
+    );
+    if key.0.is_none() && key.1.is_none() && key.2.is_none() {
         return None;
     }
     let cache = IGNORE_CACHE.get_or_init(|| Mutex::new(IgnoreCache::new()));
@@ -470,6 +506,11 @@ fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
         }
     }
     let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
+    // Lowest precedence first: a later file's rules win, and in git a
+    // `.gitignore` overrides `.git/info/exclude`.
+    if key.2.is_some() {
+        builder.add(dir.join(".git").join("info").join("exclude"));
+    }
     if key.0.is_some() {
         builder.add(dir.join(".gitignore"));
     }

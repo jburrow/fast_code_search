@@ -203,7 +203,10 @@ fn offline_search_reads_the_saved_index() -> Result<()> {
         "helper_target",
     ]));
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("proj/src/main.rs:5:"), "{out}");
+    // Piped output gives paths that open from here: the test's folder is
+    // outside the root, so they are absolute (native separators).
+    let main_rs = root.join("src").join("main.rs");
+    assert!(out.contains(&format!("{}:5:", main_rs.display())), "{out}");
     assert!(err.contains("loaded 2 files"), "{err}");
 
     // Absolute paths map the root name back to the configured directory.

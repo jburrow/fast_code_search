@@ -100,6 +100,9 @@ pub enum SearchLimit {
     PerFileCap,
     /// The deadline passed (the request's timeout, or the server's).
     Deadline,
+    /// The index was still being built or reconciled with the disk: files
+    /// not indexed yet could not match.
+    Indexing,
 }
 
 impl SearchLimit {
@@ -110,6 +113,7 @@ impl SearchLimit {
             Self::MatchBudget => "match_budget",
             Self::PerFileCap => "per_file_cap",
             Self::Deadline => "timeout",
+            Self::Indexing => "indexing",
         }
     }
 
@@ -120,6 +124,7 @@ impl SearchLimit {
             Self::MatchBudget,
             Self::PerFileCap,
             Self::Deadline,
+            Self::Indexing,
         ]
         .into_iter()
         .find(|l| l.as_str() == s)
@@ -140,6 +145,9 @@ impl SearchLimit {
             }
             Self::Deadline => {
                 "stopped at the time limit (timeout); results come from the files searched so far".to_string()
+            }
+            Self::Indexing => {
+                "the index is still being built (indexing); files not indexed yet are not searched, so search again when it completes".to_string()
             }
         }
     }
@@ -193,6 +201,9 @@ pub struct SearchLimits {
     pub scope: Option<std::sync::Arc<GraphScope>>,
     /// How the match budget and per-file cap follow from the page.
     pub budget_rule: BudgetRule,
+    /// Full ranking: never stop at a file limit. Symbol search then reads
+    /// every file holding a matching symbol instead of the best ones.
+    pub every_file: bool,
 }
 
 /// How much a search collects to rank a page (`[search]` in the config).
@@ -210,7 +221,10 @@ pub struct BudgetRule {
     /// Ceiling on the derived budget (pages ending at
     /// [`SearchLimits::STABLE_PAGING_FROM`] or deeper get exactly this).
     pub max: usize,
-    /// Most hits one file contributes, raised to the page end.
+    /// Most hits one file contributes (its best, by score) to pages ending
+    /// before [`SearchLimits::STABLE_PAGING_FROM`]. The default equals that
+    /// page end, so no file's hit that could rank in the first 1000
+    /// results is left out.
     pub per_file: usize,
 }
 
@@ -220,7 +234,7 @@ impl BudgetRule {
         min: 32_768,
         multiplier: 8,
         max: 100_000,
-        per_file: SearchEngine::MAX_MATCHES_PER_DOC,
+        per_file: SearchLimits::STABLE_PAGING_FROM,
     };
 }
 
@@ -231,20 +245,21 @@ impl Default for BudgetRule {
 }
 
 impl SearchLimits {
-    /// Most hits one document may contribute: `per_doc_cap`, or by default
-    /// the budget rule's `per_file` (100), raised to `offset + max_results` so a list of
-    /// that length can always be filled from one file. Fetching a longer
-    /// list from offset 0 (the web UI's LOAD MORE) then reaches every hit
-    /// of a file with hundreds of them, as offset paging does. From
-    /// [`Self::STABLE_PAGING_FROM`] on it is the page's budget, which is the
-    /// same for every such page.
+    /// Most hits one document may contribute (its best ones, by score):
+    /// `per_doc_cap`, or by default the budget rule's `per_file` (1000) for
+    /// every page ending before [`Self::STABLE_PAGING_FROM`], and the
+    /// page's budget from there on. Both are the same for every page in
+    /// their range, so offset pages rank the same sample and fit together;
+    /// a cap that grew with the page end ranked a different sample for
+    /// each page, and walking a busy file by `offset` repeated some of its
+    /// hits and never showed others.
     pub fn doc_cap(&self) -> usize {
         self.per_doc_cap.unwrap_or_else(|| {
             let end = self.offset.saturating_add(self.max_results);
             if end >= Self::STABLE_PAGING_FROM {
                 self.derived_budget(self.offset, self.max_results)
             } else {
-                self.budget_rule.per_file.max(end)
+                self.budget_rule.per_file.max(1)
             }
         })
     }
@@ -276,6 +291,7 @@ impl SearchLimits {
             max_files: usize::MAX,
             scope: None,
             budget_rule: BudgetRule::DEFAULT,
+            every_file: false,
         };
         limits.match_budget = limits.derived_budget(0, max_results);
         limits
@@ -310,12 +326,15 @@ impl SearchLimits {
         } = self.budget_rule;
         let (min, max) = (min.max(1), max.max(min.max(1)));
         let end = offset.saturating_add(max_results);
-        let headroom = if end >= Self::STABLE_PAGING_FROM {
-            max
-        } else {
-            end.saturating_mul(multiplier.max(1)).clamp(min, max)
-        };
-        headroom.max(end.saturating_add(min))
+        if end < Self::STABLE_PAGING_FROM {
+            // One budget for every page in this range (the one the last of
+            // them would get), so they all rank the same sample.
+            return Self::STABLE_PAGING_FROM
+                .saturating_mul(multiplier.max(1))
+                .clamp(min, max)
+                .max(Self::STABLE_PAGING_FROM);
+        }
+        max.max(end.saturating_add(min))
     }
 
     /// Skip the first `offset` results; the budget grows to cover the page.
@@ -354,6 +373,12 @@ impl SearchLimits {
     /// Open at most `n` candidate files under fast ranking (`0` = no limit).
     pub fn with_max_files(mut self, n: usize) -> Self {
         self.max_files = if n == 0 { usize::MAX } else { n };
+        self
+    }
+
+    /// Never stop at a file limit (full ranking; see [`Self::every_file`]).
+    pub fn with_every_file(mut self, every_file: bool) -> Self {
+        self.every_file = every_file;
         self
     }
 
@@ -583,6 +608,88 @@ impl QueryRun {
     fn stopped_by(&self) -> u8 {
         self.truncated.load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    /// Most hits one document may contribute (see [`SearchLimits::doc_cap`]).
+    pub(super) fn per_doc_cap(&self) -> usize {
+        self.per_doc_cap
+    }
+
+    /// A document had more hits than its cap; the best were kept.
+    pub(super) fn mark_capped(&self) {
+        self.mark(Self::CAP);
+    }
+
+    /// The deadline has passed (checked every so often inside a big file).
+    pub(super) fn past_deadline(&self) -> bool {
+        self.deadline
+            .is_some_and(|d| std::time::Instant::now() >= d)
+    }
+}
+
+/// One document's hits, keeping its best `cap` by score rather than its
+/// first `cap` in file order. A file with more hits than the cap used to
+/// contribute its earliest lines, so page 1 showed a busy file's weakest
+/// hits while its best ones (further down) were never read.
+///
+/// Memory stays bounded at twice the cap: when the buffer fills it is
+/// sorted and cut back to the cap, and from then on a hit is only built
+/// when it beats the weakest one kept. Ties go to the earlier line, as in
+/// the final ordering.
+pub(super) struct TopHits {
+    cap: usize,
+    items: Vec<SearchMatch>,
+    /// Score a new hit must beat once the buffer has been cut.
+    floor: Option<f64>,
+}
+
+impl TopHits {
+    pub(super) fn new(cap: usize) -> Self {
+        Self {
+            cap: cap.max(1),
+            items: Vec::with_capacity(8),
+            floor: None,
+        }
+    }
+
+    /// Whether a hit scoring `score` would be kept (so is worth building).
+    #[inline]
+    pub(super) fn admits(&self, score: f64) -> bool {
+        self.floor.is_none_or(|f| score > f)
+    }
+
+    pub(super) fn push(&mut self, m: SearchMatch) {
+        self.items.push(m);
+        if self.items.len() >= self.cap.saturating_mul(2) {
+            self.compact();
+        }
+    }
+
+    fn compact(&mut self) {
+        sort_doc_hits(&mut self.items);
+        self.items.truncate(self.cap);
+        self.floor = self.items.last().map(|m| m.score);
+    }
+
+    /// The kept hits, best first; marks the run capped when any were left
+    /// out.
+    pub(super) fn finish(mut self, run: &QueryRun) -> Vec<SearchMatch> {
+        let overflowed = self.floor.is_some() || self.items.len() > self.cap;
+        if overflowed {
+            run.mark_capped();
+        }
+        self.compact();
+        self.items
+    }
+}
+
+/// One document's hits best first, ties by line.
+pub(super) fn sort_doc_hits(hits: &mut [SearchMatch]) {
+    hits.sort_unstable_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.line_number.cmp(&b.line_number))
+    });
 }
 
 /// Tiny LRU of compiled regex analyses keyed by pattern.
@@ -939,8 +1046,12 @@ pub struct FileMetadata {
 
 impl FileMetadata {
     /// Compute metadata for a file at index time
+    ///
+    /// `relative` is the path under its indexed root: the folders above the
+    /// root must not change a file's score.
     fn compute(
         path: &Path,
+        relative: &str,
         (display_path, display_start): (String, usize),
         symbol_count: usize,
         dependency_count: u32,
@@ -948,14 +1059,8 @@ impl FileMetadata {
         let w = &FileScoreWeights::DEFAULT;
         let mut base_score: f32 = w.base;
 
-        let path_str = path.to_string_lossy();
-        let path_lower = path_str.to_lowercase();
-
         // Check if in source directories
-        let is_src_lib = path_lower.contains("/src/")
-            || path_lower.contains("\\src\\")
-            || path_lower.contains("/lib/")
-            || path_lower.contains("\\lib\\");
+        let (is_src_lib, is_test) = crate::search::ranking::path_signals(relative);
 
         if is_src_lib {
             base_score += w.src_lib_dir;
@@ -988,7 +1093,7 @@ impl FileMetadata {
 
         // Penalty for test/example/mock directories (same predicate as the
         // line-level score)
-        if crate::search::ranking::is_test_or_example_path(&path_lower) {
+        if is_test {
             base_score *= w.test_example_penalty;
         }
 
@@ -1082,6 +1187,10 @@ pub struct SearchEngine {
     pub max_file_size: u64,
     /// Canonical root paths used to produce root-relative display paths
     root_paths: Vec<PathBuf>,
+    /// The name each root is shown under, parallel to `root_paths`: its
+    /// folder name, or as many trailing folders as it takes to tell roots
+    /// with the same name apart (see [`crate::utils::root_labels`]).
+    root_labels: Vec<String>,
     /// Whether displayed paths start with the indexed root folder's own name
     /// (default: true). Only honoured with a single root; see
     /// [`Self::make_display_path`].
@@ -1090,6 +1199,9 @@ pub struct SearchEngine {
     /// millis): every change made on disk before then is in the index.
     /// `None` until the first build or reconcile completes.
     pub synced_at_ms: Option<u64>,
+    /// The startup build or reconcile is running: searches only see the
+    /// files indexed so far, and say so (`SearchLimit::Indexing`).
+    pub building: bool,
     /// When an incremental update (the file watcher) last changed the
     /// index (Unix millis).
     pub updated_at_ms: Option<u64>,
@@ -1123,8 +1235,10 @@ impl SearchEngine {
             transcode_non_utf8: true,
             max_file_size: PartialIndexedFile::DEFAULT_MAX_FILE_SIZE,
             root_paths: Vec::new(),
+            root_labels: Vec::new(),
             show_root_name: true,
             synced_at_ms: None,
+            building: false,
             updated_at_ms: None,
             watching: false,
         }
@@ -1143,7 +1257,29 @@ impl SearchEngine {
             .unwrap_or_else(|_| path.as_ref().to_path_buf());
         if !self.root_paths.contains(&canonical) {
             self.root_paths.push(canonical);
+            self.root_labels = crate::utils::root_labels(&self.root_paths);
         }
+    }
+
+    /// The indexed roots with the names their files are shown under.
+    pub fn roots_with_labels(&self) -> impl Iterator<Item = (&Path, &str)> {
+        self.root_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .zip(self.root_labels.iter().map(String::as_str))
+    }
+
+    /// `path` relative to the indexed root holding it (no root name), with
+    /// forward slashes; the whole path when it is under no root. Ranking
+    /// reads this, so where a repository sits on disk (`~/src/…`,
+    /// `/mnt/tests/…`) cannot change its scores.
+    pub fn root_relative_path(&self, path: &Path) -> String {
+        for root in &self.root_paths {
+            if let Ok(rel) = path.strip_prefix(root) {
+                return rel.to_string_lossy().replace('\\', "/");
+            }
+        }
+        path.to_string_lossy().replace('\\', "/")
     }
 
     /// Whether displayed paths leave off the root folder's name: only when
@@ -1156,23 +1292,22 @@ impl SearchEngine {
     /// The root-qualified path of `path` and the byte offset where its
     /// displayed form starts (see [`Self::make_display_path`]).
     fn qualified_display_path(&self, path: &Path) -> (String, usize) {
-        for root in &self.root_paths {
+        for (root, label) in self.roots_with_labels() {
             if let Ok(relative) = path.strip_prefix(root) {
                 let relative_str = relative.to_string_lossy().replace('\\', "/");
-                // Include the root folder name so the path is
-                // workspace-relative (e.g. `project/src/main.rs`).
-                if let Some(root_name) = root.file_name() {
-                    let root_name_str = root_name.to_string_lossy();
+                // Include the root's name so the path is workspace-relative
+                // (e.g. `project/src/main.rs`).
+                if !label.is_empty() {
                     if relative_str.is_empty() {
                         // Path IS the root directory (or a single-file root)
-                        return (root_name_str.to_string(), 0);
+                        return (label.to_string(), 0);
                     }
                     let start = if self.hides_root_name() {
-                        root_name_str.len() + 1
+                        label.len() + 1
                     } else {
                         0
                     };
-                    return (format!("{}/{}", root_name_str, relative_str), start);
+                    return (format!("{label}/{relative_str}"), start);
                 }
                 // Root has no file_name (e.g. filesystem root "/") — fall back
                 // to the bare relative path.
@@ -1748,10 +1883,28 @@ impl SearchEngine {
         self.symbol_cache.shrink_to_fit();
     }
 
+    /// Size on disk of file `id` as indexed (0 when unknown). Small files
+    /// are read rather than memory-mapped, so the mapped size alone said
+    /// "0 bytes" for a typical tree.
+    pub fn indexed_size(&self, id: u32) -> u64 {
+        match self.indexed_meta.get(id as usize) {
+            Some(&(_, size)) if size > 0 => size,
+            _ => self
+                .file_store
+                .get(id)
+                .and_then(|f| f.len_if_mapped())
+                .unwrap_or(0) as u64,
+        }
+    }
+
     pub fn get_stats(&self) -> SearchStats {
+        let total_size = (0..self.file_store.len() as u32)
+            .filter(|&id| self.file_store.get(id).is_some())
+            .map(|id| self.indexed_size(id))
+            .sum();
         SearchStats {
             num_files: self.file_store.live_len(),
-            total_size: self.file_store.total_mapped_size(),
+            total_size,
             num_trigrams: self.trigram_index.num_trigrams(),
             dependency_edges: self.dependency_index.total_edges(),
             total_content_bytes: self.file_store.total_content_bytes(),
@@ -1819,10 +1972,10 @@ impl SearchEngine {
                 return Some(id);
             }
         }
-        for root in &self.root_paths {
-            let Some(root_name) = root.file_name().and_then(|n| n.to_str()) else {
+        for (root, root_name) in self.roots_with_labels() {
+            if root_name.is_empty() {
                 continue;
-            };
+            }
             let rest = if display == root_name {
                 ""
             } else if let Some(rest) = display
@@ -1834,7 +1987,7 @@ impl SearchEngine {
                 continue;
             };
             let candidate = if rest.is_empty() {
-                root.clone()
+                root.to_path_buf()
             } else {
                 root.join(rest)
             };
@@ -2317,7 +2470,8 @@ impl SearchEngine {
                 let symbol_count = self.symbol_cache.get(idx).map(|s| s.len()).unwrap_or(0);
                 let dep_count = self.dependency_index.get_import_count(id);
                 let display = self.qualified_display_path(&file.path);
-                FileMetadata::compute(&file.path, display, symbol_count, dep_count)
+                let relative = self.root_relative_path(&file.path);
+                FileMetadata::compute(&file.path, &relative, display, symbol_count, dep_count)
             }
             None => FileMetadata::default(),
         };
@@ -2343,7 +2497,8 @@ impl SearchEngine {
                     .unwrap_or(0);
                 let dep_count = self.dependency_index.get_import_count(file_id);
                 let display = self.qualified_display_path(&file.path);
-                FileMetadata::compute(&file.path, display, symbol_count, dep_count)
+                let relative = self.root_relative_path(&file.path);
+                FileMetadata::compute(&file.path, &relative, display, symbol_count, dep_count)
             } else {
                 FileMetadata::default()
             };

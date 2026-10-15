@@ -53,7 +53,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -111,9 +111,7 @@ Options:
           Match whole words only
 
   -n, --max <N>
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset <N>
           Skip the first N hits (paging; ordering is deterministic)
@@ -175,7 +173,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
@@ -221,9 +219,7 @@ Options:
           Match whole words only
 
   -n, --max <N>
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset <N>
           Skip the first N hits (paging; ordering is deterministic)
@@ -285,7 +281,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
@@ -331,9 +327,7 @@ Options:
           Match whole words only
 
   -n, --max <N>
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset <N>
           Skip the first N hits (paging; ordering is deterministic)
@@ -395,7 +389,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
@@ -451,7 +445,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -504,7 +498,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -580,7 +574,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)

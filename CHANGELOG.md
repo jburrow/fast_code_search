@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Fixes from the 2026-10-15 review of what fcs promises against what it does.
+Paging is now consistent, busy files show their best hits, and several
+silent cut-offs now say so.
+
+**Upgrading:** no re-index is needed. A file with many matches now shows
+its best-scoring hits rather than its first ones, so result order changes
+for broad searches. `search.per_file_matches` now defaults to 1,000 (was
+100). Files that were skipped as binary only because of control
+characters, and SVG files, are now indexed, as ripgrep searches them.
+
+### Fixed
+- **Offset paging no longer repeats or skips hits.** The per-file cap and
+  match budget grew with the page's end, so page two could be ranked from
+  a different set than page one (an MCP walk of 305 hits returned 155
+  distinct ones). Both are now constant below result 1,000 and constant
+  per page beyond it, so consecutive pages join up.
+- **A busy file shows its best hits.** The per-file cap kept a file's
+  first N matches in line order; it now keeps its N best by score.
+- **Searches during index build say so.** Results carry a new `indexing`
+  limit (web UI: "index still building"; MCP and `fcs` notes) and no
+  exact-looking total.
+- **`fcs` piped and `fcs -l` no longer stop silently at 50.** `-l` pages
+  through every hit and lists every matching file; other output prints a
+  stderr note when more hits exist, with the `--offset` for the next page.
+  Piped and `-l` paths are relative to the current folder when the
+  configuration's roots are known, so `fcs -l foo | xargs $EDITOR` opens
+  the right files.
+- **Two indexed folders with the same name no longer collide.** Each root
+  gets a distinct label (extended with parent folders when names clash),
+  so the viewer opens the right file.
+- **Go to definition with watch off** no longer jumps to a line that no
+  longer holds the symbol; a cached definition is used only if its name is
+  still on that line.
+- **Symbol search totals are honest.** When a file limit leaves files
+  unread, the total is shown as unknown and the `max_files` limit is
+  reported; `full` ranking reads every file.
+- **Ranking no longer depends on where the repository sits on disk.**
+  The `src/`, `lib/` and test signals use the root-relative path.
+- **Test files are demoted by their names too** (`_test.go`, `.spec.ts`,
+  `.test.js`, `__tests__/`, `test_*.py` and similar), not only by folder.
+- **Ignore rules match ripgrep:** `.git/info/exclude` and the global
+  gitignore (`core.excludesFile`) are honoured by indexing and watch.
+- **Binary detection matches ripgrep:** a file is binary only if its
+  first 8 KB contains a NUL byte. SVG is no longer on the binary
+  extension list.
+- `case:` and `word:` accept only yes/no style values; anything else is
+  searched as text. A query that holds only filters now explains how to
+  add text to find.
+- The index size statistic counts indexed bytes, not files on disk.
+- The web UI no longer merges `Foo.ts` and `foo.ts` into one group.
+
+### Documentation
+- The book's matching, search limits, memory and ranking pages and the
+  CLI guide describe the new behaviour and every remaining difference
+  from ripgrep.
+
 ## [0.17.0] - 2026-10-15
 
 Search limits are measured, raised and configurable. Page 1 of a search

@@ -2110,9 +2110,10 @@ function groupResultsByFile(results) {
 function normalizeFileGroupKey(filePath) {
     if (!filePath) return '';
 
-    // Normalize separators and case so Windows path variants collapse into one group.
-    const normalizedSlashes = filePath.replace(/\\/g, '/');
-    return normalizedSlashes.toLowerCase();
+    // Normalize separators only. Lowercasing merged `Foo.ts` and `foo.ts`
+    // (two files on a case-sensitive disk) into one group, showing the
+    // second file's hits under the first one's name.
+    return filePath.replace(/\\/g, '/');
 }
 
 // ============================================

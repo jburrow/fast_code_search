@@ -17,14 +17,6 @@ impl SearchEngine {
     /// `run_candidates`).
     const SCAN_CHUNK_MAX: usize = 4096;
 
-    /// Default maximum matches to collect per document during a search
-    /// (`[search] per_file_matches`; plus the page offset, so later pages
-    /// can reach further into a busy file).
-    /// Prevents OOM on large indexes when a common keyword appears on
-    /// thousands of lines in the same file. Hitting it marks the run
-    /// truncated, so the total is reported as unknown, not as exact.
-    pub(super) const MAX_MATCHES_PER_DOC: usize = 100;
-
     /// Search with configurable ranking mode.
     ///
     /// # Ranking Modes
@@ -228,17 +220,33 @@ impl SearchEngine {
                 Some((best, id))
             })
             .collect();
+        // Ties by path, as results are: file ids follow discovery order,
+        // which differs between machines.
         scored.sort_unstable_by(|a, b| {
             b.0.partial_cmp(&a.0)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    self.get_file_metadata(a.1)
+                        .display_path
+                        .cmp(&self.get_file_metadata(b.1).display_path)
+                })
                 .then_with(|| a.1.cmp(&b.1))
         });
-        let keep = (limits.offset.saturating_add(limits.max_results))
+        // The best files by default; an explicit file limit (the web UI's
+        // SEARCH ALL FILES, MCP's `max_files`) widens it, and full ranking
+        // reads them all.
+        let mut keep = (limits.offset.saturating_add(limits.max_results))
             .saturating_mul(8)
             .max(Self::SYMBOL_PREFILTER_MIN_FILES);
+        if limits.every_file {
+            keep = usize::MAX;
+        } else if limits.max_files != usize::MAX {
+            keep = keep.max(limits.max_files);
+        }
         let selected: roaring::RoaringBitmap =
             scored.iter().take(keep).map(|(_, id)| *id).collect();
-        let total_candidates = candidates.len() as usize;
+        // What could have been read: the files holding a matching symbol.
+        let total_candidates = scored.len();
 
         // Phase 2: read only the selected files and score their lines. The
         // file set is already bounded, so the budget is sized to cover every
@@ -261,12 +269,15 @@ impl SearchEngine {
         info.total_candidates = total_candidates;
         // Files holding a matching symbol beyond the ones read were never
         // opened: say so, rather than report a total that looks complete.
+        // The total is then unknown: those files may hold more.
+        info.candidates_searched = selected.len() as usize;
         if scored.len() > selected.len() as usize {
-            info.candidates_searched = selected.len() as usize;
             if !info.limits_hit.contains(&SearchLimit::FileCap) {
                 info.limits_hit.push(SearchLimit::FileCap);
                 info.limits_hit.sort();
             }
+            info.total_matches = None;
+            info.truncated_by_budget = true;
         }
         Ok((matches, info))
     }
@@ -410,6 +421,9 @@ impl SearchEngine {
                     }
                 }
                 if hits.len() > budget {
+                    // The file's best hits, not its first ones.
+                    let mut hits = hits;
+                    sort_doc_hits(&mut hits);
                     matches.extend(hits.into_iter().take(budget));
                     budget_cut = true;
                     break 'scan;
@@ -992,14 +1006,8 @@ impl SearchEngine {
         // Pre-compute dependency boost
         let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
-        // Lazy-compute path info
-        let raw_path_str = file.path.to_string_lossy().into_owned();
-        let path_bytes = raw_path_str.as_bytes();
-        let is_src_lib = contains_bytes(path_bytes, b"/src/")
-            || contains_bytes(path_bytes, b"\\src\\")
-            || contains_bytes(path_bytes, b"/lib/")
-            || contains_bytes(path_bytes, b"\\lib\\");
-        let is_test_path = crate::search::ranking::is_test_or_example_path(&raw_path_str);
+        let (is_src_lib, is_test_path) =
+            crate::search::ranking::path_signals(&self.root_relative_path(&file.path));
         let display_path = self.make_display_path(&file.path);
 
         // Collect lines into a vector for indexed access
@@ -1045,6 +1053,13 @@ impl SearchEngine {
                 Some(l) => *l,
                 None => continue,
             };
+            // Symbols are captured at index time. If the file changed on
+            // disk since (watching off, or not caught up), the recorded line
+            // may now hold something else: report the definition only while
+            // its name is still on that line, never an unrelated line.
+            if !line.contains(symbol.name.as_str()) {
+                continue;
+            }
 
             // Find where the symbol name appears in the line
             let (match_start, match_end) =
@@ -1165,93 +1180,53 @@ impl SearchEngine {
         // Pre-compute dependency boost (done once per document, not per match)
         let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
-        // Use a simple Vec to store symbol definition lines - faster than HashSet for small N
-        // Most files have <100 symbols, linear scan is faster than hash overhead
-        // The synthetic FileName symbol lives at line 0 and must NOT count as a
-        // definition line, otherwise every match on the first line of every
-        // file gets the definition boost.
-        let symbol_def_lines: Vec<usize> = symbols
-            .iter()
-            .filter(|s| s.is_definition && s.symbol_type != SymbolType::FileName)
-            .map(|s| s.line)
-            .collect();
+        // The file's best hits up to its cap (not its first ones).
+        let mut top = TopHits::new(run.per_doc_cap());
+        let mut seen = 0usize;
 
-        // For files with many definition symbols, promote to a HashSet for O(1) lookups.
-        // Linear Vec::contains is O(n); with >32 defs across thousands of lines this
-        // becomes the hot path.  The HashSet build cost (~32 inserts) is paid back
-        // immediately on the first line scan.
-        let use_hashset = symbol_def_lines.len() > 32;
-        let symbol_def_set: FxHashSet<usize> = if use_hashset {
-            symbol_def_lines.iter().copied().collect()
-        } else {
-            FxHashSet::default()
-        };
-
-        // Pre-compute a per-line symbol-name map for O(1) `is_symbol` lookup.
-        // Without this, checking whether a matching line contains a symbol whose
-        // name matches the regex requires an O(n_symbols) scan for every match.
-        let symbol_names_by_line: FxHashMap<usize, Vec<&str>> = symbols
-            .iter()
-            .filter(|s| s.symbol_type != crate::symbols::SymbolType::FileName)
-            .fold(FxHashMap::default(), |mut map, s| {
-                map.entry(s.line).or_default().push(s.name.as_str());
-                map
-            });
-
-        // Single-pass search: collect matches directly
-        let mut matches = Vec::with_capacity(8);
-
-        // Lazy-compute path info only if we find matches
+        // Lazy-compute path info and symbol lookups only if we find matches
         let mut display_path: Option<String> = None;
         let mut is_src_lib = false;
         let mut is_test_path = false;
+        let mut symbol_maps: Option<SymbolLineMaps<'_>> = None;
 
         {
-            // Turn one matching line into a result. Returns false once the
-            // query's match budget is exhausted.
+            // Turn one matching line into a result. Returns false to stop
+            // (the deadline passed).
             let mut emit = |line_num: usize, line: &str, m_start: usize, m_end: usize| -> bool {
-                // Cap per-document results (a broad regex matching thousands
-                // of lines must not grow memory unboundedly) and honour the
-                // query's match budget.
-                if !run.take_doc_match(matches.len()) {
+                seen += 1;
+                if seen.is_multiple_of(4096) && run.past_deadline() {
                     return false;
                 }
-                // Lazy initialize path info only when we have at least one match
                 let path_ref = display_path.get_or_insert_with(|| {
-                    let raw = file.path.to_string_lossy().into_owned();
-                    let path_bytes = raw.as_bytes();
-                    is_src_lib = contains_bytes(path_bytes, b"/src/")
-                        || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/")
-                        || contains_bytes(path_bytes, b"\\lib\\");
-                    is_test_path = crate::search::ranking::is_test_or_example_path(&raw);
+                    (is_src_lib, is_test_path) =
+                        crate::search::ranking::path_signals(&self.root_relative_path(&file.path));
                     self.make_display_path(&file.path)
                 });
+                let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
 
-                // Calculate score using pre-computed values
-                let is_symbol_def = if use_hashset {
-                    symbol_def_set.contains(&line_num)
-                } else {
-                    symbol_def_lines.contains(&line_num)
-                };
+                let is_symbol_def = maps.is_definition_line(line_num, line);
                 let score = calculate_score_regex_inline(
                     line,
                     regex,
                     is_symbol_def,
                     is_src_lib,
+                    is_test_path,
                     dependency_boost,
                 );
+                if !top.admits(score) {
+                    return true;
+                }
 
-                // Check if this is a symbol match using the pre-computed per-line map (O(1) lookup)
-                let is_symbol = symbol_names_by_line
-                    .get(&line_num)
-                    .map(|names| names.iter().any(|name| regex.is_match(name)))
-                    .unwrap_or(false);
+                // Is a symbol whose name matches the regex on this line?
+                let is_symbol = maps
+                    .names_on_line(line_num)
+                    .is_some_and(|names| names.iter().any(|name| regex.is_match(name)));
 
                 // Truncate long lines around the match
                 let truncated = truncate_around_match(line, m_start, m_end);
 
-                matches.push(SearchMatch {
+                top.push(SearchMatch {
                     file_id: doc_id,
                     file_path: path_ref.clone(),
                     line_number: line_num + 1, // 1-based line numbers
@@ -1376,6 +1351,8 @@ impl SearchEngine {
             }
         }
 
+        let mut matches = top.finish(run);
+
         // Filename fallback: if no content lines matched but the regex matches a
         // FileName symbol, synthesize a result showing the file path.
         if matches.is_empty() {
@@ -1460,8 +1437,8 @@ impl SearchEngine {
         // Pre-compute dependency boost (done once per document, not per match)
         let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
-        // Single-pass search: collect matches directly
-        let mut matches = Vec::with_capacity(8);
+        // The file's best hits up to its cap (not its first ones).
+        let mut top = TopHits::new(run.per_doc_cap());
 
         // Everything below is built lazily on the FIRST match: most candidates
         // (trigram hits that fail verification, or files whose only hit is
@@ -1471,68 +1448,60 @@ impl SearchEngine {
         let mut is_test_path = false;
         let mut symbol_maps: Option<SymbolLineMaps<'_>> = None;
 
-        // Per-hit body. Returns false to stop.
-        let mut emit =
-            |line_num: usize, line: &str, match_start: usize, match_end: usize| -> bool {
-                if !run.take_doc_match(matches.len()) {
-                    return false;
-                }
-                let path_ref = display_path.get_or_insert_with(|| {
-                    let raw = file.path.to_string_lossy().into_owned();
-                    let path_bytes = raw.as_bytes();
-                    is_src_lib = contains_bytes(path_bytes, b"/src/")
-                        || contains_bytes(path_bytes, b"\\src\\")
-                        || contains_bytes(path_bytes, b"/lib/")
-                        || contains_bytes(path_bytes, b"\\lib\\");
-                    is_test_path = crate::search::ranking::is_test_or_example_path(&raw);
-                    self.display_path_for(doc_id, &file.path)
-                });
-                let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
-
-                let is_symbol_def = maps.is_definition_line(line_num);
-                let score = calculate_score_inline(
-                    line,
-                    original_query,
-                    query_lower,
-                    is_symbol_def,
-                    is_src_lib,
-                    is_test_path,
-                    dependency_boost,
-                );
-                let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
-                    names
-                        .iter()
-                        .any(|n| contains_case_insensitive(n, query_lower))
-                });
-
-                let truncated = truncate_around_match(line, match_start, match_end);
-                matches.push(SearchMatch {
-                    file_id: doc_id,
-                    file_path: path_ref.clone(),
-                    line_number: line_num + 1, // 1-based line numbers
-                    content: truncated.content,
-                    match_start: truncated.match_start,
-                    match_end: truncated.match_end,
-                    content_truncated: truncated.was_truncated,
-                    line_match_start: match_start,
-                    line_match_end: match_end,
-                    match_column: char_column(line, match_start),
-                    score,
-                    is_symbol,
-                    is_reference: false,
-                    reference_kind: None,
-                    dependency_count,
-                    file_hits: 0,
-                    file_hits_capped: false,
-                });
-                true
-            };
-
-        for hit in all_hits {
-            if !emit(hit.line_num, hit.line, hit.start, hit.end) {
+        for (n, hit) in all_hits.into_iter().enumerate() {
+            if n % 4096 == 4095 && run.past_deadline() {
                 break;
             }
+            let (line_num, line, match_start, match_end) =
+                (hit.line_num, hit.line, hit.start, hit.end);
+            let path_ref = display_path.get_or_insert_with(|| {
+                (is_src_lib, is_test_path) =
+                    crate::search::ranking::path_signals(&self.root_relative_path(&file.path));
+                self.display_path_for(doc_id, &file.path)
+            });
+            let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
+
+            let is_symbol_def = maps.is_definition_line(line_num, line);
+            let score = calculate_score_inline(
+                line,
+                original_query,
+                query_lower,
+                is_symbol_def,
+                is_src_lib,
+                is_test_path,
+                dependency_boost,
+            );
+            if !top.admits(score) {
+                continue;
+            }
+            let is_symbol = maps.names_on_line(line_num).is_some_and(|names| {
+                names
+                    .iter()
+                    .any(|n| contains_case_insensitive(n, query_lower))
+            });
+
+            let truncated = truncate_around_match(line, match_start, match_end);
+            top.push(SearchMatch {
+                file_id: doc_id,
+                file_path: path_ref.clone(),
+                line_number: line_num + 1, // 1-based line numbers
+                content: truncated.content,
+                match_start: truncated.match_start,
+                match_end: truncated.match_end,
+                content_truncated: truncated.was_truncated,
+                line_match_start: match_start,
+                line_match_end: match_end,
+                match_column: char_column(line, match_start),
+                score,
+                is_symbol,
+                is_reference: false,
+                reference_kind: None,
+                dependency_count,
+                file_hits: 0,
+                file_hits_capped: false,
+            });
         }
+        let mut matches = top.finish(run);
 
         // If no content matches, check if the query matches the filename.
         // The filename is indexed into the trigram index (so the file became a candidate),

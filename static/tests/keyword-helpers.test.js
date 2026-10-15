@@ -429,7 +429,8 @@ test('resultsCountLabel: the tooltip names the limit the server hit', () => {
     };
     const label = H.resultsCountLabel(data, 10);
     assert.match(label.title, /stopped at the time limit/);
-    assert.doesNotMatch(label.title, /candidate files/);
+    // A file limit leaves files unread, so it is named too.
+    assert.match(label.title, /candidate files/);
     assert.equal(H.limitsHitDetail({}, ['timeout']), '');
 });
 

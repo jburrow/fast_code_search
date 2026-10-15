@@ -590,7 +590,7 @@ function contentCountLabel(data, n) {
             : { text: plural(n), title: '' };
     }
     if (data.truncated_by_budget) {
-        const why = limitsHitDetail(data, ['match_budget', 'per_file_cap', 'timeout']);
+        const why = limitsHitDetail(data, ['match_budget', 'per_file_cap', 'timeout', 'max_files', 'indexing']);
         return {
             text: `${num(n)}+ results`,
             title: why
@@ -618,13 +618,10 @@ function limitsHitDetail(data, names) {
 /**
  * The request LOAD MORE sends after `loaded` hits, `pageSize` at a time.
  *
- * Offset paging is not stable when a search stops at its match budget: the
- * budget grows with `offset + max`, so a later page scans more files and
- * ranks a different set, and page 2 can repeat or skip hits from page 1.
  * Below the server's cap the whole list is fetched again at the bigger size
- * (`offset` 0) and replaces what is shown, so nothing repeats or goes
- * missing; hits already shown may move. Past the cap only offset paging is
- * possible.
+ * (`offset` 0) and replaces what is shown, so the list is always one
+ * ranking. Past the cap it pages by offset; the server keeps its match
+ * budget constant per page there, so pages join up without repeats.
  * @param {number} loaded hits on screen
  * @param {number} pageSize the search's page size (`max`)
  * @returns {{offset: number, max: number, redraw: boolean}}
@@ -657,7 +654,9 @@ function searchMetaLabel(data, durationMs, ignoresCase) {
     const caseNote = ignoresCase === undefined ? '' : (ignoresCase ? ' · ignoring case' : ' · matching case');
     // A time limit is the one cut Load more cannot undo, so it is shown.
     const timedOut = limitsHitDetail(data, ['timeout']) ? ' · stopped at time limit' : '';
-    const time = formatDurationMs(durationMs) + caseNote + timedOut;
+    // Results from a half-built index miss files: say so where it is seen.
+    const indexing = limitsHitDetail(data, ['indexing']) ? ' · index still building' : '';
+    const time = formatDurationMs(durationMs) + caseNote + timedOut + indexing;
     const total = data.total_candidates;
     if (typeof total !== 'number') return { text: time, title: '' };
     const searched = typeof data.candidates_searched === 'number' ? data.candidates_searched : total;

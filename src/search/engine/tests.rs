@@ -1509,29 +1509,35 @@ fn test_auto_ranking_reads_until_the_page_is_full() {
 #[test]
 fn test_budget_rule_from_settings() {
     let d = SearchLimits::new(50);
-    assert_eq!(d.match_budget, 50 + BudgetRule::DEFAULT.min);
-    assert_eq!(d.doc_cap(), 100);
+    assert_eq!(d.match_budget, BudgetRule::DEFAULT.min);
+    assert_eq!(d.doc_cap(), 1000);
     let rule = BudgetRule {
         min: 100,
         multiplier: 4,
-        max: 1000,
+        max: 10_000,
         per_file: 7,
     };
     let l = SearchLimits::new(50).with_budget_rule(rule);
-    assert_eq!(l.match_budget, 200);
+    assert_eq!(
+        l.match_budget, 4000,
+        "the budget of the deepest page below 1000"
+    );
     assert_eq!(
         l.doc_cap(),
-        50,
-        "the per-file cap is raised to the page end"
+        7,
+        "the per-file cap does not grow with the page"
     );
-    let l = SearchLimits::new(5).with_budget_rule(rule);
+    let l = SearchLimits::new(5).with_offset(500).with_budget_rule(rule);
     assert_eq!(l.doc_cap(), 7);
-    assert_eq!(l.match_budget, 105);
+    assert_eq!(
+        l.match_budget, 4000,
+        "every page below 1000 ranks one sample"
+    );
     // A page that ends at STABLE_PAGING_FROM or deeper gets the ceiling.
     let deep = SearchLimits::new(50)
         .with_budget_rule(rule)
         .with_offset(2000);
-    assert_eq!(deep.match_budget, 2050 + 100);
+    assert_eq!(deep.match_budget, 10_000);
     // The rule survives an offset applied afterwards.
     let s = SearchSettings {
         budget: rule,
@@ -1539,7 +1545,7 @@ fn test_budget_rule_from_settings() {
     };
     let l = s.apply(SearchLimits::new(5), None).with_offset(10);
     assert_eq!(l.budget_rule, rule);
-    assert_eq!(l.match_budget, 115);
+    assert_eq!(l.match_budget, 4000);
 }
 
 /// Symbol search reads only the best-scoring files holding a matching
@@ -1570,15 +1576,23 @@ fn test_symbol_search_reports_its_file_cap() {
         info.limits_hit
     );
     assert_eq!(info.candidates_searched, 200);
-    let (_, info) = engine
-        .search_symbols_parsed(
-            &crate::search::parse_query("widget_build"),
-            "",
-            "",
-            SearchLimits::new(50),
-        )
-        .unwrap();
+    assert_eq!(info.total_candidates, 250);
+    assert_eq!(info.total_matches, None, "the files not read may hold more");
+    let run = |limits: SearchLimits| {
+        engine
+            .search_symbols_parsed(&crate::search::parse_query("widget_build"), "", "", limits)
+            .unwrap()
+            .1
+    };
+    let info = run(SearchLimits::new(50));
     assert!(!info.limits_hit.contains(&SearchLimit::FileCap));
+    assert_eq!(info.total_matches, Some(250));
+    // The advice works: raising the file limit (SEARCH ALL FILES, MCP's
+    // max_files) or full ranking reads every file.
+    let info = run(SearchLimits::new(10).with_max_files(250));
+    assert_eq!(info.total_matches, Some(250));
+    let info = run(SearchLimits::new(10).with_every_file(true));
+    assert_eq!(info.total_matches, Some(250));
 }
 
 /// Filename-only matches: searching for the filename stem should return
@@ -2006,11 +2020,12 @@ fn test_search_limits_offset_budget() {
     assert!(settings.check_offset(100_000).is_ok());
     assert!(settings.check_offset(100_001).is_err());
 
-    // A shallow offset still grows the budget proportionally.
+    // Pages ending below 1000 share one budget and per-document cap too,
+    // so walking them by offset ranks one sample.
     let shallow = SearchLimits::new(50).with_offset(100);
     assert_eq!(shallow.offset, 100);
-    assert!(shallow.match_budget > base.match_budget);
-    assert!(shallow.match_budget <= SearchLimits::MAX_DERIVED_BUDGET);
+    assert_eq!(shallow.match_budget, base.match_budget);
+    assert_eq!(shallow.doc_cap(), base.doc_cap());
 
     // Lists ending at 1000 or deeper share one budget and per-document cap,
     // so offset pages past the API's 1000-result list rank the same sample.
@@ -2300,7 +2315,7 @@ fn test_references_survive_stale_positions() {
 fn test_several_words_are_one_phrase() {
     use crate::search::query_syntax::parse;
     let temp_dir = TempDir::new().unwrap();
-    // 150 `fn` lines, then the phrase (beyond MAX_MATCHES_PER_DOC), then
+    // 150 `fn` lines, then the phrase (beyond the old per-file cap), then
     // the two words apart.
     let mut big = String::new();
     for i in 0..150 {
@@ -2923,26 +2938,106 @@ fn review_text(
 /// A file with more hits than the per-document cap used to report an exact
 /// total of 100 with nothing more to load; its later lines were unreachable.
 #[test]
-fn test_per_document_cap_reports_unknown_total_and_pages_on() {
+fn test_per_document_cap_reports_unknown_total() {
     let t = TempDir::new().unwrap();
     let content: String = (0..150).map(|i| format!("needle {i}\n")).collect();
     let e = review_engine(t.path(), &[("a.txt", &content)]);
-    let (page1, info) = review_text(&e, "needle", SearchLimits::new(100));
-    assert_eq!(page1.len(), SearchEngine::MAX_MATCHES_PER_DOC);
+    let (page1, info) = review_text(&e, "needle", SearchLimits::new(100).with_per_doc_cap(100));
+    assert_eq!(page1.len(), 100);
     assert_eq!(info.total_matches, None, "the total is not known");
     assert!(info.truncated_by_budget);
-    let (page2, _) = review_text(&e, "needle", SearchLimits::new(100).with_offset(100));
-    let lines: Vec<usize> = page2.iter().map(|m| m.line_number).collect();
-    assert_eq!(lines, (101..=150).collect::<Vec<_>>());
-    // A longer list from the start (LOAD MORE) reaches them too.
-    let (longer, info) = review_text(&e, "needle", SearchLimits::new(200));
-    assert_eq!(longer.len(), 150);
+    // The default cap covers every page below 1000 results.
+    let (all, info) = review_text(&e, "needle", SearchLimits::new(200));
+    assert_eq!(all.len(), 150);
     assert_eq!(info.total_matches, Some(150));
     // Under the cap the total stays exact.
     let small: String = (0..10).map(|i| format!("needle {i}\n")).collect();
     let e = review_engine(t.path(), &[("a.txt", &small)]);
     let (_, info) = review_text(&e, "needle", SearchLimits::new(200));
     assert_eq!(info.total_matches, Some(10));
+}
+
+/// A capped file keeps its best hits, not its first ones: page 1 used to
+/// show a busy file's earliest (weakest) lines while its best ones further
+/// down were never read.
+#[test]
+fn test_per_document_cap_keeps_the_best_hits() {
+    let t = TempDir::new().unwrap();
+    let mut content = String::new();
+    for i in 0..150 {
+        content.push_str(&format!(
+            "# a long comment line that mentions needle somewhere in the middle of a lot of text {i}\n"
+        ));
+    }
+    for i in 0..50 {
+        content.push_str(&format!("needle{i} = 1\n"));
+    }
+    let e = review_engine(t.path(), &[("a.py", &content)]);
+    let (page, info) = review_text(&e, "needle", SearchLimits::new(20).with_per_doc_cap(60));
+    assert!(info.limits_hit.contains(&SearchLimit::PerFileCap));
+    let lines: Vec<usize> = page.iter().map(|m| m.line_number).collect();
+    assert!(
+        lines.iter().all(|&l| l > 150),
+        "the short lines starting with the term rank first: {lines:?}"
+    );
+    assert_eq!(lines[0], 151, "ties keep file order");
+    // The same through a regex.
+    let (page, _) = e
+        .search_regex_with_limits(
+            "needle",
+            "",
+            "",
+            SearchLimits::new(20).with_per_doc_cap(60),
+            RankMode::Full,
+        )
+        .unwrap();
+    assert!(page.iter().all(|m| m.line_number > 150));
+}
+
+/// Walking a search by `offset` (what MCP tells an agent to do) returns
+/// every hit exactly once, also across a file with far more hits than one
+/// page. The per-file cap used to grow with the page end, so each page
+/// ranked a different sample: 305 hits walked, 155 distinct.
+#[test]
+fn test_offset_walk_returns_every_hit_once() {
+    let t = TempDir::new().unwrap();
+    let mut big = String::new();
+    for i in 0..1200 {
+        // Varied line lengths give varied scores.
+        big.push_str(&format!("{}needlewalk {i}\n", " ".repeat(i % 37)));
+    }
+    let mut files: Vec<(String, String)> = vec![("big.py".into(), big)];
+    for j in 0..30 {
+        files.push((format!("s{j}.py"), format!("needlewalk = {j}\n")));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let e = review_engine(t.path(), &refs);
+    let (all, info) = review_text(&e, "needlewalk", SearchLimits::exhaustive());
+    assert_eq!(info.total_matches, Some(1230));
+    for page in [50usize, 333] {
+        let mut walked: Vec<(String, usize)> = Vec::new();
+        let mut offset = 0;
+        loop {
+            let (hits, _) = review_text(
+                &e,
+                "needlewalk",
+                SearchLimits::new(page).with_offset(offset),
+            );
+            if hits.is_empty() {
+                break;
+            }
+            offset += hits.len();
+            walked.extend(hits.into_iter().map(|m| (m.file_path, m.line_number)));
+        }
+        let expected: Vec<(String, usize)> = all
+            .iter()
+            .map(|m| (m.file_path.clone(), m.line_number))
+            .collect();
+        assert_eq!(walked, expected, "page size {page}");
+    }
 }
 
 /// A regex mentioning `\n` runs over the whole file; `^` and `$` used to
@@ -3707,4 +3802,178 @@ fn test_reference_kind_filter() {
         panic!("text search accepted kind:");
     };
     assert!(err.contains("references"), "{err}");
+}
+
+/// Two indexed folders with the same name used to give identical result
+/// paths (`app/src/main.rs` twice), and opening either hit showed one file.
+#[test]
+fn test_roots_with_the_same_name_get_distinct_paths() {
+    let t = TempDir::new().unwrap();
+    let one = t.path().join("one").join("app");
+    let two = t.path().join("two").join("app");
+    let mut engine = SearchEngine::new();
+    for (root, tag) in [(&one, "ONE"), (&two, "TWO")] {
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/main.rs"),
+            format!("fn shared() {{ /* {tag} */ }}\n"),
+        )
+        .unwrap();
+        engine.add_root_path(root);
+    }
+    for root in [&one, &two] {
+        engine.index_file(root.join("src/main.rs")).unwrap();
+    }
+    engine.finalize();
+    let (hits, _) = review_text(&engine, "shared", SearchLimits::new(10));
+    let mut paths: Vec<&str> = hits.iter().map(|m| m.file_path.as_str()).collect();
+    paths.sort();
+    assert_eq!(paths, vec!["one/app/src/main.rs", "two/app/src/main.rs"]);
+    // Each path opens its own file.
+    for m in &hits {
+        let id = engine.find_file_id(&m.file_path).unwrap();
+        let content = engine
+            .file_store
+            .get(id)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .into_owned();
+        let tag = if m.file_path.starts_with("one/") {
+            "ONE"
+        } else {
+            "TWO"
+        };
+        assert!(content.contains(tag), "{} opened {content}", m.file_path);
+    }
+}
+
+/// The `src/` boost and the test penalty used to test the absolute path, so
+/// a repository under `~/src/` outranked the same file elsewhere.
+#[test]
+fn test_ranking_ignores_the_folders_above_a_root() {
+    let t = TempDir::new().unwrap();
+    let a = t.path().join("src").join("zeta");
+    let b = t.path().join("plain").join("zeta");
+    let mut engine = SearchEngine::new();
+    for root in [&a, &b] {
+        fs::create_dir_all(root).unwrap();
+        fs::write(root.join("a.py"), "def rootskew_probe(): pass\n").unwrap();
+        engine.add_root_path(root);
+    }
+    for root in [&a, &b] {
+        engine.index_file(root.join("a.py")).unwrap();
+    }
+    engine.finalize();
+    let (hits, _) = review_text(&engine, "rootskew_probe", SearchLimits::new(10));
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].score, hits[1].score, "same file, same score");
+}
+
+/// Test files named the usual ways rank below the code they test.
+#[test]
+fn test_common_test_file_names_are_demoted() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[
+            ("pkg/parse.go", "package pkg\nfunc ParseWidget() {}\n"),
+            ("pkg/parse_test.go", "package pkg\nfunc ParseWidget() {}\n"),
+            ("web/gizmo.ts", "export function ParseWidget() {}\n"),
+            ("web/gizmo.spec.ts", "export function ParseWidget() {}\n"),
+            ("web/__tests__/g.ts", "export function ParseWidget() {}\n"),
+        ],
+    );
+    let (hits, _) = review_text(&e, "ParseWidget", SearchLimits::new(10));
+    let score = |name: &str| {
+        hits.iter()
+            .find(|m| m.file_path.ends_with(name))
+            .map(|m| m.score)
+            .unwrap()
+    };
+    for (test_file, code) in [
+        ("parse_test.go", "pkg/parse.go"),
+        ("gizmo.spec.ts", "web/gizmo.ts"),
+        ("__tests__/g.ts", "web/gizmo.ts"),
+    ] {
+        assert!(
+            score(test_file) < score(code) * 0.8,
+            "{test_file} is not demoted below {code}"
+        );
+    }
+}
+
+/// With file watching off, a file edited after indexing used to report its
+/// old definition line: symbol search pointed at whatever the line now held
+/// (a comment), and the real definition lost its label.
+#[test]
+fn test_edited_file_never_reports_a_definition_on_the_wrong_line() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(
+        t.path(),
+        &[(
+            "src/lib.rs",
+            "// header\npub fn alpha_target() {}\npub fn beta() { alpha_target(); }\n",
+        )],
+    );
+    fs::write(
+        t.path().join("src/lib.rs"),
+        "// header\n// inserted 1\n// inserted 2\npub fn alpha_target() {}\npub fn beta() { alpha_target(); }\n",
+    )
+    .unwrap();
+    let (syms, _) = e
+        .search_symbols_parsed(
+            &crate::search::parse_query("alpha_target"),
+            "",
+            "",
+            SearchLimits::new(10),
+        )
+        .unwrap();
+    assert!(
+        syms.iter().all(|m| m.content.contains("alpha_target")),
+        "{:?}",
+        syms.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+    // Text search: the comment on line 2 gets no definition boost (it does
+    // not match anyway), and no hit is boosted for a symbol that moved.
+    let (hits, _) = review_text(&e, "inserted", SearchLimits::new(10));
+    assert!(hits
+        .iter()
+        .all(|m| !m.is_symbol || m.content.contains("alpha_target")));
+}
+
+/// Searches made while the startup build is running say the index is
+/// incomplete instead of giving an exact-looking total.
+#[test]
+fn test_search_during_a_build_reports_indexing() {
+    let t = TempDir::new().unwrap();
+    let mut e = review_engine(t.path(), &[("a.txt", "needle\n")]);
+    let req = crate::search::SearchRequest {
+        query: "needle".into(),
+        ..Default::default()
+    };
+    let settings = SearchSettings::default();
+    let out = e.run(&req, req.limits(&settings, None).unwrap()).unwrap();
+    assert_eq!(out.info.total_matches, Some(1));
+    e.building = true;
+    let out = e.run(&req, req.limits(&settings, None).unwrap()).unwrap();
+    assert_eq!(out.info.total_matches, None);
+    assert!(out.info.limits_hit.contains(&SearchLimit::Indexing));
+}
+
+/// Filters with no text used to answer with a silent empty result.
+#[test]
+fn test_filters_without_text_say_so() {
+    let t = TempDir::new().unwrap();
+    let e = review_engine(t.path(), &[("a.txt", "needle\n")]);
+    let req = crate::search::SearchRequest {
+        query: "file:///etc".into(),
+        ..Default::default()
+    };
+    let settings = SearchSettings::default();
+    let err = e
+        .run(&req, req.limits(&settings, None).unwrap())
+        .err()
+        .unwrap();
+    assert!(err.contains("no text to find"), "{err}");
 }
