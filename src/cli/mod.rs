@@ -433,12 +433,35 @@ pub fn absolute_path(display: &str, roots: &[String]) -> Option<PathBuf> {
 }
 
 /// `abs` as a path that opens from `cwd`: relative when it is under it,
-/// absolute otherwise.
+/// absolute otherwise. Roots written relative or with `..` in the
+/// configuration are made absolute and tidied first, so they still match.
 pub fn openable_path(abs: &Path, cwd: Option<&Path>) -> String {
+    let abs = match cwd {
+        Some(c) if abs.is_relative() => lexical_normalize(&c.join(abs)),
+        _ => lexical_normalize(abs),
+    };
     cwd.and_then(|c| abs.strip_prefix(c).ok())
         .filter(|rel| !rel.as_os_str().is_empty())
         .map(|rel| rel.to_string_lossy().into_owned())
         .unwrap_or_else(|| abs.to_string_lossy().into_owned())
+}
+
+/// Drop `.` and resolve `..` without touching the disk.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// What `fcs` says on stderr when the hits printed are not all there are.
@@ -1188,6 +1211,18 @@ mod tests {
             "http://127.0.0.1:9000"
         );
         assert_eq!(server_url(None, None, None), DEFAULT_SERVER);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn openable_paths_tidy_relative_and_dotted_roots() {
+        let cwd = Path::new("/w/c/proj/src");
+        let dotted = Path::new("/w/v/../c/proj/src/lib.rs");
+        assert_eq!(openable_path(dotted, Some(cwd)), "lib.rs");
+        let relative = Path::new("../../../v/../c/proj/src/lib.rs");
+        assert_eq!(openable_path(relative, Some(cwd)), "lib.rs");
+        let outside = Path::new("/w/other/x.rs");
+        assert_eq!(openable_path(outside, Some(cwd)), "/w/other/x.rs");
     }
 
     #[test]

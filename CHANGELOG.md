@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Piped `fcs` output and `fcs -l` print short paths relative to the current
+  folder even when the configuration lists a root as a relative path or
+  with `..` in it (they were long but still valid paths).
+- MCP `search_code` says "total not known" instead of "the scan stopped
+  early" when it has no exact total; the note under it gives the reason
+  (for example, the index is still being built).
+
 ## [0.18.0] - 2026-10-15
 
 Fixes from the 2026-10-15 review of what fcs promises against what it does.
