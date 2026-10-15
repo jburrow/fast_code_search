@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -231,7 +231,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -286,9 +286,7 @@ Options:
           Match whole words only
 
   -n, --max &lt;N&gt;
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset &lt;N&gt;
           Skip the first N hits (paging; ordering is deterministic)
@@ -350,7 +348,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
@@ -393,9 +391,7 @@ Options:
           Match whole words only
 
   -n, --max &lt;N&gt;
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset &lt;N&gt;
           Skip the first N hits (paging; ordering is deterministic)
@@ -457,7 +453,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
@@ -500,9 +496,7 @@ Options:
           Match whole words only
 
   -n, --max &lt;N&gt;
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset &lt;N&gt;
           Skip the first N hits (paging; ordering is deterministic)
@@ -564,7 +558,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
@@ -617,7 +611,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -667,7 +661,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -740,7 +734,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)

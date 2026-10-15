@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -216,14 +216,14 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 <tr><td>Context lines</td><td>≤ <code>search.max_context_lines</code> (10) per hit (<code>/api/context</code>: ≤ 200)</td><td><code>context</code></td></tr>
 <tr><td>Concurrent searches</td><td><code>max_concurrent_searches</code>, shared by REST and gRPC</td><td>beyond it: 503 / <code>RESOURCE_EXHAUSTED</code> immediately</td></tr>
 <tr><td>Regex</td><td>compiled size and DFA size limits</td><td>absurd patterns are a 400</td></tr>
-<tr><td>Per-file hits</td><td><code>search.per_file_matches</code> (100) per document per search, raised to the page end</td><td>keeps a broad regex bounded</td></tr>
+<tr><td>Per-file hits</td><td><code>search.per_file_matches</code> (1,000) per document per search, its best by score; the budget from result 1000 on</td><td>keeps a broad regex bounded</td></tr>
 <tr><td>File size</td><td><code>max_file_size</code> (default 10 MB)</td><td>larger files are not indexed</td></tr>
 <tr><td>WebSocket frames</td><td>4 KiB inbound</td><td><code>/ws/progress</code> ignores inbound data</td></tr>
 </tbody>
 </table>
 </div>
 <p>When a limit cuts a search short, the response names it in <code>limits_hit</code>
-(<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code> or <code>timeout</code>, each with a
+(<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code> or <code>indexing</code>, each with a
 sentence for people). gRPC sends the names in the <code>fcs-limits-hit</code>
 response header, <code>fcs</code> prints them on stderr, and MCP adds a “Results
 capped” line, so a capped result never passes for a complete one.</p>

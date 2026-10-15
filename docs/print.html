@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fa11e869.js"></script>
@@ -431,7 +431,7 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><td><code>-e</code>, <code>--regex</code></td><td>Treat the query as a regular expression (matched one line at a time; mention <code>\n</code> for multi-line patterns).</td></tr>
 <tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text ignores case by default, a regex matches it; <code>-e -i</code> ignores it).</td></tr>
 <tr><td><code>-w</code>, <code>--word</code></td><td>Whole words only.</td></tr>
-<tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to the server’s <code>search.max_page_size</code>, 1,000).</td></tr>
+<tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to the server’s <code>search.max_page_size</code>, 1,000). When more exist, a note on stderr says so and gives the <code>--offset</code> for the next page. With <code>-l</code>, the most files to list (default: every matching file). Not grep’s line-number flag.</td></tr>
 <tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two. Up to the server’s <code>search.max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>-C</code>, <code>--context N</code></td><td>Lines of context around each hit (up to 10).</td></tr>
 <tr><td><code>-g</code>, <code>--glob GLOB</code></td><td>Only files matching the glob (repeatable). <code>src/**/*.rs</code>, <code>*.py</code>, <code>tests</code> (a bare name matches anywhere in the path).</td></tr>
@@ -439,7 +439,7 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><td><code>--rank auto|fast|full</code></td><td>Every mode reads candidate files best first until enough matches are collected to rank; <code>auto</code> and <code>fast</code> honour a file limit, <code>full</code> never stops at one.</td></tr>
 <tr><td><code>--max-files N</code></td><td>Most candidate files to read (default: the server’s <code>search.fast_rank_files</code>, no limit; up to its <code>search.max_fast_rank_files</code>).</td></tr>
 <tr><td><code>--timeout-ms MS</code></td><td>Stop scanning after MS and return the best hits so far.</td></tr>
-<tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print file paths only, once each.</td></tr>
+<tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print every matching file path once, best first. <code>fcs</code> pages through all the hits to find them, so the list is complete unless <code>-n</code> or the server’s <code>search.max_page_offset</code> stops it (then stderr says so).</td></tr>
 <tr><td><code>--format grouped|vimgrep|json</code>, <code>--json</code></td><td>Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server’s response object.</td></tr>
 <tr><td><code>--absolute</code></td><td>Print absolute paths (mapped through the configured roots).</td></tr>
 <tr><td><code>--color auto|always|never</code></td><td>ANSI colour; <code>auto</code> means a terminal without <code>NO_COLOR</code>.</td></tr>
@@ -523,8 +523,12 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
 nothing to search offline.</li>
 <li>Offline searches load the index each time (a few seconds for tens of
 thousands of files) and do not discover files added since the last save.</li>
-<li>Result paths are workspace-relative (<code>root-name/…</code>) unless <code>--absolute</code>
-can map them through the configuration’s <code>paths</code>.</li>
+<li>On a terminal, result paths are workspace-relative (<code>root-name/…</code>) unless
+<code>--absolute</code> can map them through the configuration’s <code>paths</code>. Piped
+(vimgrep) output and <code>-l</code> print paths relative to the current folder when
+the configuration’s roots are known, so <code>fcs -l foo | xargs sed …</code> opens
+the right files (absolute for files outside the current folder); without
+the roots they stay workspace-relative.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
@@ -2040,39 +2044,59 @@ multi-line match, the result is the line where it starts. ripgrep counts
 lines the same way (<code>rg -c</code>).</li>
 <li><strong>Ranked, and capped.</strong> Results come back best first rather than in file
 order. To keep a broad search fast, a request reads a bounded number of
-matches: by default 100 from one file on the first page, and a budget of
-32,768 matches (eight times the page end for longer pages, up to
-100,000). Files are read best first, so the budget keeps the hits of the
-most likely files. When either limit is reached, the
-total is shown as “N+” rather than as a count, and the response names
-the limit (<code>limits_hit</code>: <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code> or
-<code>max_files</code>; <code>fcs</code> prints it, MCP adds a “Results capped” line, gRPC
-sends an <code>fcs-limits-hit</code> header). A server may also cap the files read
+matches: a budget of 32,768 for every page that ends before result 1000,
+and 100,000 for every page from there on. One file contributes at most
+its best 1,000 hits (by score, not its first 1,000 lines) before result
+1000, and up to the budget after it. Files are read best first, so the
+budget keeps the hits of the most likely files. Because every page in
+each range ranks the same sample, paging with <code>offset</code> (MCP’s
+<code>search_code</code>, <code>fcs --offset</code>, the API) returns each hit once, with no
+repeats or gaps; only the switch at result 1000 can differ, and only for
+a search that hit its budget. When a limit is reached, the total is
+shown as “N+” rather than as a count, and the response names the limit
+(<code>limits_hit</code>: <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code>, <code>max_files</code>
+or <code>indexing</code>; <code>fcs</code> prints it, MCP adds a “Results capped” line, gRPC
+sends an <code>fcs-limits-hit</code> header). <code>indexing</code> means the server was
+still building or reconciling its index, so files not indexed yet
+could not match. A server may also cap the files read
 (<code>search.fast_rank_files</code>, off by default); the header then says
 “Searched N of M files” and SEARCH ALL FILES opens the rest (up to
-<code>search.max_fast_rank_files</code>). LOAD MORE in the web UI
-fetches the whole list again at the bigger size, up to 1000 results
-(<code>search.max_page_size</code>), so
-every match ends up shown exactly once. Results already on screen can
-move when it does. Past 1000 results it fetches the next page instead.
-Every page that ends at result 1000 or later ranks the same sample (a
-budget of 100,000 matches), so those pages fit together with no repeats
-or gaps. Shorter pages use a smaller budget, so an API client asking for
-<code>offset</code> pages below 1000 of a search that hit its budget can see a
-result repeated or skipped between pages. Asking again from offset 0
-with a larger <code>max</code> avoids that. Paging stops at offset 100,000 by
-default (<code>search.max_page_offset</code>). ripgrep has none of these limits; each
-is reported when it applies, and <a href="#search-limits">Search limits</a>
-gives the measurements behind the defaults.</li>
+<code>search.max_fast_rank_files</code>). Symbol search reads the files holding
+the best-matching symbols (at least 200); when there are more, it says
+so in the same way, and SEARCH ALL FILES, MCP’s <code>max_files</code> or
+<code>rank=full</code> read them all. LOAD MORE in the web UI fetches the whole
+list again at the bigger size, up to 1000 results
+(<code>search.max_page_size</code>), so every match ends up shown exactly once.
+Results already on screen can move when it does. Past 1000 results it
+fetches the next page instead. Paging stops at offset 100,000 by
+default (<code>search.max_page_offset</code>). ripgrep has none of these limits;
+each is reported when it applies, and <a href="#search-limits">Search
+limits</a> gives the measurements behind
+the defaults.</li>
+<li><strong>Filters need text.</strong> A query made only of filters (<code>lang:rust</code>,
+<code>file:///etc</code>) is answered with an error saying there is no text to
+find, not an empty result. <code>case:</code> and <code>word:</code> take <code>yes</code> or <code>no</code>
+(also <code>y</code>/<code>n</code>, <code>true</code>/<code>false</code>, <code>1</code>/<code>0</code>, <code>on</code>/<code>off</code>); with any other
+argument the token is text, so <code>word:count</code> searches for <code>word:count</code>.</li>
 <li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
 Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
 (<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16
 with a byte order mark, or when given <code>-E</code>. grep and git grep match raw
-bytes. Binary files are not indexed.</li>
+bytes. A file with a NUL byte in its first 8 KB is binary and not
+indexed (ripgrep’s test is the same NUL byte, but it looks wherever it
+reads, so a NUL further in makes rg stop at it while fcs searches the
+whole file). Files with these extensions are not read at all: images
+(<code>png</code>, <code>jpg</code>, <code>gif</code>, <code>ico</code>, <code>bmp</code>, <code>webp</code>), archives, fonts, office
+documents, media, compiled objects and bytecode
+(<code>indexer.extra_binary_extensions</code> adds more). SVG is text and is
+indexed.</li>
 <li><strong>Index scope.</strong> Files over <code>max_file_size</code> (10 MB by default) and paths
 matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target</code>, <code>.git</code>, <code>build</code>,
 <code>dist</code>, Python virtual environments) are not indexed, so they are never
-searched.</li>
+searched, even when git tracks them (ripgrep searches a tracked
+<code>build/</code>). Ignore files apply as in ripgrep: <code>.gitignore</code>, <code>.ignore</code>,
+<code>.git/info/exclude</code> and your global git excludes (<code>core.excludesFile</code>),
+at startup and for files the watcher sees change.</li>
 </ul>
 <h2 id="known-differences"><a class="header" href="#known-differences">Known differences</a></h2>
 <p>None at the moment. A known difference would be listed here, and marked
@@ -2538,7 +2562,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -2593,9 +2617,7 @@ Options:
           Match whole words only
 
   -n, --max &lt;N&gt;
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset &lt;N&gt;
           Skip the first N hits (paging; ordering is deterministic)
@@ -2657,7 +2679,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
@@ -2700,9 +2722,7 @@ Options:
           Match whole words only
 
   -n, --max &lt;N&gt;
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset &lt;N&gt;
           Skip the first N hits (paging; ordering is deterministic)
@@ -2764,7 +2784,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
@@ -2807,9 +2827,7 @@ Options:
           Match whole words only
 
   -n, --max &lt;N&gt;
-          Maximum hits to print (1 to the server's search.max_page_size, 1000)
-          
-          [default: 50]
+          Maximum hits to print (1 to the server's search.max_page_size, 1000; default 50). With -l, the most files to list (default: every file)
 
       --offset &lt;N&gt;
           Skip the first N hits (paging; ordering is deterministic)
@@ -2871,7 +2889,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
@@ -2924,7 +2942,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -2974,7 +2992,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -3047,7 +3065,7 @@ Options:
           Shorthand for --format json
 
   -l, --files-with-matches
-          Print only the files that match, one per line
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -3150,16 +3168,18 @@ fast_rank_files = 0
 # SEARCH MORE FILES). 0 = no limit; set one on a shared server.
 max_fast_rank_files = 0
 
-# Matches collected to rank a page: multiplier x (offset + page size),
-# between min and max. A page is the best of what was collected, so a small
-# budget gives a poor page 1 for common words. Each match costs about 230
-# bytes while the search runs.
+# Matches collected to rank a page. Every page ending before result 1000
+# collects multiplier x 1000, between min and max; every page from there on
+# collects max. One budget per range keeps offset pages consistent. A page
+# is the best of what was collected, so a small budget gives a poor page 1
+# for common words. Each match costs about 230 bytes while the search runs.
 min_match_budget = 32768
 match_budget_multiplier = 8
 max_match_budget = 100000
 
-# Most hits one file contributes (raised to the page end).
-per_file_matches = 100
+# Most hits one file contributes to pages before result 1000 (its best, by
+# score). 1000 leaves out nothing those pages could show.
+per_file_matches = 1000
 
 # Page size when a request gives none, and the largest it may ask for (the
 # web UI's LOAD MORE and MCP follow max_page_size).
@@ -3780,7 +3800,24 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
 </code></pre>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
-Files that are imported are the ones people are looking for.</p>
+Files that are imported are the ones people are looking for.
+The graph has import edges for Rust, Python and JavaScript/TypeScript only
+(see <a href="#dependency-graph-support">Dependency graph support</a>). In a
+repository that mixes those with Go, Java, C#, C/C++ or Ruby, files in the
+other languages never get this factor, so a Go module twenty files import
+scores like a Rust module nothing imports.</p>
+<p>Path signals read the path <strong>under its indexed root</strong>: <code>src/</code> and <code>lib/</code>
+are folders inside the repository, and the folders the repository sits in
+(<code>~/src/…</code>, <code>/mnt/tests/…</code>) never change a score. A test or example path is
+a folder whose name starts with <code>test</code>, <code>example</code>, <code>mock</code> or <code>fixture</code>, a
+<code>__tests__</code> or <code>spec</code> folder, or a test file name: <code>test_x.py</code>,
+<code>x_test.go</code>, <code>x_tests.rs</code>, <code>x.test.ts</code>, <code>x.spec.js</code>, <code>tests.rs</code>. The
+factor applies to text, regex and symbol searches alike.</p>
+<p>Definitions come from the symbols captured when the file was indexed. If
+the file has changed on disk since (file watching off, or not caught up),
+a line counts as a definition only while the recorded symbol’s name is
+still on it, so an edit above a definition drops its boost rather than
+moving it onto an unrelated line.</p>
 <h2 id="result-order"><a class="header" href="#result-order">Result order</a></h2>
 <p>Results are in rank order with each file’s hits kept together: files in
 the order of their best hit, and every hit of a file, by score, before the
@@ -4001,14 +4038,14 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 <tr><td>Context lines</td><td>≤ <code>search.max_context_lines</code> (10) per hit (<code>/api/context</code>: ≤ 200)</td><td><code>context</code></td></tr>
 <tr><td>Concurrent searches</td><td><code>max_concurrent_searches</code>, shared by REST and gRPC</td><td>beyond it: 503 / <code>RESOURCE_EXHAUSTED</code> immediately</td></tr>
 <tr><td>Regex</td><td>compiled size and DFA size limits</td><td>absurd patterns are a 400</td></tr>
-<tr><td>Per-file hits</td><td><code>search.per_file_matches</code> (100) per document per search, raised to the page end</td><td>keeps a broad regex bounded</td></tr>
+<tr><td>Per-file hits</td><td><code>search.per_file_matches</code> (1,000) per document per search, its best by score; the budget from result 1000 on</td><td>keeps a broad regex bounded</td></tr>
 <tr><td>File size</td><td><code>max_file_size</code> (default 10 MB)</td><td>larger files are not indexed</td></tr>
 <tr><td>WebSocket frames</td><td>4 KiB inbound</td><td><code>/ws/progress</code> ignores inbound data</td></tr>
 </tbody>
 </table>
 </div>
 <p>When a limit cuts a search short, the response names it in <code>limits_hit</code>
-(<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code> or <code>timeout</code>, each with a
+(<code>max_files</code>, <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code> or <code>indexing</code>, each with a
 sentence for people). gRPC sends the names in the <code>fcs-limits-hit</code>
 response header, <code>fcs</code> prints them on stderr, and MCP adds a “Results
 capped” line, so a capped result never passes for a complete one.</p>
@@ -4737,10 +4774,22 @@ with no way to page. <strong>Defaults:</strong> <code>mcp.default_limit = 50</co
 <code>mcp.max_limit = 1000</code>, plus <code>offset</code>, <code>max_files</code> and <code>rank</code> arguments.</p>
 <h2 id="per-file-cap-per_file_matches"><a class="header" href="#per-file-cap-per_file_matches">Per-file cap (<code>per_file_matches</code>)</a></h2>
 <p>Files with more than 100 hits: <code>return</code> 5,685, <code>struct</code> 7,359, <code>static</code>
-1,671, <code>printf</code> 76. The largest single file has 11,242 <code>return</code> hits. The
-cap is reported (<code>per_file_cap</code>) and grows with the page, so LOAD MORE
-reaches every hit. <strong>Default:</strong> 100. Nothing measured argues for another
-number.</p>
+1,671, <code>printf</code> 76. The largest single file has 11,242 <code>return</code> hits.</p>
+<p>Until 0.17 the cap was 100, applied to a file’s <em>first</em> 100 hits in file
+order and raised to the page end. Two things were wrong with that. Page 1
+showed a busy file’s earliest hits, not its best (a file with 150 long
+comment lines mentioning a word before 150 short assignments to it showed
+the comments, score 1.2, and never the assignments, score 7.8). And
+because the cap grew with the page end, each <code>offset</code> page ranked a
+different sample: walking such a search by offset, as MCP tells agents
+to, returned 305 hits of which 155 were distinct.</p>
+<p>Now a file keeps its best hits by score, and the cap is the same for every
+page in a range. <strong>Default:</strong> 1,000, the end of the range (results before
+1000): a file’s 1,001st-best hit can never rank in the first 1,000
+results, so the cap leaves out nothing those pages could show. From result
+1000 on the cap is the page’s budget, as before. The cost is that every
+hit of a capped file is scored (the old cap stopped reading the file at
+hit 100), and a busy file uses up to 1,000 of the budget instead of 100.</p>
 <h2 id="deadline"><a class="header" href="#deadline">Deadline</a></h2>
 <p>The slowest default above (a page of 1,000) took 291 ms, and a
 million-match budget took 2.4 s. The engine deadline, just under
@@ -4760,6 +4809,62 @@ judgement.</li>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.17.0...HEAD">Unreleased</a></a></h2>
+<p>Fixes from the 2026-10-15 review of what fcs promises against what it does.
+Paging is now consistent, busy files show their best hits, and several
+silent cut-offs now say so.</p>
+<p><strong>Upgrading:</strong> no re-index is needed. A file with many matches now shows
+its best-scoring hits rather than its first ones, so result order changes
+for broad searches. <code>search.per_file_matches</code> now defaults to 1,000 (was
+100). Files that were skipped as binary only because of control
+characters, and SVG files, are now indexed, as ripgrep searches them.</p>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<ul>
+<li><strong>Offset paging no longer repeats or skips hits.</strong> The per-file cap and
+match budget grew with the page’s end, so page two could be ranked from
+a different set than page one (an MCP walk of 305 hits returned 155
+distinct ones). Both are now constant below result 1,000 and constant
+per page beyond it, so consecutive pages join up.</li>
+<li><strong>A busy file shows its best hits.</strong> The per-file cap kept a file’s
+first N matches in line order; it now keeps its N best by score.</li>
+<li><strong>Searches during index build say so.</strong> Results carry a new <code>indexing</code>
+limit (web UI: “index still building”; MCP and <code>fcs</code> notes) and no
+exact-looking total.</li>
+<li><strong><code>fcs</code> piped and <code>fcs -l</code> no longer stop silently at 50.</strong> <code>-l</code> pages
+through every hit and lists every matching file; other output prints a
+stderr note when more hits exist, with the <code>--offset</code> for the next page.
+Piped and <code>-l</code> paths are relative to the current folder when the
+configuration’s roots are known, so <code>fcs -l foo | xargs $EDITOR</code> opens
+the right files.</li>
+<li><strong>Two indexed folders with the same name no longer collide.</strong> Each root
+gets a distinct label (extended with parent folders when names clash),
+so the viewer opens the right file.</li>
+<li><strong>Go to definition with watch off</strong> no longer jumps to a line that no
+longer holds the symbol; a cached definition is used only if its name is
+still on that line.</li>
+<li><strong>Symbol search totals are honest.</strong> When a file limit leaves files
+unread, the total is shown as unknown and the <code>max_files</code> limit is
+reported; <code>full</code> ranking reads every file.</li>
+<li><strong>Ranking no longer depends on where the repository sits on disk.</strong>
+The <code>src/</code>, <code>lib/</code> and test signals use the root-relative path.</li>
+<li><strong>Test files are demoted by their names too</strong> (<code>_test.go</code>, <code>.spec.ts</code>,
+<code>.test.js</code>, <code>__tests__/</code>, <code>test_*.py</code> and similar), not only by folder.</li>
+<li><strong>Ignore rules match ripgrep:</strong> <code>.git/info/exclude</code> and the global
+gitignore (<code>core.excludesFile</code>) are honoured by indexing and watch.</li>
+<li><strong>Binary detection matches ripgrep:</strong> a file is binary only if its
+first 8 KB contains a NUL byte. SVG is no longer on the binary
+extension list.</li>
+<li><code>case:</code> and <code>word:</code> accept only yes/no style values; anything else is
+searched as text. A query that holds only filters now explains how to
+add text to find.</li>
+<li>The index size statistic counts indexed bytes, not files on disk.</li>
+<li>The web UI no longer merges <code>Foo.ts</code> and <code>foo.ts</code> into one group.</li>
+</ul>
+<h3 id="documentation"><a class="header" href="#documentation">Documentation</a></h3>
+<ul>
+<li>The book’s matching, search limits, memory and ranking pages and the
+CLI guide describe the new behaviour and every remaining difference
+from ripgrep.</li>
+</ul>
 <h2 id="0170---2026-10-15"><a class="header" href="#0170---2026-10-15"><a href="https://github.com/jburrow/fast_code_search/compare/v0.16.2...v0.17.0">0.17.0</a> - 2026-10-15</a></h2>
 <p>Search limits are measured, raised and configurable. Page 1 of a search
 for a common word now holds most of what an unlimited search would rank
@@ -4820,7 +4925,7 @@ it moves page 1 from the exhaustive ranking, on any corpus.</li>
 <code>server.max_page_offset</code> moved to <code>[search]</code>. The old keys still work and
 log a warning; a <code>[search]</code> value wins.</li>
 </ul>
-<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
 <ul>
 <li>Symbol search read only the best max(200, 8 x page end) files holding a
 matching symbol, and reported its total as exact. It now reports
@@ -4836,7 +4941,7 @@ Python project to pick up the import fixes.</p>
 is not being developed for now. The page still works at
 <code>/semantic.html</code> (and shows its tab while open).</li>
 </ul>
-<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed</a></h3>
+<h3 id="fixed-2"><a class="header" href="#fixed-2">Fixed</a></h3>
 <ul>
 <li>Watch mode on large trees no longer answers searches with “index is
 being updated” while changes stream in. Applying a batch held the write
@@ -5037,7 +5142,7 @@ the engine. Offline <code>fcs</code> now enforces <code>server.max_page_offset</
 server does. A new test checks that all three return the same hits in
 the same order.</li>
 </ul>
-<h3 id="fixed-2"><a class="header" href="#fixed-2">Fixed</a></h3>
+<h3 id="fixed-3"><a class="header" href="#fixed-3">Fixed</a></h3>
 <ul>
 <li>Results are in rank order again, with each file’s hits together: files in
 the order of their best hit, then every hit of that file by score. Since
@@ -5194,7 +5299,7 @@ on stderr (<code>-q</code> hides it), <code>fcs status</code> reports it, MCP <c
 results end with it, and a new MCP tool, <code>index_status</code>, lets an agent
 check the files it just wrote.</li>
 </ul>
-<h3 id="fixed-3"><a class="header" href="#fixed-3">Fixed</a></h3>
+<h3 id="fixed-4"><a class="header" href="#fixed-4">Fixed</a></h3>
 <ul>
 <li>Web UI: search result context and hover previews are syntax-highlighted in
 one pass, so doc comments and other multi-line comments are shown as
@@ -5334,7 +5439,7 @@ readiness probes, and one index per server (its gRPC examples relied on
 reflection, which the server does not offer).</p>
 </li>
 </ul>
-<h3 id="fixed-4"><a class="header" href="#fixed-4">Fixed</a></h3>
+<h3 id="fixed-5"><a class="header" href="#fixed-5">Fixed</a></h3>
 <ul>
 <li>Search correctness review: a file with more than 100 hits now reports
 the total as unknown and LOAD MORE reaches its later lines (it claimed an
@@ -5459,7 +5564,7 @@ then every file’s second hit, and so on, so one file holding a hundred
 matches no longer fills the page. Phrase and all-term tiers still come
 first; paging stays deterministic.</li>
 </ul>
-<h3 id="fixed-5"><a class="header" href="#fixed-5">Fixed</a></h3>
+<h3 id="fixed-6"><a class="header" href="#fixed-6">Fixed</a></h3>
 <ul>
 <li>Web UI: dependency popover failures are shown inline instead of an
 <code>alert()</code>; copying a path works on plain-HTTP origins (textarea
@@ -5491,7 +5596,7 @@ HTTP client).</li>
 kept), removing the per-line start-up cost that made <code>fn\s+main\(</code> an
 order of magnitude slower than <code>main\(</code> over the same candidates.</li>
 </ul>
-<h3 id="fixed-6"><a class="header" href="#fixed-6">Fixed</a></h3>
+<h3 id="fixed-7"><a class="header" href="#fixed-7">Fixed</a></h3>
 <ul>
 <li>Regex candidate generation treated a repetition as one contiguous copy on
 both sides, so <code>fo+bar</code> demanded the literal <code>fobar</code> and never found
@@ -5597,7 +5702,7 @@ docs.html matches the API; the “INDEX” header stat is labelled as mapped
 content.</li>
 </ul>
 <h2 id="0101---2026-09-06"><a class="header" href="#0101---2026-09-06"><a href="https://github.com/jburrow/fast_code_search/compare/v0.10.0...v0.10.1">0.10.1</a> - 2026-09-06</a></h2>
-<h3 id="fixed-7"><a class="header" href="#fixed-7">Fixed</a></h3>
+<h3 id="fixed-8"><a class="header" href="#fixed-8">Fixed</a></h3>
 <ul>
 <li>The index could keep a file whose delete or rename-away event the watcher
 backend never delivered (FSEvents on macOS drops the source half of a
@@ -5611,7 +5716,7 @@ path is now canonicalized once per importing file.</li>
 annotations; the macOS and Windows test jobs pass.</li>
 </ul>
 <h2 id="0100---2026-09-06"><a class="header" href="#0100---2026-09-06"><a href="https://github.com/jburrow/fast_code_search/compare/v0.9.0...v0.10.0">0.10.0</a> - 2026-09-06</a></h2>
-<h3 id="fixed-8"><a class="header" href="#fixed-8">Fixed</a></h3>
+<h3 id="fixed-9"><a class="header" href="#fixed-9">Fixed</a></h3>
 <ul>
 <li>A freshly loaded index reported absolute display paths (and the UI could
 not round-trip them) until the next finalize, because the configured roots
@@ -5795,7 +5900,7 @@ delay and per-file cache instead of fetching the whole file.</li>
 <li>Docs page documents the <code>context</code> param and the file/context/dependencies/diagnostics
 endpoints, the JSON-error/Retry-After convention, and <code>total_results</code>/<code>has_more</code>.</li>
 </ul>
-<h3 id="fixed-9"><a class="header" href="#fixed-9">Fixed</a></h3>
+<h3 id="fixed-10"><a class="header" href="#fixed-10">Fixed</a></h3>
 <ul>
 <li>Eliminated memory-map UTF-8 undefined behavior and truncation crashes during
 indexing (no more <code>from_utf8_unchecked</code> over bytes that can change underneath it;
@@ -5828,12 +5933,12 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
 </ul>
-<h3 id="fixed-10"><a class="header" href="#fixed-10">Fixed</a></h3>
+<h3 id="fixed-11"><a class="header" href="#fixed-11">Fixed</a></h3>
 <ul>
 <li>Keyword UI tooltip cleanup behavior now hides context tooltips immediately when opening file views/modal overlays, preventing lingering tooltip artifacts.</li>
 </ul>
 <h2 id="075---2026-03-24"><a class="header" href="#075---2026-03-24"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.4...v0.7.5">0.7.5</a> - 2026-03-24</a></h2>
-<h3 id="fixed-11"><a class="header" href="#fixed-11">Fixed</a></h3>
+<h3 id="fixed-12"><a class="header" href="#fixed-12">Fixed</a></h3>
 <ul>
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
@@ -5852,7 +5957,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
 </ul>
-<h3 id="fixed-12"><a class="header" href="#fixed-12">Fixed</a></h3>
+<h3 id="fixed-13"><a class="header" href="#fixed-13">Fixed</a></h3>
 <ul>
 <li>Benchmark CI failure: reset local changes before gh-pages branch switch to prevent dirty <code>Cargo.lock</code> blocking the workflow (#97).</li>
 </ul>
@@ -5867,12 +5972,12 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
 </ul>
-<h3 id="fixed-13"><a class="header" href="#fixed-13">Fixed</a></h3>
+<h3 id="fixed-14"><a class="header" href="#fixed-14">Fixed</a></h3>
 <ul>
 <li>Linting issues across the codebase (#94).</li>
 </ul>
 <h2 id="071---2026-03-17"><a class="header" href="#071---2026-03-17"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.0...v0.7.1">0.7.1</a> - 2026-03-17</a></h2>
-<h3 id="fixed-14"><a class="header" href="#fixed-14">Fixed</a></h3>
+<h3 id="fixed-15"><a class="header" href="#fixed-15">Fixed</a></h3>
 <ul>
 <li>Fix path handling: canonical storage, root-relative display, and proper glob exclusions (#91).</li>
 <li>Fix semantic web API handlers panicking on a poisoned <code>RwLock</code> (#85).</li>
@@ -5908,12 +6013,12 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li><strong>Code coverage reports in CI</strong>: A new <code>coverage</code> job runs on every push and pull request using <code>cargo-llvm-cov</code>. The HTML coverage report is uploaded as a <code>coverage-report</code> GitHub Actions artifact and LCOV data is uploaded to Codecov. See the <a href="#code-coverage">Code Coverage</a> section in the copilot instructions for how to generate reports locally.</li>
 </ul>
-<h3 id="fixed-15"><a class="header" href="#fixed-15">Fixed</a></h3>
+<h3 id="fixed-16"><a class="header" href="#fixed-16">Fixed</a></h3>
 <ul>
 <li><strong>Website becomes unresponsive during index building</strong>: API handlers (<code>search</code>, <code>stats</code>, <code>dependents</code>, <code>dependencies</code>, <code>diagnostics</code>) previously called <code>engine.read()</code> which blocks until any pending write lock (held during batch merges) is released. Under concurrent load, this caused blocking threads to pile up and exhaust the Tokio thread pool, leading to memory pressure and system unresponsiveness. All handlers now use <code>engine.try_read()</code> and immediately return <code>503 Service Unavailable</code> with the message <em>“Index is currently being updated, please try again shortly”</em> when the write lock is held. The <code>status</code> endpoint was already safe and is unchanged.</li>
 </ul>
 <h2 id="066---2026-02-27"><a class="header" href="#066---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.5...v0.6.6">0.6.6</a> - 2026-02-27</a></h2>
-<h3 id="fixed-16"><a class="header" href="#fixed-16">Fixed</a></h3>
+<h3 id="fixed-17"><a class="header" href="#fixed-17">Fixed</a></h3>
 <ul>
 <li><strong>OOM during indexing of large codebases (Vec/HashMap over-allocation)</strong>: After each doubling growth, Rust’s <code>Vec</code> and <code>FxHashMap</code> may carry up to 2× excess capacity. On a 62 000-file corpus this contributes tens to hundreds of MB of wasted heap. Three changes address this:
 <ol>
@@ -5924,7 +6029,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 </li>
 </ul>
 <h2 id="065---2026-02-27"><a class="header" href="#065---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.4...v0.6.5">0.6.5</a> - 2026-02-27</a></h2>
-<h3 id="fixed-17"><a class="header" href="#fixed-17">Fixed</a></h3>
+<h3 id="fixed-18"><a class="header" href="#fixed-18">Fixed</a></h3>
 <ul>
 <li><strong><code>content_fallback</code> bytes permanently retained in heap (regression since v0.6.2)</strong>: Files whose mmap failed fell back to a <code>OnceLock&lt;Vec&lt;u8&gt;&gt;</code> cache, which is write-once — once populated, the bytes could never be freed. Replaced with <code>Mutex&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;</code> so the cached bytes are evictable. Resolves the memory-growth issue tracked in v0.6.4 for Linux deployments approaching the mmap limit.</li>
 </ul>
@@ -5939,7 +6044,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 </li>
 </ul>
 <h2 id="064---2026-02-27"><a class="header" href="#064---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.3...v0.6.4">0.6.4</a> - 2026-02-27</a></h2>
-<h3 id="fixed-18"><a class="header" href="#fixed-18">Fixed</a></h3>
+<h3 id="fixed-19"><a class="header" href="#fixed-19">Fixed</a></h3>
 <ul>
 <li><strong>OOM / memory errors during indexing on large codebases (regression since v0.6.0)</strong>: <code>BATCH_SIZE</code> was silently raised from 500 to 2000 in v0.6.0 as part of the Phase-2 parallelisation change (#24). During Phase 1, all <code>BATCH_SIZE</code> files are read into memory simultaneously, so peak RAM scales as <code>batch_size × average_file_size × ~4</code>. On repos with many sizable files (generated code, minified JS, large headers, etc.) this caused 4× higher indexing-time memory consumption and triggered out-of-memory crashes. The default has been restored to <strong>500</strong>. A new <code>batch_size</code> key under <code>[indexer]</code> lets operators tune the trade-off between throughput and RAM:
 <pre><code class="language-toml">[indexer]
@@ -5957,7 +6062,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>README and startup warning updated</strong>: Messaging around <code>vm.max_map_count</code> now accurately describes the graceful fallback behaviour introduced in 0.6.2 rather than implying hard failures.</li>
 </ul>
 <h2 id="062---2026-02-27"><a class="header" href="#062---2026-02-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.1...v0.6.2">0.6.2</a> - 2026-02-27</a></h2>
-<h3 id="fixed-19"><a class="header" href="#fixed-19">Fixed</a></h3>
+<h3 id="fixed-20"><a class="header" href="#fixed-20">Fixed</a></h3>
 <ul>
 <li><strong>Files beyond the OS mmap limit were silently dropped from search results (P0 — Correctness)</strong>: When the Linux <code>vm.max_map_count</code> safe limit (85% of system max, typically 55,700 on default kernels) was exceeded during indexing, <code>add_file()</code> bailed out and the remaining files were neither registered in the store nor added to the trigram index. On large codebases (e.g. 629k files) only the first ~55,700 files were searchable. Files are now always registered. For files that cannot be memory-mapped (limit exhausted), content is read via <code>std::fs::read()</code> at result-retrieval time and the result is cached, so there is no repeated I/O cost.</li>
 <li><strong>File count in UI showed mmap-capped number instead of true indexed count</strong>: Because the above fix ensures all files are registered, <code>file_store.len()</code> — which drives the FILES counter in the web UI and <code>/api/status</code> — now reflects the true number of indexed files rather than the OS mmap limit.</li>
@@ -5980,7 +6085,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 </li>
 <li><strong>Filename-only matches now returned</strong>: Searching for a filename that does not appear in the file’s content previously returned zero results (the file was shortlisted by the trigram index but then silently dropped). All three search paths now synthesize a <code>SearchMatch</code> at line 0 when the query matches the filename stem but no content lines match.</li>
 </ul>
-<h3 id="fixed-20"><a class="header" href="#fixed-20">Fixed</a></h3>
+<h3 id="fixed-21"><a class="header" href="#fixed-21">Fixed</a></h3>
 <ul>
 <li><strong>Regex trigram lookup not lowercased (P0 — Correctness)</strong>: <code>search_regex()</code> passed raw literal text (e.g. <code>"MyClass"</code>) to the trigram index which stores only lowercased content. Uppercase literals ≥3 chars returned zero trigram hits, causing missed results or a full scan fallback. The literal is now lowercased before the trigram lookup.</li>
 <li><strong>Exact-match score boost used case-insensitive comparison (P0 — Correctness)</strong>: <code>calculate_score_inline()</code> applied the 2× exact-match boost using the already-lowercased query, so every match received the boost regardless of case. The boost now uses the original (un-lowered) query for a true case-sensitive comparison.</li>
@@ -5995,7 +6100,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong><code>FileName</code> symbol search returned wrong content</strong>: <code>search_symbols_in_document()</code> fetched line 0 of the file content for <code>FileName</code> symbols, returning the first line of the file instead of the file path. It now uses the file path as the match content.</li>
 </ul>
 <h2 id="058---2026-02-26"><a class="header" href="#058---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.7...v0.5.8">0.5.8</a> - 2026-02-26</a></h2>
-<h3 id="fixed-21"><a class="header" href="#fixed-21">Fixed</a></h3>
+<h3 id="fixed-22"><a class="header" href="#fixed-22">Fixed</a></h3>
 <ul>
 <li><strong>Fix panic in <code>content_safety_check</code> on multi-byte UTF-8 content</strong>: <code>is_binary_content()</code> sliced a <code>&amp;str</code> at a raw byte offset (8192) which panics when that position falls inside a multi-byte UTF-8 character (e.g. CJK text, emoji). The function now operates on <code>as_bytes()</code> directly, avoiding the invalid slice.</li>
 </ul>
@@ -6008,7 +6113,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong><code>diagnose_mmap_error()</code> helper</strong>: Mmap failures that look like resource-limit errors now produce a rich diagnostic message including current system limits and concrete fix instructions.</li>
 <li><strong>Deployment troubleshooting docs</strong>: New “Memory Allocation Errors on RHEL7/CentOS7” section in <code>DEPLOYMENT.md</code> covering symptoms, root cause, automatic detection behaviour, and two solution paths (with/without sudo).</li>
 </ul>
-<h3 id="fixed-22"><a class="header" href="#fixed-22">Fixed</a></h3>
+<h3 id="fixed-23"><a class="header" href="#fixed-23">Fixed</a></h3>
 <ul>
 <li><strong><code>include_extensions</code> config now honoured during indexing</strong>: The field was parsed but never forwarded to file discovery; it now filters files correctly.</li>
 <li><strong><code>max_file_size</code> config now honoured during indexing</strong>: The configured value is forwarded to <code>FileDiscoveryConfig</code> instead of hardcoding 10 MB.</li>
@@ -6019,7 +6124,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Config template corrected</strong>: <code>index_path</code>, <code>save_after_build</code>, <code>save_after_updates</code>, <code>watch</code> placed under <code>[indexer]</code>; <code>telemetry.enabled</code> default fixed.</li>
 </ul>
 <h2 id="056---2026-02-26"><a class="header" href="#056---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.5...v0.5.6">0.5.6</a> - 2026-02-26</a></h2>
-<h3 id="fixed-23"><a class="header" href="#fixed-23">Fixed</a></h3>
+<h3 id="fixed-24"><a class="header" href="#fixed-24">Fixed</a></h3>
 <ul>
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
@@ -6055,7 +6160,7 @@ is running.</li>
 Use these builds when diagnosing crashes — <code>RUST_BACKTRACE=full</code> will show real function names.</li>
 </ul>
 <h2 id="052---2026-02-25"><a class="header" href="#052---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.1...v0.5.2">0.5.2</a> - 2026-02-25</a></h2>
-<h3 id="fixed-24"><a class="header" href="#fixed-24">Fixed</a></h3>
+<h3 id="fixed-25"><a class="header" href="#fixed-25">Fixed</a></h3>
 <ul>
 <li><strong>SIGABRT / heap corruption during parallel batch indexing</strong>: Tree-sitter C parsers were being
 called concurrently from rayon’s thread pool (<code>par_iter</code> over a 500-file batch). Tree-sitter’s
@@ -6071,7 +6176,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="051---2026-02-25"><a class="header" href="#051---2026-02-25"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.0...v0.5.1">0.5.1</a> - 2026-02-25</a></h2>
-<h3 id="fixed-25"><a class="header" href="#fixed-25">Fixed</a></h3>
+<h3 id="fixed-26"><a class="header" href="#fixed-26">Fixed</a></h3>
 <ul>
 <li><strong>OOM crash during background indexing</strong>: <code>PreIndexedFile</code> was retaining a full copy of each file’s content (<code>String</code>, up to 10 MB each) in memory while rayon processed batches in parallel. With a 500-file batch size this could accumulate up to 5 GB of redundant heap on top of the trigram index, causing an allocation failure on large codebases (~60K files). The <code>content</code> field has been removed from <code>PreIndexedFile</code> — it was only needed transiently inside <code>process()</code> to compute trigrams, symbols, and imports, all of which are now the only data carried into <code>index_batch</code>.</li>
 </ul>
@@ -6129,7 +6234,7 @@ are serialised.</li>
 <li>Binary startup reordered: config loads before tracing init so TOML telemetry values are available</li>
 <li><code>--init</code> flag exits before tracing init (no subscriber needed for template generation)</li>
 </ul>
-<h3 id="fixed-26"><a class="header" href="#fixed-26">Fixed</a></h3>
+<h3 id="fixed-27"><a class="header" href="#fixed-27">Fixed</a></h3>
 <ul>
 <li><strong>Persisted index loads now rebuild symbol and dependency caches</strong> to restore symbol scoring boosts and import-based ranking</li>
 <li><strong>gRPC keyword service lock handling</strong> now reports lock errors instead of panicking on poisoned locks</li>
@@ -6259,7 +6364,7 @@ are serialised.</li>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
-<h3 id="fixed-27"><a class="header" href="#fixed-27">Fixed</a></h3>
+<h3 id="fixed-28"><a class="header" href="#fixed-28">Fixed</a></h3>
 <ul>
 <li><strong>ML models build on Windows</strong>: Fixed ort 2.0 API compatibility issues and CRT linking conflicts
 <ul>
@@ -6288,7 +6393,7 @@ are serialised.</li>
 <li><strong>Indexing completion stats</strong>: When background indexing completes, the log now reports the total size of indexed text and the current process memory usage in human-readable format (e.g., “150.00 MB”). Uses the <code>sysinfo</code> crate for cross-platform memory reporting.</li>
 </ul>
 <h2 id="020---2026-02-01"><a class="header" href="#020---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.1.0...v0.2.0">0.2.0</a> - 2026-02-01</a></h2>
-<h3 id="fixed-28"><a class="header" href="#fixed-28">Fixed</a></h3>
+<h3 id="fixed-29"><a class="header" href="#fixed-29">Fixed</a></h3>
 <ul>
 <li><strong>Duplicate search results</strong>: Fixed issue where the same file could appear multiple times in search results when discovered via symlinks or different path representations. The <code>FileStore</code> now deduplicates files by canonical path.</li>
 </ul>

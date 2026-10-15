@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -272,39 +272,59 @@ multi-line match, the result is the line where it starts. ripgrep counts
 lines the same way (<code>rg -c</code>).</li>
 <li><strong>Ranked, and capped.</strong> Results come back best first rather than in file
 order. To keep a broad search fast, a request reads a bounded number of
-matches: by default 100 from one file on the first page, and a budget of
-32,768 matches (eight times the page end for longer pages, up to
-100,000). Files are read best first, so the budget keeps the hits of the
-most likely files. When either limit is reached, the
-total is shown as “N+” rather than as a count, and the response names
-the limit (<code>limits_hit</code>: <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code> or
-<code>max_files</code>; <code>fcs</code> prints it, MCP adds a “Results capped” line, gRPC
-sends an <code>fcs-limits-hit</code> header). A server may also cap the files read
+matches: a budget of 32,768 for every page that ends before result 1000,
+and 100,000 for every page from there on. One file contributes at most
+its best 1,000 hits (by score, not its first 1,000 lines) before result
+1000, and up to the budget after it. Files are read best first, so the
+budget keeps the hits of the most likely files. Because every page in
+each range ranks the same sample, paging with <code>offset</code> (MCP’s
+<code>search_code</code>, <code>fcs --offset</code>, the API) returns each hit once, with no
+repeats or gaps; only the switch at result 1000 can differ, and only for
+a search that hit its budget. When a limit is reached, the total is
+shown as “N+” rather than as a count, and the response names the limit
+(<code>limits_hit</code>: <code>match_budget</code>, <code>per_file_cap</code>, <code>timeout</code>, <code>max_files</code>
+or <code>indexing</code>; <code>fcs</code> prints it, MCP adds a “Results capped” line, gRPC
+sends an <code>fcs-limits-hit</code> header). <code>indexing</code> means the server was
+still building or reconciling its index, so files not indexed yet
+could not match. A server may also cap the files read
 (<code>search.fast_rank_files</code>, off by default); the header then says
 “Searched N of M files” and SEARCH ALL FILES opens the rest (up to
-<code>search.max_fast_rank_files</code>). LOAD MORE in the web UI
-fetches the whole list again at the bigger size, up to 1000 results
-(<code>search.max_page_size</code>), so
-every match ends up shown exactly once. Results already on screen can
-move when it does. Past 1000 results it fetches the next page instead.
-Every page that ends at result 1000 or later ranks the same sample (a
-budget of 100,000 matches), so those pages fit together with no repeats
-or gaps. Shorter pages use a smaller budget, so an API client asking for
-<code>offset</code> pages below 1000 of a search that hit its budget can see a
-result repeated or skipped between pages. Asking again from offset 0
-with a larger <code>max</code> avoids that. Paging stops at offset 100,000 by
-default (<code>search.max_page_offset</code>). ripgrep has none of these limits; each
-is reported when it applies, and <a href="../benchmarks/search-limits.html">Search limits</a>
-gives the measurements behind the defaults.</li>
+<code>search.max_fast_rank_files</code>). Symbol search reads the files holding
+the best-matching symbols (at least 200); when there are more, it says
+so in the same way, and SEARCH ALL FILES, MCP’s <code>max_files</code> or
+<code>rank=full</code> read them all. LOAD MORE in the web UI fetches the whole
+list again at the bigger size, up to 1000 results
+(<code>search.max_page_size</code>), so every match ends up shown exactly once.
+Results already on screen can move when it does. Past 1000 results it
+fetches the next page instead. Paging stops at offset 100,000 by
+default (<code>search.max_page_offset</code>). ripgrep has none of these limits;
+each is reported when it applies, and <a href="../benchmarks/search-limits.html">Search
+limits</a> gives the measurements behind
+the defaults.</li>
+<li><strong>Filters need text.</strong> A query made only of filters (<code>lang:rust</code>,
+<code>file:///etc</code>) is answered with an error saying there is no text to
+find, not an empty result. <code>case:</code> and <code>word:</code> take <code>yes</code> or <code>no</code>
+(also <code>y</code>/<code>n</code>, <code>true</code>/<code>false</code>, <code>1</code>/<code>0</code>, <code>on</code>/<code>off</code>); with any other
+argument the token is text, so <code>word:count</code> searches for <code>word:count</code>.</li>
 <li><strong>Non-UTF-8 files are converted.</strong> Files in Latin-1, Windows-1252,
 Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
 (<code>transcode_non_utf8</code>, on by default). ripgrep only does this for UTF-16
 with a byte order mark, or when given <code>-E</code>. grep and git grep match raw
-bytes. Binary files are not indexed.</li>
+bytes. A file with a NUL byte in its first 8 KB is binary and not
+indexed (ripgrep’s test is the same NUL byte, but it looks wherever it
+reads, so a NUL further in makes rg stop at it while fcs searches the
+whole file). Files with these extensions are not read at all: images
+(<code>png</code>, <code>jpg</code>, <code>gif</code>, <code>ico</code>, <code>bmp</code>, <code>webp</code>), archives, fonts, office
+documents, media, compiled objects and bytecode
+(<code>indexer.extra_binary_extensions</code> adds more). SVG is text and is
+indexed.</li>
 <li><strong>Index scope.</strong> Files over <code>max_file_size</code> (10 MB by default) and paths
 matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target</code>, <code>.git</code>, <code>build</code>,
 <code>dist</code>, Python virtual environments) are not indexed, so they are never
-searched.</li>
+searched, even when git tracks them (ripgrep searches a tracked
+<code>build/</code>). Ignore files apply as in ripgrep: <code>.gitignore</code>, <code>.ignore</code>,
+<code>.git/info/exclude</code> and your global git excludes (<code>core.excludesFile</code>),
+at startup and for files the watcher sees change.</li>
 </ul>
 <h2 id="known-differences"><a class="header" href="#known-differences">Known differences</a></h2>
 <p>None at the moment. A known difference would be listed here, and marked

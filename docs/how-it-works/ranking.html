@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -216,7 +216,24 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
 </code></pre>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
-Files that are imported are the ones people are looking for.</p>
+Files that are imported are the ones people are looking for.
+The graph has import edges for Rust, Python and JavaScript/TypeScript only
+(see <a href="../reference/graph-support.html">Dependency graph support</a>). In a
+repository that mixes those with Go, Java, C#, C/C++ or Ruby, files in the
+other languages never get this factor, so a Go module twenty files import
+scores like a Rust module nothing imports.</p>
+<p>Path signals read the path <strong>under its indexed root</strong>: <code>src/</code> and <code>lib/</code>
+are folders inside the repository, and the folders the repository sits in
+(<code>~/src/…</code>, <code>/mnt/tests/…</code>) never change a score. A test or example path is
+a folder whose name starts with <code>test</code>, <code>example</code>, <code>mock</code> or <code>fixture</code>, a
+<code>__tests__</code> or <code>spec</code> folder, or a test file name: <code>test_x.py</code>,
+<code>x_test.go</code>, <code>x_tests.rs</code>, <code>x.test.ts</code>, <code>x.spec.js</code>, <code>tests.rs</code>. The
+factor applies to text, regex and symbol searches alike.</p>
+<p>Definitions come from the symbols captured when the file was indexed. If
+the file has changed on disk since (file watching off, or not caught up),
+a line counts as a definition only while the recorded symbol’s name is
+still on it, so an edit above a definition drops its boost rather than
+moving it onto an unrelated line.</p>
 <h2 id="result-order"><a class="header" href="#result-order">Result order</a></h2>
 <p>Results are in rank order with each file’s hits kept together: files in
 the order of their best hit, and every hit of a file, by score, before the

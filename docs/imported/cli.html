@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -238,7 +238,7 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><td><code>-e</code>, <code>--regex</code></td><td>Treat the query as a regular expression (matched one line at a time; mention <code>\n</code> for multi-line patterns).</td></tr>
 <tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text ignores case by default, a regex matches it; <code>-e -i</code> ignores it).</td></tr>
 <tr><td><code>-w</code>, <code>--word</code></td><td>Whole words only.</td></tr>
-<tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to the server’s <code>search.max_page_size</code>, 1,000).</td></tr>
+<tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to the server’s <code>search.max_page_size</code>, 1,000). When more exist, a note on stderr says so and gives the <code>--offset</code> for the next page. With <code>-l</code>, the most files to list (default: every matching file). Not grep’s line-number flag.</td></tr>
 <tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two. Up to the server’s <code>search.max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>-C</code>, <code>--context N</code></td><td>Lines of context around each hit (up to 10).</td></tr>
 <tr><td><code>-g</code>, <code>--glob GLOB</code></td><td>Only files matching the glob (repeatable). <code>src/**/*.rs</code>, <code>*.py</code>, <code>tests</code> (a bare name matches anywhere in the path).</td></tr>
@@ -246,7 +246,7 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><td><code>--rank auto|fast|full</code></td><td>Every mode reads candidate files best first until enough matches are collected to rank; <code>auto</code> and <code>fast</code> honour a file limit, <code>full</code> never stops at one.</td></tr>
 <tr><td><code>--max-files N</code></td><td>Most candidate files to read (default: the server’s <code>search.fast_rank_files</code>, no limit; up to its <code>search.max_fast_rank_files</code>).</td></tr>
 <tr><td><code>--timeout-ms MS</code></td><td>Stop scanning after MS and return the best hits so far.</td></tr>
-<tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print file paths only, once each.</td></tr>
+<tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print every matching file path once, best first. <code>fcs</code> pages through all the hits to find them, so the list is complete unless <code>-n</code> or the server’s <code>search.max_page_offset</code> stops it (then stderr says so).</td></tr>
 <tr><td><code>--format grouped|vimgrep|json</code>, <code>--json</code></td><td>Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server’s response object.</td></tr>
 <tr><td><code>--absolute</code></td><td>Print absolute paths (mapped through the configured roots).</td></tr>
 <tr><td><code>--color auto|always|never</code></td><td>ANSI colour; <code>auto</code> means a terminal without <code>NO_COLOR</code>.</td></tr>
@@ -330,8 +330,12 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
 nothing to search offline.</li>
 <li>Offline searches load the index each time (a few seconds for tens of
 thousands of files) and do not discover files added since the last save.</li>
-<li>Result paths are workspace-relative (<code>root-name/…</code>) unless <code>--absolute</code>
-can map them through the configuration’s <code>paths</code>.</li>
+<li>On a terminal, result paths are workspace-relative (<code>root-name/…</code>) unless
+<code>--absolute</code> can map them through the configuration’s <code>paths</code>. Piped
+(vimgrep) output and <code>-l</code> print paths relative to the current folder when
+the configuration’s roots are known, so <code>fcs -l foo | xargs sed …</code> opens
+the right files (absolute for files outside the current folder); without
+the roots they stay workspace-relative.</li>
 </ul>
 
                     </main>

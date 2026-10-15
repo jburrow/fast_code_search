@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
+            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -317,10 +317,22 @@ with no way to page. <strong>Defaults:</strong> <code>mcp.default_limit = 50</co
 <code>mcp.max_limit = 1000</code>, plus <code>offset</code>, <code>max_files</code> and <code>rank</code> arguments.</p>
 <h2 id="per-file-cap-per_file_matches"><a class="header" href="#per-file-cap-per_file_matches">Per-file cap (<code>per_file_matches</code>)</a></h2>
 <p>Files with more than 100 hits: <code>return</code> 5,685, <code>struct</code> 7,359, <code>static</code>
-1,671, <code>printf</code> 76. The largest single file has 11,242 <code>return</code> hits. The
-cap is reported (<code>per_file_cap</code>) and grows with the page, so LOAD MORE
-reaches every hit. <strong>Default:</strong> 100. Nothing measured argues for another
-number.</p>
+1,671, <code>printf</code> 76. The largest single file has 11,242 <code>return</code> hits.</p>
+<p>Until 0.17 the cap was 100, applied to a file’s <em>first</em> 100 hits in file
+order and raised to the page end. Two things were wrong with that. Page 1
+showed a busy file’s earliest hits, not its best (a file with 150 long
+comment lines mentioning a word before 150 short assignments to it showed
+the comments, score 1.2, and never the assignments, score 7.8). And
+because the cap grew with the page end, each <code>offset</code> page ranked a
+different sample: walking such a search by offset, as MCP tells agents
+to, returned 305 hits of which 155 were distinct.</p>
+<p>Now a file keeps its best hits by score, and the cap is the same for every
+page in a range. <strong>Default:</strong> 1,000, the end of the range (results before
+1000): a file’s 1,001st-best hit can never rank in the first 1,000
+results, so the cap leaves out nothing those pages could show. From result
+1000 on the cap is the page’s budget, as before. The cost is that every
+hit of a capped file is scored (the old cap stopped reading the file at
+hit 100), and a busy file uses up to 1,000 of the budget instead of 100.</p>
 <h2 id="deadline"><a class="header" href="#deadline">Deadline</a></h2>
 <p>The slowest default above (a page of 1,000) took 291 ms, and a
 million-match budget took 2.4 s. The engine deadline, just under
