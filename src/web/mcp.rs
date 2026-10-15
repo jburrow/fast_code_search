@@ -515,7 +515,9 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
     }
     let total = match resp.total_matches {
         Some(n) => format!("{n} matches"),
-        None => "Many matches (the scan stopped early)".to_string(),
+        // The limits note below says why (a cap, a timeout, an index
+        // still being built).
+        None => "Many matches (total not known)".to_string(),
     };
     let shown = resp.results.len();
     let _ = writeln!(
