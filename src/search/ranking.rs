@@ -7,20 +7,33 @@
 /// Is this a test, example or mock path? Such files are demoted both in
 /// fast-mode file ordering and in every line-level score: a reader asking
 /// for `Field` wants the model field, not `FieldOverridePost` in a test.
+///
+/// `path` is relative to its indexed root (see [`path_signals`]): the
+/// folders the repository happens to sit in must not decide its ranking.
+/// A folder whose name starts with `test`, `example`, `mock` or `fixture`
+/// counts, and so does every test file the import graph recognises
+/// (`x_test.go`, `x.test.ts`, `x.spec.js`, `test_x.py`, `__tests__/`, ...).
 pub fn is_test_or_example_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    [
-        "/test",
-        "\\test",
-        "/example",
-        "\\example",
-        "/mock",
-        "\\mock",
-        "/fixture",
-        "\\fixture",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    let dirs = lower.rsplit('/').skip(1);
+    let dir_hit = dirs.into_iter().any(|d| {
+        ["test", "example", "mock", "fixture"]
+            .iter()
+            .any(|p| d.starts_with(p))
+    });
+    dir_hit || crate::dependencies::graph::is_test_path(&lower)
+}
+
+/// Is the file under a `src/` or `lib/` folder (relative to its root)?
+pub fn is_src_or_lib_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    lower.rsplit('/').skip(1).any(|d| d == "src" || d == "lib")
+}
+
+/// The path-based ranking signals of a root-relative path:
+/// `(under src/ or lib/, test or example)`.
+pub fn path_signals(path: &str) -> (bool, bool) {
+    (is_src_or_lib_path(path), is_test_or_example_path(path))
 }
 
 /// Multiplicative boosts applied to a line-level match score.

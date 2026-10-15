@@ -1438,8 +1438,8 @@ pub async fn diagnostics_handler(
                             .to_lowercase();
                         let entry = ext_map.entry(ext).or_insert((0, 0));
                         entry.0 += 1;
-                        // Use len_if_mapped() to avoid triggering lazy loading during diagnostics
-                        entry.1 += mapped_file.len_if_mapped().unwrap_or(0) as u64;
+                        // The size as indexed: no file is read for this.
+                        entry.1 += engine.indexed_size(file_id);
                     }
                 }
                 let mut v: Vec<ExtensionBreakdown> = ext_map

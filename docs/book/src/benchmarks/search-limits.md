@@ -125,10 +125,24 @@ with no way to page. **Defaults:** `mcp.default_limit = 50`,
 ## Per-file cap (`per_file_matches`)
 
 Files with more than 100 hits: `return` 5,685, `struct` 7,359, `static`
-1,671, `printf` 76. The largest single file has 11,242 `return` hits. The
-cap is reported (`per_file_cap`) and grows with the page, so LOAD MORE
-reaches every hit. **Default:** 100. Nothing measured argues for another
-number.
+1,671, `printf` 76. The largest single file has 11,242 `return` hits.
+
+Until 0.17 the cap was 100, applied to a file's *first* 100 hits in file
+order and raised to the page end. Two things were wrong with that. Page 1
+showed a busy file's earliest hits, not its best (a file with 150 long
+comment lines mentioning a word before 150 short assignments to it showed
+the comments, score 1.2, and never the assignments, score 7.8). And
+because the cap grew with the page end, each `offset` page ranked a
+different sample: walking such a search by offset, as MCP tells agents
+to, returned 305 hits of which 155 were distinct.
+
+Now a file keeps its best hits by score, and the cap is the same for every
+page in a range. **Default:** 1,000, the end of the range (results before
+1000): a file's 1,001st-best hit can never rank in the first 1,000
+results, so the cap leaves out nothing those pages could show. From result
+1000 on the cap is the page's budget, as before. The cost is that every
+hit of a capped file is scored (the old cap stopped reading the file at
+hit 100), and a busy file uses up to 1,000 of the budget instead of 100.
 
 ## Deadline
 

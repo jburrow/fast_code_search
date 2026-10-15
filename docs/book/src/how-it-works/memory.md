@@ -27,12 +27,12 @@ afterwards, so search traffic does not accumulate memory. The CI corpus
 | Context lines | ≤ `search.max_context_lines` (10) per hit (`/api/context`: ≤ 200) | `context` |
 | Concurrent searches | `max_concurrent_searches`, shared by REST and gRPC | beyond it: 503 / `RESOURCE_EXHAUSTED` immediately |
 | Regex | compiled size and DFA size limits | absurd patterns are a 400 |
-| Per-file hits | `search.per_file_matches` (100) per document per search, raised to the page end | keeps a broad regex bounded |
+| Per-file hits | `search.per_file_matches` (1,000) per document per search, its best by score; the budget from result 1000 on | keeps a broad regex bounded |
 | File size | `max_file_size` (default 10 MB) | larger files are not indexed |
 | WebSocket frames | 4 KiB inbound | `/ws/progress` ignores inbound data |
 
 When a limit cuts a search short, the response names it in `limits_hit`
-(`max_files`, `match_budget`, `per_file_cap` or `timeout`, each with a
+(`max_files`, `match_budget`, `per_file_cap`, `timeout` or `indexing`, each with a
 sentence for people). gRPC sends the names in the `fcs-limits-hit`
 response header, `fcs` prints them on stderr, and MCP adds a "Results
 capped" line, so a capped result never passes for a complete one.

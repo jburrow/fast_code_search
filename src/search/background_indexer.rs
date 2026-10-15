@@ -191,6 +191,7 @@ pub fn run(config: BackgroundIndexerConfig) {
         engine.transcode_non_utf8 = indexer_config.transcode_non_utf8;
         engine.max_file_size = indexer_config.max_file_size;
         engine.show_root_name = indexer_config.show_root_name;
+        engine.building = true;
         for path in &indexer_config.paths {
             engine.add_root_path(path);
         }
@@ -336,6 +337,7 @@ pub fn run(config: BackgroundIndexerConfig) {
 
     if let Ok(mut engine) = index_engine.write() {
         engine.synced_at_ms = Some(scan_started_ms);
+        engine.building = false;
     }
     broadcast_progress(&index_progress, &index_progress_tx, |p| {
         p.status = IndexingStatus::Completed;

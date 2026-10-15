@@ -67,16 +67,18 @@ fast_rank_files = 0
 # SEARCH MORE FILES). 0 = no limit; set one on a shared server.
 max_fast_rank_files = 0
 
-# Matches collected to rank a page: multiplier x (offset + page size),
-# between min and max. A page is the best of what was collected, so a small
-# budget gives a poor page 1 for common words. Each match costs about 230
-# bytes while the search runs.
+# Matches collected to rank a page. Every page ending before result 1000
+# collects multiplier x 1000, between min and max; every page from there on
+# collects max. One budget per range keeps offset pages consistent. A page
+# is the best of what was collected, so a small budget gives a poor page 1
+# for common words. Each match costs about 230 bytes while the search runs.
 min_match_budget = 32768
 match_budget_multiplier = 8
 max_match_budget = 100000
 
-# Most hits one file contributes (raised to the page end).
-per_file_matches = 100
+# Most hits one file contributes to pages before result 1000 (its best, by
+# score). 1000 leaves out nothing those pages could show.
+per_file_matches = 1000
 
 # Page size when a request gives none, and the largest it may ask for (the
 # web UI's LOAD MORE and MCP follow max_page_size).

@@ -256,10 +256,16 @@ pub fn summary(resp: &SearchResponse) -> String {
         "{shown}{more} matches{total} in {files} file{}{scope} ({:.1} ms{})",
         if files == 1 { "" } else { "s" },
         resp.elapsed_ms,
-        resp.rank_mode
-            .as_deref()
-            .map(|m| format!(", {m} ranking"))
-            .unwrap_or_default()
+        // The ranking mode only matters when it left files unread; on every
+        // other search "fast ranking" read like an approximate mode.
+        if resp.limits_hit.iter().any(|l| l.limit == "max_files") {
+            resp.rank_mode
+                .as_deref()
+                .map(|m| format!(", {m} ranking"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        }
     )
 }
 

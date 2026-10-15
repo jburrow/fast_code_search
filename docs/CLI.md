@@ -64,7 +64,7 @@ configuration file, then `http://127.0.0.1:8080`. A bind address such as
 | `-e`, `--regex` | Treat the query as a regular expression (matched one line at a time; mention `\n` for multi-line patterns). |
 | `-s`, `--case-sensitive` / `-i`, `--ignore-case` | Override case handling (plain text ignores case by default, a regex matches it; `-e -i` ignores it). |
 | `-w`, `--word` | Whole words only. |
-| `-n`, `--max N` | Hits to print (default 50, up to the server's `search.max_page_size`, 1,000). |
+| `-n`, `--max N` | Hits to print (default 50, up to the server's `search.max_page_size`, 1,000). When more exist, a note on stderr says so and gives the `--offset` for the next page. With `-l`, the most files to list (default: every matching file). Not grep's line-number flag. |
 | `--offset N` | Skip the first N hits; ordering is deterministic, so `--offset 50` is page two. Up to the server's `search.max_page_offset` (100,000 by default). |
 | `-C`, `--context N` | Lines of context around each hit (up to 10). |
 | `-g`, `--glob GLOB` | Only files matching the glob (repeatable). `src/**/*.rs`, `*.py`, `tests` (a bare name matches anywhere in the path). |
@@ -72,7 +72,7 @@ configuration file, then `http://127.0.0.1:8080`. A bind address such as
 | `--rank auto\|fast\|full` | Every mode reads candidate files best first until enough matches are collected to rank; `auto` and `fast` honour a file limit, `full` never stops at one. |
 | `--max-files N` | Most candidate files to read (default: the server's `search.fast_rank_files`, no limit; up to its `search.max_fast_rank_files`). |
 | `--timeout-ms MS` | Stop scanning after MS and return the best hits so far. |
-| `-l`, `--files-with-matches` | Print file paths only, once each. |
+| `-l`, `--files-with-matches` | Print every matching file path once, best first. `fcs` pages through all the hits to find them, so the list is complete unless `-n` or the server's `search.max_page_offset` stops it (then stderr says so). |
 | `--format grouped\|vimgrep\|json`, `--json` | Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server's response object. |
 | `--absolute` | Print absolute paths (mapped through the configured roots). |
 | `--color auto\|always\|never` | ANSI colour; `auto` means a terminal without `NO_COLOR`. |
@@ -167,5 +167,8 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
   nothing to search offline.
 - Offline searches load the index each time (a few seconds for tens of
   thousands of files) and do not discover files added since the last save.
-- Result paths are workspace-relative (`root-name/…`) unless `--absolute`
-  can map them through the configuration's `paths`.
+- On a terminal, result paths are workspace-relative (`root-name/…`) unless
+  `--absolute` can map them through the configuration's `paths`. Piped
+  (vimgrep) output and `-l` print paths relative to the current folder when
+  the configuration's roots are known, so `fcs -l foo | xargs sed …` opens
+  the right files; otherwise they stay workspace-relative.

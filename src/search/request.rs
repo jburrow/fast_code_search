@@ -10,7 +10,7 @@
 
 use crate::search::{
     parse_query, regex_pattern_with_case, GraphDirection, GraphFilter, GraphScope, PathQuery,
-    PathSearch, RankMode, SearchEngine, SearchLimits, SearchMatch, SearchRankingInfo,
+    PathSearch, RankMode, SearchEngine, SearchLimit, SearchLimits, SearchMatch, SearchRankingInfo,
     SearchSettings,
 };
 use std::sync::Arc;
@@ -123,7 +123,8 @@ impl SearchRequest {
         };
         let mut limits = SearchLimits::new(self.page_size(settings))
             .with_budget_rule(settings.budget)
-            .with_offset(self.offset);
+            .with_offset(self.offset)
+            .with_every_file(self.rank == RankMode::Full);
         if let Some(t) = timeout {
             limits = limits.with_timeout(t);
         }
@@ -141,6 +142,18 @@ impl SearchEngine {
         }
         if let Some(w) = req.whole_word {
             parsed.options.whole_word = w;
+        }
+        // Operators alone (`file:///etc`, `lang:rust`) leave no text to find:
+        // say so instead of answering with an empty result.
+        if req.mode != SearchMode::Regex
+            && parsed.text.trim().is_empty()
+            && !req.query.trim().is_empty()
+        {
+            return Err(format!(
+                "{:?} holds only filters (file:, lang:, case:, word:, deps:…) and no text to find; \
+                 add the text, or search with a regex to find the filter text itself",
+                req.query.trim()
+            ));
         }
         if parsed.ref_kinds.is_some() && matches!(req.mode, SearchMode::Text | SearchMode::Symbols)
         {
@@ -162,7 +175,7 @@ impl SearchEngine {
         let allowance = limits
             .deadline
             .map(|d| d.saturating_duration_since(Instant::now()));
-        let (matches, info) = match req.mode {
+        let (matches, mut info) = match req.mode {
             SearchMode::References => self
                 .search_references_parsed(&parsed, &req.include, &req.exclude, limits)
                 .map_err(filter_error)?,
@@ -177,6 +190,16 @@ impl SearchEngine {
                 .search_parsed(&parsed, &req.include, &req.exclude, limits, req.rank)
                 .map_err(filter_error)?,
         };
+
+        // Searches made while the index is still being built see only the
+        // files indexed so far: the total is unknown, and the reply says why.
+        if self.building {
+            info.limits_hit.push(SearchLimit::Indexing);
+            info.limits_hit.sort();
+            info.limits_hit.dedup();
+            info.total_matches = None;
+            info.truncated_by_budget = true;
+        }
 
         let wants_paths = req.path_matches > 0
             && req.offset == 0

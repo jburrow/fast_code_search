@@ -41,6 +41,25 @@ score = base
 The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.
+The graph has import edges for Rust, Python and JavaScript/TypeScript only
+(see [Dependency graph support](../reference/graph-support.md)). In a
+repository that mixes those with Go, Java, C#, C/C++ or Ruby, files in the
+other languages never get this factor, so a Go module twenty files import
+scores like a Rust module nothing imports.
+
+Path signals read the path **under its indexed root**: `src/` and `lib/`
+are folders inside the repository, and the folders the repository sits in
+(`~/src/…`, `/mnt/tests/…`) never change a score. A test or example path is
+a folder whose name starts with `test`, `example`, `mock` or `fixture`, a
+`__tests__` or `spec` folder, or a test file name: `test_x.py`,
+`x_test.go`, `x_tests.rs`, `x.test.ts`, `x.spec.js`, `tests.rs`. The
+factor applies to text, regex and symbol searches alike.
+
+Definitions come from the symbols captured when the file was indexed. If
+the file has changed on disk since (file watching off, or not caught up),
+a line counts as a definition only while the recorded symbol's name is
+still on it, so an edit above a definition drops its boost rather than
+moving it onto an unrelated line.
 
 ## Result order
 

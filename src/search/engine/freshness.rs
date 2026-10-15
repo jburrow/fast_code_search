@@ -154,12 +154,11 @@ impl SearchEngine {
         }
         let display = path.replace('\\', "/");
         let mut out = Vec::new();
-        for root in &self.root_paths {
+        for (root, label) in self.roots_with_labels() {
             out.push(root.join(&display));
-            if let Some(rest) = root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|name| display.strip_prefix(name))
+            if let Some(rest) = display
+                .strip_prefix(label)
+                .filter(|_| !label.is_empty())
                 .and_then(|r| r.strip_prefix('/'))
             {
                 out.push(root.join(rest));

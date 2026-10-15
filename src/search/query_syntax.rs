@@ -112,8 +112,9 @@ impl ParsedQuery {
 /// - `deps:PATH[:N|:*]`  only PATH and the files it imports (N hops, 1 by
 ///   default, `*` for any distance); `rdeps:` the files importing it;
 ///   `-deps:` / `-rdeps:` leave them out
-/// - `case:yes`   case-sensitive (`case:no` forces insensitive)
-/// - `word:yes`   whole-word matching
+/// - `case:yes`   case-sensitive (`case:no` forces insensitive; any other
+///   argument makes the token text)
+/// - `word:yes`   whole-word matching (`word:no`, likewise)
 /// - `kind:call`  references of these kinds only (`call`, `type`, `value`,
 ///   `attribute`; comma-separated or repeated); `-kind:attribute` drops one
 ///
@@ -191,18 +192,26 @@ fn apply_operator(q: &mut ParsedQuery, token: &Token) -> bool {
                 current & !bits
             });
         }
-        "case:" => q.options.case_sensitive = is_yes(arg),
-        "word:" => q.options.whole_word = is_yes(arg),
+        // Only a yes or no: `word:count` is text, not "whole word off".
+        "case:" => match yes_no(arg) {
+            Some(v) => q.options.case_sensitive = v,
+            None => return false,
+        },
+        "word:" => match yes_no(arg) {
+            Some(v) => q.options.whole_word = v,
+            None => return false,
+        },
         _ => return false,
     }
     true
 }
 
-fn is_yes(v: &str) -> bool {
-    matches!(
-        v.to_ascii_lowercase().as_str(),
-        "yes" | "y" | "true" | "1" | "on"
-    )
+fn yes_no(v: &str) -> Option<bool> {
+    match v.to_ascii_lowercase().as_str() {
+        "yes" | "y" | "true" | "1" | "on" => Some(true),
+        "no" | "n" | "false" | "0" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 /// Operator prefixes, longest first where one is a suffix of another.
