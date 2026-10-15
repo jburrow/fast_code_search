@@ -171,4 +171,5 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
   `--absolute` can map them through the configuration's `paths`. Piped
   (vimgrep) output and `-l` print paths relative to the current folder when
   the configuration's roots are known, so `fcs -l foo | xargs sed …` opens
-  the right files; otherwise they stay workspace-relative.
+  the right files (absolute for files outside the current folder); without
+  the roots they stay workspace-relative.
