@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
+            window.path_to_searchindex_js = "../searchindex-704e9c70.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -291,7 +291,7 @@ absolute path finds its file. <code>file:</code>, <code>lang:</code>, <code>incl
 filter as for content. See <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/matching.md">how matching
 compares with grep and ripgrep</a>.</p>
 <h3 id="index-freshness"><a class="header" href="#index-freshness">Index freshness</a></h3>
-<p>With <code>watch = false</code> (the default), the server indexes the tree when it
+<p>With <code>watch = false</code> (the default is <code>true</code>), the server indexes the tree when it
 starts and does not see files written afterwards. Search then misses text
 written after that scan, while <code>/api/file</code> and MCP <code>read_file</code> read the disk
 and already show it. Every search response, <code>/api/status</code> and the

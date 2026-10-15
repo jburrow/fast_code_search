@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
+            window.path_to_searchindex_js = "../searchindex-704e9c70.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -296,7 +296,7 @@ down each request is answered with an error saying so. Clients that speak
 HTTP can use <code>http://127.0.0.1:8080/mcp</code> directly. The tools are listed in
 <a href="api.html#mcp-coding-agents">API.md</a>.</p>
 <h2 id="when-the-index-is-behind"><a class="header" href="#when-the-index-is-behind">When the index is behind</a></h2>
-<p>A server running with <code>watch = false</code> (the default) only knows the files as
+<p>A server running with <code>watch = false</code> (watching is on by default) only knows the files as
 they were at its last scan. <code>fcs</code> then ends a search with a note on stderr,
 such as <code>fcs: Index last synced with disk 2 h 0 min ago (…); file watching is off, so files written since then may be missing or out of date.</code> <code>-q</code> hides
 it, and <code>fcs status</code> always reports when the index last synced and whether

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-43f28d3f.js";
+            window.path_to_searchindex_js = "../searchindex-704e9c70.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -191,7 +191,7 @@ defaults for everything else are sensible; the keys worth knowing early:</p>
 <pre><code class="language-toml">[indexer]
 paths = ["~/work", "~/src/another-repo"]     # ~ expands; relative paths resolve against this file
 index_path = "~/.local/share/fast_code_search/index.fcsidx"   # persist the index across restarts
-watch = true                                   # follow edits, renames and deletes
+watch = true                                   # the default: follow edits, renames and deletes
 </code></pre>
 <p>Both binaries find this file on their own (<code>$FCS_CONFIG</code>,
 <code>./fast_code_search.toml</code>, then <code>~/.config/fast_code_search/config.toml</code>),

@@ -1,6 +1,12 @@
 {
   "releases": [
     {
+      "version": "0.18.0",
+      "date": "2026-10-15",
+      "summary": "Fixes from the 2026-10-15 review of what fcs promises against what it does. Paging is now consistent, busy files show their best hits, several silent cut-offs now say so, and the server keeps its index current by default. Upgrading:** file watching is now on by default. A config without a `watch`...",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.18.0"
+    },
+    {
       "version": "0.17.0",
       "date": "2026-10-15",
       "summary": "Search limits are measured, raised and configurable. Page 1 of a search for a common word now holds most of what an unlimited search would rank first, and MCP agents can page through every hit. Upgrading:** no re-index is needed. Page 1 of a broad search now ranks different (better) hits than 0.1...",
@@ -41,12 +47,6 @@
       "date": "2026-09-08",
       "summary": "",
       "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.13.0"
-    },
-    {
-      "version": "0.12.1",
-      "date": "2026-09-08",
-      "summary": "",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.12.1"
     }
   ]
 }
