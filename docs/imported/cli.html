@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -238,13 +238,13 @@ configuration file, then <code>http://127.0.0.1:8080</code>. A bind address such
 <tr><td><code>-e</code>, <code>--regex</code></td><td>Treat the query as a regular expression (matched one line at a time; mention <code>\n</code> for multi-line patterns).</td></tr>
 <tr><td><code>-s</code>, <code>--case-sensitive</code> / <code>-i</code>, <code>--ignore-case</code></td><td>Override case handling (plain text ignores case by default, a regex matches it; <code>-e -i</code> ignores it).</td></tr>
 <tr><td><code>-w</code>, <code>--word</code></td><td>Whole words only.</td></tr>
-<tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to 1000).</td></tr>
-<tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two. Up to the server’s <code>max_page_offset</code> (100,000 by default).</td></tr>
+<tr><td><code>-n</code>, <code>--max N</code></td><td>Hits to print (default 50, up to the server’s <code>search.max_page_size</code>, 1,000).</td></tr>
+<tr><td><code>--offset N</code></td><td>Skip the first N hits; ordering is deterministic, so <code>--offset 50</code> is page two. Up to the server’s <code>search.max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>-C</code>, <code>--context N</code></td><td>Lines of context around each hit (up to 10).</td></tr>
 <tr><td><code>-g</code>, <code>--glob GLOB</code></td><td>Only files matching the glob (repeatable). <code>src/**/*.rs</code>, <code>*.py</code>, <code>tests</code> (a bare name matches anywhere in the path).</td></tr>
 <tr><td><code>--exclude GLOB</code></td><td>Skip files matching the glob (repeatable).</td></tr>
-<tr><td><code>--rank auto|fast|full</code></td><td>Ranking mode; <code>auto</code> reads every candidate up to 5,000 files and samples by file metadata beyond that.</td></tr>
-<tr><td><code>--max-files N</code></td><td>Files a fast-ranked search opens (default: the server’s <code>fast_rank_files</code>, 2,000; up to its <code>max_fast_rank_files</code>).</td></tr>
+<tr><td><code>--rank auto|fast|full</code></td><td>Every mode reads candidate files best first until enough matches are collected to rank; <code>auto</code> and <code>fast</code> honour a file limit, <code>full</code> never stops at one.</td></tr>
+<tr><td><code>--max-files N</code></td><td>Most candidate files to read (default: the server’s <code>search.fast_rank_files</code>, no limit; up to its <code>search.max_fast_rank_files</code>).</td></tr>
 <tr><td><code>--timeout-ms MS</code></td><td>Stop scanning after MS and return the best hits so far.</td></tr>
 <tr><td><code>-l</code>, <code>--files-with-matches</code></td><td>Print file paths only, once each.</td></tr>
 <tr><td><code>--format grouped|vimgrep|json</code>, <code>--json</code></td><td>Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server’s response object.</td></tr>

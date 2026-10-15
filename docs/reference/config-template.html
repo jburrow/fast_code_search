@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -216,20 +216,6 @@ max_concurrent_searches = 64
 # Per-request timeout (seconds) for both servers
 request_timeout_secs = 30
 
-# When a query could be in many files (over 5000), Auto ranking orders them
-# by file metadata and opens only the best ones. This is how many it opens
-# unless the request asks for more (0 = every candidate file).
-fast_rank_files = 2000
-
-# Most files a request may ask for (the web UI's SEARCH MORE FILES button,
-# `max_files` on /api/search). 0 = no limit; set one on a shared server.
-max_fast_rank_files = 0
-
-# Deepest result offset a client may page to (LOAD MORE past 1000 results,
-# `--offset`, `offset` on /api/search). Deep pages cost a scan of that many
-# matches. 0 = no limit.
-max_page_offset = 100000
-
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
 # request so that UI edits are visible without recompiling the server.
@@ -245,6 +231,70 @@ default_theme = "bold"
 # server to use default_theme without asking (they can still change it from
 # the palette button in the header).
 theme_picker = true
+
+[search]
+# Search limits for every front end (web UI, REST, gRPC, fcs, MCP). The
+# defaults were measured on a 372k-file corpus; see the "Limits" page of the
+# book. Every limit that cuts a search is reported with the result.
+
+# A search reads candidate files best first (by a per-file score that needs
+# no reads) until it has collected enough matches to rank. This caps how
+# many files it reads unless the request asks for more. 0 = no cap.
+fast_rank_files = 0
+
+# Most files a request may ask for (`max_files` on /api/search, the web UI's
+# SEARCH MORE FILES). 0 = no limit; set one on a shared server.
+max_fast_rank_files = 0
+
+# Matches collected to rank a page: multiplier x (offset + page size),
+# between min and max. A page is the best of what was collected, so a small
+# budget gives a poor page 1 for common words. Each match costs about 230
+# bytes while the search runs.
+min_match_budget = 32768
+match_budget_multiplier = 8
+max_match_budget = 100000
+
+# Most hits one file contributes (raised to the page end).
+per_file_matches = 100
+
+# Page size when a request gives none, and the largest it may ask for (the
+# web UI's LOAD MORE and MCP follow max_page_size).
+default_page_size = 50
+max_page_size = 1000
+
+# Deepest result offset a client may page to. Deep pages cost a scan of that
+# many matches. 0 = no limit.
+max_page_offset = 100000
+
+# Most path matches (the FILES box) one request may ask for.
+max_path_matches = 100
+
+# Longest deadline a request may ask for, in seconds (request_timeout_secs
+# still bounds every search).
+max_timeout_secs = 30
+
+# Most context lines around each hit.
+max_context_lines = 10
+
+[mcp]
+# Hits search_code returns by default, and the most one call may ask for
+# (at most search.max_page_size; agents page further with `offset`).
+default_limit = 50
+max_limit = 1000
+
+# Files whose path matches the query, listed above search_code's hits.
+file_matches = 20
+
+# Most context lines search_code may ask for.
+max_context_lines = 5
+
+# read_file: lines returned by default, and the most one call returns.
+read_file_lines = 200
+max_read_file_lines = 1000
+
+# Graph tools: files listed per level or group by default, and at most.
+graph_default_limit = 50
+graph_max_limit = 500
 
 [indexer]
 # Paths to index on startup

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -209,15 +209,19 @@ and restrict <code>include_extensions</code>.</p>
 <li><strong>Candidates.</strong> A query’s trigrams intersect posting lists; the fewer
 and rarer the trigrams, the smaller the candidate set. Short queries
 (under three characters) have no trigrams and scan everything.</li>
-<li><strong>Fast versus full ranking.</strong> Above 5,000 candidates the engine reads only
-the top 2,000 by file metadata (<code>rank=auto</code>; <code>fast_rank_files</code> in the
-configuration); <code>rank=full</code> reads them all. The web UI’s SEARCH ALL FILES
+<li><strong>Reading order.</strong> Candidates are read best first by file metadata until
+the match budget is spent. A server can cap the files read
+(<code>search.fast_rank_files</code>; none by default); the web UI’s SEARCH ALL FILES
 (<code>max_files</code> on the API, <code>fcs --max-files</code>) opens more for one search, up
-to <code>max_fast_rank_files</code>.</li>
-<li><strong>Budget and deadline.</strong> Every search stops at a match budget and at a
-deadline derived from <code>request_timeout_secs</code> (or a smaller <code>timeout_ms</code>),
-reporting <code>truncated_by_budget</code> when it did. Narrow the query (<code>file:</code>,
-<code>lang:</code>, a longer literal) rather than raising limits.</li>
+to <code>search.max_fast_rank_files</code>.</li>
+<li><strong>Budget and deadline.</strong> Every search stops at a match budget (32,768
+matches for a first page by default, about 230 bytes each while the search
+runs) and at a deadline derived from <code>request_timeout_secs</code> (or a smaller
+<code>timeout_ms</code>), reporting <code>truncated_by_budget</code> when it did. On a 372k-file
+corpus a first page took about 80 ms (median) for words with over 100k
+hits; <a href="../benchmarks/search-limits.html">Search limits</a> has the
+measurements behind each default. On a small machine serving many people,
+<code>search.min_match_budget</code> trades page-1 quality for memory and time.</li>
 <li><strong>Regex.</strong> Literals extracted from the pattern pre-filter through the
 index; a pattern with no required literal scans every file. Line-mode
 patterns run in one pass per file.</li>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -230,14 +230,22 @@ pages away. That was never asked for and was removed.)</p>
 file across all pages (<code>file_hits_capped</code> when the file reached the
 per-file cap and may hold more), so a file cut at a page boundary says
 “3 of 7 hits” in the web UI rather than “3 hits”.</p>
-<h2 id="fast-ranking"><a class="header" href="#fast-ranking">Fast ranking</a></h2>
-<p>Above 5,000 candidates (<code>rank=auto</code>) only the top 2,000 files are read
-(<code>fast_rank_files</code>; a request may ask for more with <code>max_files</code>, up to
-<code>max_fast_rank_files</code>),
-chosen by a per-file score that needs no I/O: base, <code>src/</code>/<code>lib/</code>, code
-extension, <code>log2(symbol count)</code> (capped), <code>log2(dependents)</code> (capped),
-×0.7 for test and example paths, ×5 when the query matches the file’s
-name. <code>rank=full</code> reads every candidate.</p>
+<h2 id="reading-order"><a class="header" href="#reading-order">Reading order</a></h2>
+<p>Every search reads its candidate files best first, by a per-file score
+that needs no I/O: base, <code>src/</code>/<code>lib/</code>, code extension,
+<code>log2(symbol count)</code> (capped), <code>log2(dependents)</code> (capped), ×0.7 for test
+and example paths, ×5 when the query matches the file’s name. It stops
+when it has collected enough matches to rank the page (the match budget,
+see <a href="../benchmarks/search-limits.html">Search limits</a>), so for a word with a
+million hits page 1 is the best of the best-looking files, not of the
+first folders on disk. <code>rank=auto</code> and <code>rank=fast</code> also stop after
+<code>search.fast_rank_files</code> files when the server sets one (no limit by
+default; a request may ask for more with <code>max_files</code>, up to
+<code>search.max_fast_rank_files</code>); <code>rank=full</code> never stops at a file limit.</p>
+<p>(Until 0.17, <code>rank=auto</code> read files in discovery order up to 5,000
+candidates and only the best 2,000 above that, and the budget was 512
+matches. On a 372k-file corpus that put 10% of the exhaustive top 50 on
+page 1 for common words; the current defaults put 81% there.)</p>
 <h2 id="symbols-and-references"><a class="header" href="#symbols-and-references">Symbols and references</a></h2>
 <p>Symbol search scores exact name matches above prefix matches above
 substrings, with variables and constants slightly below types and

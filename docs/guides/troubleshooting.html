@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,7 +196,7 @@
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
 <tr><td><code>fn main</code> returns lines without <code>main</code></td><td>Older version</td><td>Since 0.16 several words are one phrase; upgrade</td></tr>
 <tr><td><code>fn main</code> misses <code>fn  main</code> or <code>fn\tmain</code></td><td>Plain text is a literal, spacing included</td><td>Use a regex: <code>fn\s+main</code></td></tr>
-<tr><td>“Searched 2,000 of N files”</td><td>Fast ranking opened only the most likely files</td><td>Click SEARCH ALL FILES (<code>max_files</code> on the API, <code>fcs --max-files</code>); raise <code>fast_rank_files</code> to change the default</td></tr>
+<tr><td>“Searched N of M files”</td><td>The server sets <code>search.fast_rank_files</code>, and the search read only that many of the most likely files</td><td>Click SEARCH ALL FILES (<code>max_files</code> on the API and MCP, <code>fcs --max-files</code>); raise or unset <code>search.fast_rank_files</code> to change the default</td></tr>
 <tr><td>A regex finds nothing that plain search finds</td><td><code>{ ( .</code> are syntax; outside the web UI a regex is also case-sensitive</td><td>Escape special characters with <code>\</code>, use <code>\s*</code> for spacing, start with <code>(?i)</code> (or <code>fcs -e -i</code>); the web UI’s suggestions under an empty result do this for you</td></tr>
 <tr><td>A regex is slow</td><td>No required literal, so every file is scanned</td><td>Anchor it with a literal (<code>fn\s+main</code> rather than <code>\w+\s+\w+</code>)</td></tr>
 <tr><td><code>references</code> finds nothing, or misses a use, for a name</td><td>The use is in a position that language does not record (C and C++ record none), or the index predates extraction changes</td><td><a href="../reference/reference-support.html">Reference support</a> lists what each language finds; search the plain text for the rest. The index re-extracts symbols on the first start after an upgrade that changed extraction</td></tr>

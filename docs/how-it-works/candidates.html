@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -218,10 +218,11 @@ identifier in each candidate’s reference table and verify the position
 against the current content.</p>
 <h2 id="budgets"><a class="header" href="#budgets">Budgets</a></h2>
 <p>Every search runs under a <code>QueryRun</code>: a match budget derived from the page
-size and offset (capped), and a deadline just under the request timeout.
+size and offset (<code>[search]</code> <code>min_match_budget</code>, <code>match_budget_multiplier</code>,
+<code>max_match_budget</code>), and a deadline just under the request timeout.
 When either stops the scan the response says so
 (<code>truncated_by_budget</code>). A deep page gets a budget that reaches it, so
-paging past <code>max_page_offset</code> (100,000 by default) is refused rather than
+paging past <code>search.max_page_offset</code> (100,000 by default) is refused rather than
 allowed to grow the budget without bound.</p>
 
                     </main>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -266,12 +266,22 @@ web_address = "0.0.0.0:8080"
 cors_origins = ["https://ide.example.com"]   # only if a page on another origin calls the API
 max_concurrent_searches = 64
 request_timeout_secs = 30
-fast_rank_files = 2000      # files fast ranking opens when a query could be in over 5,000 (0 = all)
-max_fast_rank_files = 0     # most a request may ask for (SEARCH ALL FILES, max_files); 0 = no limit
-max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
 default_theme = "corporate" # web UI theme: "bold" (default), "corporate" or "corporate-dark"
 theme_picker = false        # don't ask each person to pick a theme on their first visit
+
+[search]
+max_fast_rank_files = 50000 # most files one request may ask to read (SEARCH ALL FILES, max_files); 0 = no limit
+max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
+min_match_budget = 32768    # matches collected to rank page 1; lower it on a small shared machine
+
+[mcp]
+default_limit = 50          # search_code hits per call by default
+max_limit = 1000            # most one call may ask for; agents page on with `offset`
 </code></pre>
+<p>Every search limit and its default, with the measurements behind it, is on
+<a href="../benchmarks/search-limits.html">Search limits</a>. Up to 0.16 three of them
+lived under <code>[server]</code> (<code>fast_rank_files</code>, <code>max_fast_rank_files</code>,
+<code>max_page_offset</code>); those spellings still work, with a warning at startup.</p>
 <p>See <a href="../imported/deployment.html">Deployment</a> for a reverse-proxy example and
 the system-wide systemd unit, and the <a href="../imported/security.html">security policy</a>.</p>
 <h2 id="where-the-config-file-lives"><a class="header" href="#where-the-config-file-lives">Where the config file lives</a></h2>

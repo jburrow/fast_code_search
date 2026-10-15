@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4ab63b0a.js";
+            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-84d94ec6.js"></script>
+        <script src="../toc-fa11e869.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -222,19 +222,19 @@ when the request timeout is hit.</p>
 </thead>
 <tbody>
 <tr><td><code>q</code></td><td>required</td><td>Query. Plain text understands the <a href="#query-syntax">query syntax</a>; with <code>regex=true</code> it is a regular expression.</td></tr>
-<tr><td><code>max</code></td><td>50</td><td>Page size, 1–1000 (<code>0</code> = default).</td></tr>
-<tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most <code>max_page_offset</code> (100,000 by default).</td></tr>
+<tr><td><code>max</code></td><td>50</td><td>Page size, 1 to <code>search.max_page_size</code> (1,000) (<code>0</code> = <code>search.default_page_size</code>).</td></tr>
+<tr><td><code>offset</code></td><td>0</td><td>Hits to skip; ordering is deterministic, so <code>offset=max</code> is page two. At most <code>search.max_page_offset</code> (100,000 by default).</td></tr>
 <tr><td><code>regex</code></td><td>false</td><td>Treat <code>q</code> as a regex (Rust <code>regex</code> syntax, matched one line at a time unless the pattern mentions <code>\n</code> or sets <code>(?s)</code>).</td></tr>
 <tr><td><code>symbols</code></td><td>false</td><td>Definitions only (functions, types, classes, …) plus filename matches.</td></tr>
 <tr><td><code>references</code></td><td>false</td><td>Uses of the identifier in <code>q</code>: call sites and type mentions. Cannot be combined with <code>regex</code> or <code>symbols</code> (400).</td></tr>
 <tr><td><code>case</code></td><td>—</td><td><code>true</code> / <code>false</code> overrides <code>case:</code> in the query. Plain text ignores case by default; a regex is case-sensitive by default and <code>case=false</code> adds <code>(?i)</code>.</td></tr>
 <tr><td><code>word</code></td><td>—</td><td><code>true</code> for whole-word matching.</td></tr>
 <tr><td><code>include</code> / <code>exclude</code></td><td>—</td><td>Semicolon-separated path globs (<code>src/**/*.rs;lib/**</code>).</td></tr>
-<tr><td><code>rank</code></td><td>auto</td><td><code>auto</code>, <code>fast</code> (metadata-ranked sample, used above 5,000 candidates) or <code>full</code>.</td></tr>
-<tr><td><code>max_files</code></td><td><code>fast_rank_files</code> (2000)</td><td>Files a fast-ranked search opens. Capped by <code>max_fast_rank_files</code>, reported in <code>max_files_allowed</code> when the server sets one. When <code>candidates_searched</code> &lt; <code>total_candidates</code>, ask again with <code>max_files=total_candidates</code> to search the rest.</td></tr>
-<tr><td><code>context</code></td><td>0</td><td>Context lines before and after each hit, 0–10.</td></tr>
-<tr><td><code>timeout_ms</code></td><td>0</td><td>Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server’s request timeout).</td></tr>
-<tr><td><code>files</code></td><td>0</td><td>Also return up to this many files whose <em>path</em> matches <code>q</code>, 0–100, in <code>files</code> (first page of a text or regex search only).</td></tr>
+<tr><td><code>rank</code></td><td>auto</td><td>Every mode reads candidate files best first (by a per-file score that needs no reads) until the match budget is spent. <code>auto</code> and <code>fast</code> also stop at <code>max_files</code> when one applies; <code>full</code> never does.</td></tr>
+<tr><td><code>max_files</code></td><td><code>search.fast_rank_files</code> (no limit)</td><td>Most candidate files a search reads. Capped by <code>search.max_fast_rank_files</code>, reported in <code>max_files_allowed</code> when the server sets one. When <code>candidates_searched</code> &lt; <code>total_candidates</code>, ask again with <code>max_files=total_candidates</code> to search the rest.</td></tr>
+<tr><td><code>context</code></td><td>0</td><td>Context lines before and after each hit, 0 to <code>search.max_context_lines</code> (10).</td></tr>
+<tr><td><code>timeout_ms</code></td><td>0</td><td>Stop scanning after this long and return the best hits so far (capped at <code>search.max_timeout_secs</code>, 30 s; every search also runs under the server’s request timeout).</td></tr>
+<tr><td><code>files</code></td><td>0</td><td>Also return up to this many files whose <em>path</em> matches <code>q</code>, 0 to <code>search.max_path_matches</code> (100), in <code>files</code> (first page of a text or regex search only).</td></tr>
 </tbody>
 </table>
 </div>
@@ -416,8 +416,8 @@ to the same endpoint (it finds the server like every <code>fcs</code> command:
 <tr><th>Tool</th><th>Arguments</th><th>What it returns</th></tr>
 </thead>
 <tbody>
-<tr><td><code>search_code</code></td><td><code>query</code> (the <a href="#query-syntax">query syntax</a>), <code>mode</code> (<code>text</code>, <code>regex</code>, <code>symbols</code>, <code>references</code>), <code>include</code> / <code>exclude</code> globs, <code>limit</code> (default 20, max 100), <code>context</code> (0–5)</td><td><code>path:line:column: line</code> per hit, with the match count and whether more exist; in text and regex mode up to five files whose path matches are listed first</td></tr>
-<tr><td><code>read_file</code></td><td><code>path</code>, <code>start_line</code>, <code>end_line</code></td><td>Numbered lines, 200 by default and at most 1,000, with how to continue</td></tr>
+<tr><td><code>search_code</code></td><td><code>query</code> (the <a href="#query-syntax">query syntax</a>), <code>mode</code> (<code>text</code>, <code>regex</code>, <code>symbols</code>, <code>references</code>), <code>include</code> / <code>exclude</code> globs, <code>limit</code> (default 50, max 1,000: <code>mcp.default_limit</code> / <code>mcp.max_limit</code>), <code>offset</code> (page on from there), <code>max_files</code>, <code>rank</code>, <code>context</code> (0–5)</td><td><code>path:line:column: line</code> per hit, with the match count and, when more exist, the <code>offset</code> of the next page; in text and regex mode up to 20 files whose path matches are listed first (<code>mcp.file_matches</code>)</td></tr>
+<tr><td><code>read_file</code></td><td><code>path</code>, <code>start_line</code>, <code>end_line</code></td><td>Numbered lines, 200 by default and at most 1,000 (<code>mcp.read_file_lines</code> / <code>mcp.max_read_file_lines</code>), with how to continue</td></tr>
 <tr><td><code>file_dependencies</code></td><td><code>path</code>, <code>direction</code> (<code>in</code>, <code>out</code>, <code>both</code>), <code>depth</code> (1–4), <code>limit</code></td><td>Files it imports and files importing it, by distance, with the line of each direct import</td></tr>
 <tr><td><code>change_impact</code></td><td><code>paths</code> (one or more), <code>limit</code></td><td>Every file that transitively imports any of them, nearest first, split into tests and other code</td></tr>
 <tr><td><code>import_path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest chain of imports between two files, either way round</td></tr>
