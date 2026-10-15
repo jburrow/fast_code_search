@@ -110,7 +110,7 @@ compares with grep and ripgrep](book/src/reference/matching.md).
 
 ### Index freshness
 
-With `watch = false` (the default), the server indexes the tree when it
+With `watch = false` (the default is `true`), the server indexes the tree when it
 starts and does not see files written afterwards. Search then misses text
 written after that scan, while `/api/file` and MCP `read_file` read the disk
 and already show it. Every search response, `/api/status` and the

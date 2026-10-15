@@ -183,9 +183,11 @@ save_after_updates = 0
 # Recommended for very large repos: 20000. Has no effect if index_path is not set.
 checkpoint_interval_files = 0
 
-# Enable file watcher for incremental indexing (default: false)
-# When enabled, changes to indexed files are detected and re-indexed automatically
-watch = false
+# Enable file watcher for incremental indexing (default: true)
+# Changes to indexed files are detected and re-indexed automatically.
+# Set to false to index once at startup (search then misses later edits
+# until a restart; responses say how old the index is).
+watch = true
 
 # Enable tree-sitter symbol extraction (default: true)
 # When enabled, function/class/struct definitions are parsed from source files

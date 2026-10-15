@@ -14,7 +14,7 @@ defaults for everything else are sensible; the keys worth knowing early:
 [indexer]
 paths = ["~/work", "~/src/another-repo"]     # ~ expands; relative paths resolve against this file
 index_path = "~/.local/share/fast_code_search/index.fcsidx"   # persist the index across restarts
-watch = true                                   # follow edits, renames and deletes
+watch = true                                   # the default: follow edits, renames and deletes
 ```
 
 Both binaries find this file on their own (`$FCS_CONFIG`,
