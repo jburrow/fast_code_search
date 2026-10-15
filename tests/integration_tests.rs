@@ -767,6 +767,7 @@ async fn test_http_ui_config_script() -> Result<()> {
         ui_settings: UiSettings {
             default_theme: UiTheme::CorporateDark,
             theme_picker: false,
+            ..UiSettings::default()
         },
         ..Default::default()
     };
@@ -788,7 +789,7 @@ async fn test_http_ui_config_script() -> Result<()> {
     let body = resp.text().await?;
     assert_eq!(
         body.trim(),
-        r#"window.FCS_UI = {"default_theme":"corporate-dark","theme_picker":false};"#
+        r#"window.FCS_UI = {"default_theme":"corporate-dark","theme_picker":false,"max_page_size":1000,"max_context_lines":10};"#
     );
     Ok(())
 }
@@ -4186,6 +4187,68 @@ async fn test_mcp_handshake_and_tool_list() -> Result<()> {
     )
     .await?;
     assert_eq!(body["error"]["code"], -32601);
+    Ok(())
+}
+
+/// Feedback: MCP returned too few results, and an agent could never see
+/// hit 101. `search_code` now pages with `offset`, defaults to 50 and allows
+/// up to `mcp.max_limit` (1,000), and says the offset of the next page.
+#[tokio::test]
+async fn test_mcp_search_code_pages_with_offset() -> Result<()> {
+    let (base, _dir) = setup_graph_server().await?;
+    let hit_lines = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.contains(".py:") && l.contains("import"))
+            .map(String::from)
+            .collect()
+    };
+    let (err, all) = mcp_tool(&base, "search_code", serde_json::json!({"query": "import"})).await?;
+    assert!(!err, "{all}");
+    let all = hit_lines(&all);
+    assert!(all.len() >= 6, "{all:?}");
+
+    let mut paged = Vec::new();
+    let mut offset = 0;
+    loop {
+        let (err, text) = mcp_tool(
+            &base,
+            "search_code",
+            serde_json::json!({"query": "import", "limit": 2, "offset": offset}),
+        )
+        .await?;
+        assert!(!err, "{text}");
+        let page = hit_lines(&text);
+        paged.extend(page.clone());
+        if offset > 0 {
+            assert!(
+                text.contains(&format!("showing {}-{}", offset + 1, offset + page.len())),
+                "{text}"
+            );
+        }
+        if !text.contains("more exist") {
+            break;
+        }
+        offset += page.len();
+        assert!(
+            text.contains(&format!("call again with offset={offset}")),
+            "{text}"
+        );
+    }
+    assert_eq!(paged, all, "pages joined give the one long list");
+
+    let (status, body) = mcp_call(
+        &base,
+        serde_json::json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}),
+    )
+    .await?;
+    assert_eq!(status, 200);
+    let tools = body["result"]["tools"].as_array().unwrap();
+    let search = tools.iter().find(|t| t["name"] == "search_code").unwrap();
+    let props = &search["inputSchema"]["properties"];
+    assert_eq!(props["limit"]["maximum"], 1000, "{props}");
+    assert_eq!(props["limit"]["default"], 50, "{props}");
+    assert!(props.get("offset").is_some(), "{props}");
+    assert!(props.get("max_files").is_some(), "{props}");
     Ok(())
 }
 

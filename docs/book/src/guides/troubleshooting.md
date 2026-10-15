@@ -10,7 +10,7 @@
 | Results stop at "50+ (scan budget reached)" | Broad query, budget hit | Narrow with `file:`, `lang:` or a longer literal; use Load more / `--offset` for the next page |
 | `fn main` returns lines without `main` | Older version | Since 0.16 several words are one phrase; upgrade |
 | `fn main` misses `fn  main` or `fn\tmain` | Plain text is a literal, spacing included | Use a regex: `fn\s+main` |
-| "Searched 2,000 of N files" | Fast ranking opened only the most likely files | Click SEARCH ALL FILES (`max_files` on the API, `fcs --max-files`); raise `fast_rank_files` to change the default |
+| "Searched N of M files" | The server sets `search.fast_rank_files`, and the search read only that many of the most likely files | Click SEARCH ALL FILES (`max_files` on the API and MCP, `fcs --max-files`); raise or unset `search.fast_rank_files` to change the default |
 | A regex finds nothing that plain search finds | `{ ( .` are syntax; outside the web UI a regex is also case-sensitive | Escape special characters with `\`, use `\s*` for spacing, start with `(?i)` (or `fcs -e -i`); the web UI's suggestions under an empty result do this for you |
 | A regex is slow | No required literal, so every file is scanned | Anchor it with a literal (`fn\s+main` rather than `\w+\s+\w+`) |
 | `references` finds nothing, or misses a use, for a name | The use is in a position that language does not record (C and C++ record none), or the index predates extraction changes | [Reference support](../reference/reference-support.md) lists what each language finds; search the plain text for the rest. The index re-extracts symbols on the first start after an upgrade that changed extraction |

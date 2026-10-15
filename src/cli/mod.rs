@@ -195,13 +195,13 @@ pub struct SearchArgs {
     /// Match whole words only
     #[arg(short = 'w', long)]
     pub word: bool,
-    /// Maximum hits to print (1-1000)
+    /// Maximum hits to print (1 to the server's search.max_page_size, 1000)
     #[arg(short = 'n', long, default_value_t = 50, value_name = "N")]
     pub max: usize,
     /// Skip the first N hits (paging; ordering is deterministic)
     #[arg(long, default_value_t = 0, value_name = "N")]
     pub offset: usize,
-    /// Lines of context before and after each hit (0-10)
+    /// Lines of context before and after each hit (0 to search.max_context_lines, 10)
     #[arg(short = 'C', long, default_value_t = 0, value_name = "N")]
     pub context: usize,
     /// Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
@@ -210,14 +210,15 @@ pub struct SearchArgs {
     /// Skip files matching this glob (repeatable)
     #[arg(long = "exclude", value_name = "GLOB")]
     pub excludes: Vec<String>,
-    /// Ranking: auto, fast (metadata only, big candidate sets), full
+    /// Ranking: auto and fast read files best first and honour a file
+    /// limit; full never stops at one
     #[arg(long, value_enum, default_value_t = Rank::Auto)]
     pub rank: Rank,
     /// Stop scanning after this many milliseconds and return the best so far
     #[arg(long, default_value_t = 0, value_name = "MS")]
     pub timeout_ms: u64,
-    /// Files fast ranking may open when a query could be in very many
-    /// (default: the server's fast_rank_files, 2000)
+    /// Most candidate files to read, best first (default: the server's
+    /// search.fast_rank_files, no limit)
     #[arg(long, value_name = "N")]
     pub max_files: Option<usize>,
     /// Only search this file and what it imports, N hops deep (1 by
@@ -659,8 +660,12 @@ impl Session {
         let settings = self
             .config
             .as_ref()
-            .map(|c| crate::search::SearchSettings::from_config(&c.server))
+            .map(crate::search::SearchSettings::from_config)
             .unwrap_or_default();
+        let request = crate::search::SearchRequest {
+            path_matches: request.path_matches.min(settings.max_path_matches),
+            ..request
+        };
         let limits = request.limits(&settings, None).map_err(|e| anyhow!(e))?;
         let search_started = std::time::Instant::now();
         let outcome = engine.run(&request, limits).map_err(|e| anyhow!(e))?;

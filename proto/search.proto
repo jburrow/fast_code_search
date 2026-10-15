@@ -9,14 +9,14 @@ service CodeSearch {
 
 message SearchRequest {
   string query = 1;
-  int32 max_results = 2;              // 0 (unset) means the default page size, 50; capped at 1000
+  int32 max_results = 2;              // 0 (unset) means the server's search.default_page_size (50); capped at search.max_page_size (1000)
   repeated string include_paths = 3;  // Glob patterns for paths to include
   repeated string exclude_paths = 4;  // Glob patterns for paths to exclude
   bool is_regex = 5;                  // Treat query as regex pattern
   bool symbols_only = 6;              // Search only in discovered symbols (function/class names)
   int32 offset = 7;                   // Results to skip (deterministic ordering, so pages are stable)
   string rank = 8;                    // "auto" (default), "fast" or "full"
-  int64 deadline_ms = 9;              // Stop scanning after this many ms and return the best so far (0 = none; capped at 30000)
+  int64 deadline_ms = 9;              // Stop scanning after this many ms and return the best so far (0 = none; capped at search.max_timeout_secs)
   bool case_sensitive = 10;           // Exact-case matching (overrides case: in the query)
   bool whole_word = 11;               // Whole-word matching (overrides word: in the query)
   bool references = 12;               // Return the references (call sites, type mentions) of the identifier in query

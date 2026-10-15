@@ -88,15 +88,18 @@ These follow from fcs being a code search server rather than a line filter.
 - **Ranked, and capped.** Results come back best first rather than in file
   order. To keep a broad search fast, a request reads a bounded number of
   matches: by default 100 from one file on the first page, and a budget of
-  about eight times the requested page. When either limit is reached, the
+  32,768 matches (eight times the page end for longer pages, up to
+  100,000). Files are read best first, so the budget keeps the hits of the
+  most likely files. When either limit is reached, the
   total is shown as "N+" rather than as a count, and the response names
   the limit (`limits_hit`: `match_budget`, `per_file_cap`, `timeout` or
   `max_files`; `fcs` prints it, MCP adds a "Results capped" line, gRPC
-  sends an `fcs-limits-hit` header). When a query could be in
-  more than 5,000 files, Auto ranking opens only the 2,000 most likely
-  (`fast_rank_files`); the header then says "Searched 2,000 of N files"
-  and SEARCH ALL FILES opens the rest (up to `max_fast_rank_files`). LOAD MORE in the web UI
-  fetches the whole list again at the bigger size, up to 1000 results, so
+  sends an `fcs-limits-hit` header). A server may also cap the files read
+  (`search.fast_rank_files`, off by default); the header then says
+  "Searched N of M files" and SEARCH ALL FILES opens the rest (up to
+  `search.max_fast_rank_files`). LOAD MORE in the web UI
+  fetches the whole list again at the bigger size, up to 1000 results
+  (`search.max_page_size`), so
   every match ends up shown exactly once. Results already on screen can
   move when it does. Past 1000 results it fetches the next page instead.
   Every page that ends at result 1000 or later ranks the same sample (a
@@ -105,7 +108,9 @@ These follow from fcs being a code search server rather than a line filter.
   `offset` pages below 1000 of a search that hit its budget can see a
   result repeated or skipped between pages. Asking again from offset 0
   with a larger `max` avoids that. Paging stops at offset 100,000 by
-  default (`max_page_offset`).
+  default (`search.max_page_offset`). ripgrep has none of these limits; each
+  is reported when it applies, and [Search limits](../benchmarks/search-limits.md)
+  gives the measurements behind the defaults.
 - **Non-UTF-8 files are converted.** Files in Latin-1, Windows-1252,
   Shift-JIS or UTF-16 are converted to UTF-8 when they are indexed
   (`transcode_non_utf8`, on by default). ripgrep only does this for UTF-16

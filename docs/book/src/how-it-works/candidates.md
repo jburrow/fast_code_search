@@ -46,8 +46,9 @@ against the current content.
 ## Budgets
 
 Every search runs under a `QueryRun`: a match budget derived from the page
-size and offset (capped), and a deadline just under the request timeout.
+size and offset (`[search]` `min_match_budget`, `match_budget_multiplier`,
+`max_match_budget`), and a deadline just under the request timeout.
 When either stops the scan the response says so
 (`truncated_by_budget`). A deep page gets a budget that reaches it, so
-paging past `max_page_offset` (100,000 by default) is refused rather than
+paging past `search.max_page_offset` (100,000 by default) is refused rather than
 allowed to grow the budget without bound.

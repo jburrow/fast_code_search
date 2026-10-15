@@ -17,11 +17,11 @@ pub use background_indexer::{
     BackgroundIndexerConfig,
 };
 pub use engine::{
-    create_progress_broadcaster, unix_now_ms, GraphScope, IndexFreshness, IndexingProgress,
-    IndexingStatus, LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch,
-    PathQuery, PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, SearchEngine,
-    SearchLimit, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings, SearchStats,
-    SharedIndexingProgress,
+    create_progress_broadcaster, unix_now_ms, BudgetRule, GraphScope, IndexFreshness,
+    IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase, PartialIndexedFile,
+    PathFreshness, PathMatch, PathQuery, PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun,
+    RankMode, SearchEngine, SearchLimit, SearchLimits, SearchMatch, SearchRankingInfo,
+    SearchSettings, SearchStats, SharedIndexingProgress,
 };
 pub use file_discovery::{
     discover_files, EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator,

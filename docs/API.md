@@ -34,19 +34,19 @@ when the request timeout is hit.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `q` | required | Query. Plain text understands the [query syntax](#query-syntax); with `regex=true` it is a regular expression. |
-| `max` | 50 | Page size, 1–1000 (`0` = default). |
-| `offset` | 0 | Hits to skip; ordering is deterministic, so `offset=max` is page two. At most `max_page_offset` (100,000 by default). |
+| `max` | 50 | Page size, 1 to `search.max_page_size` (1,000) (`0` = `search.default_page_size`). |
+| `offset` | 0 | Hits to skip; ordering is deterministic, so `offset=max` is page two. At most `search.max_page_offset` (100,000 by default). |
 | `regex` | false | Treat `q` as a regex (Rust `regex` syntax, matched one line at a time unless the pattern mentions `\n` or sets `(?s)`). |
 | `symbols` | false | Definitions only (functions, types, classes, …) plus filename matches. |
 | `references` | false | Uses of the identifier in `q`: call sites and type mentions. Cannot be combined with `regex` or `symbols` (400). |
 | `case` | — | `true` / `false` overrides `case:` in the query. Plain text ignores case by default; a regex is case-sensitive by default and `case=false` adds `(?i)`. |
 | `word` | — | `true` for whole-word matching. |
 | `include` / `exclude` | — | Semicolon-separated path globs (`src/**/*.rs;lib/**`). |
-| `rank` | auto | `auto`, `fast` (metadata-ranked sample, used above 5,000 candidates) or `full`. |
-| `max_files` | `fast_rank_files` (2000) | Files a fast-ranked search opens. Capped by `max_fast_rank_files`, reported in `max_files_allowed` when the server sets one. When `candidates_searched` < `total_candidates`, ask again with `max_files=total_candidates` to search the rest. |
-| `context` | 0 | Context lines before and after each hit, 0–10. |
-| `timeout_ms` | 0 | Stop scanning after this long and return the best hits so far (capped at 30 s; every search also runs under the server's request timeout). |
-| `files` | 0 | Also return up to this many files whose *path* matches `q`, 0–100, in `files` (first page of a text or regex search only). |
+| `rank` | auto | Every mode reads candidate files best first (by a per-file score that needs no reads) until the match budget is spent. `auto` and `fast` also stop at `max_files` when one applies; `full` never does. |
+| `max_files` | `search.fast_rank_files` (no limit) | Most candidate files a search reads. Capped by `search.max_fast_rank_files`, reported in `max_files_allowed` when the server sets one. When `candidates_searched` < `total_candidates`, ask again with `max_files=total_candidates` to search the rest. |
+| `context` | 0 | Context lines before and after each hit, 0 to `search.max_context_lines` (10). |
+| `timeout_ms` | 0 | Stop scanning after this long and return the best hits so far (capped at `search.max_timeout_secs`, 30 s; every search also runs under the server's request timeout). |
+| `files` | 0 | Also return up to this many files whose *path* matches `q`, 0 to `search.max_path_matches` (100), in `files` (first page of a text or regex search only). |
 
 Response:
 
@@ -220,8 +220,8 @@ to the same endpoint (it finds the server like every `fcs` command:
 
 | Tool | Arguments | What it returns |
 |------|-----------|-----------------|
-| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 20, max 100), `context` (0–5) | `path:line:column: line` per hit, with the match count and whether more exist; in text and regex mode up to five files whose path matches are listed first |
-| `read_file` | `path`, `start_line`, `end_line` | Numbered lines, 200 by default and at most 1,000, with how to continue |
+| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 50, max 1,000: `mcp.default_limit` / `mcp.max_limit`), `offset` (page on from there), `max_files`, `rank`, `context` (0–5) | `path:line:column: line` per hit, with the match count and, when more exist, the `offset` of the next page; in text and regex mode up to 20 files whose path matches are listed first (`mcp.file_matches`) |
+| `read_file` | `path`, `start_line`, `end_line` | Numbered lines, 200 by default and at most 1,000 (`mcp.read_file_lines` / `mcp.max_read_file_lines`), with how to continue |
 | `file_dependencies` | `path`, `direction` (`in`, `out`, `both`), `depth` (1–4), `limit` | Files it imports and files importing it, by distance, with the line of each direct import |
 | `change_impact` | `paths` (one or more), `limit` | Every file that transitively imports any of them, nearest first, split into tests and other code |
 | `import_path` | `from`, `to` | The shortest chain of imports between two files, either way round |

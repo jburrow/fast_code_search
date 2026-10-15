@@ -112,14 +112,35 @@ fn ms(d: Duration) -> f64 {
 
 const DEFAULT_QUERIES: &[&str] = &[
     // very common tokens
-    "return", "static", "struct", "error", "NULL", "self", "include", "the",
+    "return",
+    "static",
+    "struct",
+    "error",
+    "NULL",
+    "self",
+    "include",
+    "the",
     // common identifiers
-    "mutex_lock", "kmalloc", "unwrap", "Config", "printf", "std::vector",
+    "mutex_lock",
+    "kmalloc",
+    "unwrap",
+    "Config",
+    "printf",
+    "std::vector",
     // medium
-    "spin_lock_irqsave", "EXPORT_SYMBOL_GPL", "SmallVector", "ctx.Done()",
+    "spin_lock_irqsave",
+    "EXPORT_SYMBOL_GPL",
+    "SmallVector",
+    "ctx.Done()",
     // rare strings made of common trigrams
-    "return -EBUSY;", "if (ret < 0) {", "get_user_pages_fast", "handle_error",
-    "TODO(", "deadbeef", "LLVM_DEBUG(dbgs() <<", "fn main",
+    "return -EBUSY;",
+    "if (ret < 0) {",
+    "get_user_pages_fast",
+    "handle_error",
+    "TODO(",
+    "deadbeef",
+    "LLVM_DEBUG(dbgs() <<",
+    "fn main",
 ];
 
 fn main() -> Result<()> {
@@ -181,11 +202,7 @@ fn main() -> Result<()> {
         None => DEFAULT_QUERIES.iter().map(|s| s.to_string()).collect(),
     };
     let only: HashSet<&str> = args.only.split(',').collect();
-    let mut out = args
-        .json
-        .as_ref()
-        .map(std::fs::File::create)
-        .transpose()?;
+    let mut out = args.json.as_ref().map(std::fs::File::create).transpose()?;
     let mut emit = |row: serde_json::Value| {
         println!("{row}");
         if let Some(f) = out.as_mut() {
@@ -216,9 +233,12 @@ fn main() -> Result<()> {
             },
             took,
         };
-        let content_bytes: usize = all.iter().map(|m| m.content.len() + m.file_path.len()).sum();
-        let avg_hit_bytes = std::mem::size_of::<SearchMatch>()
-            + content_bytes.checked_div(all.len()).unwrap_or(0);
+        let content_bytes: usize = all
+            .iter()
+            .map(|m| m.content.len() + m.file_path.len())
+            .sum();
+        let avg_hit_bytes =
+            std::mem::size_of::<SearchMatch>() + content_bytes.checked_div(all.len()).unwrap_or(0);
         drop(all);
         emit(serde_json::json!({
             "query": q, "kind": "reference",
@@ -297,11 +317,18 @@ fn main() -> Result<()> {
         if only.contains("files") {
             for n in [500usize, 1000, 2000, 5000, 10_000, 20_000, 50_000, 0] {
                 let l = SearchLimits::new(page).with_max_files(n);
-                emit(measure("fast_files", serde_json::json!(n), l, RankMode::Fast));
+                emit(measure(
+                    "fast_files",
+                    serde_json::json!(n),
+                    l,
+                    RankMode::Fast,
+                ));
             }
         }
         if only.contains("budget") {
-            for b in [512usize, 2048, 8192, 16_384, 32_768, 65_536, 100_000, 262_144, 1_000_000] {
+            for b in [
+                512usize, 2048, 8192, 16_384, 32_768, 65_536, 100_000, 262_144, 1_000_000,
+            ] {
                 for (name, mode) in [("full", RankMode::Full), ("fast_all", RankMode::Fast)] {
                     let l = SearchLimits::new(page)
                         .with_max_files(0)
@@ -318,9 +345,19 @@ fn main() -> Result<()> {
         if only.contains("page") {
             for p in [20usize, 50, 100, 500, 1000] {
                 let l = SearchLimits::new(p);
-                emit(measure("page_auto", serde_json::json!(p), l, RankMode::Auto));
+                emit(measure(
+                    "page_auto",
+                    serde_json::json!(p),
+                    l,
+                    RankMode::Auto,
+                ));
                 let l = SearchLimits::new(p).with_max_files(0);
-                emit(measure("page_fast_all", serde_json::json!(p), l, RankMode::Fast));
+                emit(measure(
+                    "page_fast_all",
+                    serde_json::json!(p),
+                    l,
+                    RankMode::Fast,
+                ));
             }
         }
     }

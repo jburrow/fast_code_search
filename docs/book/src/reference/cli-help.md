@@ -111,7 +111,7 @@ Options:
           Match whole words only
 
   -n, --max <N>
-          Maximum hits to print (1-1000)
+          Maximum hits to print (1 to the server's search.max_page_size, 1000)
           
           [default: 50]
 
@@ -121,7 +121,7 @@ Options:
           [default: 0]
 
   -C, --context <N>
-          Lines of context before and after each hit (0-10)
+          Lines of context before and after each hit (0 to search.max_context_lines, 10)
           
           [default: 0]
 
@@ -144,7 +144,7 @@ Options:
           Never fall back to the on-disk index when the server is unreachable
 
       --rank <RANK>
-          Ranking: auto, fast (metadata only, big candidate sets), full
+          Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
@@ -166,7 +166,7 @@ Options:
           - json:    The server's JSON response, one object
 
       --max-files <N>
-          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
       --deps <PATH[:N]>
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
@@ -221,7 +221,7 @@ Options:
           Match whole words only
 
   -n, --max <N>
-          Maximum hits to print (1-1000)
+          Maximum hits to print (1 to the server's search.max_page_size, 1000)
           
           [default: 50]
 
@@ -231,7 +231,7 @@ Options:
           [default: 0]
 
   -C, --context <N>
-          Lines of context before and after each hit (0-10)
+          Lines of context before and after each hit (0 to search.max_context_lines, 10)
           
           [default: 0]
 
@@ -254,7 +254,7 @@ Options:
           Never fall back to the on-disk index when the server is unreachable
 
       --rank <RANK>
-          Ranking: auto, fast (metadata only, big candidate sets), full
+          Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
@@ -276,7 +276,7 @@ Options:
           - json:    The server's JSON response, one object
 
       --max-files <N>
-          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
       --deps <PATH[:N]>
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
@@ -331,7 +331,7 @@ Options:
           Match whole words only
 
   -n, --max <N>
-          Maximum hits to print (1-1000)
+          Maximum hits to print (1 to the server's search.max_page_size, 1000)
           
           [default: 50]
 
@@ -341,7 +341,7 @@ Options:
           [default: 0]
 
   -C, --context <N>
-          Lines of context before and after each hit (0-10)
+          Lines of context before and after each hit (0 to search.max_context_lines, 10)
           
           [default: 0]
 
@@ -364,7 +364,7 @@ Options:
           Never fall back to the on-disk index when the server is unreachable
 
       --rank <RANK>
-          Ranking: auto, fast (metadata only, big candidate sets), full
+          Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
@@ -386,7 +386,7 @@ Options:
           - json:    The server's JSON response, one object
 
       --max-files <N>
-          Files fast ranking may open when a query could be in very many (default: the server's fast_rank_files, 2000)
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
       --deps <PATH[:N]>
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out

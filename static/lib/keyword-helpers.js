@@ -8,9 +8,15 @@
 
 // ---------- Form / URL state validation ----------
 
-/** The server clamps `max` to 1..MAX_RESULTS_LIMIT. */
-const MAX_RESULTS_LIMIT = 1000;
-const CONTEXT_LINES_LIMIT = 10;
+/**
+ * The server clamps `max` to 1..MAX_RESULTS_LIMIT (`search.max_page_size`)
+ * and `context` to 0..CONTEXT_LINES_LIMIT (`search.max_context_lines`); the
+ * page learns both from `/ui-config.js` (FCS_UI), defaulting to the
+ * server's defaults when it is absent (Node tests).
+ */
+const FCS_LIMITS = (typeof globalThis !== 'undefined' && globalThis.FCS_UI) || {};
+const MAX_RESULTS_LIMIT = FCS_LIMITS.max_page_size > 0 ? FCS_LIMITS.max_page_size : 1000;
+const CONTEXT_LINES_LIMIT = FCS_LIMITS.max_context_lines >= 0 ? FCS_LIMITS.max_context_lines : 10;
 
 /**
  * Parse a requested result cap (URL param, stored setting, select value)

@@ -48,6 +48,7 @@
 - [Against ripgrep and ugrep](benchmarks/comparison.md)
 - [Ranking quality](benchmarks/ranking-quality.md)
 - [Correctness against ripgrep](benchmarks/correctness.md)
+- [Search limits](benchmarks/search-limits.md)
 
 # Project
 

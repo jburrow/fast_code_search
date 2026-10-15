@@ -64,13 +64,13 @@ configuration file, then `http://127.0.0.1:8080`. A bind address such as
 | `-e`, `--regex` | Treat the query as a regular expression (matched one line at a time; mention `\n` for multi-line patterns). |
 | `-s`, `--case-sensitive` / `-i`, `--ignore-case` | Override case handling (plain text ignores case by default, a regex matches it; `-e -i` ignores it). |
 | `-w`, `--word` | Whole words only. |
-| `-n`, `--max N` | Hits to print (default 50, up to 1000). |
-| `--offset N` | Skip the first N hits; ordering is deterministic, so `--offset 50` is page two. Up to the server's `max_page_offset` (100,000 by default). |
+| `-n`, `--max N` | Hits to print (default 50, up to the server's `search.max_page_size`, 1,000). |
+| `--offset N` | Skip the first N hits; ordering is deterministic, so `--offset 50` is page two. Up to the server's `search.max_page_offset` (100,000 by default). |
 | `-C`, `--context N` | Lines of context around each hit (up to 10). |
 | `-g`, `--glob GLOB` | Only files matching the glob (repeatable). `src/**/*.rs`, `*.py`, `tests` (a bare name matches anywhere in the path). |
 | `--exclude GLOB` | Skip files matching the glob (repeatable). |
-| `--rank auto\|fast\|full` | Ranking mode; `auto` reads every candidate up to 5,000 files and samples by file metadata beyond that. |
-| `--max-files N` | Files a fast-ranked search opens (default: the server's `fast_rank_files`, 2,000; up to its `max_fast_rank_files`). |
+| `--rank auto\|fast\|full` | Every mode reads candidate files best first until enough matches are collected to rank; `auto` and `fast` honour a file limit, `full` never stops at one. |
+| `--max-files N` | Most candidate files to read (default: the server's `search.fast_rank_files`, no limit; up to its `search.max_fast_rank_files`). |
 | `--timeout-ms MS` | Stop scanning after MS and return the best hits so far. |
 | `-l`, `--files-with-matches` | Print file paths only, once each. |
 | `--format grouped\|vimgrep\|json`, `--json` | Output layout (default: grouped on a terminal, vimgrep when piped). JSON is the server's response object. |

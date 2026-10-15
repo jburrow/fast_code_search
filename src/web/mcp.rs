@@ -32,12 +32,6 @@ use std::fmt::Write as _;
 /// another one is answered with the newest (it may then disconnect).
 const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const DEFAULT_LIMIT: usize = 50;
-const MAX_LIMIT: usize = 500;
-const MAX_SEARCH_LIMIT: usize = 100;
-const DEFAULT_READ_LINES: usize = 200;
-const MAX_READ_LINES: usize = 1000;
-
 /// What every graph tool says about coverage, so an empty answer for a Go
 /// file is not read as "nothing uses it".
 const GRAPH_COVERAGE: &str = "Imports are resolved for Rust, Python and JavaScript/TypeScript \
@@ -179,7 +173,10 @@ async fn handle(state: &WebState, message: Value) -> Option<Value> {
             )
         }
         "ping" => rpc_result(id, json!({})),
-        "tools/list" => rpc_result(id, json!({ "tools": tool_definitions() })),
+        "tools/list" => rpc_result(
+            id,
+            json!({ "tools": tool_definitions(&state.mcp_settings) }),
+        ),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params
@@ -225,7 +222,8 @@ impl From<String> for ToolError {
 
 type ToolResult = Result<String, ToolError>;
 
-fn tool_definitions() -> Value {
+/// The tools, with the limits from `[mcp]` in their schemas.
+fn tool_definitions(m: &crate::config::McpConfig) -> Value {
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
     let tool = |name: &str, title: &str, description: String, schema: Value| {
         json!({
@@ -250,7 +248,9 @@ fn tool_definitions() -> Value {
              of an identifier; kind:call, kind:type, kind:value or kind:attribute keeps one \
              kind, -kind:attribute drops one, and each hit says its kind). Text ignores case and regex does not, unless case_sensitive is \
              set. Returns path:line:column with the matching line; in text and regex mode, \
-             files whose path matches the query (e.g. a pasted path) are listed first."
+             files whose path matches the query (e.g. a pasted path) are listed first. \
+             Hits come in rank order; when more exist the result says the offset to pass \
+             for the next page."
                 .to_string(),
             json!({
                 "type": "object",
@@ -259,8 +259,11 @@ fn tool_definitions() -> Value {
                     "mode": {"type": "string", "enum": ["text", "regex", "symbols", "references"], "default": "text"},
                     "include": {"type": "string", "description": "Semicolon-separated path globs to search within, e.g. src/**/*.rs;lib/**"},
                     "exclude": {"type": "string", "description": "Semicolon-separated path globs to skip."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_LIMIT, "default": 20},
-                    "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "Lines of context around each match."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": m.max_limit, "default": m.default_limit, "description": "Hits to return."},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0, "description": "Skip this many hits, to page through a long result (the result says the next offset)."},
+                    "max_files": {"type": "integer", "minimum": 0, "description": "Most candidate files to read, best first (0 or unset = the server's default). Raise it when a result says the file limit stopped the search."},
+                    "rank": {"type": "string", "enum": ["auto", "fast", "full"], "default": "auto", "description": "full never stops at the file limit; auto and fast honour it."},
+                    "context": {"type": "integer", "minimum": 0, "maximum": m.max_context_lines, "default": 0, "description": "Lines of context around each match."},
                     "case_sensitive": {"type": "boolean", "description": "Match case exactly (true) or ignore it (false). Default: text ignores case, regex matches it."},
                     "deps": {"type": "string", "description": "Only search these files and what they import: semicolon-separated PATH[:N] (N import hops, default 1; * for any distance). A leading - leaves those files out."},
                     "rdeps": {"type": "string", "description": "Only search these files and the files that import them (change impact): same form as deps."}
@@ -273,7 +276,8 @@ fn tool_definitions() -> Value {
             "Read file",
             format!(
                 "Read an indexed file with line numbers, so you can cite path:line. Reads \
-                 {DEFAULT_READ_LINES} lines from start_line by default, at most {MAX_READ_LINES}."
+                 {} lines from start_line by default, at most {}.",
+                m.read_file_lines, m.max_read_file_lines
             ),
             json!({
                 "type": "object",
@@ -300,7 +304,7 @@ fn tool_definitions() -> Value {
                     "path": {"type": "string"},
                     "direction": {"type": "string", "enum": ["in", "out", "both"], "default": "both"},
                     "depth": {"type": "integer", "minimum": 1, "maximum": 4, "default": 1},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "default": DEFAULT_LIMIT, "description": "Files listed per level."}
+                    "limit": {"type": "integer", "minimum": 1, "maximum": m.graph_max_limit, "default": m.graph_default_limit, "description": "Files listed per level."}
                 },
                 "required": ["path"]
             }),
@@ -318,7 +322,7 @@ fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "default": DEFAULT_LIMIT, "description": "Files listed in each group."}
+                    "limit": {"type": "integer", "minimum": 1, "maximum": m.graph_max_limit, "default": m.graph_default_limit, "description": "Files listed in each group."}
                 },
                 "required": ["paths"]
             }),
@@ -406,9 +410,6 @@ fn limit(asked: Option<usize>, default: usize, max: usize) -> usize {
 
 // ------------------------------------------------------------- search_code
 
-/// Path matches listed above `search_code`'s content hits.
-const MCP_FILE_MATCHES: usize = 5;
-
 #[derive(serde::Deserialize)]
 struct SearchArgs {
     query: String,
@@ -419,6 +420,12 @@ struct SearchArgs {
     #[serde(default)]
     exclude: String,
     limit: Option<usize>,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default)]
+    max_files: Option<usize>,
+    #[serde(default)]
+    rank: String,
     #[serde(default)]
     context: usize,
     #[serde(default)]
@@ -445,22 +452,29 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
             )
         }
     };
-    let context = a.context.min(5);
+    let m = state.mcp_settings;
+    let context = a.context.min(m.max_context_lines);
+    let page = limit(a.limit, m.default_limit, m.max_limit);
     let mut params = json!({
         "q": a.query,
-        "max": limit(a.limit, 20, MAX_SEARCH_LIMIT),
+        "max": page,
+        "offset": a.offset,
+        "rank": a.rank,
         "include": a.include,
         "exclude": a.exclude,
         "regex": regex,
         "symbols": symbols,
         "references": references,
         "context": context,
-        "files": MCP_FILE_MATCHES,
+        "files": m.file_matches,
         "deps": a.deps,
         "rdeps": a.rdeps,
     });
     if let Some(c) = a.case_sensitive {
         params["case"] = json!(c);
+    }
+    if let Some(n) = a.max_files {
+        params["max_files"] = json!(n);
     }
     let q = query(params)?;
     let Json(resp) = api::search_handler(State(state.clone()), q).await?;
@@ -503,14 +517,19 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         Some(n) => format!("{n} matches"),
         None => "Many matches (the scan stopped early)".to_string(),
     };
+    let shown = resp.results.len();
     let _ = writeln!(
         out,
         "{total}; showing {}{}.",
-        resp.results.len(),
-        if resp.has_more {
-            ", more exist: narrow the query or raise limit"
+        if a.offset == 0 {
+            shown.to_string()
         } else {
-            ""
+            format!("{}-{}", a.offset + 1, a.offset + shown)
+        },
+        if resp.has_more {
+            format!(", more exist: call again with offset={}", a.offset + shown)
+        } else {
+            String::new()
         }
     );
     push_limits_note(&mut out, &resp.limits_hit);
@@ -677,9 +696,11 @@ async fn read_file(state: &WebState, a: ReadArgs) -> ToolResult {
     }
     let wanted_end = a
         .end_line
-        .unwrap_or(start + DEFAULT_READ_LINES - 1)
+        .unwrap_or(start + state.mcp_settings.read_file_lines - 1)
         .max(start);
-    let end = wanted_end.min(total).min(start + MAX_READ_LINES - 1);
+    let end = wanted_end
+        .min(total)
+        .min(start + state.mcp_settings.max_read_file_lines - 1);
     let mut out = format!("{} (lines {start}-{end} of {total})\n", file.file);
     for (i, line) in lines[start - 1..end].iter().enumerate() {
         let _ = writeln!(out, "{:>6}  {line}", start + i);
@@ -773,7 +794,8 @@ async fn file_dependencies(state: &WebState, a: DepsArgs) -> ToolResult {
         other => return Err(format!("Unknown direction {other:?}: use in, out or both").into()),
     };
     let depth = a.depth.unwrap_or(1).clamp(1, 4);
-    let per_level = limit(a.limit, DEFAULT_LIMIT, MAX_LIMIT);
+    let m = state.mcp_settings;
+    let per_level = limit(a.limit, m.graph_default_limit, m.graph_max_limit);
     let q = query(json!({ "file": a.path, "depth": depth, "limit": per_level }))?;
     let Json(resp) = graph::neighborhood_handler(State(state.clone()), q).await?;
     let set: NodeSetJson = reshape(&resp)?;
@@ -887,7 +909,8 @@ async fn change_impact(state: &WebState, a: ImpactArgs) -> ToolResult {
     if a.paths.is_empty() {
         return Err("paths is empty".to_string().into());
     }
-    let per_group = limit(a.limit, DEFAULT_LIMIT, MAX_LIMIT);
+    let m = state.mcp_settings;
+    let per_group = limit(a.limit, m.graph_default_limit, m.graph_max_limit);
     let engine = state.engine.clone();
     tokio::task::spawn_blocking(move || -> ToolResult {
         let engine = try_read_engine(&engine).map_err(|(_, m)| ToolError::Failed(m))?;

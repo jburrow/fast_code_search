@@ -34,15 +34,19 @@ and restrict `include_extensions`.
 - **Candidates.** A query's trigrams intersect posting lists; the fewer
   and rarer the trigrams, the smaller the candidate set. Short queries
   (under three characters) have no trigrams and scan everything.
-- **Fast versus full ranking.** Above 5,000 candidates the engine reads only
-  the top 2,000 by file metadata (`rank=auto`; `fast_rank_files` in the
-  configuration); `rank=full` reads them all. The web UI's SEARCH ALL FILES
+- **Reading order.** Candidates are read best first by file metadata until
+  the match budget is spent. A server can cap the files read
+  (`search.fast_rank_files`; none by default); the web UI's SEARCH ALL FILES
   (`max_files` on the API, `fcs --max-files`) opens more for one search, up
-  to `max_fast_rank_files`.
-- **Budget and deadline.** Every search stops at a match budget and at a
-  deadline derived from `request_timeout_secs` (or a smaller `timeout_ms`),
-  reporting `truncated_by_budget` when it did. Narrow the query (`file:`,
-  `lang:`, a longer literal) rather than raising limits.
+  to `search.max_fast_rank_files`.
+- **Budget and deadline.** Every search stops at a match budget (32,768
+  matches for a first page by default, about 230 bytes each while the search
+  runs) and at a deadline derived from `request_timeout_secs` (or a smaller
+  `timeout_ms`), reporting `truncated_by_budget` when it did. On a 372k-file
+  corpus a first page took about 80 ms (median) for words with over 100k
+  hits; [Search limits](../benchmarks/search-limits.md) has the
+  measurements behind each default. On a small machine serving many people,
+  `search.min_match_budget` trades page-1 quality for memory and time.
 - **Regex.** Literals extracted from the pattern pre-filter through the
   index; a pattern with no required literal scans every file. Line-mode
   patterns run in one pass per file.

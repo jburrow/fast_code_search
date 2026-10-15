@@ -230,7 +230,7 @@ async fn main() -> Result<()> {
         let web_progress = shared_progress.clone();
         let web_progress_tx = progress_tx.clone();
         let web_shutdown_rx = shutdown_rx.clone();
-        let mut router_options = web::RouterOptions::from(&config.server);
+        let mut router_options = web::RouterOptions::from(&config);
         router_options.indexer_config = Some(config.indexer.clone());
         router_options.search_permits = Some(search_permits.clone());
         web_handle = Some(tokio::spawn(async move {
@@ -355,7 +355,7 @@ async fn main() -> Result<()> {
         &config.indexer,
         search_permits.clone(),
         request_timeout,
-        fast_code_search::search::SearchSettings::from_config(&config.server),
+        fast_code_search::search::SearchSettings::from_config(&config),
     );
 
     let persistence = match config.indexer.index_path.as_deref() {

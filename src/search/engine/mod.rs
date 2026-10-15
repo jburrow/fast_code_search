@@ -186,15 +186,53 @@ pub struct SearchLimits {
     /// Most hits one document may contribute; `None` means the default
     /// (see `doc_cap`).
     pub per_doc_cap: Option<usize>,
-    /// Most candidate files fast ranking opens (the best by metadata).
+    /// Most candidate files fast ranking opens (the best by metadata;
+    /// `usize::MAX` = no limit, the default).
     pub max_files: usize,
     /// Only search these files (from `deps:` / `rdeps:`).
     pub scope: Option<std::sync::Arc<GraphScope>>,
+    /// How the match budget and per-file cap follow from the page.
+    pub budget_rule: BudgetRule,
+}
+
+/// How much a search collects to rank a page (`[search]` in the config).
+///
+/// The defaults are measured, not guessed: on a 372k-file corpus (Linux,
+/// LLVM, Rust, Kubernetes) a 32,768-match floor put 81% of the exhaustive
+/// top 50 on page 1 for tokens with over 100k hits (10% at the old 512),
+/// at about 80 ms median; raising it further bought under one point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BudgetRule {
+    /// Never budget fewer matches than this.
+    pub min: usize,
+    /// Budget this many times the page end, between `min` and `max`.
+    pub multiplier: usize,
+    /// Ceiling on the derived budget (pages ending at
+    /// [`SearchLimits::STABLE_PAGING_FROM`] or deeper get exactly this).
+    pub max: usize,
+    /// Most hits one file contributes, raised to the page end.
+    pub per_file: usize,
+}
+
+impl BudgetRule {
+    /// The defaults (`[search]` with nothing set).
+    pub const DEFAULT: BudgetRule = BudgetRule {
+        min: 32_768,
+        multiplier: 8,
+        max: 100_000,
+        per_file: SearchEngine::MAX_MATCHES_PER_DOC,
+    };
+}
+
+impl Default for BudgetRule {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 impl SearchLimits {
     /// Most hits one document may contribute: `per_doc_cap`, or by default
-    /// `MAX_MATCHES_PER_DOC`, raised to `offset + max_results` so a list of
+    /// the budget rule's `per_file` (100), raised to `offset + max_results` so a list of
     /// that length can always be filled from one file. Fetching a longer
     /// list from offset 0 (the web UI's LOAD MORE) then reaches every hit
     /// of a file with hundreds of them, as offset paging does. From
@@ -204,45 +242,51 @@ impl SearchLimits {
         self.per_doc_cap.unwrap_or_else(|| {
             let end = self.offset.saturating_add(self.max_results);
             if end >= Self::STABLE_PAGING_FROM {
-                Self::derived_budget(self.offset, self.max_results)
+                self.derived_budget(self.offset, self.max_results)
             } else {
-                SearchEngine::MAX_MATCHES_PER_DOC.max(end)
+                self.budget_rule.per_file.max(end)
             }
         })
     }
 
-    /// Default budget multiplier: enough headroom above the requested page
-    /// (plus offset) that ranking still sees a broad sample.
-    const BUDGET_MULTIPLIER: usize = 8;
-    /// Never budget fewer matches than this, so tiny pages still rank well.
-    const MIN_BUDGET: usize = 512;
-    /// Ceiling on the ranking headroom derived from page size and offset.
-    /// A deeper page still gets enough budget to reach it; an explicit
-    /// [`Self::with_match_budget`] may exceed it (benchmarks, tests).
-    pub const MAX_DERIVED_BUDGET: usize = 100_000;
+    /// Ceiling on the ranking headroom derived from page size and offset by
+    /// default ([`BudgetRule::max`]). A deeper page still gets enough budget
+    /// to reach it; an explicit [`Self::with_match_budget`] may exceed it
+    /// (benchmarks, tests).
+    pub const MAX_DERIVED_BUDGET: usize = BudgetRule::DEFAULT.max;
     /// Pages ending here or deeper all get the same budget
-    /// ([`Self::MAX_DERIVED_BUDGET`]) and per-document cap, so they rank the
+    /// ([`BudgetRule::max`]) and per-document cap, so they rank the
     /// same sample of a broad query's hits and offset pages fit together.
     /// A budget that grew with the offset ranked a different sample for
     /// each page, so LOAD MORE past the API's 1000-result list repeated
     /// some hits and skipped others. Shorter lists keep a smaller budget
     /// (fast first pages); each is fetched whole, from offset 0.
     pub const STABLE_PAGING_FROM: usize = 1000;
-    /// Files fast ranking opens by default.
-    pub const DEFAULT_MAX_FILES: usize = 2000;
 
-    /// Limits for a page of `max_results` with the default budget.
+    /// Limits for a page of `max_results` with the default budget rule and
+    /// no file cap.
     pub fn new(max_results: usize) -> Self {
         let max_results = max_results.max(1);
-        Self {
+        let mut limits = Self {
             max_results,
             offset: 0,
-            match_budget: Self::derived_budget(0, max_results),
+            match_budget: 0,
             deadline: None,
             per_doc_cap: None,
-            max_files: Self::DEFAULT_MAX_FILES,
+            max_files: usize::MAX,
             scope: None,
-        }
+            budget_rule: BudgetRule::DEFAULT,
+        };
+        limits.match_budget = limits.derived_budget(0, max_results);
+        limits
+    }
+
+    /// Derive the budget and per-file cap from `rule` (the server's
+    /// `[search]` settings) instead of the defaults.
+    pub fn with_budget_rule(mut self, rule: BudgetRule) -> Self {
+        self.budget_rule = rule;
+        self.match_budget = self.derived_budget(self.offset, self.max_results);
+        self
     }
 
     /// Only search the files in `scope`.
@@ -251,21 +295,27 @@ impl SearchLimits {
         self
     }
 
-    /// Budget for a page of `max_results` starting at `offset`: eight times
-    /// the page end for ranking headroom, or [`Self::MAX_DERIVED_BUDGET`]
-    /// once the page ends at [`Self::STABLE_PAGING_FROM`] or deeper, and
-    /// never less than the page end plus [`Self::MIN_BUDGET`], so a deep
-    /// page can always be reached. Servers bound how deep a client may page
-    /// with [`SearchSettings::max_offset`].
-    fn derived_budget(offset: usize, max_results: usize) -> usize {
+    /// Budget for a page of `max_results` starting at `offset`: the rule's
+    /// multiple of the page end for ranking headroom, between its `min` and
+    /// `max`, or exactly `max` once the page ends at
+    /// [`Self::STABLE_PAGING_FROM`] or deeper, and never less than the page
+    /// end plus `min`, so a deep page can always be reached. Servers bound
+    /// how deep a client may page with [`SearchSettings::max_offset`].
+    fn derived_budget(&self, offset: usize, max_results: usize) -> usize {
+        let BudgetRule {
+            min,
+            multiplier,
+            max,
+            ..
+        } = self.budget_rule;
+        let (min, max) = (min.max(1), max.max(min.max(1)));
         let end = offset.saturating_add(max_results);
         let headroom = if end >= Self::STABLE_PAGING_FROM {
-            Self::MAX_DERIVED_BUDGET
+            max
         } else {
-            end.saturating_mul(Self::BUDGET_MULTIPLIER)
-                .clamp(Self::MIN_BUDGET, Self::MAX_DERIVED_BUDGET)
+            end.saturating_mul(multiplier.max(1)).clamp(min, max)
         };
-        headroom.max(end.saturating_add(Self::MIN_BUDGET))
+        headroom.max(end.saturating_add(min))
     }
 
     /// Skip the first `offset` results; the budget grows to cover the page.
@@ -275,7 +325,7 @@ impl SearchLimits {
         self.offset = offset;
         self.match_budget = self
             .match_budget
-            .max(Self::derived_budget(self.offset, self.max_results));
+            .max(self.derived_budget(self.offset, self.max_results));
         self
     }
 
@@ -319,26 +369,45 @@ impl SearchLimits {
     }
 }
 
-/// Server-wide search limits, from `[server]` in the configuration. Every
+/// Server-wide search limits, from `[search]` in the configuration. Every
 /// surface (REST, MCP, gRPC, `fcs`) applies them to client requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchSettings {
     /// Candidate files fast ranking opens when the request does not say
-    /// (`usize::MAX` = no limit).
+    /// (`usize::MAX` = no limit, the default: read until the budget is
+    /// spent).
     pub fast_rank_files: usize,
     /// Most candidate files a request may ask fast ranking to open
     /// (`usize::MAX` = no limit).
     pub max_fast_rank_files: usize,
     /// Deepest `offset` a request may page to (`usize::MAX` = no limit).
     pub max_offset: usize,
+    /// Match budget and per-file cap.
+    pub budget: BudgetRule,
+    /// Page size when a request does not give one.
+    pub default_page_size: usize,
+    /// Largest page one request may ask for.
+    pub max_page_size: usize,
+    /// Most path matches one request may ask for.
+    pub max_path_matches: usize,
+    /// Longest deadline a request may ask for.
+    pub max_timeout: std::time::Duration,
+    /// Most context lines around each hit.
+    pub max_context_lines: usize,
 }
 
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
-            fast_rank_files: SearchLimits::DEFAULT_MAX_FILES,
+            fast_rank_files: usize::MAX,
             max_fast_rank_files: usize::MAX,
             max_offset: Self::DEFAULT_MAX_OFFSET,
+            budget: BudgetRule::DEFAULT,
+            default_page_size: 50,
+            max_page_size: 1000,
+            max_path_matches: 100,
+            max_timeout: std::time::Duration::from_secs(30),
+            max_context_lines: 10,
         }
     }
 }
@@ -349,13 +418,53 @@ impl SearchSettings {
     /// matches.
     pub const DEFAULT_MAX_OFFSET: usize = 100_000;
 
-    /// Settings from the server configuration, where 0 means no limit.
-    pub fn from_config(c: &crate::config::ServerConfig) -> Self {
+    /// Settings from the configuration, where 0 means no limit for the file
+    /// counts and the offset. `[search]` wins over the deprecated `[server]`
+    /// spellings of `fast_rank_files`, `max_fast_rank_files` and
+    /// `max_page_offset`.
+    pub fn from_config(c: &crate::config::Config) -> Self {
         let unlimited_if_zero = |n: usize| if n == 0 { usize::MAX } else { n };
+        let (s, server) = (&c.search, &c.server);
+        let d = Self::default();
         Self {
-            fast_rank_files: unlimited_if_zero(c.fast_rank_files),
-            max_fast_rank_files: unlimited_if_zero(c.max_fast_rank_files),
-            max_offset: unlimited_if_zero(c.max_page_offset),
+            fast_rank_files: unlimited_if_zero(
+                s.fast_rank_files.or(server.fast_rank_files).unwrap_or(0),
+            ),
+            max_fast_rank_files: unlimited_if_zero(
+                s.max_fast_rank_files
+                    .or(server.max_fast_rank_files)
+                    .unwrap_or(0),
+            ),
+            max_offset: unlimited_if_zero(
+                s.max_page_offset
+                    .or(server.max_page_offset)
+                    .unwrap_or(Self::DEFAULT_MAX_OFFSET),
+            ),
+            budget: BudgetRule {
+                min: s.min_match_budget.max(1),
+                multiplier: s.match_budget_multiplier.max(1),
+                max: s.max_match_budget.max(s.min_match_budget.max(1)),
+                per_file: s.per_file_matches.max(1),
+            },
+            default_page_size: s.default_page_size.clamp(1, s.max_page_size.max(1)),
+            max_page_size: s.max_page_size.max(1),
+            max_path_matches: s.max_path_matches,
+            max_timeout: if s.max_timeout_secs == 0 {
+                d.max_timeout
+            } else {
+                std::time::Duration::from_secs(s.max_timeout_secs)
+            },
+            max_context_lines: s.max_context_lines,
+        }
+    }
+
+    /// The page size a request asking for `requested` gets (0 = the
+    /// default), capped at [`Self::max_page_size`].
+    pub fn page_size(&self, requested: usize) -> usize {
+        if requested == 0 {
+            self.default_page_size
+        } else {
+            requested.min(self.max_page_size)
         }
     }
 
@@ -372,7 +481,7 @@ impl SearchSettings {
     pub fn check_offset(&self, offset: usize) -> std::result::Result<(), String> {
         if offset > self.max_offset {
             return Err(format!(
-                "offset must be at most {} (server.max_page_offset); narrow the query instead of paging deeper",
+                "offset must be at most {} (search.max_page_offset); narrow the query instead of paging deeper",
                 self.max_offset
             ));
         }
@@ -383,7 +492,9 @@ impl SearchSettings {
     /// a request asking fast ranking to open `requested_files`.
     pub fn apply(&self, limits: SearchLimits, requested_files: Option<usize>) -> SearchLimits {
         let n = self.fast_rank_files_for(requested_files);
-        limits.with_max_files(if n == usize::MAX { 0 } else { n })
+        limits
+            .with_budget_rule(self.budget)
+            .with_max_files(if n == usize::MAX { 0 } else { n })
     }
 }
 
@@ -784,12 +895,13 @@ impl PreIndexedFile {
 /// Ranking mode for search queries
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RankMode {
-    /// Automatically choose based on candidate count (fast if >5000 candidates)
+    /// The default: the same as [`RankMode::Fast`].
     #[default]
     Auto,
-    /// Fast file-level ranking (no file reads for ranking, reads only top candidates)
+    /// Read candidate files best first (by a per-file score that needs no
+    /// I/O) until the match budget is spent, opening at most `max_files`.
     Fast,
-    /// Full line-level ranking (reads all candidate files)
+    /// As `Fast`, but never limited to `max_files`.
     Full,
 }
 

@@ -28,10 +28,10 @@ the binary.
 - Results are grouped by file, best hit first, with every query term
   highlighted from the server's match offsets. **Load more** pages through
   the rest; the summary line says how many matches exist and whether the
-  scan was cut short by its budget. When a query could be in thousands of
-  files, fast ranking opens only the most likely 2,000; the summary says
-  "Searched 2,000 of N files" and **SEARCH ALL FILES** opens the rest (or
-  as many as the server allows).
+  scan was cut short by its budget. Files are read best first; when the
+  server limits how many (`search.fast_rank_files`), the summary says
+  "Searched N of M files" and **SEARCH ALL FILES** opens the rest (or as
+  many as the server allows).
 - Results are in rank order with each file's hits together (see
   [Ranking](../how-it-works/ranking.md#result-order)). A file cut at the
   end of a page says so: its badge reads "3 of 7 hits", and **Show 4 more
