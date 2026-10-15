@@ -85,6 +85,8 @@ struct Reference {
     max_file_hits: usize,
     /// Reference page order (rank order with each file's hits together).
     order: Vec<Key>,
+    /// Every hit's score, best first.
+    scores: Vec<f64>,
     took: Duration,
 }
 
@@ -207,8 +209,16 @@ fn main() -> Result<()> {
             files_over_100: per_file.values().filter(|&&n| n > 100).count(),
             max_file_hits: per_file.values().copied().max().unwrap_or(0),
             order: all.iter().map(key).collect(),
+            scores: {
+                let mut v: Vec<f64> = all.iter().map(|m| m.score).collect();
+                v.sort_by(|a, b| b.partial_cmp(a).unwrap());
+                v
+            },
             took,
         };
+        let content_bytes: usize = all.iter().map(|m| m.content.len() + m.file_path.len()).sum();
+        let avg_hit_bytes = std::mem::size_of::<SearchMatch>()
+            + content_bytes.checked_div(all.len()).unwrap_or(0);
         drop(all);
         emit(serde_json::json!({
             "query": q, "kind": "reference",
@@ -217,6 +227,8 @@ fn main() -> Result<()> {
             "files_over_100": reference.files_over_100,
             "max_file_hits": reference.max_file_hits,
             "ms": ms(reference.took),
+            "avg_hit_bytes": avg_hit_bytes,
+            "ties_at_50": reference.scores.get(49).map(|t| reference.scores.iter().filter(|s| *s == t).count()),
         }));
         let reference_ok = reference.hits <= args.max_reference_hits;
 
@@ -242,6 +254,17 @@ fn main() -> Result<()> {
                 .order
                 .first()
                 .is_none_or(|b| page.first().map(key) == Some(*b));
+            // Ties make the exact top-K set arbitrary; this asks only whether
+            // each of the page's best K scores reaches the reference K-th.
+            let mut page_scores: Vec<f64> = page.iter().map(|m| m.score).collect();
+            page_scores.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            let score_recall = reference.scores.get(k.saturating_sub(1)).map(|kth| {
+                page_scores.iter().take(k).filter(|s| *s >= kth).count() as f64 / k.max(1) as f64
+            });
+            let best_score_ratio = match (page_scores.first(), reference.scores.first()) {
+                (Some(p), Some(r)) if *r > 0.0 => p / r,
+                _ => 1.0,
+            };
             let page_files: HashSet<u32> = page.iter().map(|m| m.file_id).collect();
             serde_json::json!({
                 "query": q, "kind": label, "value": value,
@@ -252,6 +275,8 @@ fn main() -> Result<()> {
                 "candidates": info.total_candidates,
                 "top_k_overlap": if reference_ok { serde_json::json!(overlap as f64 / k.max(1) as f64) } else { serde_json::Value::Null },
                 "best_first": best_found,
+                "score_recall": score_recall,
+                "best_score_ratio": best_score_ratio,
                 "limits": info.limits_hit.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
             })
         };
@@ -276,7 +301,7 @@ fn main() -> Result<()> {
             }
         }
         if only.contains("budget") {
-            for b in [128usize, 512, 2048, 8192, 32_768, 100_000] {
+            for b in [512usize, 2048, 8192, 16_384, 32_768, 65_536, 100_000, 262_144, 1_000_000] {
                 for (name, mode) in [("full", RankMode::Full), ("fast_all", RankMode::Fast)] {
                     let l = SearchLimits::new(page)
                         .with_max_files(0)
