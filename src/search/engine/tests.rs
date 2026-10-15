@@ -1432,7 +1432,8 @@ fn test_symbol_search_uses_trigram_filtering() {
 }
 
 /// Bug report: fast ranking always stopped at 2000 files. The number is
-/// a limit now (`max_files`), from the server's settings or the request.
+/// an optional limit now (`max_files`), from the server's settings or the
+/// request, and by default there is none.
 #[test]
 fn test_fast_ranking_opens_max_files() {
     let temp_dir = TempDir::new().unwrap();
@@ -1449,7 +1450,8 @@ fn test_fast_ranking_opens_max_files() {
         assert_eq!(hits.len(), info.candidates_searched);
         info.candidates_searched
     };
-    assert_eq!(SearchLimits::new(100).max_files, 2000);
+    assert_eq!(SearchLimits::new(100).max_files, usize::MAX);
+    assert_eq!(searched(SearchLimits::new(100)), 30);
     assert_eq!(searched(SearchLimits::new(100).with_max_files(10)), 10);
     assert_eq!(searched(SearchLimits::new(100).with_max_files(0)), 30);
 
@@ -1470,7 +1472,113 @@ fn test_fast_ranking_opens_max_files() {
     );
     let unlimited = SearchSettings::default();
     assert_eq!(unlimited.fast_rank_files_for(Some(50_000)), 50_000);
-    assert_eq!(unlimited.fast_rank_files_for(None), 2000);
+    assert_eq!(unlimited.fast_rank_files_for(None), usize::MAX);
+    assert_eq!(searched(unlimited.apply(SearchLimits::new(100), None)), 30);
+}
+
+/// Feedback: auto ranking "fell back to fast mode too quickly". Above 5,000
+/// candidate files it switched to opening only the best 2,000, so a rare
+/// string whose files ranked low came back with few hits. Now every mode
+/// reads candidates best first until the budget is spent, so `auto`
+/// reaches every file without a cap; `full` ignores a cap.
+#[test]
+fn test_auto_ranking_reads_until_the_page_is_full() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut engine = SearchEngine::new();
+    for i in 0..40 {
+        let p = temp_dir.path().join(format!("f{i:02}.rs"));
+        fs::write(&p, "needle\n").unwrap();
+        engine.index_file(&p).unwrap();
+    }
+    engine.finalize();
+    let (hits, info) =
+        engine.search_ranked_with_limits("needle", SearchLimits::new(100), RankMode::Auto);
+    assert_eq!(hits.len(), 40);
+    assert!(info.limits_hit.is_empty(), "{:?}", info.limits_hit);
+    let capped = SearchLimits::new(100).with_max_files(5);
+    let (hits, info) = engine.search_ranked_with_limits("needle", capped.clone(), RankMode::Auto);
+    assert_eq!(hits.len(), 5);
+    assert_eq!(info.limits_hit, vec![SearchLimit::FileCap]);
+    let (hits, info) = engine.search_ranked_with_limits("needle", capped, RankMode::Full);
+    assert_eq!(hits.len(), 40, "full ranking never stops at the file cap");
+    assert!(info.limits_hit.is_empty());
+}
+
+/// The match budget follows `[search]`: the floor, multiplier, ceiling and
+/// per-file cap all come from the server's settings.
+#[test]
+fn test_budget_rule_from_settings() {
+    let d = SearchLimits::new(50);
+    assert_eq!(d.match_budget, 50 + BudgetRule::DEFAULT.min);
+    assert_eq!(d.doc_cap(), 100);
+    let rule = BudgetRule {
+        min: 100,
+        multiplier: 4,
+        max: 1000,
+        per_file: 7,
+    };
+    let l = SearchLimits::new(50).with_budget_rule(rule);
+    assert_eq!(l.match_budget, 200);
+    assert_eq!(
+        l.doc_cap(),
+        50,
+        "the per-file cap is raised to the page end"
+    );
+    let l = SearchLimits::new(5).with_budget_rule(rule);
+    assert_eq!(l.doc_cap(), 7);
+    assert_eq!(l.match_budget, 105);
+    // A page that ends at STABLE_PAGING_FROM or deeper gets the ceiling.
+    let deep = SearchLimits::new(50)
+        .with_budget_rule(rule)
+        .with_offset(2000);
+    assert_eq!(deep.match_budget, 2050 + 100);
+    // The rule survives an offset applied afterwards.
+    let s = SearchSettings {
+        budget: rule,
+        ..SearchSettings::default()
+    };
+    let l = s.apply(SearchLimits::new(5), None).with_offset(10);
+    assert_eq!(l.budget_rule, rule);
+    assert_eq!(l.match_budget, 115);
+}
+
+/// Symbol search reads only the best-scoring files holding a matching
+/// symbol; when there were more, it says so instead of giving an
+/// exact-looking total.
+#[test]
+fn test_symbol_search_reports_its_file_cap() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut engine = SearchEngine::new();
+    for i in 0..250 {
+        let p = temp_dir.path().join(format!("m{i:03}.rs"));
+        fs::write(&p, "pub fn widget_build() {}\n").unwrap();
+        engine.index_file(&p).unwrap();
+    }
+    engine.finalize();
+    let (hits, info) = engine
+        .search_symbols_parsed(
+            &crate::search::parse_query("widget_build"),
+            "",
+            "",
+            SearchLimits::new(10),
+        )
+        .unwrap();
+    assert_eq!(hits.len(), 10);
+    assert!(
+        info.limits_hit.contains(&SearchLimit::FileCap),
+        "{:?}",
+        info.limits_hit
+    );
+    assert_eq!(info.candidates_searched, 200);
+    let (_, info) = engine
+        .search_symbols_parsed(
+            &crate::search::parse_query("widget_build"),
+            "",
+            "",
+            SearchLimits::new(50),
+        )
+        .unwrap();
+    assert!(!info.limits_hit.contains(&SearchLimit::FileCap));
 }
 
 /// Filename-only matches: searching for the filename stem should return
@@ -3029,7 +3137,7 @@ fn test_budget_truncated_search_is_repeatable() {
         .collect();
     let e = review_engine(t.path(), &refs);
     let page = || -> Vec<(String, usize)> {
-        let (m, info) = review_text(&e, "needle", SearchLimits::new(20));
+        let (m, info) = review_text(&e, "needle", SearchLimits::new(20).with_match_budget(512));
         assert!(info.truncated_by_budget, "the budget must cut this scan");
         m.iter()
             .map(|m| (m.file_path.clone(), m.line_number))

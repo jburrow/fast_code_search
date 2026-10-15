@@ -7,7 +7,7 @@ pub mod metrics;
 
 pub use api::{
     file_matches_to_json, results_to_json, split_graph_param, ErrorResponse, FileMatchJson,
-    LimitHitJson, ScopeJson, SearchResponse, SearchResultJson, MAX_FILE_MATCHES,
+    LimitHitJson, ScopeJson, SearchResponse, SearchResultJson,
 };
 
 use crate::search::{ProgressBroadcaster, SearchEngine, SharedIndexingProgress};
@@ -60,8 +60,10 @@ pub struct WebState {
     /// Cross-origin callers allowed by configuration; `/mcp` also accepts
     /// these as browser origins.
     pub cors_origins: Arc<Vec<String>>,
-    /// Fast-ranking file count and paging depth (`[server]` settings).
+    /// Search limits (`[search]` settings).
     pub search_settings: crate::search::SearchSettings,
+    /// MCP tool limits (`[mcp]` settings).
+    pub mcp_settings: crate::config::McpConfig,
     /// Theme settings the pages read from `/ui-config.js`.
     pub ui_settings: UiSettings,
 }
@@ -73,22 +75,33 @@ pub struct UiSettings {
     pub default_theme: crate::config::UiTheme,
     /// Ask for a theme on a person's first visit.
     pub theme_picker: bool,
+    /// Largest page the server returns (`search.max_page_size`); LOAD MORE
+    /// re-fetches the list up to this size.
+    pub max_page_size: usize,
+    /// Most context lines a search may ask for (`search.max_context_lines`).
+    pub max_context_lines: usize,
 }
 
 impl Default for UiSettings {
     fn default() -> Self {
+        let search = crate::search::SearchSettings::default();
         Self {
             default_theme: crate::config::UiTheme::default(),
             theme_picker: true,
+            max_page_size: search.max_page_size,
+            max_context_lines: search.max_context_lines,
         }
     }
 }
 
-impl From<&crate::config::ServerConfig> for UiSettings {
-    fn from(c: &crate::config::ServerConfig) -> Self {
+impl From<&crate::config::Config> for UiSettings {
+    fn from(c: &crate::config::Config) -> Self {
+        let search = crate::search::SearchSettings::from_config(c);
         Self {
-            default_theme: c.default_theme,
-            theme_picker: c.theme_picker,
+            default_theme: c.server.default_theme,
+            theme_picker: c.server.theme_picker,
+            max_page_size: search.max_page_size,
+            max_context_lines: search.max_context_lines,
         }
     }
 }
@@ -126,8 +139,10 @@ pub struct RouterOptions {
     /// service so both surfaces share `max_concurrent_searches`; `None`
     /// creates a private one sized from `max_concurrent_searches`.
     pub search_permits: Option<Arc<tokio::sync::Semaphore>>,
-    /// Fast-ranking file count and paging depth.
+    /// Search limits (`[search]`).
     pub search_settings: crate::search::SearchSettings,
+    /// MCP tool limits (`[mcp]`).
+    pub mcp_settings: crate::config::McpConfig,
     /// Default theme and first-run picker (`/ui-config.js`).
     pub ui_settings: UiSettings,
 }
@@ -142,18 +157,20 @@ impl Default for RouterOptions {
             indexer_config: None,
             search_permits: None,
             search_settings: crate::search::SearchSettings::default(),
+            mcp_settings: crate::config::McpConfig::default(),
             ui_settings: UiSettings::default(),
         }
     }
 }
 
-impl From<&crate::config::ServerConfig> for RouterOptions {
-    fn from(c: &crate::config::ServerConfig) -> Self {
+impl From<&crate::config::Config> for RouterOptions {
+    fn from(c: &crate::config::Config) -> Self {
         Self {
-            cors_origins: c.cors_origins.clone(),
-            max_concurrent_searches: c.max_concurrent_searches,
-            request_timeout: std::time::Duration::from_secs(c.request_timeout_secs.max(1)),
+            cors_origins: c.server.cors_origins.clone(),
+            max_concurrent_searches: c.server.max_concurrent_searches,
+            request_timeout: std::time::Duration::from_secs(c.server.request_timeout_secs.max(1)),
             search_settings: crate::search::SearchSettings::from_config(c),
+            mcp_settings: c.mcp,
             ui_settings: UiSettings::from(c),
             ..Default::default()
         }
@@ -214,6 +231,7 @@ pub fn create_router_with_options(
         graph_cache: Arc::default(),
         cors_origins: Arc::new(opts.cors_origins.clone()),
         search_settings: opts.search_settings,
+        mcp_settings: opts.mcp_settings,
         ui_settings: opts.ui_settings,
     };
 
@@ -516,6 +534,7 @@ mod tests {
             graph_cache: Arc::default(),
             cors_origins: Arc::default(),
             search_settings: crate::search::SearchSettings::default(),
+            mcp_settings: crate::config::McpConfig::default(),
             ui_settings: UiSettings::default(),
         };
         let router = Router::new()

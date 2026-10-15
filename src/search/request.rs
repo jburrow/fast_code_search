@@ -16,15 +16,6 @@ use crate::search::{
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Page size when the request does not give one.
-pub const DEFAULT_PAGE_SIZE: usize = 50;
-/// Largest page one request may ask for.
-pub const MAX_PAGE_SIZE: usize = 1000;
-/// Longest deadline a request may ask for.
-pub const MAX_TIMEOUT: Duration = Duration::from_secs(30);
-/// Most path matches one request may ask for.
-pub const MAX_PATH_MATCHES: usize = 100;
-
 /// What kind of search to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchMode {
@@ -68,17 +59,19 @@ pub struct SearchRequest {
     /// Semicolon-separated path globs to include / exclude.
     pub include: String,
     pub exclude: String,
-    /// Page size (0 = [`DEFAULT_PAGE_SIZE`]; capped at [`MAX_PAGE_SIZE`]).
+    /// Page size (0 = the server's `search.default_page_size`; capped at
+    /// `search.max_page_size`).
     pub max_results: usize,
     pub offset: usize,
     pub rank: RankMode,
-    /// The client's deadline (`None` = none; capped at [`MAX_TIMEOUT`]).
+    /// The client's deadline (`None` = none; capped at
+    /// `search.max_timeout_secs`).
     pub timeout: Option<Duration>,
     /// Candidate files fast ranking may open (`None` = the server default).
     pub max_files: Option<usize>,
-    /// Also list up to this many files whose path matches (0 = none; capped
-    /// at [`MAX_PATH_MATCHES`]). Only on the first page of a text or regex
-    /// search.
+    /// Also list up to this many files whose path matches (0 = none). Only
+    /// on the first page of a text or regex search. Front ends cap it at
+    /// `search.max_path_matches` ([`SearchSettings::max_path_matches`]).
     pub path_matches: usize,
     /// Graph filters as `PATH[:N|:*]`, a leading `-` to leave the files out:
     /// the same as `deps:` / `rdeps:` in the query, and the only way to
@@ -109,13 +102,9 @@ impl SearchOutcome {
 }
 
 impl SearchRequest {
-    /// The page size this request gets.
-    pub fn page_size(&self) -> usize {
-        if self.max_results == 0 {
-            DEFAULT_PAGE_SIZE
-        } else {
-            self.max_results.min(MAX_PAGE_SIZE)
-        }
+    /// The page size this request gets under `settings`.
+    pub fn page_size(&self, settings: &SearchSettings) -> usize {
+        settings.page_size(self.max_results)
     }
 
     /// The limits this request runs under. `server_timeout` is the
@@ -128,11 +117,13 @@ impl SearchRequest {
     ) -> Result<SearchLimits, String> {
         settings.check_offset(self.offset)?;
         let ceiling = server_timeout.map(|t| t.mul_f32(0.9));
-        let timeout = match (self.timeout.map(|t| t.min(MAX_TIMEOUT)), ceiling) {
+        let timeout = match (self.timeout.map(|t| t.min(settings.max_timeout)), ceiling) {
             (Some(t), Some(c)) => Some(t.min(c)),
             (t, c) => t.or(c),
         };
-        let mut limits = SearchLimits::new(self.page_size()).with_offset(self.offset);
+        let mut limits = SearchLimits::new(self.page_size(settings))
+            .with_budget_rule(settings.budget)
+            .with_offset(self.offset);
         if let Some(t) = timeout {
             limits = limits.with_timeout(t);
         }
@@ -200,7 +191,7 @@ impl SearchEngine {
                     query,
                     &req.include,
                     &req.exclude,
-                    req.path_matches.min(MAX_PATH_MATCHES),
+                    req.path_matches,
                     allowance.map(|a| Instant::now() + a),
                     scope.as_deref(),
                 )
@@ -269,11 +260,21 @@ mod tests {
     #[test]
     fn page_size_defaults_and_caps() {
         let mut req = SearchRequest::default();
-        assert_eq!(req.page_size(), DEFAULT_PAGE_SIZE);
+        let s = SearchSettings::default();
+        assert_eq!(req.page_size(&s), s.default_page_size);
         req.max_results = 5000;
-        assert_eq!(req.page_size(), MAX_PAGE_SIZE);
+        assert_eq!(req.page_size(&s), s.max_page_size);
         req.max_results = 7;
-        assert_eq!(req.page_size(), 7);
+        assert_eq!(req.page_size(&s), 7);
+        let small = SearchSettings {
+            default_page_size: 20,
+            max_page_size: 200,
+            ..s
+        };
+        req.max_results = 0;
+        assert_eq!(req.page_size(&small), 20);
+        req.max_results = 5000;
+        assert_eq!(req.page_size(&small), 200);
     }
 
     #[test]

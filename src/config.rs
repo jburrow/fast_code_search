@@ -87,6 +87,192 @@ pub struct Config {
 
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+
+    #[serde(default)]
+    pub search: SearchConfig,
+
+    #[serde(default)]
+    pub mcp: McpConfig,
+}
+
+/// Search limits (`[search]`), applied to every front end: web UI, REST,
+/// gRPC, `fcs` and MCP. Defaults are measured; see the book's "Limits" page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchConfig {
+    /// Most candidate files a search reads (best first) before it stops,
+    /// unless the request asks for more. 0 (the default) = no cap: read
+    /// until the match budget is spent or the deadline passes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_rank_files: Option<usize>,
+
+    /// Most candidate files a request may ask for (`max_files` on
+    /// `/api/search`, the web UI's SEARCH MORE FILES). 0 = no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fast_rank_files: Option<usize>,
+
+    /// Deepest result offset a client may page to. 0 = no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_page_offset: Option<usize>,
+
+    /// Matches collected to rank a page, at least.
+    #[serde(default = "default_min_match_budget")]
+    pub min_match_budget: usize,
+
+    /// Matches collected per result of the page end (`offset + page`).
+    #[serde(default = "default_match_budget_multiplier")]
+    pub match_budget_multiplier: usize,
+
+    /// Most matches collected for a page (deeper pages still get enough to
+    /// reach them).
+    #[serde(default = "default_max_match_budget")]
+    pub max_match_budget: usize,
+
+    /// Most hits one file contributes (raised to the page end).
+    #[serde(default = "default_per_file_matches")]
+    pub per_file_matches: usize,
+
+    /// Page size when a request does not give one.
+    #[serde(default = "default_page_size")]
+    pub default_page_size: usize,
+
+    /// Largest page one request may ask for (the web UI's LOAD MORE and MCP
+    /// follow it).
+    #[serde(default = "default_max_page_size")]
+    pub max_page_size: usize,
+
+    /// Most path matches (FILES box) one request may ask for.
+    #[serde(default = "default_max_path_matches")]
+    pub max_path_matches: usize,
+
+    /// Longest deadline a request may ask for, in seconds (the server's
+    /// `request_timeout_secs` still applies).
+    #[serde(default = "default_max_timeout_secs")]
+    pub max_timeout_secs: u64,
+
+    /// Most context lines a request may ask for around each hit.
+    #[serde(default = "default_max_context_lines")]
+    pub max_context_lines: usize,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            fast_rank_files: None,
+            max_fast_rank_files: None,
+            max_page_offset: None,
+            min_match_budget: default_min_match_budget(),
+            match_budget_multiplier: default_match_budget_multiplier(),
+            max_match_budget: default_max_match_budget(),
+            per_file_matches: default_per_file_matches(),
+            default_page_size: default_page_size(),
+            max_page_size: default_max_page_size(),
+            max_path_matches: default_max_path_matches(),
+            max_timeout_secs: default_max_timeout_secs(),
+            max_context_lines: default_max_context_lines(),
+        }
+    }
+}
+
+fn default_min_match_budget() -> usize {
+    crate::search::BudgetRule::DEFAULT.min
+}
+fn default_match_budget_multiplier() -> usize {
+    crate::search::BudgetRule::DEFAULT.multiplier
+}
+fn default_max_match_budget() -> usize {
+    crate::search::BudgetRule::DEFAULT.max
+}
+fn default_per_file_matches() -> usize {
+    crate::search::BudgetRule::DEFAULT.per_file
+}
+fn default_page_size() -> usize {
+    crate::search::SearchSettings::default().default_page_size
+}
+fn default_max_page_size() -> usize {
+    crate::search::SearchSettings::default().max_page_size
+}
+fn default_max_path_matches() -> usize {
+    crate::search::SearchSettings::default().max_path_matches
+}
+fn default_max_timeout_secs() -> u64 {
+    crate::search::SearchSettings::default()
+        .max_timeout
+        .as_secs()
+}
+fn default_max_context_lines() -> usize {
+    crate::search::SearchSettings::default().max_context_lines
+}
+
+/// MCP tool limits (`[mcp]`, for `/mcp` and `fcs mcp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpConfig {
+    /// Hits `search_code` returns when the agent gives no `limit`.
+    #[serde(default = "default_mcp_limit")]
+    pub default_limit: usize,
+    /// Most hits one `search_code` call may ask for (at most
+    /// `search.max_page_size`); agents page further with `offset`.
+    #[serde(default = "default_mcp_max_limit")]
+    pub max_limit: usize,
+    /// Files whose path matches, listed above `search_code`'s hits.
+    #[serde(default = "default_mcp_file_matches")]
+    pub file_matches: usize,
+    /// Most context lines `search_code` may ask for around each hit.
+    #[serde(default = "default_mcp_max_context_lines")]
+    pub max_context_lines: usize,
+    /// Lines `read_file` returns when the agent gives no `end_line`.
+    #[serde(default = "default_mcp_read_file_lines")]
+    pub read_file_lines: usize,
+    /// Most lines one `read_file` call returns.
+    #[serde(default = "default_mcp_max_read_file_lines")]
+    pub max_read_file_lines: usize,
+    /// Files the graph tools list per level or group by default.
+    #[serde(default = "default_mcp_graph_limit")]
+    pub graph_default_limit: usize,
+    /// Most files the graph tools may list per level or group.
+    #[serde(default = "default_mcp_graph_max_limit")]
+    pub graph_max_limit: usize,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            default_limit: default_mcp_limit(),
+            max_limit: default_mcp_max_limit(),
+            file_matches: default_mcp_file_matches(),
+            max_context_lines: default_mcp_max_context_lines(),
+            read_file_lines: default_mcp_read_file_lines(),
+            max_read_file_lines: default_mcp_max_read_file_lines(),
+            graph_default_limit: default_mcp_graph_limit(),
+            graph_max_limit: default_mcp_graph_max_limit(),
+        }
+    }
+}
+
+fn default_mcp_limit() -> usize {
+    50
+}
+fn default_mcp_max_limit() -> usize {
+    1000
+}
+fn default_mcp_file_matches() -> usize {
+    20
+}
+fn default_mcp_max_context_lines() -> usize {
+    5
+}
+fn default_mcp_read_file_lines() -> usize {
+    200
+}
+fn default_mcp_max_read_file_lines() -> usize {
+    1000
+}
+fn default_mcp_graph_limit() -> usize {
+    50
+}
+fn default_mcp_graph_max_limit() -> usize {
+    500
 }
 
 /// Server-related configuration
@@ -128,21 +314,18 @@ pub struct ServerConfig {
     #[serde(default = "default_request_timeout_secs")]
     pub request_timeout_secs: u64,
 
-    /// Candidate files a search opens under fast ranking (the best by file
-    /// metadata) unless the request asks for more. 0 = every candidate.
-    #[serde(default = "default_fast_rank_files")]
-    pub fast_rank_files: usize,
+    /// Deprecated spelling of `search.fast_rank_files` (still read; the
+    /// `[search]` value wins).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_rank_files: Option<usize>,
 
-    /// Most candidate files a request may ask fast ranking to open (the web
-    /// UI's SEARCH MORE FILES, `max_files` on `/api/search`). 0 = no limit.
-    #[serde(default)]
-    pub max_fast_rank_files: usize,
+    /// Deprecated spelling of `search.max_fast_rank_files`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fast_rank_files: Option<usize>,
 
-    /// Deepest result offset a client may page to. Each page re-runs the
-    /// search with a budget covering the offset, so deep pages cost more.
-    /// 0 = no limit.
-    #[serde(default = "default_max_page_offset")]
-    pub max_page_offset: usize,
+    /// Deprecated spelling of `search.max_page_offset`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_page_offset: Option<usize>,
 
     /// Serve static UI files from this directory instead of the embedded assets.
     ///
@@ -301,14 +484,6 @@ fn default_request_timeout_secs() -> u64 {
     30
 }
 
-fn default_fast_rank_files() -> usize {
-    crate::search::SearchLimits::DEFAULT_MAX_FILES
-}
-
-fn default_max_page_offset() -> usize {
-    crate::search::SearchSettings::DEFAULT_MAX_OFFSET
-}
-
 fn default_exclude_patterns() -> Vec<String> {
     vec![
         "**/node_modules/**".to_string(),
@@ -344,9 +519,9 @@ impl Default for ServerConfig {
             cors_origins: Vec::new(),
             max_concurrent_searches: default_max_concurrent_searches(),
             request_timeout_secs: default_request_timeout_secs(),
-            fast_rank_files: default_fast_rank_files(),
-            max_fast_rank_files: 0,
-            max_page_offset: default_max_page_offset(),
+            fast_rank_files: None,
+            max_fast_rank_files: None,
+            max_page_offset: None,
             static_dir: None,
             default_theme: UiTheme::default(),
             theme_picker: true,
@@ -628,6 +803,7 @@ impl Config {
         if self.indexer.batch_size == 0 {
             anyhow::bail!("indexer.batch_size must be at least 1");
         }
+        self.validate_limits(&mut warnings)?;
         if let Some(index_path) = &self.indexer.index_path {
             let p = Path::new(index_path);
             if let Some(parent) = p.parent() {
@@ -654,6 +830,94 @@ impl Config {
             );
         }
         Ok(warnings)
+    }
+
+    /// `[search]` and `[mcp]` values that contradict each other are errors
+    /// naming the key, not silent clamps.
+    fn validate_limits(&self, warnings: &mut Vec<String>) -> Result<()> {
+        let (s, m) = (&self.search, &self.mcp);
+        for (key, v) in [
+            ("search.min_match_budget", s.min_match_budget),
+            ("search.match_budget_multiplier", s.match_budget_multiplier),
+            ("search.max_match_budget", s.max_match_budget),
+            ("search.per_file_matches", s.per_file_matches),
+            ("search.default_page_size", s.default_page_size),
+            ("search.max_page_size", s.max_page_size),
+            ("mcp.default_limit", m.default_limit),
+            ("mcp.max_limit", m.max_limit),
+            ("mcp.read_file_lines", m.read_file_lines),
+            ("mcp.max_read_file_lines", m.max_read_file_lines),
+            ("mcp.graph_default_limit", m.graph_default_limit),
+            ("mcp.graph_max_limit", m.graph_max_limit),
+        ] {
+            anyhow::ensure!(v >= 1, "{key} must be at least 1");
+        }
+        if s.max_timeout_secs == 0 {
+            anyhow::bail!("search.max_timeout_secs must be at least 1");
+        }
+        let pairs = [
+            (
+                "search.min_match_budget",
+                s.min_match_budget,
+                "search.max_match_budget",
+                s.max_match_budget,
+            ),
+            (
+                "search.default_page_size",
+                s.default_page_size,
+                "search.max_page_size",
+                s.max_page_size,
+            ),
+            (
+                "mcp.default_limit",
+                m.default_limit,
+                "mcp.max_limit",
+                m.max_limit,
+            ),
+            (
+                "mcp.max_limit",
+                m.max_limit,
+                "search.max_page_size",
+                s.max_page_size,
+            ),
+            (
+                "mcp.read_file_lines",
+                m.read_file_lines,
+                "mcp.max_read_file_lines",
+                m.max_read_file_lines,
+            ),
+            (
+                "mcp.graph_default_limit",
+                m.graph_default_limit,
+                "mcp.graph_max_limit",
+                m.graph_max_limit,
+            ),
+            (
+                "mcp.file_matches",
+                m.file_matches,
+                "search.max_path_matches",
+                s.max_path_matches,
+            ),
+        ];
+        for (a, av, b, bv) in pairs {
+            anyhow::ensure!(av <= bv, "{a} ({av}) must not exceed {b} ({bv})");
+        }
+        for (key, set) in [
+            ("fast_rank_files", self.server.fast_rank_files.is_some()),
+            (
+                "max_fast_rank_files",
+                self.server.max_fast_rank_files.is_some(),
+            ),
+            ("max_page_offset", self.server.max_page_offset.is_some()),
+        ] {
+            if set {
+                warnings.push(format!(
+                    "server.{key} has moved to search.{key}; the [server] value is still used \
+                     unless [search] sets one"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -690,20 +954,6 @@ max_concurrent_searches = 64
 # Per-request timeout (seconds) for both servers
 request_timeout_secs = 30
 
-# When a query could be in many files (over 5000), Auto ranking orders them
-# by file metadata and opens only the best ones. This is how many it opens
-# unless the request asks for more (0 = every candidate file).
-fast_rank_files = 2000
-
-# Most files a request may ask for (the web UI's SEARCH MORE FILES button,
-# `max_files` on /api/search). 0 = no limit; set one on a shared server.
-max_fast_rank_files = 0
-
-# Deepest result offset a client may page to (LOAD MORE past 1000 results,
-# `--offset`, `offset` on /api/search). Deep pages cost a scan of that many
-# matches. 0 = no limit.
-max_page_offset = 100000
-
 # Serve static UI files from a directory on disk instead of embedded assets.
 # When set, the web server reads HTML/CSS/JS files from this path on every
 # request so that UI edits are visible without recompiling the server.
@@ -719,6 +969,70 @@ default_theme = "bold"
 # server to use default_theme without asking (they can still change it from
 # the palette button in the header).
 theme_picker = true
+
+[search]
+# Search limits for every front end (web UI, REST, gRPC, fcs, MCP). The
+# defaults were measured on a 372k-file corpus; see the "Limits" page of the
+# book. Every limit that cuts a search is reported with the result.
+
+# A search reads candidate files best first (by a per-file score that needs
+# no reads) until it has collected enough matches to rank. This caps how
+# many files it reads unless the request asks for more. 0 = no cap.
+fast_rank_files = 0
+
+# Most files a request may ask for (`max_files` on /api/search, the web UI's
+# SEARCH MORE FILES). 0 = no limit; set one on a shared server.
+max_fast_rank_files = 0
+
+# Matches collected to rank a page: multiplier x (offset + page size),
+# between min and max. A page is the best of what was collected, so a small
+# budget gives a poor page 1 for common words. Each match costs about 230
+# bytes while the search runs.
+min_match_budget = 32768
+match_budget_multiplier = 8
+max_match_budget = 100000
+
+# Most hits one file contributes (raised to the page end).
+per_file_matches = 100
+
+# Page size when a request gives none, and the largest it may ask for (the
+# web UI's LOAD MORE and MCP follow max_page_size).
+default_page_size = 50
+max_page_size = 1000
+
+# Deepest result offset a client may page to. Deep pages cost a scan of that
+# many matches. 0 = no limit.
+max_page_offset = 100000
+
+# Most path matches (the FILES box) one request may ask for.
+max_path_matches = 100
+
+# Longest deadline a request may ask for, in seconds (request_timeout_secs
+# still bounds every search).
+max_timeout_secs = 30
+
+# Most context lines around each hit.
+max_context_lines = 10
+
+[mcp]
+# Hits search_code returns by default, and the most one call may ask for
+# (at most search.max_page_size; agents page further with `offset`).
+default_limit = 50
+max_limit = 1000
+
+# Files whose path matches the query, listed above search_code's hits.
+file_matches = 20
+
+# Most context lines search_code may ask for.
+max_context_lines = 5
+
+# read_file: lines returned by default, and the most one call returns.
+read_file_lines = 200
+max_read_file_lines = 1000
+
+# Graph tools: files listed per level or group by default, and at most.
+graph_default_limit = 50
+graph_max_limit = 500
 
 [indexer]
 # Paths to index on startup
@@ -1004,6 +1318,65 @@ paths = ["/code/project"]
             parsed.indexer.index_path.as_deref(),
             Some("~/.local/share/fast_code_search/index.fcsidx")
         );
+    }
+
+    /// `[search]` and `[mcp]` set the limits; the old `[server]` spellings
+    /// still work (with a warning) unless `[search]` sets the same key.
+    #[test]
+    fn test_search_limits_from_config() {
+        use crate::search::SearchSettings;
+        let d = SearchSettings::from_config(&Config::default());
+        assert_eq!(d, SearchSettings::default());
+        assert_eq!(d.fast_rank_files, usize::MAX);
+        assert_eq!(d.budget.min, 32_768);
+
+        let c: Config = toml::from_str(
+            "[server]\nfast_rank_files = 3000\nmax_page_offset = 500\n\
+             [search]\nmax_page_offset = 900\nmin_match_budget = 4096\nmax_page_size = 2000\n\
+             default_page_size = 25\n[mcp]\nmax_limit = 2000\n",
+        )
+        .unwrap();
+        let s = SearchSettings::from_config(&c);
+        assert_eq!(s.fast_rank_files, 3000, "legacy [server] key still read");
+        assert_eq!(s.max_offset, 900, "[search] wins over [server]");
+        assert_eq!(s.budget.min, 4096);
+        assert_eq!(s.max_page_size, 2000);
+        assert_eq!(s.page_size(0), 25);
+        assert_eq!(c.mcp.max_limit, 2000);
+        let warnings = c.validate().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("server.fast_rank_files")),
+            "{warnings:?}"
+        );
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("server.max_page_offset")));
+
+        for (bad, needle) in [
+            (
+                "[search]\nmin_match_budget = 0\n",
+                "search.min_match_budget",
+            ),
+            (
+                "[search]\nmin_match_budget = 9000\nmax_match_budget = 100\n",
+                "search.max_match_budget",
+            ),
+            (
+                "[search]\ndefault_page_size = 5000\n",
+                "search.max_page_size",
+            ),
+            ("[mcp]\nmax_limit = 5000\n", "search.max_page_size"),
+            (
+                "[mcp]\ndefault_limit = 600\nmax_limit = 500\n",
+                "mcp.max_limit",
+            ),
+        ] {
+            let c: Config = toml::from_str(bad).unwrap();
+            let err = c.validate().unwrap_err().to_string();
+            assert!(err.contains(needle), "{bad}: {err}");
+        }
     }
 
     #[test]

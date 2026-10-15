@@ -118,12 +118,23 @@ web_address = "0.0.0.0:8080"
 cors_origins = ["https://ide.example.com"]   # only if a page on another origin calls the API
 max_concurrent_searches = 64
 request_timeout_secs = 30
-fast_rank_files = 2000      # files fast ranking opens when a query could be in over 5,000 (0 = all)
-max_fast_rank_files = 0     # most a request may ask for (SEARCH ALL FILES, max_files); 0 = no limit
-max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
 default_theme = "corporate" # web UI theme: "bold" (default), "corporate" or "corporate-dark"
 theme_picker = false        # don't ask each person to pick a theme on their first visit
+
+[search]
+max_fast_rank_files = 50000 # most files one request may ask to read (SEARCH ALL FILES, max_files); 0 = no limit
+max_page_offset = 100000    # deepest result offset a client may page to; 0 = no limit
+min_match_budget = 32768    # matches collected to rank page 1; lower it on a small shared machine
+
+[mcp]
+default_limit = 50          # search_code hits per call by default
+max_limit = 1000            # most one call may ask for; agents page on with `offset`
 ```
+
+Every search limit and its default, with the measurements behind it, is on
+[Search limits](../benchmarks/search-limits.md). Up to 0.16 three of them
+lived under `[server]` (`fast_rank_files`, `max_fast_rank_files`,
+`max_page_offset`); those spellings still work, with a warning at startup.
 
 See [Deployment](../imported/deployment.md) for a reverse-proxy example and
 the system-wide systemd unit, and the [security policy](../imported/security.md).

@@ -162,7 +162,7 @@ impl CodeSearch for CodeSearchService {
             deps: req.deps,
             rdeps: req.rdeps,
         };
-        let max_results = request.page_size();
+        let max_results = request.page_size(&self.search_settings);
         let limits = request
             .limits(&self.search_settings, Some(self.request_timeout))
             .map_err(Status::invalid_argument)?;

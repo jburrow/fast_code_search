@@ -99,8 +99,9 @@ where
 pub struct SearchQuery {
     /// The search query string
     q: String,
-    /// Maximum number of results (default: 50)
-    #[serde(default = "default_max_results")]
+    /// Maximum number of results (0 or absent = the server's
+    /// `search.default_page_size`, 50; capped at `search.max_page_size`)
+    #[serde(default)]
     max: usize,
     /// Semicolon-delimited glob patterns for paths to include
     #[serde(default)]
@@ -140,7 +141,8 @@ pub struct SearchQuery {
     #[serde(default)]
     word: Option<bool>,
     /// Also return up to this many files whose *path* matches the query, in
-    /// `files` (0 = none, the default; at most 100). Only on the first page
+    /// `files` (0 = none, the default; at most `search.max_path_matches`,
+    /// 100). Only on the first page
     /// (`offset=0`) of a text or regex search.
     #[serde(default)]
     files: usize,
@@ -168,13 +170,6 @@ pub fn split_graph_param(param: &str) -> Vec<String> {
         .collect()
 }
 
-/// Most path matches one request may ask for.
-pub const MAX_FILE_MATCHES: usize = crate::search::request::MAX_PATH_MATCHES;
-
-fn default_max_results() -> usize {
-    crate::search::request::DEFAULT_PAGE_SIZE
-}
-
 /// Records a search's wall time when dropped, so the metric covers the
 /// search's real lifetime even when the HTTP response was abandoned.
 struct SearchTimer {
@@ -187,10 +182,6 @@ impl Drop for SearchTimer {
         self.metrics.record_search(self.start.elapsed());
     }
 }
-
-/// Maximum number of context lines allowed per match.
-/// Capped to avoid returning excessively large payloads for dense result sets.
-const MAX_CONTEXT_LINES: usize = 10;
 
 /// Maximum lines of context on each side for `/api/context` (hover preview /
 /// "show more" windows). Larger windows should use `/api/file`.
@@ -585,7 +576,7 @@ pub async fn search_handler(
         timeout: (params.timeout_ms > 0)
             .then(|| std::time::Duration::from_millis(params.timeout_ms)),
         max_files: params.max_files,
-        path_matches: params.files,
+        path_matches: params.files.min(state.search_settings.max_path_matches),
         deps: split_graph_param(&params.deps),
         rdeps: split_graph_param(&params.rdeps),
     };
@@ -595,7 +586,7 @@ pub async fn search_handler(
         .map_err(|e| ApiError::from((StatusCode::BAD_REQUEST, e)))?;
     let max_files_allowed =
         (settings.max_fast_rank_files != usize::MAX).then_some(settings.max_fast_rank_files);
-    let context_lines = params.context.min(MAX_CONTEXT_LINES);
+    let context_lines = params.context.min(settings.max_context_lines);
     let offset = request.offset;
 
     // Concurrency limit: each search occupies a blocking-pool thread, so

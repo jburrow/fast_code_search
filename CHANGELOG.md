@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Search limits are measured, raised and configurable. Page 1 of a search
+for a common word now holds most of what an unlimited search would rank
+first, and MCP agents can page through every hit.
+
+### Changed
+- **Page 1 ranks far more of a broad query's matches.** A first page
+  collected 512 matches before ranking (the "match budget"); it now
+  collects 32,768. On a 372k-file corpus (Linux, LLVM, Rust, Kubernetes)
+  page 1 held 10% of the exhaustive top 50 for words with over 100k hits,
+  and now holds 81%, at about 80 ms median. Each collected match costs
+  about 230 bytes while the search runs, about 7.5 MB per search at the
+  new floor. The measurements are on the book's new "Search limits" page.
+- **Every search reads files best first.** Files are read in order of the
+  per-file score fast ranking used, for every mode, instead of in
+  discovery order below 5,000 candidate files. The budget therefore keeps
+  the hits of the most likely files. **Ordering side effect:** with the
+  bigger budget and the new order, page 1 of a broad search shows
+  different (better ranked) hits than before; the result list is still
+  plain rank order, and no hit is hidden.
+- **No more 2,000-file stop.** Above 5,000 candidate files, auto ranking
+  read only the best 2,000 and stopped, even when those files held too few
+  hits to fill the page, so a rare string in a big repository could come
+  back nearly empty. Searches now read until the budget is spent or the
+  deadline passes. A server can still set a cap (`search.fast_rank_files`),
+  reported as `max_files` as before. `rank=full` never stops at a file
+  cap; `auto` and `fast` honour one.
+- **MCP `search_code`** returns 50 hits by default (was 20), allows up to
+  1,000 (was 100), takes `offset`, `max_files` and `rank`, and lists 20
+  files whose path matches (was 5). When more hits exist it says the
+  offset of the next page.
+
+### Added
+- `[search]` configuration section for every search limit, read by the
+  web UI, REST, gRPC, `fcs` and MCP: `fast_rank_files`,
+  `max_fast_rank_files`, `max_page_offset`, `min_match_budget`,
+  `match_budget_multiplier`, `max_match_budget`, `per_file_matches`,
+  `default_page_size`, `max_page_size`, `max_path_matches`,
+  `max_timeout_secs`, `max_context_lines`. Contradictory values (a page
+  size above `max_page_size`, a budget floor above its ceiling) stop the
+  server at startup, naming the key. The web UI's LOAD MORE follows the
+  server's `max_page_size`.
+- `[mcp]` configuration section: `default_limit`, `max_limit`,
+  `file_matches`, `max_context_lines`, `read_file_lines`,
+  `max_read_file_lines`, `graph_default_limit`, `graph_max_limit`.
+- `examples/limits_bench.rs`: measures what each limit costs and how far
+  it moves page 1 from the exhaustive ranking, on any corpus.
+
+### Deprecated
+- `server.fast_rank_files`, `server.max_fast_rank_files` and
+  `server.max_page_offset` moved to `[search]`. The old keys still work and
+  log a warning; a `[search]` value wins.
+
+### Fixed
+- Symbol search read only the best max(200, 8 x page end) files holding a
+  matching symbol, and reported its total as exact. It now reports
+  `max_files` with the files it read when there were more.
+
 ## [0.16.2] - 2026-10-14
 
 Watch mode keeps answering searches on very large trees, and Python

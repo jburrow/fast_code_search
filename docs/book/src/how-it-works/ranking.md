@@ -59,15 +59,24 @@ file across all pages (`file_hits_capped` when the file reached the
 per-file cap and may hold more), so a file cut at a page boundary says
 "3 of 7 hits" in the web UI rather than "3 hits".
 
-## Fast ranking
+## Reading order
 
-Above 5,000 candidates (`rank=auto`) only the top 2,000 files are read
-(`fast_rank_files`; a request may ask for more with `max_files`, up to
-`max_fast_rank_files`),
-chosen by a per-file score that needs no I/O: base, `src/`/`lib/`, code
-extension, `log2(symbol count)` (capped), `log2(dependents)` (capped),
-×0.7 for test and example paths, ×5 when the query matches the file's
-name. `rank=full` reads every candidate.
+Every search reads its candidate files best first, by a per-file score
+that needs no I/O: base, `src/`/`lib/`, code extension,
+`log2(symbol count)` (capped), `log2(dependents)` (capped), ×0.7 for test
+and example paths, ×5 when the query matches the file's name. It stops
+when it has collected enough matches to rank the page (the match budget,
+see [Search limits](../benchmarks/search-limits.md)), so for a word with a
+million hits page 1 is the best of the best-looking files, not of the
+first folders on disk. `rank=auto` and `rank=fast` also stop after
+`search.fast_rank_files` files when the server sets one (no limit by
+default; a request may ask for more with `max_files`, up to
+`search.max_fast_rank_files`); `rank=full` never stops at a file limit.
+
+(Until 0.17, `rank=auto` read files in discovery order up to 5,000
+candidates and only the best 2,000 above that, and the budget was 512
+matches. On a 372k-file corpus that put 10% of the exhaustive top 50 on
+page 1 for common words; the current defaults put 81% there.)
 
 ## Symbols and references
 
