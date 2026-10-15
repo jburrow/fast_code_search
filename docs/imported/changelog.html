@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-d5b98734.js";
+            window.path_to_searchindex_js = "../searchindex-7da0ff60.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -185,10 +185,16 @@
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.16.2...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.17.0...HEAD">Unreleased</a></a></h2>
+<h2 id="0170---2026-10-15"><a class="header" href="#0170---2026-10-15"><a href="https://github.com/jburrow/fast_code_search/compare/v0.16.2...v0.17.0">0.17.0</a> - 2026-10-15</a></h2>
 <p>Search limits are measured, raised and configurable. Page 1 of a search
 for a common word now holds most of what an unlimited search would rank
 first, and MCP agents can page through every hit.</p>
+<p><strong>Upgrading:</strong> no re-index is needed. Page 1 of a broad search now ranks
+different (better) hits than 0.16.x. If your config sets
+<code>server.fast_rank_files</code>, <code>server.max_fast_rank_files</code> or
+<code>server.max_page_offset</code>, move them to the new <code>[search]</code> section; the
+old keys still work but log a deprecation warning.</p>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
 <li><strong>Page 1 ranks far more of a broad query’s matches.</strong> A first page
