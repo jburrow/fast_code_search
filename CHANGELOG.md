@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-15
+
 Search limits are measured, raised and configurable. Page 1 of a search
 for a common word now holds most of what an unlimited search would rank
 first, and MCP agents can page through every hit.
+
+**Upgrading:** no re-index is needed. Page 1 of a broad search now ranks
+different (better) hits than 0.16.x. If your config sets
+`server.fast_rank_files`, `server.max_fast_rank_files` or
+`server.max_page_offset`, move them to the new `[search]` section; the
+old keys still work but log a deprecation warning.
 
 ### Changed
 - **Page 1 ranks far more of a broad query's matches.** A first page
@@ -1538,7 +1546,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/jburrow/fast_code_search/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/jburrow/fast_code_search/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/jburrow/fast_code_search/compare/v0.15.2...v0.16.1
 [0.15.2]: https://github.com/jburrow/fast_code_search/compare/v0.15.1...v0.15.2
