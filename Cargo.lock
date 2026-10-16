@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "fast_code_search"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "anyhow",
  "axum",
