@@ -667,7 +667,13 @@ fn main() -> Result<()> {
             });
             let head = head_defs.iter().find(|d| d.qualname == c.def.qualname);
             let name = search_name(c);
-            let anchor = &c.file;
+            // With extra roots, the root-relative path can match a file in
+            // each of them; the display path (`<root name>/<path>`) can't.
+            let anchor = &if args.extra.is_empty() {
+                c.file.clone()
+            } else {
+                format!("{}/{}", root.file_name().unwrap().to_string_lossy(), c.file)
+            };
             let mut strat = serde_json::Map::new();
             let queries = [
                 ("module1", format!("rdeps:{anchor}:1 {name}"), false, true),
