@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A large change no longer leaves the index "updating" for minutes
+  while people search.** Each watcher step got the lock only after the
+  running searches finished and then installed just 512 files, so with
+  searches running the watcher applied a few hundred files a second. On a
+  200,000-file tree, 100,000 rewritten files were still 17,000 behind four
+  minutes later. A step now stays in about as long as it waited, up to
+  one second; the same change is applied 10 s after it stops, and on a
+  million-file tree 200,000 changed files catch up in about 3.5 minutes,
+  with no search turned away. `examples/watch_load.rs` now checks that
+  the index matches the disk again after the load.
 - **Searches no longer stop while the file watcher applies many changes.**
   One slow search plus any watcher step used to stop every other search
   until the slow one finished, and those still waiting after five seconds

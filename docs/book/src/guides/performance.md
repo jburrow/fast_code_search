@@ -58,9 +58,10 @@ and restrict `include_extensions`.
 
 The watcher gathers events for up to two seconds, reads and parses the
 changed files in parallel without the write lock, and installs them in
-steps of at most 512 files. Each step takes the write lock in a moment when
-no search holds it, so a long search never makes the others wait for the
-watcher; while changes are still to be applied, searches say how many (see
+steps. Each step takes the write lock in a moment when no search holds it,
+so a long search never makes the others wait for the watcher, and stays in
+about as long as it waited (at most a second), so a large change is
+applied while people search instead of trickling in; while changes are still to be applied, searches say how many (see
 [Incremental indexing](../how-it-works/incremental.md)). On Linux one inotify watch is
 installed per kept directory; excluded trees get none. If the limit is
 hit the log says so; raise it with

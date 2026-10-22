@@ -696,6 +696,47 @@ fn burst_holds_the_write_lock_in_short_steps() {
     h.assert_converges("burst applied in steps");
 }
 
+/// A step that had to wait for searches to finish stays in longer, so a
+/// backlog drains while people search. With one chunk per step the watcher
+/// paid a whole search's wait for every 512 files and fell minutes behind
+/// a large change on a big tree (see `watch_loop::MAX_HOLD`).
+#[test]
+fn a_step_that_waited_for_searches_installs_more() {
+    const FILES: usize = 2400;
+    let mut h = Harness::new(seed_from_env(43), FILES);
+    build_index(&h.config, h.engine.clone());
+    let changed = rewrite_all(&mut h, FILES);
+    let changes: Vec<FileChange> = changed.into_iter().map(FileChange::Modified).collect();
+
+    // A long search holds the lock until the burst is planned, and for a
+    // while after, so the first step waits well past MAX_HOLD.
+    let search = h.engine.read().unwrap();
+    let burst = {
+        let (engine, config) = (h.engine.clone(), h.config.clone());
+        std::thread::spawn(move || watch_loop::apply_burst(&engine, &changes, &config))
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while search.watch_backlog.pending() < FILES {
+        assert!(Instant::now() < deadline, "the burst was never planned");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::thread::sleep(watch_loop::MAX_HOLD * 3);
+    drop(search);
+    let report = burst.join().unwrap().expect("burst applied");
+
+    assert_eq!(report.outcome.indexed, FILES);
+    assert!(
+        report.steps < FILES.div_ceil(watch_loop::INSTALL_CHUNK),
+        "the step that waited for the search installed one chunk only: {report:?}"
+    );
+    assert!(
+        report.longest_hold < watch_loop::MAX_HOLD * 2,
+        "a step held the lock far past MAX_HOLD: {report:?}"
+    );
+    h.note(format!("rewrite all {FILES} files behind a long search"));
+    h.assert_converges("burst applied behind a long search");
+}
+
 /// Searches running while the watch loop applies a burst are all answered,
 /// none turned away, and the index still converges.
 #[test]
