@@ -9,8 +9,13 @@
 //!
 //! ```text
 //! cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 200000 \
-//!     [--burst 200] [--interval-ms 100] [--seconds 20] [--readers 4]
+//!     [--burst 200] [--interval-ms 100] [--seconds 20] [--readers 4] [--mixed]
 //! ```
+//!
+//! `--mixed` searches the way the web handler does (`SearchEngine::run` with
+//! the default limits), cycling through rare, common and regex queries, so
+//! some searches scan most of the tree. A big `--burst` with a long
+//! `--interval-ms` is a bulk change (a branch switch, a formatter run).
 
 use clap::Parser;
 use fast_code_search::config::IndexerConfig;
@@ -47,6 +52,43 @@ struct Args {
     /// handlers behaved before they waited for it).
     #[arg(long)]
     no_wait: bool,
+    /// Search through `SearchEngine::run` with a mix of rare, common and
+    /// regex queries instead of one cheap literal.
+    #[arg(long)]
+    mixed: bool,
+}
+
+/// The `--mixed` queries: (regex, text). Common words make a search read
+/// most of the tree; the rest are cheap.
+const MIXED: &[(bool, &str)] = &[
+    (false, "task_17_"),
+    (false, "return value"),
+    (true, r"default_\w+\(\)"),
+    (false, "revision"),
+    (true, r"task_\d+_amber"),
+    (false, "helpers.default_cobalt"),
+];
+
+/// One search the way the web handler runs it.
+fn mixed_search(engine: &SearchEngine, n: usize) -> usize {
+    use fast_code_search::search::{SearchMode, SearchRequest, SearchSettings};
+    let (regex, text) = MIXED[n % MIXED.len()];
+    let request = SearchRequest {
+        query: text.to_string(),
+        mode: if regex {
+            SearchMode::Regex
+        } else {
+            SearchMode::Text
+        },
+        ..Default::default()
+    };
+    let limits = request
+        .limits(&SearchSettings::default(), Some(Duration::from_secs(30)))
+        .unwrap();
+    engine
+        .run(&request, limits)
+        .map(|o| o.matches.len())
+        .unwrap_or(0)
 }
 
 const WORDS: &[&str] = &[
@@ -143,7 +185,7 @@ fn main() {
     let latencies = Arc::new(Mutex::new(Vec::<Duration>::new()));
     let readers: Vec<_> = (0..args.readers)
         .map(|r| {
-            let no_wait = args.no_wait;
+            let (no_wait, mixed) = (args.no_wait, args.mixed);
             let (engine, stop, served, turned_away, latencies) = (
                 engine.clone(),
                 stop.clone(),
@@ -164,9 +206,12 @@ fn main() {
                     };
                     match guard {
                         Some(guard) => {
-                            let hits = guard.search(&query, 50);
+                            if mixed {
+                                std::hint::black_box(mixed_search(&guard, n));
+                            } else {
+                                std::hint::black_box(guard.search(&query, 50));
+                            }
                             drop(guard);
-                            std::hint::black_box(hits);
                             served.fetch_add(1, Ordering::Relaxed);
                             latencies.lock().unwrap().push(t.elapsed());
                         }
@@ -217,12 +262,13 @@ fn main() {
     let served = served.load(Ordering::Relaxed);
     let away = turned_away.load(Ordering::Relaxed);
     println!(
-        "files={} changed={} searches served={} turned_away={} ({:.1}%) p50={:.1?} p95={:.1?} p99={:.1?} max={:.1?}",
+        "files={} changed={} searches served={} turned_away={} ({:.1}%) mean={:.1?} p50={:.1?} p95={:.1?} p99={:.1?} max={:.1?}",
         args.files,
         changed,
         served,
         away,
         100.0 * away as f64 / (served + away).max(1) as f64,
+        lat.iter().sum::<Duration>() / (lat.len().max(1) as u32),
         percentile(&lat, 0.5),
         percentile(&lat, 0.95),
         percentile(&lat, 0.99),

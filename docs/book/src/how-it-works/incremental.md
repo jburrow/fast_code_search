@@ -68,12 +68,56 @@ file that appeared. That covers an import that fell back to a package
 to the new file, and back. The dependency graph is therefore a function
 of the files on disk, the same as a fresh build would draw.
 
-A search that arrives during an install step waits for it (up to five
-seconds) instead of being turned away. Only if the lock is still held
-after that does it get a 503 with `Retry-After: 1` (gRPC: `UNAVAILABLE`),
-which `fcs` and the web UI retry on their own. On a generated tree of one
-million Python files with 2,000 files rewritten a second, no search was
-turned away and the slowest took 0.2 s (see `examples/watch_load.rs`).
+## Searching while changes are applied
+
+Searches and the watcher share one lock: searches read under it, install
+steps write. A writer that *queues* for such a lock makes it turn every new
+reader away until the writer has had its turn, and the writer gets its
+turn only when every running search has finished. So one slow search (a
+regex over a million files) and a one-file install step used to stop every
+other search for as long as the slow one ran, and searches still waiting
+after five seconds got "Index is currently being updated".
+
+Writers no longer queue. An install step (and each batch of the initial
+build) takes the write lock in a moment when no search holds it, trying
+every couple of milliseconds. While it waits, a new search holds back for
+up to 250 ms so the running ones can finish and the step can get in, and
+then goes ahead whether or not it did. A search therefore waits for a
+step's short hold (tens of milliseconds), never for other searches. A
+search that arrives during a step waits for it, up to five seconds, before
+it gets a 503 with `Retry-After: 1` (gRPC: `UNAVAILABLE`), which `fcs` and
+the web UI retry on their own.
+
+While changes wait to be applied, searches see the index as it was. They
+say so rather than pass it off as current: the `index` part of every
+search response carries `pending_changes`, the events the watcher has
+queued plus the files of the burst being applied, and the web UI shows
+"Index updating · N file changes to apply" beside the timing; `fcs` and the
+MCP tools print the same as a note.
+
+Measured with `examples/watch_load.rs --mixed` on a generated tree of one
+million Python files (4 cores, four threads searching back to back with a
+mix of cheap, common-word and regex queries, the way the web handler runs
+them):
+
+| Load | Version | Turned away | Slowest search | p99 | Mean | Files applied |
+|---|---|---|---|---|---|---|
+| 50,000 files rewritten at once, every 10 s, for 40 s | before | 9 (3.0%) | 5.1 s | 4.3 s | 433 ms | 24,550 |
+| | after | 0 | 1.5 s | 1.3 s | 684 ms | 138,739 |
+| 200 files rewritten every 100 ms, for 30 s | before | 4 (1.8%) | 5.0 s | 4.5 s | 511 ms | 10,643 |
+| | after | 0 | 1.4 s | 1.1 s | 591 ms | 31,757 |
+
+"Files applied" counts what the watcher had installed when the run ended:
+before, searches held it back and most of the changes were still waiting.
+The mean search is slower after (433 to 684 ms in the bulk run) for two
+reasons: the watcher now does three to six times the work in the same time
+on the same four cores, and a search holds back while a step waits. In
+exchange, no search waits seconds and none is turned away. "Files applied"
+can exceed the files rewritten: a file rewritten twice is installed twice,
+and in the bulk run the watcher's event queue filled, so it reconciled the
+tree as well. Without that holding back
+the watcher did not get in once in a 30 s run on a 200,000-file tree, so
+nothing was applied at all.
 
 ## Saving
 
@@ -93,13 +137,19 @@ for every vocabulary word, symbol definitions and dependency edges. The
 random sequences print their seed; replay one with
 `FCS_WATCH_SEED=<seed> cargo test --test watch_harness`. Another test
 searches continuously while a burst of changes is applied and fails if a
-search is turned away or waits too long.
+search is turned away or waits too long; another holds a long search while
+a burst waits to be installed and checks that other searches are answered
+and report the changes still to apply.
 
 For larger trees, `examples/watch_load.rs` generates a tree of small
 scripts (a million, if you like), streams rewrites, creates and deletes
 into it through the real watch loop while threads search, and reports how
-many searches were answered or turned away and the latency percentiles:
+many searches were answered or turned away and the latency percentiles.
+`--mixed` searches the way the web handler does, with queries that read
+most of the tree; a large `--burst` with a long `--interval-ms` is a bulk
+change such as a branch switch:
 
 ```text
-cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000
+cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000 \
+    --burst 50000 --interval-ms 10000 --seconds 40 --mixed
 ```

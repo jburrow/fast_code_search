@@ -24,7 +24,7 @@ mod query;
 mod scope;
 mod text;
 
-pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness};
+pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness, WatchBacklog};
 pub use impact::{
     ImpactFileSummary, ImpactOptions, ImpactReport, ImpactScope, SymbolImpact, TierCounts, UseLine,
     UseTier, UserFile, DEFAULT_IMPACT_FILES, DEFAULT_IMPACT_LINES, MAX_IMPACT_SYMBOLS,
@@ -1216,6 +1216,8 @@ pub struct SearchEngine {
     pub updated_at_ms: Option<u64>,
     /// Whether a file watcher is keeping the index in step with disk.
     pub watching: bool,
+    /// The changes that watcher has seen and not applied yet.
+    pub watch_backlog: WatchBacklog,
 }
 
 impl SearchEngine {
@@ -1251,6 +1253,7 @@ impl SearchEngine {
             building: false,
             updated_at_ms: None,
             watching: false,
+            watch_backlog: WatchBacklog::default(),
         }
     }
 

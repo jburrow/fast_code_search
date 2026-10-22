@@ -17,7 +17,7 @@ use crate::search::watcher::{FileChange, FileWatcher, WatcherConfig};
 use crate::search::SearchEngine;
 use anyhow::Result;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
@@ -58,7 +58,13 @@ pub fn start_watcher(indexer: &IndexerConfig) -> Result<FileWatcher> {
 /// the way out.
 pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
     info!("File watcher started");
-    with_engine_write(&cfg.engine, |engine| engine.watching = true);
+    let queued = watcher.queued_counter();
+    let applying = with_engine_write(&cfg.engine, |engine| {
+        engine.watching = true;
+        engine.watch_backlog.queued = queued;
+        Arc::clone(&engine.watch_backlog.applying)
+    })
+    .unwrap_or_default();
     let mut updates_since_save: usize = 0;
     loop {
         if cfg.shutdown.load(Ordering::Acquire) {
@@ -68,11 +74,13 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
             return;
         }
         let mut changes = match watcher.recv_timeout(Duration::from_secs(1)) {
-            Some(first) => gather_burst(&watcher, first, cfg.batch_window),
+            Some(first) => gather_burst(&watcher, first, cfg.batch_window, &applying),
             None => Vec::new(),
         };
         // Events were lost: reconcile the watched roots with the disk.
-        changes.extend(watcher.take_rescan().into_iter().map(FileChange::Modified));
+        let rescan = watcher.take_rescan();
+        applying.fetch_add(rescan.len(), Ordering::AcqRel);
+        changes.extend(rescan.into_iter().map(FileChange::Modified));
         if changes.is_empty() {
             continue;
         }
@@ -88,6 +96,9 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
             }
         }
         let report = apply_burst(&cfg.engine, &changes, &cfg.indexer);
+        // Already cleared, unless planning panicked before it took over the
+        // count of the gathered events.
+        applying.store(0, Ordering::Release);
         if let Some(report) = report.filter(|r| r.outcome.changed()) {
             let outcome = report.outcome;
             debug!(
@@ -130,6 +141,10 @@ pub struct BurstReport {
 /// and anything that changed on disk meanwhile has an event of its own
 /// coming.
 ///
+/// Until a change is installed it counts in the engine's
+/// `watch_backlog.applying`, which searches report: first as the events,
+/// then as the files they came to. The count is cleared when the burst ends.
+///
 /// `None` if a step panicked; the rest of the burst is then skipped.
 pub fn apply_burst(
     engine: &Arc<RwLock<SearchEngine>>,
@@ -138,17 +153,30 @@ pub fn apply_burst(
 ) -> Option<BurstReport> {
     let started = Instant::now();
     let pool = watch_pool();
-    let (plan, parser) = guarded("planning", || {
+    let (plan, parser, applying) = guarded("planning", || {
         let engine = engine
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let applying = Arc::clone(&engine.watch_backlog.applying);
         pool.install(|| {
             (
                 plan_changes(&engine, changes, indexer),
                 engine.file_parser(),
+                applying,
             )
         })
     })?;
+    // Cleared however the burst ends.
+    struct Cleared(Arc<AtomicUsize>);
+    impl Drop for Cleared {
+        fn drop(&mut self) {
+            self.0.store(0, Ordering::Release);
+        }
+    }
+    let applying = Cleared(applying);
+    applying
+        .0
+        .store(plan.remove.len() + plan.index.len(), Ordering::Release);
     let parsed = guarded("parsing", || pool.install(|| parse_planned(parser, &plan)))?;
 
     // The removals go in one step and the files in steps of at most
@@ -159,17 +187,28 @@ pub fn apply_burst(
         remove: plan.remove,
         index: Vec::new(),
     };
+    let removing = removals.remove.len();
     install(engine, removals, Vec::new(), &mut report)?;
+    applied(&applying.0, removing);
     let mut parsed = parsed;
     while !parsed.is_empty() {
         // Searches that queued during the last step go first.
         std::thread::sleep(STEP_GAP);
         let rest = parsed.split_off(parsed.len().min(INSTALL_CHUNK));
+        let step = parsed.len();
         install(engine, ChangePlan::default(), parsed, &mut report)?;
+        applied(&applying.0, step);
         parsed = rest;
     }
     report.elapsed = started.elapsed();
     Some(report)
+}
+
+/// Take `n` installed changes off the `applying` count.
+fn applied(applying: &AtomicUsize, n: usize) {
+    let _ = applying.fetch_update(Ordering::AcqRel, Ordering::Acquire, |c| {
+        Some(c.saturating_sub(n))
+    });
 }
 
 /// Files installed per write-lock step; see [`apply_burst`].
@@ -231,8 +270,15 @@ fn guarded<R>(step: &str, f: impl FnOnce() -> R) -> Option<R> {
 }
 
 /// `first` plus every event that follows it with gaps shorter than `quiet`,
-/// up to [`MAX_BURST`].
-fn gather_burst(watcher: &FileWatcher, first: FileChange, quiet: Duration) -> Vec<FileChange> {
+/// up to [`MAX_BURST`], each counted in `applying` as it is taken off the
+/// watcher's queue, so searches keep reporting it until it is applied.
+fn gather_burst(
+    watcher: &FileWatcher,
+    first: FileChange,
+    quiet: Duration,
+    applying: &AtomicUsize,
+) -> Vec<FileChange> {
+    applying.fetch_add(1, Ordering::AcqRel);
     let mut changes = vec![first];
     let deadline = Instant::now() + MAX_BURST;
     loop {
@@ -241,7 +287,10 @@ fn gather_burst(watcher: &FileWatcher, first: FileChange, quiet: Duration) -> Ve
             return changes;
         }
         match watcher.recv_timeout(quiet.min(remaining)) {
-            Some(c) => changes.push(c),
+            Some(c) => {
+                applying.fetch_add(1, Ordering::AcqRel);
+                changes.push(c);
+            }
             None => return changes,
         }
     }

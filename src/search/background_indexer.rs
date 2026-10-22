@@ -4,6 +4,7 @@
 //! and progress reporting via terminal and WebSocket broadcast.
 
 use crate::config::IndexerConfig;
+use crate::search::engine_lock;
 use crate::search::file_discovery::{FileDiscoveryConfig, FileDiscoveryIterator};
 use crate::search::{
     IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase, PartialIndexedFile,
@@ -186,7 +187,8 @@ pub fn run(config: BackgroundIndexerConfig) {
     // (index_file, rebuild_symbols_and_dependencies, etc.) respect it.
     // Also register root paths so that search results and file_handler can
     // return root-relative display paths instead of full OS paths.
-    if let Ok(mut engine) = index_engine.write() {
+    {
+        let mut engine = engine_lock::write(&index_engine);
         engine.enable_symbols = indexer_config.enable_symbols;
         engine.transcode_non_utf8 = indexer_config.transcode_non_utf8;
         engine.max_file_size = indexer_config.max_file_size;
@@ -335,7 +337,8 @@ pub fn run(config: BackgroundIndexerConfig) {
         0.0
     };
 
-    if let Ok(mut engine) = index_engine.write() {
+    {
+        let mut engine = engine_lock::write(&index_engine);
         engine.synced_at_ms = Some(scan_started_ms);
         engine.building = false;
     }
@@ -935,17 +938,12 @@ fn process_batch(
     let batch_indexed_count = pre_indexed.len();
 
     // Merge into engine and incrementally resolve imports.
-    // Recover from a poisoned lock (caused by a panic in some other thread)
-    // rather than dropping this and every subsequent batch — the engine's
-    // own data structures remain consistent because index_batch only merges
-    // already-computed data.
+    // Taken when no search holds the lock, so a long search does not stop
+    // the others (see `engine_lock`). A poisoned lock (a panic in some other
+    // thread) is recovered rather than dropping this and every later batch:
+    // index_batch only merges already-computed data.
     {
-        let mut engine = index_engine.write().unwrap_or_else(|poisoned| {
-            tracing::error!(
-                "Search engine lock was poisoned; recovering and continuing batch merge"
-            );
-            poisoned.into_inner()
-        });
+        let mut engine = engine_lock::write(index_engine);
         engine.index_batch(pre_indexed);
         engine.resolve_imports_incremental();
         // Capacity is released once, in finalize(): shrinking the trigram
@@ -977,10 +975,7 @@ fn finalize_imports(
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
 ) {
-    let mut engine = index_engine.write().unwrap_or_else(|poisoned| {
-        tracing::error!("Search engine lock was poisoned; recovering for import finalization");
-        poisoned.into_inner()
-    });
+    let mut engine = engine_lock::write(index_engine);
 
     let pending_count = engine.pending_imports_count();
 

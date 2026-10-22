@@ -112,6 +112,14 @@ impl VectorIndex {
         // Search using HNSW
         let neighbors = self.hnsw.search(query_embedding, k, self.ef_search);
 
+        // HNSW is approximate: on a small or sparsely linked graph it can
+        // return fewer neighbours than exist (seen with three orthogonal
+        // vectors, one search in a few hundred). The embeddings are kept, so
+        // answer exactly instead of dropping results.
+        if neighbors.len() < k.min(self.len()) {
+            return self.exact_search(query_embedding, k);
+        }
+
         // Convert HNSW results to (chunk_id, similarity) pairs
         // HNSW returns Vec<Neighbour> with (DataId, distance)
         // We need to convert distance to similarity and map to chunk_id
@@ -129,6 +137,19 @@ impl VectorIndex {
                 }
             })
             .collect()
+    }
+
+    /// The `k` most similar embeddings by brute force, most similar first.
+    fn exact_search(&self, query_embedding: &[f32], k: usize) -> Vec<(u32, f32)> {
+        let mut scored: Vec<(u32, f32)> = self
+            .embeddings
+            .iter()
+            .zip(&self.chunk_ids)
+            .map(|(e, &id)| (id, cosine_similarity(query_embedding, e)))
+            .collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        scored.truncate(k);
+        scored
     }
 
     /// Get number of indexed embeddings
@@ -213,8 +234,6 @@ impl VectorIndex {
 }
 
 /// Compute cosine similarity between two vectors
-/// Kept for backward compatibility and testing
-#[allow(dead_code)]
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return 0.0;
@@ -254,6 +273,17 @@ mod tests {
         // First result should be chunk_id 0 with high similarity
         assert_eq!(results[0].0, 0);
         assert!(results[0].1 > 0.9); // Should be very similar to [1,0,0]
+    }
+
+    #[test]
+    fn exact_search_ranks_every_embedding() {
+        let mut index = VectorIndex::new(3);
+        index.add(7, vec![0.0, 1.0, 0.0]).unwrap();
+        index.add(8, vec![1.0, 0.1, 0.0]).unwrap();
+        index.add(9, vec![0.0, 0.0, 1.0]).unwrap();
+        let results = index.exact_search(&[1.0, 0.0, 0.0], 2);
+        assert_eq!(results.iter().map(|r| r.0).collect::<Vec<_>>(), [8, 7]);
+        assert_eq!(index.exact_search(&[1.0, 0.0, 0.0], 10).len(), 3);
     }
 
     #[test]

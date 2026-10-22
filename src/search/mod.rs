@@ -21,7 +21,7 @@ pub use engine::{
     IndexFreshness, IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase,
     PartialIndexedFile, PathFreshness, PathMatch, PathQuery, PathSearch, PreIndexedFile,
     ProgressBroadcaster, QueryRun, RankMode, SearchEngine, SearchLimit, SearchLimits, SearchMatch,
-    SearchRankingInfo, SearchSettings, SearchStats, SharedIndexingProgress,
+    SearchRankingInfo, SearchSettings, SearchStats, SharedIndexingProgress, WatchBacklog,
 };
 pub use file_discovery::{
     discover_files, EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator,
