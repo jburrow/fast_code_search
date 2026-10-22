@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-68871993.js";
+            window.path_to_searchindex_js = "../searchindex-1b2b2e49.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fa11e869.js"></script>
+        <script src="../toc-19c5e137.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -202,6 +202,7 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/file?file=…</code></td><td>Full content of an indexed file</td></tr>
 <tr><td><code>GET /api/context?file=…&amp;line=N&amp;context=K</code></td><td>Lines around a match (K ≤ 200)</td></tr>
 <tr><td><code>GET /api/dependents?file=…</code> / <code>GET /api/dependencies?file=…</code></td><td>Files that import this file / files it imports</td></tr>
+<tr><td><code>POST /api/impact</code></td><td>The files that use each symbol a diff changes. See <a href="#post-apiimpact">Diff impact</a></td></tr>
 <tr><td><code>POST /mcp</code></td><td>Model Context Protocol for coding agents. See <a href="#mcp-coding-agents">MCP</a></td></tr>
 <tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
@@ -398,6 +399,45 @@ edge, so it is left out too.</p>
 </div>
 <p>Imports are resolved for Rust (<code>crate::</code>, <code>self::</code>, <code>super::</code>, sibling
 modules and the crate’s own name), Python and JavaScript/TypeScript.</p>
+<h3 id="post-apiimpact"><a class="header" href="#post-apiimpact"><code>POST /api/impact</code></a></h3>
+<p>For each function, class, method, type or constant a unified diff changes,
+the files that use it. The body is JSON:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Default</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>diff</code></td><td>required</td><td>A unified diff, as <code>git diff</code> prints it (8 MiB at most)</td></tr>
+<tr><td><code>root</code></td><td>none</td><td>The folder the diff’s paths are relative to, on the server’s machine. Without it, paths are matched as display paths, then as unique path suffixes</td></tr>
+<tr><td><code>max_files</code></td><td>200</td><td>Files listed per changed symbol (0 = all)</td></tr>
+<tr><td><code>max_lines</code></td><td>3</td><td>Use lines listed per file (0 = all)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The response:</p>
+<ul>
+<li><code>files</code>: each file in the diff, with <code>status</code> (<code>modified</code>, <code>added</code>,
+<code>deleted</code>, <code>renamed</code>), the <code>indexed_path</code> it was matched to, how many
+changed <code>symbols</code> it holds, <code>module_lines</code> (changed lines outside every
+definition, not traced) and a <code>note</code> when it was not analysed (not
+indexed, or the indexed copy matches neither side of the diff).</li>
+<li><code>symbols</code>: per changed symbol, <code>name</code>, <code>qualname</code> (<code>Class.method</code>),
+<code>kind</code> (<code>function</code>, <code>class</code>, <code>type</code>, <code>constant</code>, <code>method</code>, <code>field</code>),
+<code>change</code> (<code>added</code>, <code>modified</code>, <code>removed</code>), <code>signature</code> (a changed line is
+in its signature), <code>line</code>, the <code>names</code> searched (renames found are added),
+<code>scope</code> (<code>importers</code>, <code>all_importers</code> for members, <code>repository</code> for a
+language without an import graph, <code>none</code>), <code>total_files</code>, <code>tiers</code>
+(<code>reference</code>, <code>code</code>, <code>text</code> file counts), <code>users</code> and <code>notes</code>.</li>
+<li>Each user: <code>path</code>, <code>tier</code> (its best line’s), <code>names_owner</code> (members: the
+file also names the class), <code>in_diff</code>, <code>test</code>, <code>lines</code> (<code>line</code>, <code>column</code>,
+<code>text</code>, <code>tier</code>, and the reference <code>kind</code>) and <code>total_lines</code>.</li>
+<li><code>total_files</code>: the distinct files using any changed symbol; <code>notes</code>.</li>
+</ul>
+<p>Totals count every file found; <code>users</code> and <code>lines</code> are capped by
+<code>max_files</code> and <code>max_lines</code>, and a capped symbol has a note saying so. A
+body that holds no file changes is a 400. The method, what it misses and
+its measured accuracy: <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/impact.md">Diff impact</a>.</p>
 <h2 id="mcp-coding-agents"><a class="header" href="#mcp-coding-agents">MCP (coding agents)</a></h2>
 <p>The web server also speaks the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
 at <code>/mcp</code>, so a coding agent can use the index instead of grepping: search,
@@ -420,6 +460,7 @@ to the same endpoint (it finds the server like every <code>fcs</code> command:
 <tr><td><code>read_file</code></td><td><code>path</code>, <code>start_line</code>, <code>end_line</code></td><td>Numbered lines, 200 by default and at most 1,000 (<code>mcp.read_file_lines</code> / <code>mcp.max_read_file_lines</code>), with how to continue</td></tr>
 <tr><td><code>file_dependencies</code></td><td><code>path</code>, <code>direction</code> (<code>in</code>, <code>out</code>, <code>both</code>), <code>depth</code> (1–4), <code>limit</code></td><td>Files it imports and files importing it, by distance, with the line of each direct import</td></tr>
 <tr><td><code>change_impact</code></td><td><code>paths</code> (one or more), <code>limit</code></td><td>Every file that transitively imports any of them, nearest first, split into tests and other code</td></tr>
+<tr><td><code>diff_impact</code></td><td><code>diff</code> (unified diff), <code>root</code> (optional), <code>max_files</code> (default 50, 0 = all), <code>max_lines</code> (default 2)</td><td>For each symbol the diff changes, the files that use it, best first, with use lines and tiers. See <a href="#post-apiimpact"><code>POST /api/impact</code></a></td></tr>
 <tr><td><code>import_path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest chain of imports between two files, either way round</td></tr>
 <tr><td><code>dependency_overview</code></td><td><code>directory</code> (optional), <code>limit</code></td><td>The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files</td></tr>
 <tr><td><code>index_status</code></td><td><code>paths</code> (optional, at most 100)</td><td>When the index last synced with disk and whether file watching is on, plus, for each path, whether it is current, stale, not indexed yet or deleted. See <a href="#index-freshness">Index freshness</a></td></tr>
@@ -440,6 +481,8 @@ address, or listed in <code>cors_origins</code>, so a web page cannot drive a lo
 server through the visitor’s browser. Like the REST API, <code>/mcp</code> has no
 authentication: anyone who can reach the web port can read the index.</p>
 <h2 id="grpc"><a class="header" href="#grpc">gRPC</a></h2>
+<p>gRPC has no diff impact call; use <code>POST /api/impact</code>, MCP <code>diff_impact</code> or
+<code>fcs impact</code>.</p>
 <p>The schema is <a href="https://github.com/jburrow/fast_code_search/blob/main/proto/search.proto"><code>proto/search.proto</code></a>: <code>Search</code>
 streams <code>SearchResult</code> messages with the same fields and modes as REST
 (<code>is_regex</code>, <code>symbols_only</code>, <code>references</code>, <code>case_sensitive</code>,

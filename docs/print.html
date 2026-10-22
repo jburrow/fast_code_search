@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-68871993.js";
+            window.path_to_searchindex_js = "searchindex-1b2b2e49.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fa11e869.js"></script>
+        <script src="toc-19c5e137.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -385,6 +385,7 @@ fcs -- -Wall                     # a query starting with - goes after --
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
+fcs impact                       # files that use what your uncommitted changes touch
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
@@ -477,6 +478,25 @@ or <code>set grepprg=fcs\ --format\ vimgrep grepformat=%f:%l:%c:%m</code> and us
 is clickable. With <code>--absolute</code> the links work from any working directory.</li>
 <li><strong>fzf</strong>: <code>fcs -l QUERY | fzf | xargs $EDITOR</code>.</li>
 </ul>
+<h2 id="diff-impact"><a class="header" href="#diff-impact">Diff impact</a></h2>
+<p><code>fcs impact</code> lists, for each function, class, method, type or constant a
+diff changes, the files that use it, best first, with the use lines:</p>
+<pre><code class="language-bash">fcs impact                     # uncommitted changes (git diff HEAD)
+fcs impact --staged            # staged changes only
+fcs impact main                # main to the working tree
+fcs impact --diff change.patch # a diff from anywhere (- for stdin)
+vim -q &lt;(fcs impact --format vimgrep)
+</code></pre>
+<p>It runs <code>git diff</code> in the current repository (so it needs <code>git</code>, unless
+<code>--diff</code> is given) and sends the diff to the server’s <code>POST /api/impact</code>, or
+analyses it offline like a search. <code>-n N</code> caps the files listed per changed
+symbol (default 200, 0 = all), <code>--lines N</code> the use lines per file (default
+3). Each file is a <code>reference</code>, <code>code</code> or <code>text</code> (strings and comments
+only) use; totals always count every file found, and a capped list says so.
+Piped, only the use lines are printed, with the caps and gaps on stderr.
+Exit status: 0 when something uses the changed code, 1 when nothing does.
+How it works, what it misses and how accurate it is:
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/impact.md">Diff impact</a>.</p>
 <h2 id="mcp-for-coding-agents"><a class="header" href="#mcp-for-coding-agents">MCP for coding agents</a></h2>
 <p><code>fcs mcp</code> serves the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
 over stdio by relaying each message to the server’s <code>/mcp</code> endpoint, for
@@ -1465,6 +1485,7 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/file?file=…</code></td><td>Full content of an indexed file</td></tr>
 <tr><td><code>GET /api/context?file=…&amp;line=N&amp;context=K</code></td><td>Lines around a match (K ≤ 200)</td></tr>
 <tr><td><code>GET /api/dependents?file=…</code> / <code>GET /api/dependencies?file=…</code></td><td>Files that import this file / files it imports</td></tr>
+<tr><td><code>POST /api/impact</code></td><td>The files that use each symbol a diff changes. See <a href="#post-apiimpact">Diff impact</a></td></tr>
 <tr><td><code>POST /mcp</code></td><td>Model Context Protocol for coding agents. See <a href="#mcp-coding-agents">MCP</a></td></tr>
 <tr><td><code>GET /api/graph/…</code></td><td>The import graph: neighbourhoods, impact, import chains, the folder map. See <a href="#import-graph">Import graph</a></td></tr>
 <tr><td><code>GET /api/stats</code></td><td>Index statistics (files, trigrams, dependency edges, content bytes)</td></tr>
@@ -1661,6 +1682,45 @@ edge, so it is left out too.</p>
 </div>
 <p>Imports are resolved for Rust (<code>crate::</code>, <code>self::</code>, <code>super::</code>, sibling
 modules and the crate’s own name), Python and JavaScript/TypeScript.</p>
+<h3 id="post-apiimpact"><a class="header" href="#post-apiimpact"><code>POST /api/impact</code></a></h3>
+<p>For each function, class, method, type or constant a unified diff changes,
+the files that use it. The body is JSON:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Default</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>diff</code></td><td>required</td><td>A unified diff, as <code>git diff</code> prints it (8 MiB at most)</td></tr>
+<tr><td><code>root</code></td><td>none</td><td>The folder the diff’s paths are relative to, on the server’s machine. Without it, paths are matched as display paths, then as unique path suffixes</td></tr>
+<tr><td><code>max_files</code></td><td>200</td><td>Files listed per changed symbol (0 = all)</td></tr>
+<tr><td><code>max_lines</code></td><td>3</td><td>Use lines listed per file (0 = all)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The response:</p>
+<ul>
+<li><code>files</code>: each file in the diff, with <code>status</code> (<code>modified</code>, <code>added</code>,
+<code>deleted</code>, <code>renamed</code>), the <code>indexed_path</code> it was matched to, how many
+changed <code>symbols</code> it holds, <code>module_lines</code> (changed lines outside every
+definition, not traced) and a <code>note</code> when it was not analysed (not
+indexed, or the indexed copy matches neither side of the diff).</li>
+<li><code>symbols</code>: per changed symbol, <code>name</code>, <code>qualname</code> (<code>Class.method</code>),
+<code>kind</code> (<code>function</code>, <code>class</code>, <code>type</code>, <code>constant</code>, <code>method</code>, <code>field</code>),
+<code>change</code> (<code>added</code>, <code>modified</code>, <code>removed</code>), <code>signature</code> (a changed line is
+in its signature), <code>line</code>, the <code>names</code> searched (renames found are added),
+<code>scope</code> (<code>importers</code>, <code>all_importers</code> for members, <code>repository</code> for a
+language without an import graph, <code>none</code>), <code>total_files</code>, <code>tiers</code>
+(<code>reference</code>, <code>code</code>, <code>text</code> file counts), <code>users</code> and <code>notes</code>.</li>
+<li>Each user: <code>path</code>, <code>tier</code> (its best line’s), <code>names_owner</code> (members: the
+file also names the class), <code>in_diff</code>, <code>test</code>, <code>lines</code> (<code>line</code>, <code>column</code>,
+<code>text</code>, <code>tier</code>, and the reference <code>kind</code>) and <code>total_lines</code>.</li>
+<li><code>total_files</code>: the distinct files using any changed symbol; <code>notes</code>.</li>
+</ul>
+<p>Totals count every file found; <code>users</code> and <code>lines</code> are capped by
+<code>max_files</code> and <code>max_lines</code>, and a capped symbol has a note saying so. A
+body that holds no file changes is a 400. The method, what it misses and
+its measured accuracy: <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/impact.md">Diff impact</a>.</p>
 <h2 id="mcp-coding-agents"><a class="header" href="#mcp-coding-agents">MCP (coding agents)</a></h2>
 <p>The web server also speaks the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
 at <code>/mcp</code>, so a coding agent can use the index instead of grepping: search,
@@ -1683,6 +1743,7 @@ to the same endpoint (it finds the server like every <code>fcs</code> command:
 <tr><td><code>read_file</code></td><td><code>path</code>, <code>start_line</code>, <code>end_line</code></td><td>Numbered lines, 200 by default and at most 1,000 (<code>mcp.read_file_lines</code> / <code>mcp.max_read_file_lines</code>), with how to continue</td></tr>
 <tr><td><code>file_dependencies</code></td><td><code>path</code>, <code>direction</code> (<code>in</code>, <code>out</code>, <code>both</code>), <code>depth</code> (1–4), <code>limit</code></td><td>Files it imports and files importing it, by distance, with the line of each direct import</td></tr>
 <tr><td><code>change_impact</code></td><td><code>paths</code> (one or more), <code>limit</code></td><td>Every file that transitively imports any of them, nearest first, split into tests and other code</td></tr>
+<tr><td><code>diff_impact</code></td><td><code>diff</code> (unified diff), <code>root</code> (optional), <code>max_files</code> (default 50, 0 = all), <code>max_lines</code> (default 2)</td><td>For each symbol the diff changes, the files that use it, best first, with use lines and tiers. See <a href="#post-apiimpact"><code>POST /api/impact</code></a></td></tr>
 <tr><td><code>import_path</code></td><td><code>from</code>, <code>to</code></td><td>The shortest chain of imports between two files, either way round</td></tr>
 <tr><td><code>dependency_overview</code></td><td><code>directory</code> (optional), <code>limit</code></td><td>The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files</td></tr>
 <tr><td><code>index_status</code></td><td><code>paths</code> (optional, at most 100)</td><td>When the index last synced with disk and whether file watching is on, plus, for each path, whether it is current, stale, not indexed yet or deleted. See <a href="#index-freshness">Index freshness</a></td></tr>
@@ -1703,6 +1764,8 @@ address, or listed in <code>cors_origins</code>, so a web page cannot drive a lo
 server through the visitor’s browser. Like the REST API, <code>/mcp</code> has no
 authentication: anyone who can reach the web port can read the index.</p>
 <h2 id="grpc"><a class="header" href="#grpc">gRPC</a></h2>
+<p>gRPC has no diff impact call; use <code>POST /api/impact</code>, MCP <code>diff_impact</code> or
+<code>fcs impact</code>.</p>
 <p>The schema is <a href="https://github.com/jburrow/fast_code_search/blob/main/proto/search.proto"><code>proto/search.proto</code></a>: <code>Search</code>
 streams <code>SearchResult</code> messages with the same fields and modes as REST
 (<code>is_regex</code>, <code>symbols_only</code>, <code>references</code>, <code>case_sensitive</code>,
@@ -2516,6 +2579,146 @@ local variable that shares a type’s name, an import line).</p>
 </div>
 <p>Closing these gaps is on the <a href="#roadmap">roadmap</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="diff-impact-1"><a class="header" href="#diff-impact-1">Diff impact</a></h1>
+<p><code>fcs impact</code>, <code>POST /api/impact</code> and the MCP tool <code>diff_impact</code> take a
+unified diff and say, for each function, class, method, type or constant it
+changes, which files use it. File-level impact (every file that imports a
+changed file, as <code>change_impact</code> and the dependency explorer show it) lists
+thousands of files for a busy module. This lists the files that name the
+changed thing.</p>
+<pre><code class="language-console">$ fcs impact                    # your uncommitted changes (git diff HEAD)
+$ fcs impact --staged           # what you are about to commit
+$ fcs impact main               # everything since main, to the working tree
+$ git diff main... | fcs impact --diff -
+</code></pre>
+<pre><code class="language-text">modified pkg/util.py: 2 changed symbols
+
+pkg/util.py:12  function parse_date  (modified, signature)
+  3 files (2 reference, 1 code, 0 text only); searched importers that name it
+  pkg/api/views.py  [reference]
+    41: when = parse_date(request.GET["since"])
+  pkg/settings.py  [code]
+    3: from pkg.util import parse_date as parse
+  tests/test_util.py  [reference, test]
+    18: assert parse_date("2024-01-02") == date(2024, 1, 2)
+    … 4 more lines
+</code></pre>
+<p>(Made-up example.) Piped, the output is <code>path:line:col:text</code>, one line per
+use, for <code>vim -q</code> and other quickfix readers; <code>--json</code> gives the full report.
+The exit status is 0 when some file uses the changed code, 1 when none does,
+2 on error.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<ol>
+<li><strong>The diff.</strong> Each file in the diff is matched to an indexed file (by the
+repository root when given, then by the path search results print, then
+by a unique path suffix). The indexed copy is one side of the change; the
+other side is rebuilt by applying the diff to it, forwards or backwards,
+whichever applies. So the same answer comes from <code>git diff</code> of a watched
+working tree (the index holds the new side) and from a diff whose old side
+is indexed. A file the index does not hold, or whose indexed copy matches
+neither side, is listed with a note and not analysed.</li>
+<li><strong>Changed symbols.</strong> Both sides are parsed with tree-sitter (Python,
+JavaScript, TypeScript, Rust) and each changed line is put in the
+innermost definition that contains it, so a change inside a method is a
+change to the method, not to the class. A change to a definition’s
+signature lines is marked <code>signature</code>. Definitions present on one side
+only are <code>added</code> or <code>removed</code>. Lines outside every definition (imports,
+module-level code) are counted on the file and not traced. Other
+languages get the definitions fcs’s symbol extractor finds, with a change
+put in the nearest definition above it (and a note saying so).</li>
+<li><strong>Who uses it.</strong> For a function, class, type or constant, fcs walks the
+import graph from the changed file along “imported by” edges, but only
+into files that mention the name (checked with the trigram index first,
+then the recorded references, then the text) and into package entry files
+(<code>__init__.py</code>, <code>index.*</code>, <code>mod.rs</code>, <code>lib.rs</code>, <code>main.rs</code>), which re-export.
+An import that renames it (<code>import { parse as p }</code>, <code>from x import parse as p</code>, <code>use x::parse as p</code>) adds the new name to the search. A
+constructor (<code>__init__</code>, <code>constructor</code>) is searched as its class.</li>
+<li><strong>Members.</strong> A method or field is used through a value whose type fcs
+does not know, so it is searched by name among every file that imports
+its file, directly or not. Files that also name the class come first.
+Methods are listed only where fcs recorded a reference to the name.</li>
+<li><strong>Tiers.</strong> Each use line is a <code>reference</code> (a recorded call, type, value or
+attribute reference), <code>code</code> (the name as a whole word in code, such as
+an import line or a JSX tag) or <code>text</code> (only in a string or a comment: a
+dotted path in a settings file is a real use, prose is not). A file’s
+tier is its best line’s. Files are ordered by tier, then (members)
+whether they name the class, then code before tests, then by how widely
+used the file is, then path.</li>
+</ol>
+<p>Nothing is dropped: every file found is counted in the totals and in the
+tier counts. What is listed is capped (200 files per symbol and 3 lines per
+file by default; <code>-n</code>/<code>--lines</code>, <code>max_files</code>/<code>max_lines</code>, 0 for all), and a
+capped list says so. At most 500 changed symbols are searched per request;
+the rest are listed without users, with a note.</p>
+<h2 id="measured-accuracy"><a class="header" href="#measured-accuracy">Measured accuracy</a></h2>
+<p>On Django at 79502d0, for the 248 most recent commits that change Python files (the last 400 commits of history), each
+commit’s diff (old side: the commit’s parent, new side: the indexed tree)
+was analysed and compared with the files where <a href="https://jedi.readthedocs.io">Jedi</a>
+resolves a use to the changed definition (<code>src/check/oracle/py_impact.py</code>).
+<strong>Found</strong> is the share of Jedi’s files that fcs lists, <strong>right</strong> the share
+of listed files Jedi confirms. Files the diff itself changes are left out
+of both. CI repeats this on every change to the impact code
+(<code>.github/workflows/impact-oracle.yml</code>, <code>examples/impact_oracle.rs</code>).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symbols</th><th>Scored</th><th>Found</th><th>Right</th></tr>
+</thead>
+<tbody>
+<tr><td>Functions, classes, constants</td><td>226</td><td>100% (1,267 of 1,267 files)</td><td>79.5%</td></tr>
+<tr><td>Methods and fields</td><td>131</td><td>100% (212 of 212)</td><td>13.0%</td></tr>
+</tbody>
+</table>
+</div>
+<p>“Right” is a lower bound: Jedi misses dynamic uses that fcs’s text tier
+finds, such as dotted paths in settings and <code>mock.patch("pkg.mod.name")</code>.
+For members, fcs finds every file but also lists the files that call a
+method of the same name on something else; files naming the class come
+first so they are read first.</p>
+<p>The evaluation before this was built
+(Django and Sentry, Python and TypeScript, against Jedi and the TypeScript
+compiler’s <code>findReferences</code>) found the same picture: functions and classes
+100% found and 83–91% right with all three tiers; references alone miss
+two thirds of TypeScript uses (JSX tags, re-exports, type positions), which
+is why the code and text tiers are kept.</p>
+<h2 id="speed"><a class="header" href="#speed">Speed</a></h2>
+<p>On Django (5,700 files), the analysis of one commit’s diff takes 49 ms
+median and 309 ms p95 (commits that change many methods at once are the
+slow ones). The walk is lazy: a file is read only when the trigram index
+says it may hold the name. Measured during the evaluation on 348,000 files
+(16 copies of Sentry), one changed symbol took 0.5 ms median and 3 ms p95;
+a synthetic hub function called from 200,000 of 400,000 files took 2 s,
+reading each caller once.</p>
+<h2 id="what-it-does-not-do"><a class="header" href="#what-it-does-not-do">What it does not do</a></h2>
+<ul>
+<li><strong>No types.</strong> A method is found by name, so every <code>save()</code> in the
+importers is listed for a change to one <code>save()</code> (class-named files first).
+Uses through <code>getattr</code>, dependency injection, or a method passed as a
+value are not references, so they are found only by the code tier
+(functions, classes) or not at all (methods).</li>
+<li><strong>One level.</strong> It lists the direct users of each changed symbol. It does
+not then follow the functions those users define to their own users.</li>
+<li><strong>Import graph languages only for the walk.</strong> Python, JavaScript,
+TypeScript and Rust have import edges. In other languages (Go, Java, C#,
+C, C++ and the rest) a symbol is searched by name across the whole index,
+with a note, so same-named things elsewhere are listed too. C and C++
+record no references, so their uses are <code>code</code> or <code>text</code> only. Per-language
+coverage of references: <a href="#reference-support">Reference support</a>; of
+import edges: <a href="#dependency-graph-support">Dependency graph support</a>.</li>
+<li><strong>Language-called methods.</strong> A change to <code>__eq__</code>, <code>__str__</code> or
+<code>__iter__</code> is found only where it is named explicitly; the note says so.</li>
+<li><strong>Module-level changes</strong> (a changed import, a top-level statement) are
+counted per file, not traced.</li>
+<li><strong>The index must hold one side.</strong> With file watching on (the default),
+the index is the working tree, so <code>fcs impact</code> (uncommitted changes) and
+<code>fcs impact REV</code> (REV to the working tree) work. A diff between two other
+commits works only if the index holds one of them; otherwise each file
+says “matches neither side”.</li>
+<li><strong>gRPC</strong> has no impact call; use REST, MCP or <code>fcs</code>.</li>
+<li><code>fcs impact</code> is a subcommand, so searching for the word <code>impact</code> needs
+<code>fcs search impact</code>.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="fcs-command-line"><a class="header" href="#fcs-command-line"><code>fcs</code> command line</a></h1>
 <!-- Generated by scripts/docs/generate-reference.sh from `fcs --help`; do not edit. -->
 <p>Full help for the client and each subcommand, as printed by the binary.
@@ -2533,6 +2736,7 @@ Commands:
   search   Search file contents (the default; `fcs QUERY` works too)
   refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
   symbols  Search symbol definitions (functions, types, classes, ...) only
+  impact   The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
   check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
@@ -2592,6 +2796,7 @@ Examples:
   fcs -e 'fn\s+\w+\(' -g '*.rs'  regex, Rust files only
   fcs refs SearchEngine         call sites and type mentions
   fcs symbols parse_query       definitions only
+  fcs impact                    files that use what your uncommitted changes touch
   fcs -l TODO | xargs $EDITOR   files containing TODO
   vim -q &lt;(fcs --format vimgrep TODO)
   fcs status                    is the server up, what does it hold
@@ -2633,14 +2838,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob &lt;GLOB&gt;
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob &lt;GLOB&gt;
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
@@ -2648,22 +2853,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files &lt;N&gt;
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2673,20 +2884,14 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files &lt;N&gt;
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
-
-      --deps &lt;PATH[:N]&gt;
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
-
       --json
           Shorthand for --format json
 
-  -l, --files-with-matches
-          Print every file that matches, once, best first (pages through all hits)
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -2738,14 +2943,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob &lt;GLOB&gt;
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob &lt;GLOB&gt;
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
@@ -2753,22 +2958,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files &lt;N&gt;
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2778,20 +2989,14 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files &lt;N&gt;
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
-
-      --deps &lt;PATH[:N]&gt;
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
-
       --json
           Shorthand for --format json
 
-  -l, --files-with-matches
-          Print every file that matches, once, best first (pages through all hits)
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -2843,14 +3048,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob &lt;GLOB&gt;
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob &lt;GLOB&gt;
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
@@ -2858,22 +3063,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files &lt;N&gt;
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2883,20 +3094,87 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files &lt;N&gt;
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+      --json
+          Shorthand for --format json
 
-      --deps &lt;PATH[:N]&gt;
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+      --rdeps &lt;PATH[:N]&gt;
+          Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color &lt;COLOR&gt;
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+</code></pre>
+<h2 id="fcs-impact---help"><a class="header" href="#fcs-impact---help"><code>fcs impact --help</code></a></h2>
+<pre><code class="language-text">The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
+
+Usage: fcs impact [OPTIONS] [REV]...
+
+Arguments:
+  [REV]...
+          Revisions to diff, as `git diff` takes them: none for uncommitted changes (against HEAD), `REV` for REV to the working tree, `A..B` or `A B` between commits (the index must hold one of the two sides)
+
+Options:
+      --staged
+          Only staged changes (`git diff --cached`)
+
+      --diff &lt;FILE&gt;
+          Read the diff from this file (`-` for stdin) instead of running git
+
+  -n, --max-files &lt;N&gt;
+          Files listed per changed symbol (0 = all)
+          
+          [default: 200]
+
+      --lines &lt;N&gt;
+          Use lines listed per file (0 = all)
+          
+          [default: 3]
+
+      --root &lt;DIR&gt;
+          Folder the diff's paths are relative to (default: the Git repository's top folder)
+
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config &lt;FILE&gt;
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --format &lt;FORMAT&gt;
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
 
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
-
-      --rdeps &lt;PATH[:N]&gt;
-          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -4882,9 +5160,32 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>Diff impact: <code>fcs impact</code>, <code>POST /api/impact</code>, MCP <code>diff_impact</code>.</strong>
+Give it a diff (by default your uncommitted changes) and it lists, for
+each function, class, method, type or constant the diff changes, the files
+that use it, best first, with the use lines: finer than the file-level
+<code>change_impact</code>. Functions and classes are traced through importers that
+name them (renames followed), methods and fields by name among every
+importer with files naming the class first. Each use is a recorded
+<code>reference</code>, a <code>code</code> mention or a <code>text</code> mention (strings and comments).
+On Django’s 248 most recent commits that change Python, checked against Jedi, it lists 100%
+of the files that use a changed function or class (79.5% of those it
+lists are confirmed by Jedi), in 49 ms median per commit. No re-index is
+needed. See the book’s <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/impact.md">Diff impact</a>
+page for what it misses.</li>
 <li>Search responses report file changes the watcher has seen and not
 applied yet (<code>index.pending_changes</code>). The web UI shows “Index updating ·
 N file changes to apply”; <code>fcs</code> and the MCP tools print it as a note.</li>
+</ul>
+<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<ul>
+<li><code>rdeps:</code> and <code>deps:</code> filters no longer read every indexed path to find
+their file (when it is given as results print it, with or without <code>:N</code>)
+nor copy every unresolved import to count the broken ones. On a
+348,000-file index the filter’s own cost fell from 464 ms to 0.1 ms
+median (<code>examples/rdeps_timing.rs</code>); a partial path or a folder still
+reads every path.</li>
+<li>The server accepts request bodies up to 8 MiB (was 64 KiB), for diffs.</li>
 </ul>
 <h2 id="0181---2026-10-16"><a class="header" href="#0181---2026-10-16"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.0...v0.18.1">0.18.1</a> - 2026-10-16</a></h2>
 <p>Small fixes to piped <code>fcs</code> paths and MCP totals. No re-index or config
@@ -4909,7 +5210,7 @@ its best-scoring hits rather than its first ones, so result order changes
 for broad searches. <code>search.per_file_matches</code> now defaults to 1,000 (was
 100). Files that were skipped as binary only because of control
 characters, and SVG files, are now indexed, as ripgrep searches them.</p>
-<h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
+<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
 <ul>
 <li><strong><code>watch</code> defaults to <code>true</code>.</strong> The server follows edits, renames and
 deletes unless the config says <code>watch = false</code>, matching what the README
@@ -4974,7 +5275,7 @@ different (better) hits than 0.16.x. If your config sets
 <code>server.fast_rank_files</code>, <code>server.max_fast_rank_files</code> or
 <code>server.max_page_offset</code>, move them to the new <code>[search]</code> section; the
 old keys still work but log a deprecation warning.</p>
-<h3 id="changed-1"><a class="header" href="#changed-1">Changed</a></h3>
+<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
 <ul>
 <li><strong>Page 1 ranks far more of a broad query’s matches.</strong> A first page
 collected 512 matches before ranking (the “match budget”); it now
@@ -5035,7 +5336,7 @@ matching symbol, and reported its total as exact. It now reports
 <p>Watch mode keeps answering searches on very large trees, and Python
 projects whose imports were listed as external now resolve. Re-index a
 Python project to pick up the import fixes.</p>
-<h3 id="changed-2"><a class="header" href="#changed-2">Changed</a></h3>
+<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
 <ul>
 <li>Web UI: Semantic is no longer in the header nav, since semantic search
 is not being developed for now. The page still works at
@@ -5161,7 +5462,7 @@ on stderr, MCP’s <code>search_code</code> adds a “Results capped” line (al
 nothing was found), and the web UI names the limit in the count’s
 tooltip and shows “stopped at time limit” beside the time.</li>
 </ul>
-<h3 id="changed-3"><a class="header" href="#changed-3">Changed</a></h3>
+<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
 <ul>
 <li>Import graph: a Rust path into the crate used without a <code>use</code>
 (<code>crate::a::b::f()</code>, <code>super::x::Y</code>) is an import of the module it names,
@@ -5350,7 +5651,7 @@ request may ask for, and <code>max_page_offset</code> (default 100000, 0 = no li
 sets how deep a client may page. Responses report the cap as
 <code>max_files_allowed</code> when one is set.</li>
 </ul>
-<h3 id="changed-4"><a class="header" href="#changed-4">Changed</a></h3>
+<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
 <ul>
 <li><strong>Plain-text search is a literal, like <code>rg -F</code>.</strong> Several words are one
 phrase: <code>fn main</code> finds lines holding <code>fn main</code>, not every line holding
@@ -5476,7 +5777,7 @@ literally or escaped. The regex docs gained examples and pitfalls.</li>
 <li>rustls 0.23.36 -&gt; 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake
 messages accepted across encryption-level boundaries).</li>
 </ul>
-<h3 id="changed-5"><a class="header" href="#changed-5">Changed</a></h3>
+<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
 <ul>
 <li>
 <p>The keyword search results header is shorter: “1,234 RESULTS · 42 ms”
@@ -5594,7 +5895,7 @@ recorded) and refuses FUSE/NFS/SMB mounts, where scan tools are unfairly
 slow. CI runs it and the documentation site shows the result alongside
 the latency and ranking-quality figures, with two new book pages.</li>
 </ul>
-<h3 id="changed-6"><a class="header" href="#changed-6">Changed</a></h3>
+<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
 <ul>
 <li>Ranking: single-term lines of a multi-term query are capped per file and
 the files holding the phrase are scanned first, so the match budget can
@@ -5636,7 +5937,7 @@ reference, moved out of the README.</li>
 <li>Release pages carry an install table, checksum instructions and a
 first-run line alongside the changelog section.</li>
 </ul>
-<h3 id="changed-7"><a class="header" href="#changed-7">Changed</a></h3>
+<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
 <ul>
 <li>README rewritten as a landing page that leads with how results are
 ranked; benchmark figures are from the latest CI run and link to it.</li>
@@ -5652,7 +5953,7 @@ moved under <code>docs/internal/</code>.</li>
 built-in runner over <code>static/tests</code>) and fails if the committed
 <code>tailwind.css</code> does not match the markup.</li>
 </ul>
-<h3 id="changed-8"><a class="header" href="#changed-8">Changed</a></h3>
+<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
 <ul>
 <li>Web UI: the keyword pages use inline SVG icons instead of the 3.9 MB
 icon font (which stays only for the semantic pages); result groups are
@@ -5689,7 +5990,7 @@ HTTP client).</li>
 </ul>
 <p>Fixes from the 2026-09-06 engine and UI review
 (<code>docs/internal/plans/2026-09-06-keyword-engine-and-ui-review.md</code>).</p>
-<h3 id="changed-9"><a class="header" href="#changed-9">Changed</a></h3>
+<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
 <ul>
 <li>Line-mode regex patterns are matched in one pass per file (compiled with
 <code>(?mR)</code>, one hit per line, per-line semantics for <code>^</code>, <code>$</code>, <code>\s</code> and CRLF
@@ -5883,7 +6184,7 @@ and the standard <code>grpc.health.v1</code> service.</li>
 <li>gRPC <code>SearchRequest.offset</code> / <code>rank</code> / <code>deadline_ms</code>; results carry
 <code>dependency_count</code>.</li>
 </ul>
-<h3 id="changed-10"><a class="header" href="#changed-10">Changed</a></h3>
+<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
 <ul>
 <li>Build: the semantic engine is behind the <code>semantic</code> Cargo feature (off by
 default; <code>ml-models</code> implies it), release binaries use thin LTO and are
@@ -5989,7 +6290,7 @@ refresh, dependency-edge removal) instead of leaving stale entries until restart
 <li>Keyboard navigation in results (<code>j</code>/<code>k</code>/arrows to move, Enter to open, <code>/</code> to focus).</li>
 <li>Per-result copy-path button.</li>
 </ul>
-<h3 id="changed-11"><a class="header" href="#changed-11">Changed</a></h3>
+<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
 <ul>
 <li>API errors are now consistent JSON (<code>{ "error": … }</code>); 503s include <code>Retry-After</code>.</li>
 <li>Static assets use compile-time content hashes for ETags and honor <code>If-None-Match</code>
@@ -6028,7 +6329,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Dependency popover and tooltip interactions in the web UI to improve code navigation context.</li>
 <li>Shared search history utilities used by both keyword and semantic UIs for more consistent query history behavior.</li>
 </ul>
-<h3 id="changed-12"><a class="header" href="#changed-12">Changed</a></h3>
+<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
 <ul>
 <li>Search result highlighting now uses dynamic, context-aware highlight styles in the keyword UI.</li>
 <li>Reduced duplicated UI styling by removing redundant syntax-highlighting and tooltip rules from keyword-specific CSS and inheriting from shared styles.</li>
@@ -6043,7 +6344,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Web UI regression where loading <code>/</code> or <code>/semantic.html</code> with <code>?q=...</code> restored the query text but did not execute search automatically on page load.</li>
 </ul>
 <h2 id="074---2026-03-20"><a class="header" href="#074---2026-03-20"><a href="https://github.com/jburrow/fast_code_search/compare/v0.7.3...v0.7.4">0.7.4</a> - 2026-03-20</a></h2>
-<h3 id="changed-13"><a class="header" href="#changed-13">Changed</a></h3>
+<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
 <ul>
 <li>New UI theme for the keyword search interface with improved layout and styling.</li>
 </ul>
@@ -6052,7 +6353,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <ul>
 <li>New agent skills: normalize, onboard, optimize, overdrive, quieter, and teach-impeccable for design context.</li>
 </ul>
-<h3 id="changed-14"><a class="header" href="#changed-14">Changed</a></h3>
+<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
 <ul>
 <li>Updated scoring factors and improved score tooltip information in keyword search results.</li>
 <li>Enhanced UI/UX across diagnostics and semantic pages: improved status banner styles, typography, spacing, input focus styles, and semantic score display.</li>
@@ -6067,7 +6368,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>Workspace-relative display paths in results (VSCode-style folder name prefix) (#95).</li>
 <li>New agent skills: arrange, audit, bolder, colorize, critique, delight, polish, typeset.</li>
 </ul>
-<h3 id="changed-15"><a class="header" href="#changed-15">Changed</a></h3>
+<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
 <ul>
 <li>UI improvements: wordmark styling, help icon for docs header link, and accessibility enhancements.</li>
 <li>Improved touch target sizes for mobile accessibility.</li>
@@ -6088,7 +6389,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li>URL state encoding for semantic search UI; refactored shared helpers into <code>common.js</code> (#93).</li>
 <li>VS Code configuration and tasks for Rust development.</li>
 </ul>
-<h3 id="changed-16"><a class="header" href="#changed-16">Changed</a></h3>
+<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
 <ul>
 <li>Refactor code structure for improved readability and maintainability.</li>
 </ul>
@@ -6098,7 +6399,7 @@ tracks server recovery; <code>wss://</code> under HTTPS; rebuilt CSS; removed de
 <li><strong>GitHub Pages site</strong> (<code>docs/site/</code>): A static project site deployed to <code>gh-pages</code> on every push to <code>main</code> via a new <code>pages.yml</code> workflow. The site includes a features overview, live CI badge matrix, embedded benchmark trend charts (from <code>dev/bench/</code> pushed by <code>github-action-benchmark</code>), Codecov coverage badge, dynamically-rendered changelog (from <code>changelog.json</code> generated at deploy time), and a Getting Started guide. Theme toggle (dark/light) with OS preference detection. The deploy action uses <code>clean-exclude: dev/</code> to preserve benchmark data, and both <code>pages.yml</code> and <code>benchmark.yml</code> share a <code>gh-pages-deploy</code> concurrency group to prevent simultaneous pushes.</li>
 </ul>
 <h2 id="069---2026-02-28"><a class="header" href="#069---2026-02-28"><a href="https://github.com/jburrow/fast_code_search/compare/v0.6.8...v0.6.9">0.6.9</a> - 2026-02-28</a></h2>
-<h3 id="changed-17"><a class="header" href="#changed-17">Changed</a></h3>
+<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
 <ul>
 <li>Version bump and release.</li>
 </ul>
@@ -6229,7 +6530,7 @@ batch_size = 1000   # raise on high-RAM machines; lower if still OOM
 <li><strong>Binary-detection tests use genuine binary bytes</strong>: Test helpers in <code>file_store</code>, <code>lazy_file_store</code>, <code>engine</code>, and <code>integration_tests</code> now construct binary payloads from real non-UTF-8 byte sequences instead of synthetic strings, making the tests more robust and accurately representative of real-world binary files.</li>
 </ul>
 <h2 id="055---2026-02-26"><a class="header" href="#055---2026-02-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.5.4...v0.5.5">0.5.5</a> - 2026-02-26</a></h2>
-<h3 id="changed-18"><a class="header" href="#changed-18">Changed</a></h3>
+<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
 <ul>
 <li>Maintenance release: version/changelog update only; no functional code changes.</li>
 </ul>
@@ -6293,7 +6594,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-19"><a class="header" href="#changed-19">Changed</a></h3>
+<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
 <ul>
 <li>Semantic search vector index now uses HNSW instead of linear search</li>
 <li>Updated documentation with HNSW configuration and tuning guide</li>
@@ -6326,7 +6627,7 @@ are serialised.</li>
 <p><strong>Semantic model download verification</strong>: Optional SHA256 verification via <code>FCS_MODEL_SHA256</code> or <code>FCS_MODEL_SHA256_&lt;MODEL&gt;</code></p>
 </li>
 </ul>
-<h3 id="changed-20"><a class="header" href="#changed-20">Changed</a></h3>
+<h3 id="changed-21"><a class="header" href="#changed-21">Changed</a></h3>
 <ul>
 <li>Tracing subscriber upgraded from simple <code>FmtSubscriber</code> to layered <code>Registry</code> (fmt + OTel)</li>
 <li><code>tracing-subscriber</code> now uses <code>registry</code> feature alongside <code>env-filter</code></li>
@@ -6367,7 +6668,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-21"><a class="header" href="#changed-21">Changed</a></h3>
+<h3 id="changed-22"><a class="header" href="#changed-22">Changed</a></h3>
 <ul>
 <li>Symbol extractor now handles C/C++ function declarators correctly (name is in <code>declarator</code> field, not <code>name</code>)</li>
 </ul>
@@ -6402,7 +6703,7 @@ are serialised.</li>
 </ul>
 </li>
 </ul>
-<h3 id="changed-22"><a class="header" href="#changed-22">Changed</a></h3>
+<h3 id="changed-23"><a class="header" href="#changed-23">Changed</a></h3>
 <ul>
 <li>Search methods now use file metadata ranking instead of early termination for large candidate sets</li>
 <li><code>search_regex()</code> and <code>search_symbols()</code> also use fast ranking for consistency</li>
@@ -6460,7 +6761,7 @@ are serialised.</li>
 <p><strong>Symbols-only search mode</strong>: New search mode that searches only in discovered symbol names (functions, classes, methods, types, etc.) plus filename matches. Enable via <code>symbols=true</code> query parameter in REST API or <code>symbols_only=true</code> in gRPC SearchRequest. This provides faster, more targeted results when looking for definitions.</p>
 </li>
 </ul>
-<h3 id="changed-23"><a class="header" href="#changed-23">Changed</a></h3>
+<h3 id="changed-24"><a class="header" href="#changed-24">Changed</a></h3>
 <ul>
 <li><strong>Updated performance comparison docs</strong>: Added comprehensive benchmark comparison with traditional search tools (ripgrep, ag, git grep, grep) in README.md and PRIOR_ART.md. Includes published benchmark data from ripgrep’s official benchmarks, break-even analysis for when indexing pays off, and detailed feature comparison tables.</li>
 </ul>
@@ -6483,7 +6784,7 @@ are serialised.</li>
 </li>
 </ul>
 <h2 id="022---2026-02-01"><a class="header" href="#022---2026-02-01"><a href="https://github.com/jburrow/fast_code_search/compare/v0.2.1...v0.2.2">0.2.2</a> - 2026-02-01</a></h2>
-<h3 id="changed-24"><a class="header" href="#changed-24">Changed</a></h3>
+<h3 id="changed-25"><a class="header" href="#changed-25">Changed</a></h3>
 <ul>
 <li><strong>Improved indexing log readability</strong>: The background indexing completion message now formats large numbers with underscore separators (e.g., <code>89_210</code>), rounds <code>files_per_sec</code> to whole numbers, and removes redundant raw byte values.</li>
 </ul>

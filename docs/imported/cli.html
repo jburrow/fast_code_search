@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-68871993.js";
+            window.path_to_searchindex_js = "../searchindex-1b2b2e49.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fa11e869.js"></script>
+        <script src="../toc-19c5e137.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -192,6 +192,7 @@ fcs -- -Wall                     # a query starting with - goes after --
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
+fcs impact                       # files that use what your uncommitted changes touch
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
@@ -284,6 +285,25 @@ or <code>set grepprg=fcs\ --format\ vimgrep grepformat=%f:%l:%c:%m</code> and us
 is clickable. With <code>--absolute</code> the links work from any working directory.</li>
 <li><strong>fzf</strong>: <code>fcs -l QUERY | fzf | xargs $EDITOR</code>.</li>
 </ul>
+<h2 id="diff-impact"><a class="header" href="#diff-impact">Diff impact</a></h2>
+<p><code>fcs impact</code> lists, for each function, class, method, type or constant a
+diff changes, the files that use it, best first, with the use lines:</p>
+<pre><code class="language-bash">fcs impact                     # uncommitted changes (git diff HEAD)
+fcs impact --staged            # staged changes only
+fcs impact main                # main to the working tree
+fcs impact --diff change.patch # a diff from anywhere (- for stdin)
+vim -q &lt;(fcs impact --format vimgrep)
+</code></pre>
+<p>It runs <code>git diff</code> in the current repository (so it needs <code>git</code>, unless
+<code>--diff</code> is given) and sends the diff to the server’s <code>POST /api/impact</code>, or
+analyses it offline like a search. <code>-n N</code> caps the files listed per changed
+symbol (default 200, 0 = all), <code>--lines N</code> the use lines per file (default
+3). Each file is a <code>reference</code>, <code>code</code> or <code>text</code> (strings and comments
+only) use; totals always count every file found, and a capped list says so.
+Piped, only the use lines are printed, with the caps and gaps on stderr.
+Exit status: 0 when something uses the changed code, 1 when nothing does.
+How it works, what it misses and how accurate it is:
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/reference/impact.md">Diff impact</a>.</p>
 <h2 id="mcp-for-coding-agents"><a class="header" href="#mcp-for-coding-agents">MCP for coding agents</a></h2>
 <p><code>fcs mcp</code> serves the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
 over stdio by relaying each message to the server’s <code>/mcp</code> endpoint, for

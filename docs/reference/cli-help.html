@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-68871993.js";
+            window.path_to_searchindex_js = "../searchindex-1b2b2e49.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fa11e869.js"></script>
+        <script src="../toc-19c5e137.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,6 +198,7 @@ Commands:
   search   Search file contents (the default; `fcs QUERY` works too)
   refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
   symbols  Search symbol definitions (functions, types, classes, ...) only
+  impact   The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
   check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
@@ -257,6 +258,7 @@ Examples:
   fcs -e 'fn\s+\w+\(' -g '*.rs'  regex, Rust files only
   fcs refs SearchEngine         call sites and type mentions
   fcs symbols parse_query       definitions only
+  fcs impact                    files that use what your uncommitted changes touch
   fcs -l TODO | xargs $EDITOR   files containing TODO
   vim -q &lt;(fcs --format vimgrep TODO)
   fcs status                    is the server up, what does it hold
@@ -298,14 +300,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob &lt;GLOB&gt;
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob &lt;GLOB&gt;
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
@@ -313,22 +315,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files &lt;N&gt;
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -338,20 +346,14 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files &lt;N&gt;
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
-
-      --deps &lt;PATH[:N]&gt;
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
-
       --json
           Shorthand for --format json
 
-  -l, --files-with-matches
-          Print every file that matches, once, best first (pages through all hits)
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -403,14 +405,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob &lt;GLOB&gt;
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob &lt;GLOB&gt;
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
@@ -418,22 +420,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files &lt;N&gt;
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -443,20 +451,14 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files &lt;N&gt;
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
-
-      --deps &lt;PATH[:N]&gt;
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
-
       --json
           Shorthand for --format json
 
-  -l, --files-with-matches
-          Print every file that matches, once, best first (pages through all hits)
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -508,14 +510,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob &lt;GLOB&gt;
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob &lt;GLOB&gt;
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude &lt;GLOB&gt;
           Skip files matching this glob (repeatable)
@@ -523,22 +525,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files &lt;N&gt;
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps &lt;PATH[:N]&gt;
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -548,20 +556,87 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files &lt;N&gt;
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+      --json
+          Shorthand for --format json
 
-      --deps &lt;PATH[:N]&gt;
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+      --rdeps &lt;PATH[:N]&gt;
+          Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color &lt;COLOR&gt;
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+</code></pre>
+<h2 id="fcs-impact---help"><a class="header" href="#fcs-impact---help"><code>fcs impact --help</code></a></h2>
+<pre><code class="language-text">The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
+
+Usage: fcs impact [OPTIONS] [REV]...
+
+Arguments:
+  [REV]...
+          Revisions to diff, as `git diff` takes them: none for uncommitted changes (against HEAD), `REV` for REV to the working tree, `A..B` or `A B` between commits (the index must hold one of the two sides)
+
+Options:
+      --staged
+          Only staged changes (`git diff --cached`)
+
+      --diff &lt;FILE&gt;
+          Read the diff from this file (`-` for stdin) instead of running git
+
+  -n, --max-files &lt;N&gt;
+          Files listed per changed symbol (0 = all)
+          
+          [default: 200]
+
+      --lines &lt;N&gt;
+          Use lines listed per file (0 = all)
+          
+          [default: 3]
+
+      --root &lt;DIR&gt;
+          Folder the diff's paths are relative to (default: the Git repository's top folder)
+
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config &lt;FILE&gt;
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --format &lt;FORMAT&gt;
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
 
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
-
-      --rdeps &lt;PATH[:N]&gt;
-          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -756,7 +831,7 @@ Options:
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../reference/reference-support.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../reference/impact.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -770,7 +845,7 @@ Options:
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../reference/reference-support.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../reference/impact.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
