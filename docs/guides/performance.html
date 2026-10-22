@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f9266db1.js";
+            window.path_to_searchindex_js = "../searchindex-68871993.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -230,9 +230,12 @@ the blocking threads; beyond it the server answers 503 with <code>Retry-After</c
 rather than queueing.</li>
 </ul>
 <h2 id="incremental-updates"><a class="header" href="#incremental-updates">Incremental updates</a></h2>
-<p>The watcher coalesces events for two seconds and applies a batch under one
-write lock: deletes in one pass over the posting lists, modified files
-stripped in one pass and re-read in parallel. On Linux one inotify watch is
+<p>The watcher gathers events for up to two seconds, reads and parses the
+changed files in parallel without the write lock, and installs them in
+steps of at most 512 files. Each step takes the write lock in a moment when
+no search holds it, so a long search never makes the others wait for the
+watcher; while changes are still to be applied, searches say how many (see
+<a href="../how-it-works/incremental.html">Incremental indexing</a>). On Linux one inotify watch is
 installed per kept directory; excluded trees get none. If the limit is
 hit the log says so; raise it with
 <code>sysctl fs.inotify.max_user_watches=524288</code>.</p>

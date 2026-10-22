@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f9266db1.js";
+            window.path_to_searchindex_js = "../searchindex-68871993.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-fa11e869.js"></script>
@@ -241,12 +241,57 @@ file that appeared. That covers an import that fell back to a package
 (<code>from . import m</code> reaching <code>__init__.py</code> while <code>m.py</code> is missing) moving
 to the new file, and back. The dependency graph is therefore a function
 of the files on disk, the same as a fresh build would draw.</p>
-<p>A search that arrives during an install step waits for it (up to five
-seconds) instead of being turned away. Only if the lock is still held
-after that does it get a 503 with <code>Retry-After: 1</code> (gRPC: <code>UNAVAILABLE</code>),
-which <code>fcs</code> and the web UI retry on their own. On a generated tree of one
-million Python files with 2,000 files rewritten a second, no search was
-turned away and the slowest took 0.2 s (see <code>examples/watch_load.rs</code>).</p>
+<h2 id="searching-while-changes-are-applied"><a class="header" href="#searching-while-changes-are-applied">Searching while changes are applied</a></h2>
+<p>Searches and the watcher share one lock: searches read under it, install
+steps write. A writer that <em>queues</em> for such a lock makes it turn every new
+reader away until the writer has had its turn, and the writer gets its
+turn only when every running search has finished. So one slow search (a
+regex over a million files) and a one-file install step used to stop every
+other search for as long as the slow one ran, and searches still waiting
+after five seconds got “Index is currently being updated”.</p>
+<p>Writers no longer queue. An install step (and each batch of the initial
+build) takes the write lock in a moment when no search holds it, trying
+every couple of milliseconds. While it waits, a new search holds back for
+up to 250 ms so the running ones can finish and the step can get in, and
+then goes ahead whether or not it did. A search therefore waits for a
+step’s short hold (tens of milliseconds), never for other searches. A
+search that arrives during a step waits for it, up to five seconds, before
+it gets a 503 with <code>Retry-After: 1</code> (gRPC: <code>UNAVAILABLE</code>), which <code>fcs</code> and
+the web UI retry on their own.</p>
+<p>While changes wait to be applied, searches see the index as it was. They
+say so rather than pass it off as current: the <code>index</code> part of every
+search response carries <code>pending_changes</code>, the events the watcher has
+queued plus the files of the burst being applied, and the web UI shows
+“Index updating · N file changes to apply” beside the timing; <code>fcs</code> and the
+MCP tools print the same as a note.</p>
+<p>Measured with <code>examples/watch_load.rs --mixed</code> on a generated tree of one
+million Python files (4 cores, four threads searching back to back with a
+mix of cheap, common-word and regex queries, the way the web handler runs
+them):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Load</th><th>Version</th><th>Turned away</th><th>Slowest search</th><th>p99</th><th>Mean</th><th>Files applied</th></tr>
+</thead>
+<tbody>
+<tr><td>50,000 files rewritten at once, every 10 s, for 40 s</td><td>before</td><td>9 (3.0%)</td><td>5.1 s</td><td>4.3 s</td><td>433 ms</td><td>24,550</td></tr>
+<tr><td></td><td>after</td><td>0</td><td>1.5 s</td><td>1.3 s</td><td>684 ms</td><td>138,739</td></tr>
+<tr><td>200 files rewritten every 100 ms, for 30 s</td><td>before</td><td>4 (1.8%)</td><td>5.0 s</td><td>4.5 s</td><td>511 ms</td><td>10,643</td></tr>
+<tr><td></td><td>after</td><td>0</td><td>1.4 s</td><td>1.1 s</td><td>591 ms</td><td>31,757</td></tr>
+</tbody>
+</table>
+</div>
+<p>“Files applied” counts what the watcher had installed when the run ended:
+before, searches held it back and most of the changes were still waiting.
+The mean search is slower after (433 to 684 ms in the bulk run) for two
+reasons: the watcher now does three to six times the work in the same time
+on the same four cores, and a search holds back while a step waits. In
+exchange, no search waits seconds and none is turned away. “Files applied”
+can exceed the files rewritten: a file rewritten twice is installed twice,
+and in the bulk run the watcher’s event queue filled, so it reconciled the
+tree as well. Without that holding back
+the watcher did not get in once in a 30 s run on a 200,000-file tree, so
+nothing was applied at all.</p>
 <h2 id="saving"><a class="header" href="#saving">Saving</a></h2>
 <p>After <code>save_after_updates</code> file changes the index is saved; it is also
 saved on shutdown when anything changed since the last save, so an edit
@@ -262,12 +307,18 @@ for every vocabulary word, symbol definitions and dependency edges. The
 random sequences print their seed; replay one with
 <code>FCS_WATCH_SEED=&lt;seed&gt; cargo test --test watch_harness</code>. Another test
 searches continuously while a burst of changes is applied and fails if a
-search is turned away or waits too long.</p>
+search is turned away or waits too long; another holds a long search while
+a burst waits to be installed and checks that other searches are answered
+and report the changes still to apply.</p>
 <p>For larger trees, <code>examples/watch_load.rs</code> generates a tree of small
 scripts (a million, if you like), streams rewrites, creates and deletes
 into it through the real watch loop while threads search, and reports how
-many searches were answered or turned away and the latency percentiles:</p>
-<pre><code class="language-text">cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000
+many searches were answered or turned away and the latency percentiles.
+<code>--mixed</code> searches the way the web handler does, with queries that read
+most of the tree; a large <code>--burst</code> with a long <code>--interval-ms</code> is a bulk
+change such as a branch switch:</p>
+<pre><code class="language-text">cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000 \
+    --burst 50000 --interval-ms 10000 --seconds 40 --mixed
 </code></pre>
 
                     </main>
