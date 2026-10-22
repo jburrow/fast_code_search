@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Diff impact: `fcs impact`, `POST /api/impact`, MCP `diff_impact`.**
+  Give it a diff (by default your uncommitted changes) and it lists, for
+  each function, class, method, type or constant the diff changes, the files
+  that use it, best first, with the use lines: finer than the file-level
+  `change_impact`. Functions and classes are traced through importers that
+  name them (renames followed), methods and fields by name among every
+  importer with files naming the class first. Each use is a recorded
+  `reference`, a `code` mention or a `text` mention (strings and comments).
+  On Django's 248 most recent commits that change Python, checked against Jedi, it lists 100%
+  of the files that use a changed function or class (79.5% of those it
+  lists are confirmed by Jedi), in 49 ms median per commit. No re-index is
+  needed. See the book's [Diff impact](docs/book/src/reference/impact.md)
+  page for what it misses.
+
+### Changed
+- `rdeps:` and `deps:` filters no longer read every indexed path to find
+  their file (when it is given as results print it, with or without `:N`)
+  nor copy every unresolved import to count the broken ones. On a
+  348,000-file index the filter's own cost fell from 464 ms to 0.1 ms
+  median (`examples/rdeps_timing.rs`); a partial path or a folder still
+  reads every path.
+- The server accepts request bodies up to 8 MiB (was 64 KiB), for diffs.
+
 ## [0.18.1] - 2026-10-16
 
 Small fixes to piped `fcs` paths and MCP totals. No re-index or config

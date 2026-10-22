@@ -1,12 +1,15 @@
-"""Jedi oracle for impact analysis: every use of a function, class or
-property defined in the tree, with the definition it resolves to.
+"""Jedi's answer to "which files use this definition?", for the impact
+oracle (examples/impact_oracle.rs).
 
-    python3 py_impact_oracle.py ROOT OUT.jsonl [--procs N]
+    python3 src/check/oracle/py_impact.py ROOT OUT.jsonl
 
-Same rules as src/check/oracle/py_refs.py (goto with follow_imports, import
-lines skipped, tree + stdlib sys_path), but each row also names the target:
-{"file", "line", "name", "target_file", "target_line"} (0-based lines,
-paths relative to ROOT). Rows for every target of an ambiguous goto.
+The same rules as py_refs.py (every name resolved with `goto`, following
+imports; import lines skipped; the tree and the standard library on
+sys.path), but each use also names the definition it resolves to, one JSON
+object per line: {"file", "line", "name", "target_file", "target_line"}
+(0-based lines, paths relative to ROOT). A use whose goto is ambiguous gets
+a row per target. Files or names Jedi fails on are counted in rows
+{"failed": path} / {"failed_names": n, "file": path}.
 """
 
 import json
@@ -72,35 +75,33 @@ def one(path):
 
 def uses(name, rel):
     rows = []
-    if True:
-        if name.is_definition():
-            return rows
-        node = name._name.tree_name
-        if node is not None and node.search_ancestor("import_from", "import_name") is not None:
-            return rows
-        targets = name.goto(follow_imports=True, follow_builtin_imports=False)
-        for t in targets:
-            if t.type not in ("function", "class", "property") or t.module_path is None:
-                continue
-            tp = os.path.realpath(str(t.module_path))
-            if not tp.startswith(ROOT + os.sep) or t.line is None:
-                continue
-            rows.append(
-                {
-                    "file": rel,
-                    "line": name.line - 1,
-                    "name": name.name,
-                    "target_file": os.path.relpath(tp, ROOT),
-                    "target_line": t.line - 1,
-                }
-            )
+    if name.is_definition():
+        return rows
+    node = name._name.tree_name
+    if node is not None and node.search_ancestor("import_from", "import_name") is not None:
+        return rows
+    for t in name.goto(follow_imports=True, follow_builtin_imports=False):
+        if t.type not in ("function", "class", "property") or t.module_path is None:
+            continue
+        tp = os.path.realpath(str(t.module_path))
+        if not tp.startswith(ROOT + os.sep) or t.line is None:
+            continue
+        rows.append(
+            {
+                "file": rel,
+                "line": name.line - 1,
+                "name": name.name,
+                "target_file": os.path.relpath(tp, ROOT),
+                "target_line": t.line - 1,
+            }
+        )
     return rows
 
 
 def main():
     root = os.path.realpath(sys.argv[1])
     out = sys.argv[2]
-    procs = int(sys.argv[4]) if len(sys.argv) > 4 else os.cpu_count()
+    procs = os.cpu_count()
     files = list(py_files(root))
     n = 0
     with Pool(procs, initializer=init, initargs=(root,), maxtasksperchild=50) as pool, open(out, "w") as fh:

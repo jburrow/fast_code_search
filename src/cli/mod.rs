@@ -37,7 +37,7 @@ pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 /// Subcommands `fcs` understands; anything else on the command line is a
 /// search query (see [`normalize_args`]).
 pub const SUBCOMMANDS: &[&str] = &[
-    "search", "refs", "symbols", "status", "mcp", "check", "help",
+    "search", "refs", "symbols", "impact", "status", "mcp", "check", "help",
 ];
 
 #[derive(Parser, Debug)]
@@ -57,6 +57,7 @@ pub const SUBCOMMANDS: &[&str] = &[
                   fcs -e 'fn\\s+\\w+\\(' -g '*.rs'  regex, Rust files only\n  \
                   fcs refs SearchEngine         call sites and type mentions\n  \
                   fcs symbols parse_query       definitions only\n  \
+                  fcs impact                    files that use what your uncommitted changes touch\n  \
                   fcs -l TODO | xargs $EDITOR   files containing TODO\n  \
                   vim -q <(fcs --format vimgrep TODO)\n  \
                   fcs status                    is the server up, what does it hold\n  \
@@ -81,6 +82,9 @@ pub enum Command {
     Refs(SearchArgs),
     /// Search symbol definitions (functions, types, classes, ...) only
     Symbols(SearchArgs),
+    /// The files that use each function, class, method or constant a diff
+    /// changes (default: your uncommitted changes, `git diff HEAD`)
+    Impact(ImpactArgs),
     /// Show whether the server is reachable and what it has indexed
     Status,
     /// Serve MCP over stdio by relaying to the server's /mcp endpoint (for
@@ -114,6 +118,32 @@ pub struct CheckArgs {
     /// Skip the dependency graph check
     #[arg(long)]
     pub no_graph: bool,
+}
+
+/// `fcs impact`.
+#[derive(Args, Debug, Clone, Default)]
+pub struct ImpactArgs {
+    /// Revisions to diff, as `git diff` takes them: none for uncommitted
+    /// changes (against HEAD), `REV` for REV to the working tree, `A..B`
+    /// or `A B` between commits (the index must hold one of the two sides)
+    #[arg(value_name = "REV")]
+    pub revs: Vec<String>,
+    /// Only staged changes (`git diff --cached`)
+    #[arg(long, conflicts_with = "diff")]
+    pub staged: bool,
+    /// Read the diff from this file (`-` for stdin) instead of running git
+    #[arg(long, value_name = "FILE", conflicts_with = "revs")]
+    pub diff: Option<PathBuf>,
+    /// Files listed per changed symbol (0 = all)
+    #[arg(short = 'n', long = "max-files", default_value_t = crate::search::engine::DEFAULT_IMPACT_FILES, value_name = "N")]
+    pub max_files: usize,
+    /// Use lines listed per file (0 = all)
+    #[arg(long = "lines", default_value_t = crate::search::engine::DEFAULT_IMPACT_LINES, value_name = "N")]
+    pub max_lines: usize,
+    /// Folder the diff's paths are relative to (default: the Git
+    /// repository's top folder)
+    #[arg(long, value_name = "DIR")]
+    pub root: Option<PathBuf>,
 }
 
 /// How to reach the index.
@@ -769,16 +799,21 @@ impl Session {
         Ok(engine)
     }
 
+    /// The on-disk index, loaded on first use.
+    fn offline_engine(&self) -> Result<&crate::search::SearchEngine> {
+        match self.offline_engine.get() {
+            Some(e) => Ok(e),
+            None => {
+                let e = self.load_offline_engine()?;
+                Ok(self.offline_engine.get_or_init(|| e))
+            }
+        }
+    }
+
     fn search_offline(&self, req: &SearchRequest) -> Result<SearchResponse> {
         use crate::search::RankMode;
 
-        let engine = match self.offline_engine.get() {
-            Some(e) => e,
-            None => {
-                let e = self.load_offline_engine()?;
-                self.offline_engine.get_or_init(|| e)
-            }
-        };
+        let engine = self.offline_engine()?;
 
         let mode = match req.mode {
             Mode::References => crate::search::SearchMode::References,
@@ -856,6 +891,58 @@ impl Session {
                 .as_deref()
                 .map(crate::web::ScopeJson::from_scope),
         })
+    }
+
+    /// Run an impact analysis on the server, or offline.
+    pub fn impact(
+        &self,
+        req: &crate::web::DiffImpactRequest,
+    ) -> Result<crate::search::ImpactReport> {
+        let offline = |s: &Self| -> Result<crate::search::ImpactReport> {
+            s.offline_engine()?
+                .impact(&req.diff, &req.options())
+                .map_err(|e| anyhow!(e))
+        };
+        if self.conn.offline {
+            return offline(self);
+        }
+        let client = self.client(0)?;
+        let url = format!("{}/api/impact", self.server);
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let resp = match client.post(&url).json(req).send() {
+                Ok(r) => r,
+                Err(e) if e.is_connect() => {
+                    if !self.conn.no_offline && self.index_path().is_some() {
+                        self.note(&format!(
+                            "server not reachable at {} ({e}); using the on-disk index (may be stale)",
+                            self.server
+                        ));
+                        return offline(self);
+                    }
+                    return Err(unreachable_error(&self.server, &e.to_string()));
+                }
+                Err(e) => bail!("request failed: {e}"),
+            };
+            let status = resp.status();
+            if status.as_u16() == 503 && attempt < 3 {
+                std::thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+            let body = resp.text().context("reading response")?;
+            if !status.is_success() {
+                let msg = serde_json::from_str::<ErrorResponse>(&body)
+                    .map(|e| e.error)
+                    .unwrap_or_else(|_| body.trim().to_string());
+                if status.as_u16() == 404 || status.as_u16() == 405 {
+                    bail!("the server at {} has no impact analysis (older than fcs; restart it with this version)", self.server);
+                }
+                bail!("server answered {status}: {msg}");
+            }
+            return serde_json::from_str(&body)
+                .map_err(|e| anyhow!("unexpected response from {url}: {e}"));
+        }
     }
 
     /// `fcs status`: server health and index size, or the offline picture.
@@ -1003,6 +1090,7 @@ fn run(cli: Cli) -> Result<i32> {
             return Ok(0);
         }
         Command::Check(a) => return check(&session, &a),
+        Command::Impact(a) => return impact(&session, &a),
         Command::Search(a) => (a, Mode::Text),
         Command::Refs(a) => (a, Mode::References),
         Command::Symbols(a) => (a, Mode::Symbols),
@@ -1066,6 +1154,111 @@ fn run(cli: Cli) -> Result<i32> {
     } else {
         0
     })
+}
+
+/// Run `git` in the current folder and return its stdout.
+fn git(args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .output()
+        .context("running git (pass the diff with --diff FILE when git is not available)")?;
+    if !out.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The diff `fcs impact` analyses, and the folder its paths are relative to.
+fn impact_diff(args: &ImpactArgs) -> Result<(String, Option<PathBuf>)> {
+    let toplevel = || {
+        git(&["rev-parse", "--show-toplevel"])
+            .ok()
+            .map(|s| PathBuf::from(s.trim()))
+    };
+    if let Some(file) = &args.diff {
+        let text = if file.as_os_str() == "-" {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                .context("reading the diff from stdin")?;
+            s
+        } else {
+            std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?
+        };
+        return Ok((text, args.root.clone().or_else(toplevel)));
+    }
+    let root = args.root.clone().or_else(toplevel).ok_or_else(|| {
+        anyhow!(
+            "not in a Git repository: run fcs impact inside one, or pass the diff with --diff FILE"
+        )
+    })?;
+    let root_s = root.to_string_lossy().into_owned();
+    // Plain unified diff with repository-relative paths, whatever the
+    // user's git configuration says.
+    let mut cmd: Vec<&str> = vec![
+        "-C",
+        &root_s,
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-renames",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+    ];
+    if args.staged {
+        cmd.push("--cached");
+    }
+    if args.revs.is_empty() && !args.staged {
+        cmd.push("HEAD");
+    }
+    cmd.extend(args.revs.iter().map(String::as_str));
+    Ok((git(&cmd)?, Some(root)))
+}
+
+/// `fcs impact`: exit 0 when something uses the changed code, 1 when
+/// nothing does (or nothing changed), 2 on error.
+fn impact(session: &Session, args: &ImpactArgs) -> Result<i32> {
+    let (diff, root) = impact_diff(args)?;
+    if diff.trim().is_empty() {
+        session.note("no changes to analyse");
+        return Ok(1);
+    }
+    let req = crate::web::DiffImpactRequest {
+        diff,
+        root: root.map(|r| r.to_string_lossy().into_owned()),
+        max_files: Some(args.max_files),
+        max_lines: Some(args.max_lines),
+    };
+    let report = session.impact(&req)?;
+    let mapper = session.path_mapper();
+    let text = match session.format {
+        Format::Json => serde_json::to_string_pretty(&report)? + "\n",
+        Format::Vimgrep => crate::impact::report::vimgrep(&report, &*mapper),
+        Format::Grouped => crate::impact::report::grouped(&report, &*mapper, session.style.color),
+    };
+    let mut stdout = std::io::stdout().lock();
+    if let Err(e) = stdout
+        .write_all(text.as_bytes())
+        .and_then(|_| stdout.flush())
+    {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(0);
+        }
+        return Err(e.into());
+    }
+    if session.format != Format::Json {
+        // Piped output is only use lines: the caps and gaps go to stderr.
+        if session.format == Format::Vimgrep {
+            for n in crate::impact::report::caps(&report) {
+                session.note(&n);
+            }
+        }
+        session.note(&crate::impact::report::summary(&report));
+    }
+    Ok(if report.total_files == 0 { 1 } else { 0 })
 }
 
 /// Path matches listed above the hits in grouped output.
@@ -1178,6 +1371,29 @@ mod tests {
         };
         let req = SearchRequest::from_args(&args, Mode::Symbols);
         assert!(req.to_params().contains(&("symbols", "true".to_string())));
+    }
+
+    #[test]
+    fn impact_takes_revisions_or_a_diff_file() {
+        let cli =
+            Cli::try_parse_from(normalize_args(os(&["fcs", "--json", "impact", "main"]))).unwrap();
+        let Command::Impact(a) = cli.command else {
+            panic!()
+        };
+        assert_eq!(a.revs, ["main"]);
+        assert_eq!(a.max_files, crate::search::engine::DEFAULT_IMPACT_FILES);
+        assert!(cli.output.json);
+        let cli = Cli::try_parse_from(os(&[
+            "fcs", "impact", "--diff", "-", "-n", "0", "--lines", "1",
+        ]))
+        .unwrap();
+        let Command::Impact(a) = cli.command else {
+            panic!()
+        };
+        assert_eq!(a.diff.as_deref(), Some(Path::new("-")));
+        assert_eq!((a.max_files, a.max_lines), (0, 1));
+        // A diff file and revisions are two different inputs.
+        assert!(Cli::try_parse_from(os(&["fcs", "impact", "--diff", "x", "HEAD"])).is_err());
     }
 
     #[test]

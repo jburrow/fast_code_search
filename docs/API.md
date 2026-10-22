@@ -19,6 +19,7 @@ when the request timeout is hit.
 | `GET /api/file?file=…` | Full content of an indexed file |
 | `GET /api/context?file=…&line=N&context=K` | Lines around a match (K ≤ 200) |
 | `GET /api/dependents?file=…` / `GET /api/dependencies?file=…` | Files that import this file / files it imports |
+| `POST /api/impact` | The files that use each symbol a diff changes. See [Diff impact](#post-apiimpact) |
 | `POST /mcp` | Model Context Protocol for coding agents. See [MCP](#mcp-coding-agents) |
 | `GET /api/graph/…` | The import graph: neighbourhoods, impact, import chains, the folder map. See [Import graph](#import-graph) |
 | `GET /api/stats` | Index statistics (files, trigrams, dependency edges, content bytes) |
@@ -199,6 +200,42 @@ edge, so it is left out too.
 Imports are resolved for Rust (`crate::`, `self::`, `super::`, sibling
 modules and the crate's own name), Python and JavaScript/TypeScript.
 
+### `POST /api/impact`
+
+For each function, class, method, type or constant a unified diff changes,
+the files that use it. The body is JSON:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `diff` | required | A unified diff, as `git diff` prints it (8 MiB at most) |
+| `root` | none | The folder the diff's paths are relative to, on the server's machine. Without it, paths are matched as display paths, then as unique path suffixes |
+| `max_files` | 200 | Files listed per changed symbol (0 = all) |
+| `max_lines` | 3 | Use lines listed per file (0 = all) |
+
+The response:
+
+- `files`: each file in the diff, with `status` (`modified`, `added`,
+  `deleted`, `renamed`), the `indexed_path` it was matched to, how many
+  changed `symbols` it holds, `module_lines` (changed lines outside every
+  definition, not traced) and a `note` when it was not analysed (not
+  indexed, or the indexed copy matches neither side of the diff).
+- `symbols`: per changed symbol, `name`, `qualname` (`Class.method`),
+  `kind` (`function`, `class`, `type`, `constant`, `method`, `field`),
+  `change` (`added`, `modified`, `removed`), `signature` (a changed line is
+  in its signature), `line`, the `names` searched (renames found are added),
+  `scope` (`importers`, `all_importers` for members, `repository` for a
+  language without an import graph, `none`), `total_files`, `tiers`
+  (`reference`, `code`, `text` file counts), `users` and `notes`.
+- Each user: `path`, `tier` (its best line's), `names_owner` (members: the
+  file also names the class), `in_diff`, `test`, `lines` (`line`, `column`,
+  `text`, `tier`, and the reference `kind`) and `total_lines`.
+- `total_files`: the distinct files using any changed symbol; `notes`.
+
+Totals count every file found; `users` and `lines` are capped by
+`max_files` and `max_lines`, and a capped symbol has a note saying so. A
+body that holds no file changes is a 400. The method, what it misses and
+its measured accuracy: [Diff impact](book/src/reference/impact.md).
+
 ## MCP (coding agents)
 
 The web server also speaks the [Model Context Protocol](https://modelcontextprotocol.io)
@@ -224,6 +261,7 @@ to the same endpoint (it finds the server like every `fcs` command:
 | `read_file` | `path`, `start_line`, `end_line` | Numbered lines, 200 by default and at most 1,000 (`mcp.read_file_lines` / `mcp.max_read_file_lines`), with how to continue |
 | `file_dependencies` | `path`, `direction` (`in`, `out`, `both`), `depth` (1–4), `limit` | Files it imports and files importing it, by distance, with the line of each direct import |
 | `change_impact` | `paths` (one or more), `limit` | Every file that transitively imports any of them, nearest first, split into tests and other code |
+| `diff_impact` | `diff` (unified diff), `root` (optional), `max_files` (default 50, 0 = all), `max_lines` (default 2) | For each symbol the diff changes, the files that use it, best first, with use lines and tiers. See [`POST /api/impact`](#post-apiimpact) |
 | `import_path` | `from`, `to` | The shortest chain of imports between two files, either way round |
 | `dependency_overview` | `directory` (optional), `limit` | The most connected folders, the heaviest folder-to-folder imports, folder cycles and hub files |
 | `index_status` | `paths` (optional, at most 100) | When the index last synced with disk and whether file watching is on, plus, for each path, whether it is current, stale, not indexed yet or deleted. See [Index freshness](#index-freshness) |
@@ -244,6 +282,9 @@ server through the visitor's browser. Like the REST API, `/mcp` has no
 authentication: anyone who can reach the web port can read the index.
 
 ## gRPC
+
+gRPC has no diff impact call; use `POST /api/impact`, MCP `diff_impact` or
+`fcs impact`.
 
 The schema is [`proto/search.proto`](../proto/search.proto): `Search`
 streams `SearchResult` messages with the same fields and modes as REST

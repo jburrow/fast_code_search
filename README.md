@@ -83,6 +83,7 @@ fcs 'fn main'                                                            # from 
 fcs -e 'fn\s+\w+\(' -g '*.rs' -C 2    # regex, Rust files only, two lines of context
 fcs refs helper                       # references; `fcs symbols helper` for definitions
 fcs -l TODO | xargs $EDITOR           # files only
+fcs impact                            # files that use the functions and classes your diff changes
 vim -q <(fcs --format vimgrep TODO)   # quickfix list; exit codes follow grep (0 / 1 / 2)
 ```
 
@@ -115,6 +116,7 @@ What an agent can then answer, and the tool it uses:
 | read source with line numbers it can cite | `read_file` |
 | know what a file depends on, and what depends on it | `file_dependencies` |
 | check what a change could break, and which tests cover it, before editing | `change_impact` |
+| find the code that uses the functions and classes its diff changes | `diff_impact` |
 | understand how two files are connected | `import_path` |
 | get oriented in an unfamiliar repository: main folders, hubs, cycles | `dependency_overview` |
 | check whether files it just wrote are indexed yet (when file watching is off) | `index_status` |

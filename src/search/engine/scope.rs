@@ -7,11 +7,11 @@
 
 use super::SearchEngine;
 use crate::dependencies::graph::Direction;
-use crate::dependencies::is_local_spec;
 use crate::dependencies::scope::has_import_graph;
 use crate::search::query_syntax::{GraphDirection, GraphFilter};
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
+use std::path::Path;
 
 /// Most hops `:N` may ask for (`:*` has no limit).
 pub const MAX_SCOPE_HOPS: u32 = 10;
@@ -144,13 +144,7 @@ impl SearchEngine {
             scope.hops = hops;
         }
         if scope.include.is_some() {
-            scope.unresolved_local = self
-                .waiting_imports_by_file()
-                .iter()
-                .filter(|(id, _, _)| scope.allows(*id))
-                .flat_map(|(_, _, specs)| specs)
-                .filter(|s| is_local_spec(s))
-                .count();
+            scope.unresolved_local = self.local_unresolved_where(|id| scope.allows(id));
         }
         Ok(Some(scope))
     }
@@ -222,7 +216,27 @@ impl SearchEngine {
         let op = format!("{}{}:", if f.negate { "-" } else { "" }, f.direction.name());
         let arg = f.arg.replace('\\', "/");
         let arg = arg.trim_start_matches("./");
-        if let Some(found) = self.anchor_files(arg, &op)? {
+        // A path as results print it (with or without `:N`) is found by
+        // lookup; only a partial path or a folder reads every indexed path.
+        if let Some(found) = self.anchor_files(arg, &op, false)? {
+            return Ok((found, Some(1), arg.to_string()));
+        }
+        if let Some((path, hops)) = arg.rsplit_once(':') {
+            let max_hops = match hops {
+                "*" => Some(None),
+                n => n
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| (1..=MAX_SCOPE_HOPS).contains(n))
+                    .map(Some),
+            };
+            if let Some(max_hops) = max_hops {
+                if let Some(found) = self.anchor_files(path, &op, false)? {
+                    return Ok((found, max_hops, path.to_string()));
+                }
+            }
+        }
+        if let Some(found) = self.anchor_files(arg, &op, true)? {
             return Ok((found, Some(1), arg.to_string()));
         }
         // Not a file as written: try a trailing `:N` / `:*`.
@@ -239,7 +253,7 @@ impl SearchEngine {
                     Err(_) => return Err(format!("{op}{arg}: no indexed file matches {arg}")),
                 },
             };
-            if let Some(found) = self.anchor_files(path, &op)? {
+            if let Some(found) = self.anchor_files(path, &op, true)? {
                 return Ok((found, max_hops, path.to_string()));
             }
             return Err(format!("{op}{arg}: no indexed file matches {path}"));
@@ -249,8 +263,9 @@ impl SearchEngine {
 
     /// Files `path` names: a folder (trailing `/`) is every file under it;
     /// a file is the exact path, else the one file whose path ends with it.
-    /// `Ok(None)` when nothing matches.
-    fn anchor_files(&self, path: &str, op: &str) -> Result<Option<Vec<u32>>, String> {
+    /// `Ok(None)` when nothing matches. Without `scan`, only an exact
+    /// lookup of a display or absolute path is tried.
+    fn anchor_files(&self, path: &str, op: &str, scan: bool) -> Result<Option<Vec<u32>>, String> {
         if path.is_empty() || path == "/" {
             return Ok(None);
         }
@@ -258,7 +273,28 @@ impl SearchEngine {
         let suffix = format!("/{path}");
         let mut exact = Vec::new();
         let mut partial = Vec::new();
-        for id in 0..self.file_store.len() as u32 {
+        // A path as results print it, or an absolute one, is found without
+        // reading every path in the index (milliseconds at a million files).
+        if !folder {
+            let found = if Path::new(path).is_absolute() {
+                self.find_file_id_exact(Path::new(path))
+            } else {
+                self.find_by_display_path(path)
+            };
+            if let (Some(id), Some(file)) = (found, found.and_then(|id| self.file_store.get(id))) {
+                let shown = self
+                    .display_path(id)
+                    .map(|p| p.into_owned())
+                    .unwrap_or_default();
+                exact.push((id, shown, has_import_graph(&file.path)));
+            }
+        }
+        let upto = if scan && exact.is_empty() {
+            self.file_store.len() as u32
+        } else {
+            0
+        };
+        for id in 0..upto {
             let Some(file) = self.file_store.get(id) else {
                 continue;
             };

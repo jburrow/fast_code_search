@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 mod freshness;
+mod impact;
 mod paths;
 mod persist;
 mod progress;
@@ -24,6 +25,10 @@ mod scope;
 mod text;
 
 pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness};
+pub use impact::{
+    ImpactFileSummary, ImpactOptions, ImpactReport, ImpactScope, SymbolImpact, TierCounts, UseLine,
+    UseTier, UserFile, DEFAULT_IMPACT_FILES, DEFAULT_IMPACT_LINES, MAX_IMPACT_SYMBOLS,
+};
 pub use paths::{PathMatch, PathQuery, PathSearch};
 pub use progress::*;
 pub use scope::{GraphScope, MAX_SCOPE_HOPS};
@@ -1155,6 +1160,10 @@ pub struct SearchEngine {
     /// segment to indices into this Vec.
     waiting_imports: Vec<Option<(u32, std::path::PathBuf, String)>>,
     waiting_keys: FxHashMap<String, Vec<usize>>,
+    /// Indices into `waiting_imports` of imports written as project paths
+    /// (`./x`, `crate::x`): the few that point at a broken import, counted
+    /// per `rdeps:`/`deps:` scope without reading every parked import.
+    waiting_local: Vec<usize>,
     /// Every import of every file, as written, by file id. The graph's
     /// edges are a function of these and of which files exist; keeping
     /// them lets a change recompute exactly the importers it can affect, so
@@ -1224,6 +1233,7 @@ impl SearchEngine {
             pending_imports: Vec::new(),
             waiting_imports: Vec::new(),
             waiting_keys: FxHashMap::default(),
+            waiting_local: Vec::new(),
             import_specs: FxHashMap::default(),
             spec_keys: FxHashMap::default(),
             dirty_importers: FxHashSet::default(),
@@ -1750,6 +1760,9 @@ impl SearchEngine {
     fn park_import(&mut self, file_id: u32, path: std::path::PathBuf, import: String) {
         let keys = Self::import_keys(&import);
         let idx = self.waiting_imports.len();
+        if crate::dependencies::is_local_spec(&import) {
+            self.waiting_local.push(idx);
+        }
         self.waiting_imports.push(Some((file_id, path, import)));
         for key in keys {
             self.waiting_keys.entry(key).or_default().push(idx);
@@ -1826,6 +1839,7 @@ impl SearchEngine {
         let live: Vec<(u32, std::path::PathBuf, String)> =
             self.waiting_imports.drain(..).flatten().collect();
         self.waiting_keys.clear();
+        self.waiting_local.clear();
         for (id, path, import) in live {
             self.park_import(id, path, import);
         }
