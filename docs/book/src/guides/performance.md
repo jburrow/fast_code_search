@@ -56,9 +56,12 @@ and restrict `include_extensions`.
 
 ## Incremental updates
 
-The watcher coalesces events for two seconds and applies a batch under one
-write lock: deletes in one pass over the posting lists, modified files
-stripped in one pass and re-read in parallel. On Linux one inotify watch is
+The watcher gathers events for up to two seconds, reads and parses the
+changed files in parallel without the write lock, and installs them in
+steps of at most 512 files. Each step takes the write lock in a moment when
+no search holds it, so a long search never makes the others wait for the
+watcher; while changes are still to be applied, searches say how many (see
+[Incremental indexing](../how-it-works/incremental.md)). On Linux one inotify watch is
 installed per kept directory; excluded trees get none. If the limit is
 hit the log says so; raise it with
 `sysctl fs.inotify.max_user_watches=524288`.

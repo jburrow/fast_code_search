@@ -114,13 +114,11 @@ impl CodeSearchService {
     }
 }
 
-/// Take the engine write lock, recovering from poison (every writer is
-/// panic-guarded, so poison only means another thread panicked).
+/// Take the engine write lock without stopping running searches (see
+/// [`crate::search::engine_lock::write`]), recovering from poison (every
+/// writer is panic-guarded, so poison only means another thread panicked).
 fn write_engine(engine: &RwLock<SearchEngine>) -> std::sync::RwLockWriteGuard<'_, SearchEngine> {
-    engine.write().unwrap_or_else(|poisoned| {
-        warn!("Search engine lock poisoned during Index RPC; recovering");
-        poisoned.into_inner()
-    })
+    crate::search::engine_lock::write(engine)
 }
 
 impl Default for CodeSearchService {

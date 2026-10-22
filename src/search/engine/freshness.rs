@@ -7,6 +7,8 @@
 
 use super::*;
 use crate::index::persistence::mtime_secs_of;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// When the index last matched the disk, and whether a watcher keeps it so.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -20,15 +22,48 @@ pub struct IndexFreshness {
     /// When the watcher last changed the index (Unix millis).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at_ms: Option<u64>,
+    /// File changes the watcher has seen and not applied yet: searches do
+    /// not see them until it has (a branch switch can leave thousands).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pending_changes: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// The changes a file watcher has seen and not applied yet. Counters, not
+/// engine state: the watcher updates them without the engine lock, so a
+/// search reports the backlog as it is while the watcher waits to install.
+#[derive(Debug, Clone, Default)]
+pub struct WatchBacklog {
+    /// Events queued by the watcher and not picked up yet (shared with
+    /// [`crate::search::FileWatcher`]).
+    pub queued: Arc<AtomicUsize>,
+    /// Changes picked up and not installed yet.
+    pub applying: Arc<AtomicUsize>,
+}
+
+impl WatchBacklog {
+    /// Changes seen and not applied yet.
+    pub fn pending(&self) -> usize {
+        self.queued.load(Ordering::Acquire) + self.applying.load(Ordering::Acquire)
+    }
 }
 
 impl IndexFreshness {
     /// One line warning that results may miss recent writes, or `None` while
     /// a watcher keeps the index current or no scan has completed (an engine
     /// built in-process, or the first build, which progress already reports).
+    /// With a watcher, it names the changes the watcher has not applied yet.
     pub fn note(&self, now_ms: u64) -> Option<String> {
         if self.watching {
-            return None;
+            return (self.pending_changes > 0).then(|| {
+                format!(
+                    "The file watcher is still applying {}; results may not include them yet.",
+                    changes(self.pending_changes)
+                )
+            });
         }
         let at = self.synced_at_ms?;
         Some(format!(
@@ -56,11 +91,21 @@ impl IndexFreshness {
             ),
             _ => String::new(),
         };
+        let pending = if self.watching && self.pending_changes > 0 {
+            format!(", {} still to apply", changes(self.pending_changes))
+        } else {
+            String::new()
+        };
         format!(
-            "index {synced}, file watching {}{updated}",
+            "index {synced}, file watching {}{updated}{pending}",
             if self.watching { "on" } else { "off" }
         )
     }
+}
+
+/// "1 file change", "2000 file changes".
+fn changes(n: usize) -> String {
+    format!("{n} file change{}", if n == 1 { "" } else { "s" })
 }
 
 /// Whether one path's indexed content still matches the file on disk.
@@ -106,6 +151,11 @@ impl SearchEngine {
             watching: self.watching,
             synced_at_ms: self.synced_at_ms,
             updated_at_ms: self.updated_at_ms,
+            pending_changes: if self.watching {
+                self.watch_backlog.pending()
+            } else {
+                0
+            },
         }
     }
 
@@ -202,8 +252,34 @@ mod tests {
             watching: true,
             synced_at_ms: Some(0),
             updated_at_ms: None,
+            pending_changes: 0,
         };
         assert_eq!(f.note(1_000_000), None);
+    }
+
+    #[test]
+    fn note_reports_changes_the_watcher_has_not_applied() {
+        let f = IndexFreshness {
+            watching: true,
+            synced_at_ms: Some(0),
+            updated_at_ms: None,
+            pending_changes: 2_500,
+        };
+        let note = f.note(1_000_000).unwrap();
+        assert!(note.contains("2500 file changes"), "{note}");
+        assert!(f
+            .summary(1_000_000)
+            .contains("2500 file changes still to apply"));
+    }
+
+    #[test]
+    fn freshness_counts_queued_and_applying_changes_while_watching() {
+        let mut engine = SearchEngine::new();
+        engine.watch_backlog.queued.store(3, Ordering::Release);
+        engine.watch_backlog.applying.store(4, Ordering::Release);
+        assert_eq!(engine.freshness().pending_changes, 0, "not watching");
+        engine.watching = true;
+        assert_eq!(engine.freshness().pending_changes, 7);
     }
 
     #[test]
@@ -213,6 +289,7 @@ mod tests {
             watching: false,
             synced_at_ms: Some(at),
             updated_at_ms: None,
+            pending_changes: 0,
         };
         let note = f.note(at + 6 * 60_000).unwrap();
         assert!(note.contains("6 min ago"), "{note}");
