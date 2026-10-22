@@ -418,6 +418,54 @@ pub async fn impact_handler(
     .await
 }
 
+// ----------------------------------------------------------- diff impact
+
+/// `POST /api/impact` body.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiffImpactRequest {
+    /// A unified diff (`git diff`).
+    pub diff: String,
+    /// Folder the diff's paths are relative to (the repository root on the
+    /// server's machine). Without it, paths are matched to indexed files by
+    /// display path, then by unique suffix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// Files listed per changed symbol (0 = all; default 200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_files: Option<usize>,
+    /// Use lines listed per file (0 = all; default 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lines: Option<usize>,
+}
+
+impl DiffImpactRequest {
+    pub fn options(&self) -> crate::search::ImpactOptions {
+        let d = crate::search::ImpactOptions::default();
+        crate::search::ImpactOptions {
+            root: self
+                .root
+                .as_deref()
+                .filter(|r| !r.is_empty())
+                .map(Into::into),
+            max_files: self.max_files.unwrap_or(d.max_files),
+            max_lines: self.max_lines.unwrap_or(d.max_lines),
+        }
+    }
+}
+
+/// `POST /api/impact`: the files that use each symbol a diff changes.
+pub async fn diff_impact_handler(
+    State(state): State<WebState>,
+    Json(req): Json<DiffImpactRequest>,
+) -> Result<Json<crate::search::ImpactReport>, ApiError> {
+    blocking(state, move |_, engine| {
+        engine
+            .impact(&req.diff, &req.options())
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))
+    })
+    .await
+}
+
 // ------------------------------------------------------------------ path
 
 #[derive(Debug, Deserialize)]

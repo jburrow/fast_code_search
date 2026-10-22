@@ -13,6 +13,7 @@ fcs -- -Wall                     # a query starting with - goes after --
 fcs -e 'fn\s+\w+\(' -g '*.rs'    # regex, Rust files only
 fcs refs SearchEngine            # call sites and type mentions of an identifier
 fcs symbols parse_query          # definitions only
+fcs impact                       # files that use what your uncommitted changes touch
 fcs -l TODO | xargs $EDITOR      # files containing TODO
 vim -q <(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
@@ -115,6 +116,30 @@ result carries `line_number`, `match_column`, `line_match_start` /
 - **VS Code**: run `fcs` in the integrated terminal; `path:line:col` output
   is clickable. With `--absolute` the links work from any working directory.
 - **fzf**: `fcs -l QUERY | fzf | xargs $EDITOR`.
+
+## Diff impact
+
+`fcs impact` lists, for each function, class, method, type or constant a
+diff changes, the files that use it, best first, with the use lines:
+
+```bash
+fcs impact                     # uncommitted changes (git diff HEAD)
+fcs impact --staged            # staged changes only
+fcs impact main                # main to the working tree
+fcs impact --diff change.patch # a diff from anywhere (- for stdin)
+vim -q <(fcs impact --format vimgrep)
+```
+
+It runs `git diff` in the current repository (so it needs `git`, unless
+`--diff` is given) and sends the diff to the server's `POST /api/impact`, or
+analyses it offline like a search. `-n N` caps the files listed per changed
+symbol (default 200, 0 = all), `--lines N` the use lines per file (default
+3). Each file is a `reference`, `code` or `text` (strings and comments
+only) use; totals always count every file found, and a capped list says so.
+Piped, only the use lines are printed, with the caps and gaps on stderr.
+Exit status: 0 when something uses the changed code, 1 when nothing does.
+How it works, what it misses and how accurate it is:
+[Diff impact](book/src/reference/impact.md).
 
 ## MCP for coding agents
 

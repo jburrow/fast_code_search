@@ -191,6 +191,7 @@ impl SearchEngine {
         self.pending_imports.clear();
         self.waiting_imports.clear();
         self.waiting_keys.clear();
+        self.waiting_local.clear();
         self.import_specs.clear();
         self.spec_keys.clear();
         self.dirty_importers.clear();

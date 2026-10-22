@@ -2,6 +2,7 @@
 
 mod api;
 mod graph;
+pub use graph::DiffImpactRequest;
 mod mcp;
 pub mod metrics;
 
@@ -122,6 +123,10 @@ pub fn ui_config_response(ui: &UiSettings) -> Response<Body> {
 }
 
 /// Knobs for [`create_router_with_options`].
+/// Largest request body (a diff for `POST /api/impact` or MCP
+/// `diff_impact`): 8 MiB.
+pub const MAX_DIFF_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct RouterOptions {
     /// CORS origins (`"*"` = any; empty = same-origin only).
@@ -130,8 +135,8 @@ pub struct RouterOptions {
     pub max_concurrent_searches: usize,
     /// Whole-request timeout.
     pub request_timeout: std::time::Duration,
-    /// Maximum request body size in bytes (the API is GET-only; this just
-    /// closes the door on oversized bodies).
+    /// Maximum request body size in bytes. Only `POST /api/impact` and
+    /// `/mcp` take a body; a diff is the largest thing either carries.
     pub body_limit: usize,
     /// Indexer configuration to report on `/api/diagnostics`.
     pub indexer_config: Option<crate::config::IndexerConfig>,
@@ -153,7 +158,7 @@ impl Default for RouterOptions {
             cors_origins: Vec::new(),
             max_concurrent_searches: 64,
             request_timeout: std::time::Duration::from_secs(30),
-            body_limit: 64 * 1024,
+            body_limit: MAX_DIFF_BYTES,
             indexer_config: None,
             search_permits: None,
             search_settings: crate::search::SearchSettings::default(),
@@ -248,6 +253,10 @@ pub fn create_router_with_options(
         .route("/api/dependencies", get(api::dependencies_handler))
         .route("/api/graph/neighborhood", get(graph::neighborhood_handler))
         .route("/api/graph/impact", get(graph::impact_handler))
+        .route(
+            "/api/impact",
+            axum::routing::post(graph::diff_impact_handler),
+        )
         .route("/api/graph/path", get(graph::path_handler))
         .route("/api/graph/modules", get(graph::modules_handler))
         .route("/api/graph/imports", get(graph::imports_handler))

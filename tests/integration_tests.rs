@@ -4171,6 +4171,7 @@ async fn test_mcp_handshake_and_tool_list() -> Result<()> {
             "read_file",
             "file_dependencies",
             "change_impact",
+            "diff_impact",
             "import_path",
             "dependency_overview",
             "index_status"
@@ -4343,6 +4344,100 @@ async fn test_mcp_tools_answer_from_the_index() -> Result<()> {
     let (err, text) = mcp_tool(&base, "read_file", serde_json::json!({"path": "nope.py"})).await?;
     assert!(err);
     assert!(text.contains("not found"), "{text}");
+    Ok(())
+}
+
+/// `POST /api/impact` and MCP `diff_impact`: a diff to `pkg/util.py`'s
+/// `helper` lists the file that calls it, not the one that only imports
+/// the module.
+#[tokio::test]
+async fn test_diff_impact_over_rest_and_mcp() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let files = [
+        ("pkg/__init__.py", ""),
+        (
+            "pkg/util.py",
+            "def helper():\n    return 2\n\n\ndef other():\n    return 0\n",
+        ),
+        (
+            "pkg/service.py",
+            "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
+        ),
+        ("pkg/api.py", "import pkg.util\n\nX = pkg.util.other()\n"),
+        (
+            "tests/test_service.py",
+            "# helper is tested through run\nfrom pkg.service import run\n",
+        ),
+    ];
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    {
+        let mut eng = engine.write().unwrap();
+        for (rel, content) in files {
+            let path = temp_dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(&path, content)?;
+            eng.index_file(path)?;
+        }
+        eng.resolve_imports();
+    }
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let router = create_router(engine, progress, create_progress_broadcaster(), None);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let base = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("HTTP server failed");
+    });
+    let diff = "diff --git a/pkg/util.py b/pkg/util.py\n--- a/pkg/util.py\n+++ b/pkg/util.py\n@@ -1,2 +1,2 @@\n def helper():\n-    return 1\n+    return 2\n";
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/impact"))
+        .json(&serde_json::json!({ "diff": diff }))
+        .send()
+        .await?;
+    assert!(response.status().is_success(), "{}", response.status());
+    let report: serde_json::Value = response.json().await?;
+    let symbols = report["symbols"].as_array().unwrap();
+    assert_eq!(symbols.len(), 1, "{report}");
+    assert_eq!(symbols[0]["name"], "helper");
+    assert_eq!(symbols[0]["change"], "modified");
+    let users: Vec<&str> = symbols[0]["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        users.iter().any(|p| p.ends_with("pkg/service.py")),
+        "{report}"
+    );
+    assert!(!users.iter().any(|p| p.ends_with("pkg/api.py")), "{report}");
+    // The test file only names it in a comment: listed, last, as text.
+    assert_eq!(report["total_files"], 2, "{report}");
+    assert_eq!(symbols[0]["users"][1]["tier"], "text", "{report}");
+    let service = &symbols[0]["users"][0];
+    assert_eq!(service["tier"], "reference", "{report}");
+    assert_eq!(service["lines"][0]["line"], 5, "{report}");
+
+    // Not a diff: a 400 with the reason.
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/impact"))
+        .json(&serde_json::json!({ "diff": "hello" }))
+        .send()
+        .await?;
+    assert_eq!(response.status().as_u16(), 400);
+
+    let (err, text) = mcp_tool(&base, "diff_impact", serde_json::json!({ "diff": diff })).await?;
+    assert!(!err, "{text}");
+    assert!(
+        text.starts_with("1 changed symbol in 1 file; 2 other files use it."),
+        "{text}"
+    );
+    assert!(text.contains("function helper  (modified)"), "{text}");
+    assert!(text.contains("service.py  [reference]"), "{text}");
+    assert!(text.contains("5: return helper()"), "{text}");
+    assert!(text.contains("test_service.py  [text, test]"), "{text}");
     Ok(())
 }
 

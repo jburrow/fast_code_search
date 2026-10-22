@@ -25,7 +25,7 @@ SERVER=$(bin fast_code_search_server)
   echo "Full help for the client and each subcommand, as printed by the binary."
   echo "The narrative guide is [Command-line client](../imported/cli.md)."
   echo
-  for cmd in "" search refs symbols status mcp check; do
+  for cmd in "" search refs symbols impact status mcp check; do
     if [ -z "$cmd" ]; then echo "## \`fcs --help\`"; else echo "## \`fcs $cmd --help\`"; fi
     echo
     echo '```text'

@@ -20,6 +20,7 @@ Commands:
   search   Search file contents (the default; `fcs QUERY` works too)
   refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
   symbols  Search symbol definitions (functions, types, classes, ...) only
+  impact   The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
   status   Show whether the server is reachable and what it has indexed
   mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
   check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
@@ -79,6 +80,7 @@ Examples:
   fcs -e 'fn\s+\w+\(' -g '*.rs'  regex, Rust files only
   fcs refs SearchEngine         call sites and type mentions
   fcs symbols parse_query       definitions only
+  fcs impact                    files that use what your uncommitted changes touch
   fcs -l TODO | xargs $EDITOR   files containing TODO
   vim -q <(fcs --format vimgrep TODO)
   fcs status                    is the server up, what does it hold
@@ -123,14 +125,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob <GLOB>
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob <GLOB>
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
@@ -138,22 +140,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank <RANK>
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files <N>
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps <PATH[:N]>
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -163,20 +171,14 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files <N>
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
-
-      --deps <PATH[:N]>
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
-
       --json
           Shorthand for --format json
 
-  -l, --files-with-matches
-          Print every file that matches, once, best first (pages through all hits)
-
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -231,14 +233,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob <GLOB>
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob <GLOB>
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
@@ -246,22 +248,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank <RANK>
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files <N>
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps <PATH[:N]>
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -271,20 +279,14 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files <N>
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
-
-      --deps <PATH[:N]>
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
-
       --json
           Shorthand for --format json
 
-  -l, --files-with-matches
-          Print every file that matches, once, best first (pages through all hits)
-
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)
@@ -339,14 +341,14 @@ Options:
           
           [default: 0]
 
+  -g, --glob <GLOB>
+          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-  -g, --glob <GLOB>
-          Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
       --exclude <GLOB>
           Skip files matching this glob (repeatable)
@@ -354,22 +356,28 @@ Options:
       --offline
           Search the on-disk index directly instead of asking the server
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
-
       --rank <RANK>
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
           
           [default: auto]
           [possible values: auto, fast, full]
 
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
 
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --max-files <N>
+          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+
+      --deps <PATH[:N]>
+          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -379,20 +387,90 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --max-files <N>
-          Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
+      --json
+          Shorthand for --format json
 
-      --deps <PATH[:N]>
-          Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+      --rdeps <PATH[:N]>
+          Only search this file and the files that import it (as `--deps`)
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color <COLOR>
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `fcs impact --help`
+
+```text
+The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
+
+Usage: fcs impact [OPTIONS] [REV]...
+
+Arguments:
+  [REV]...
+          Revisions to diff, as `git diff` takes them: none for uncommitted changes (against HEAD), `REV` for REV to the working tree, `A..B` or `A B` between commits (the index must hold one of the two sides)
+
+Options:
+      --staged
+          Only staged changes (`git diff --cached`)
+
+      --diff <FILE>
+          Read the diff from this file (`-` for stdin) instead of running git
+
+  -n, --max-files <N>
+          Files listed per changed symbol (0 = all)
+          
+          [default: 200]
+
+      --lines <N>
+          Use lines listed per file (0 = all)
+          
+          [default: 3]
+
+      --root <DIR>
+          Folder the diff's paths are relative to (default: the Git repository's top folder)
+
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --format <FORMAT>
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
 
       --json
           Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
-
-      --rdeps <PATH[:N]>
-          Only search this file and the files that import it (as `--deps`)
 
       --absolute
           Print absolute paths (needs the roots from the configuration)

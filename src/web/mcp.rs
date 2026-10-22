@@ -40,7 +40,8 @@ const GRAPH_COVERAGE: &str = "Imports are resolved for Rust, Python and JavaScri
 const INSTRUCTIONS: &str = "fast_code_search keeps a trigram index and a file-level import graph \
      of the codebase in memory, so these tools answer in milliseconds. Prefer search_code over \
      grep, read_file to read source with line numbers, file_dependencies and change_impact \
-     before changing a file other code relies on, import_path to see how two files are \
+     before changing a file other code relies on, diff_impact on a diff to find the code that \
+     uses what it changes, import_path to see how two files are \
      connected, and dependency_overview to get oriented in an unfamiliar repository. When file \
      watching is off, search_code says how old the index is; index_status tells whether files \
      you just wrote are indexed yet. Paths are \
@@ -328,6 +329,30 @@ fn tool_definitions(m: &crate::config::McpConfig) -> Value {
             }),
         ),
         tool(
+            "diff_impact",
+            "Diff impact",
+            "The files that use each function, class, method, type or constant a unified \
+             diff (`git diff`) changes, finer than change_impact's file level. For each changed \
+             symbol: the files that use it, best first, in tiers (reference = a recorded call \
+             or type use, code = the name in code, text = only in strings or comments) with \
+             the use lines. Functions and classes are traced through importers (Python, \
+             JS/TS, Rust; renames followed); methods and fields by name among all importers, \
+             files naming the class first; other languages by name across the index. Every \
+             cap and gap is stated in the result. Call it before or after editing, on your \
+             own diff, to find the code and tests to check."
+                .to_string(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "diff": {"type": "string", "description": "A unified diff, as `git diff` prints it."},
+                    "root": {"type": "string", "description": "The repository folder the diff's paths are relative to, when known (absolute path on the server's machine)."},
+                    "max_files": {"type": "integer", "minimum": 0, "default": MCP_IMPACT_FILES, "description": "Files listed per changed symbol (0 = all)."},
+                    "max_lines": {"type": "integer", "minimum": 0, "default": MCP_IMPACT_LINES, "description": "Use lines listed per file (0 = all)."}
+                },
+                "required": ["diff"]
+            }),
+        ),
+        tool(
             "import_path",
             "Import path",
             format!(
@@ -386,6 +411,7 @@ async fn call_tool(state: &WebState, name: &str, args: Value) -> ToolResult {
         "read_file" => read_file(state, parse(args)?).await,
         "file_dependencies" => file_dependencies(state, parse(args)?).await,
         "change_impact" => change_impact(state, parse(args)?).await,
+        "diff_impact" => diff_impact(state, parse(args)?).await,
         "import_path" => import_path(state, parse(args)?).await,
         "dependency_overview" => dependency_overview(state, parse(args)?).await,
         "index_status" => index_status(state, parse(args)?).await,
@@ -973,6 +999,47 @@ async fn change_impact(state: &WebState, a: ImpactArgs) -> ToolResult {
                 let _ = writeln!(out, "  … {} more (raise limit to see them)", list.len() - per_group);
             }
         }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| ToolError::Failed(format!("Task join error: {e}")))?
+}
+
+// ------------------------------------------------------------- diff_impact
+
+/// Files listed per changed symbol, and lines per file, by default: an
+/// agent's context is smaller than a terminal's scrollback.
+const MCP_IMPACT_FILES: usize = 50;
+const MCP_IMPACT_LINES: usize = 2;
+
+#[derive(serde::Deserialize)]
+struct DiffImpactArgs {
+    diff: String,
+    root: Option<String>,
+    max_files: Option<usize>,
+    max_lines: Option<usize>,
+}
+
+async fn diff_impact(state: &WebState, a: DiffImpactArgs) -> ToolResult {
+    let req = super::graph::DiffImpactRequest {
+        diff: a.diff,
+        root: a.root,
+        max_files: Some(a.max_files.unwrap_or(MCP_IMPACT_FILES)),
+        max_lines: Some(a.max_lines.unwrap_or(MCP_IMPACT_LINES)),
+    };
+    let engine = state.engine.clone();
+    tokio::task::spawn_blocking(move || -> ToolResult {
+        let engine = try_read_engine(&engine).map_err(|(_, m)| ToolError::Failed(m))?;
+        let report = engine
+            .impact(&req.diff, &req.options())
+            .map_err(ToolError::Failed)?;
+        let mut out = crate::impact::report::summary(&report);
+        out.push_str(".\n");
+        out.push_str(&crate::impact::report::grouped(
+            &report,
+            &|p| p.to_string(),
+            false,
+        ));
         Ok(out)
     })
     .await
