@@ -7,7 +7,7 @@
 //! short steps, and a search waits a short while for it ([`read_within`])
 //! instead of failing, so it is answered rather than turned away.
 //!
-//! Writers also never *queue* on the lock ([`write`]). A queued writer makes
+//! Writers also never *queue* on the lock ([`write()`]). A queued writer makes
 //! the lock turn every new reader away until the writer has been granted
 //! the lock, and it is granted only once every running search has finished.
 //! One slow search (a regex over a million files) and a one-file watcher
@@ -47,7 +47,7 @@ const MAX_BACKOFF: Duration = Duration::from_millis(10);
 /// The longest a waiting writer sleeps between attempts.
 const WRITER_MAX_BACKOFF: Duration = Duration::from_millis(2);
 
-/// Writers waiting in [`write`]. One count for the process: in the server
+/// Writers waiting in [`write()`]. One count for the process: in the server
 /// there is one engine, and in tests that run several, a writer on one only
 /// makes a search on another hold back for [`READER_DEFER`].
 static WRITERS_WAITING: AtomicUsize = AtomicUsize::new(0);
