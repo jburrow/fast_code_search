@@ -750,3 +750,55 @@ fn searches_are_answered_while_a_burst_applies() {
         );
     }
 }
+
+/// While a burst waits to be installed (here: behind a long search),
+/// other searches are still answered, and they report the changes not
+/// applied yet instead of passing off the old index as current.
+#[test]
+fn searches_report_changes_still_to_apply() {
+    const FILES: usize = 600;
+    let mut h = Harness::new(seed_from_env(73), FILES);
+    build_index(&h.config, h.engine.clone());
+    h.engine.write().unwrap().watching = true;
+    let changed = rewrite_all(&mut h, FILES);
+    let changes: Vec<FileChange> = changed.into_iter().map(FileChange::Modified).collect();
+
+    // A long search holds the lock, so no install step can start.
+    let slow = h.engine.read().unwrap();
+    let burst = {
+        let (engine, config) = (h.engine.clone(), h.config.clone());
+        std::thread::spawn(move || watch_loop::apply_burst(&engine, &changes, &config))
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let pending = loop {
+        let started = Instant::now();
+        let engine = engine_lock::read_within(&h.engine, engine_lock::SEARCH_READ_WAIT)
+            .expect("a search is answered while the burst waits");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a search waited {:?} behind the waiting burst",
+            started.elapsed()
+        );
+        let pending = engine.freshness().pending_changes;
+        if pending == FILES {
+            break pending;
+        }
+        drop(engine);
+        assert!(
+            Instant::now() < deadline,
+            "the burst never got to installing"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let note = h.engine.read().unwrap().freshness().note(0).unwrap();
+    assert!(note.contains(&format!("{pending} file changes")), "{note}");
+    drop(slow);
+
+    let report = burst.join().unwrap().expect("burst applied");
+    assert_eq!(report.outcome.indexed, FILES);
+    let freshness = h.engine.read().unwrap().freshness();
+    assert_eq!(freshness.pending_changes, 0);
+    assert_eq!(freshness.note(0), None);
+    h.note(format!("rewrite all {FILES} files behind a long search"));
+    h.assert_converges("burst applied after the long search");
+}

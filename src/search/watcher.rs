@@ -17,7 +17,7 @@ use crate::search::path_filter::PathFilter;
 use anyhow::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,6 +73,8 @@ pub struct FileWatcher {
     roots: Vec<PathBuf>,
     /// Set when events were lost and the roots need reconciling.
     rescan: Arc<AtomicBool>,
+    /// Events queued and not received yet; see [`Self::queued_counter`].
+    queued: Arc<AtomicUsize>,
 }
 
 /// Bound on queued change events. The consumer applies batches under the
@@ -144,6 +146,8 @@ impl FileWatcher {
 
         let handler_exclude = Arc::clone(&exclude_filter);
         let handler_rescan = Arc::clone(&rescan);
+        let queued = Arc::new(AtomicUsize::new(0));
+        let handler_queued = Arc::clone(&queued);
         let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
             match result {
                 Ok(event) => {
@@ -152,7 +156,14 @@ impl FileWatcher {
                         handler_rescan.store(true, Ordering::Release);
                     }
                     for change in hints_for(&event, &handler_exclude) {
-                        match tx.try_send(change) {
+                        // Counted before it is sent, so the receiver never
+                        // takes it off the count before it is on it.
+                        handler_queued.fetch_add(1, Ordering::AcqRel);
+                        let sent = tx.try_send(change);
+                        if sent.is_err() {
+                            handler_queued.fetch_sub(1, Ordering::AcqRel);
+                        }
+                        match sent {
                             Ok(()) => {}
                             Err(mpsc::TrySendError::Full(_)) => {
                                 if !handler_rescan.swap(true, Ordering::AcqRel) {
@@ -247,6 +258,7 @@ impl FileWatcher {
             per_directory,
             roots,
             rescan,
+            queued,
         })
     }
 
@@ -271,19 +283,34 @@ impl FileWatcher {
         }
     }
 
+    /// The count of events queued and not received yet, kept current by
+    /// the watcher thread and the receive methods, so a search can report
+    /// changes nobody has applied yet.
+    pub fn queued_counter(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.queued)
+    }
+
+    /// One event taken off the queue.
+    fn received(&self, change: Option<FileChange>) -> Option<FileChange> {
+        if change.is_some() {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+        }
+        change
+    }
+
     /// Try to receive a file change event without blocking
     pub fn try_recv(&self) -> Option<FileChange> {
-        self.rx.try_recv().ok()
+        self.received(self.rx.try_recv().ok())
     }
 
     /// Receive a file change event, blocking until one is available
     pub fn recv(&self) -> Option<FileChange> {
-        self.rx.recv().ok()
+        self.received(self.rx.recv().ok())
     }
 
     /// Receive a file change event with a timeout
     pub fn recv_timeout(&self, timeout: Duration) -> Option<FileChange> {
-        self.rx.recv_timeout(timeout).ok()
+        self.received(self.rx.recv_timeout(timeout).ok())
     }
 }
 

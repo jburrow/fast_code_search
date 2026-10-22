@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Searches no longer stop while the file watcher applies many changes.**
+  One slow search plus any watcher step used to stop every other search
+  until the slow one finished, and those still waiting after five seconds
+  got "Index is currently being updated". The watcher (and the startup
+  build) now take the write lock only in a moment when no search holds it,
+  so a search waits for a short install step at most, never for other
+  searches. On a million-file tree with 50,000 files rewritten at once,
+  searches turned away fell from 3% to none and the slowest search from
+  5.1 s to 1.5 s, while the watcher applied 5.6 times as many changes in the
+  same time. Measurements are in the book (How it works > Incremental
+  indexing).
+
+### Added
+- Search responses report file changes the watcher has seen and not
+  applied yet (`index.pending_changes`). The web UI shows "Index updating ·
+  N file changes to apply"; `fcs` and the MCP tools print it as a note.
+
 ## [0.18.1] - 2026-10-16
 
 Small fixes to piped `fcs` paths and MCP totals. No re-index or config

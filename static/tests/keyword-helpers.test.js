@@ -464,6 +464,15 @@ test('indexFreshnessLabel: silent while watching or before the first sync', () =
     assert.equal(H.indexFreshnessLabel({ watching: false }, 1e9), null);
 });
 
+test('indexFreshnessLabel: names the changes the watcher has not applied yet', () => {
+    const label = H.indexFreshnessLabel({ watching: true, synced_at_ms: 0, pending_changes: 12500 }, 1e9);
+    assert.equal(label.text, 'Index updating · 12,500 file changes to apply');
+    assert.match(label.title, /may not include/);
+    assert.equal(H.indexFreshnessLabel({ watching: true, pending_changes: 1 }, 0).text,
+        'Index updating · 1 file change to apply');
+    assert.equal(H.indexFreshnessLabel({ watching: true, pending_changes: 0 }, 0), null);
+});
+
 test('indexFreshnessLabel: says how old the index is when watching is off', () => {
     const at = 1_760_000_000_000;
     const label = H.indexFreshnessLabel({ watching: false, synced_at_ms: at }, at + 6 * 60_000);

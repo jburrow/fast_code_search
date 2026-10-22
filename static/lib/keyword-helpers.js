@@ -729,13 +729,23 @@ function formatAge(ms) {
 
 /**
  * The freshness note beside the timing, or null when there is nothing to
- * warn about: a file watcher keeps the index current, or no scan has
- * finished yet (the progress panel covers the first build).
- * @param {{watching?: boolean, synced_at_ms?: number}|undefined} index `index` of a search response
+ * warn about: a file watcher keeps the index current and has applied every
+ * change it has seen, or no scan has finished yet (the progress panel
+ * covers the first build).
+ * @param {{watching?: boolean, synced_at_ms?: number, pending_changes?: number}|undefined} index `index` of a search response
  * @param {number} nowMs
  * @returns {{text: string, title: string}|null}
  */
 function indexFreshnessLabel(index, nowMs) {
+    if (index && index.watching && index.pending_changes > 0) {
+        const n = index.pending_changes;
+        const changes = `${n.toLocaleString('en-US')} file change${n === 1 ? '' : 's'}`;
+        return {
+            text: `Index updating · ${changes} to apply`,
+            title: `The file watcher is still applying ${changes}, so results may not include `
+                + 'them yet. Search again shortly to see them.',
+        };
+    }
     if (!index || index.watching || typeof index.synced_at_ms !== 'number') return null;
     const when = new Date(index.synced_at_ms).toLocaleString();
     return {
