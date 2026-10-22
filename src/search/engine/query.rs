@@ -62,7 +62,7 @@ impl SearchEngine {
     /// caller holding a lowercased string gets the index's spelling).
     /// Queries shorter than 3 bytes produce no trigrams; fall back to all
     /// documents so short terms like `_` or `__` still return results.
-    pub(super) fn text_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
+    pub fn text_candidates(&self, query_lower: &str) -> Cow<'_, roaring::RoaringBitmap> {
         let folded = fold_str(query_lower);
         if folded.len() >= 3 {
             Cow::Owned(self.trigram_index.search(&folded))
