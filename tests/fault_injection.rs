@@ -12,6 +12,7 @@
 
 use fast_code_search::config::IndexerConfig;
 use fast_code_search::faults::{self, Action, Fault};
+use fast_code_search::index::PersistedIndex;
 use fast_code_search::search::{
     create_progress_broadcaster, run_background_indexer, watch_loop, BackgroundIndexerConfig,
     IndexingProgress, ReadFailures, SearchEngine, WatchLoopConfig,
@@ -31,6 +32,8 @@ const FIRST_RETRY: Duration = Duration::from_millis(50);
 
 struct Rig {
     _temp: TempDir,
+    /// Outside the watched tree.
+    index_dir: TempDir,
     root: PathBuf,
     config: IndexerConfig,
     engine: Arc<RwLock<SearchEngine>>,
@@ -57,10 +60,43 @@ impl Rig {
                 ..Default::default()
             },
             _temp: temp,
+            index_dir: TempDir::new().unwrap(),
             root,
             engine,
             shutdown: Arc::new(AtomicBool::new(false)),
             watch: None,
+        }
+    }
+
+    /// Save the index to (and after watcher updates, every
+    /// `save_after_updates`) a file of this rig's own.
+    fn saving(mut self, save_after_updates: usize) -> Self {
+        self.config.index_path = Some(self.index_path().to_string_lossy().to_string());
+        self.config.save_after_updates = save_after_updates;
+        self
+    }
+
+    fn index_path(&self) -> PathBuf {
+        self.index_dir.path().join("index.bin")
+    }
+
+    /// Files next to the index other than the index itself.
+    fn index_leftovers(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.index_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n != "index.bin")
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Stop the watcher (it saves on the way out) and wait for it.
+    fn stop_watching(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        if let Some(h) = self.watch.take() {
+            h.join().unwrap();
         }
     }
 
@@ -82,6 +118,22 @@ impl Rig {
 
     fn disarm(&self, point: &str, name: &str) {
         faults::clear(point, Some(&self.key(name)));
+    }
+
+    /// Arm `point` for this rig's index file.
+    fn arm_save(&self, point: &str, action: Action, times: Option<usize>) {
+        faults::set(
+            point,
+            Fault {
+                action,
+                path_contains: Some(self.index_path().to_string_lossy().to_string()),
+                times,
+            },
+        );
+    }
+
+    fn disarm_save(&self, point: &str) {
+        faults::clear(point, Some(&self.index_path().to_string_lossy()));
     }
 
     fn build(&self) {
@@ -406,4 +458,250 @@ fn scrub_finds_and_fixes_a_lost_change() {
     });
     rig.shutdown.store(true, Ordering::Release);
     scrub.join().unwrap();
+}
+
+/// A file that vanishes between being listed and being read is simply
+/// not indexed: it is not reported as unreadable.
+#[test]
+fn file_that_vanishes_before_it_is_read_is_not_reported() {
+    let rig = Rig::new(&[("a.py", "x = 'buildword'\n"), ("b.py", "y = 1\n")], false);
+    rig.arm(
+        "parse.read",
+        "a.py",
+        Action::IoError(std::io::ErrorKind::NotFound),
+        None,
+    );
+    rig.build();
+    rig.disarm("parse.read", "a.py");
+    assert_eq!(rig.indexed(), ["b.py"]);
+    assert_eq!(rig.unreadable(), 0);
+    assert!(!rig.note().contains("could not be read"), "{}", rig.note());
+}
+
+/// Out of file handles (`EMFILE`, which has no `ErrorKind` of its own):
+/// the build and the watcher both try again.
+#[test]
+fn out_of_file_handles_is_retried() {
+    // EMFILE on Linux and macOS (on Windows 24 is some other error, which
+    // is retried the same way).
+    const EMFILE: i32 = 24;
+    let mut rig = Rig::new(&[("a.py", "x = 'buildword'\n"), ("b.py", "y = 1\n")], true);
+    rig.arm("parse.read", "a.py", Action::OsError(EMFILE), Some(1));
+    rig.build();
+    assert_eq!(rig.found_in("buildword"), ["a.py"]);
+    rig.start_watching();
+    rig.arm("parse.read", "b.py", Action::OsError(EMFILE), Some(2));
+    rig.write("b.py", "y = 'newword'\n");
+    rig.wait_for("the change to be applied", |r| {
+        r.found_in("newword") == ["b.py"]
+    });
+    rig.wait_for("nothing pending", |r| r.pending() == 0);
+    assert_eq!(rig.unreadable(), 0);
+}
+
+/// A panic while reading one file during the build is tried again; it
+/// used to leave the file out of the index without a word.
+#[test]
+fn build_retries_a_file_whose_read_panicked() {
+    let rig = Rig::new(&[("a.py", "x = 'buildword'\n"), ("b.py", "y = 1\n")], false);
+    rig.arm("parse.panic", "a.py", Action::Panic, Some(1));
+    rig.build();
+    assert_eq!(rig.found_in("buildword"), ["a.py"]);
+    assert_eq!(rig.unreadable(), 0);
+}
+
+/// A file whose read panics every time is reported, like one that cannot
+/// be read.
+#[test]
+fn build_reports_a_file_whose_read_always_panics() {
+    let rig = Rig::new(&[("a.py", "x = 'buildword'\n"), ("b.py", "y = 1\n")], false);
+    rig.arm("parse.panic", "a.py", Action::Panic, None);
+    rig.build();
+    rig.disarm("parse.panic", "a.py");
+    assert_eq!(rig.indexed(), ["b.py"]);
+    assert_eq!(rig.unreadable(), 1);
+    assert!(
+        rig.note().contains("1 file could not be read"),
+        "{}",
+        rig.note()
+    );
+}
+
+/// A change whose read panics once is applied on the next try.
+#[test]
+fn watcher_retries_a_change_whose_read_panicked() {
+    let mut rig = Rig::new(&[("a.py", "x = 'oldword'\n"), ("b.py", "y = 1\n")], true);
+    rig.build();
+    rig.start_watching();
+    rig.arm("parse.panic", "a.py", Action::Panic, Some(1));
+    rig.write("a.py", "x = 'newword'\n");
+    rig.write("b.py", "y = 'newword'\n");
+    rig.wait_for("both changes to be applied", |r| {
+        r.found_in("newword") == ["a.py", "b.py"]
+    });
+    rig.wait_for("nothing pending", |r| r.pending() == 0);
+    assert_eq!(rig.unreadable(), 0);
+}
+
+/// Symbol extraction that panics (tree-sitter on a pathological file)
+/// leaves the file searchable as text.
+#[test]
+fn file_whose_parser_panics_stays_searchable() {
+    let rig = Rig::new(
+        &[
+            ("a.py", "def parsed_fn():\n    return 'buildword'\n"),
+            ("b.py", "y = 1\n"),
+        ],
+        false,
+    );
+    rig.arm("parse.symbols", "a.py", Action::Panic, None);
+    rig.build();
+    rig.disarm("parse.symbols", "a.py");
+    assert_eq!(rig.found_in("buildword"), ["a.py"]);
+    assert_eq!(rig.unreadable(), 0);
+}
+
+/// Events the OS lost (its queue overflowed) are made up by a rescan of
+/// the watched paths: an edit and a removal it never reported are both in
+/// the index afterwards.
+#[test]
+fn lost_events_are_made_up_by_a_rescan() {
+    let mut rig = Rig::new(
+        &[
+            ("a.py", "x = 'oldword'\n"),
+            ("b.py", "y = 1\n"),
+            ("c.py", "z = 'goneword'\n"),
+        ],
+        true,
+    );
+    rig.build();
+    rig.start_watching();
+    rig.arm("watch.overflow", "a.py", Action::Panic, None);
+    rig.arm("watch.overflow", "c.py", Action::Panic, None);
+    // Not the same second as the build, so the change shows in the mtime.
+    std::thread::sleep(Duration::from_millis(1100));
+    rig.write("a.py", "x = 'newword'\n");
+    std::fs::remove_file(rig.root.join("c.py")).unwrap();
+    rig.wait_for("the rescan to apply both changes", |r| {
+        r.found_in("newword") == ["a.py"] && r.indexed() == ["a.py", "b.py"]
+    });
+    rig.disarm("watch.overflow", "a.py");
+    rig.disarm("watch.overflow", "c.py");
+    assert!(rig.found_in("oldword").is_empty());
+    rig.wait_for("nothing pending", |r| r.pending() == 0);
+}
+
+/// A slow disk slows the watcher, not searches: the watcher reads files
+/// without holding the index lock, and the change counts as pending while
+/// it waits.
+#[test]
+fn slow_disk_does_not_hold_up_searches() {
+    let mut rig = Rig::new(&[("a.py", "x = 'oldword'\n"), ("b.py", "y = 1\n")], true);
+    rig.build();
+    rig.start_watching();
+    rig.arm(
+        "parse.read",
+        "a.py",
+        Action::Delay(Duration::from_secs(2)),
+        Some(1),
+    );
+    rig.write("a.py", "x = 'newword'\n");
+    rig.wait_for("the change to count as pending", |r| r.pending() > 0);
+    let started = Instant::now();
+    let mut slowest = Duration::ZERO;
+    while started.elapsed() < Duration::from_millis(1000) {
+        let t = Instant::now();
+        let _ = rig.found_in("oldword");
+        slowest = slowest.max(t.elapsed());
+    }
+    assert!(
+        slowest < Duration::from_millis(500),
+        "a search waited {slowest:?} for a slow read"
+    );
+    rig.wait_for("the change to be applied", |r| {
+        r.found_in("newword") == ["a.py"]
+    });
+    rig.wait_for("nothing pending", |r| r.pending() == 0);
+}
+
+/// Saving onto a full disk, or failing to move the new index into place,
+/// leaves the previous index as it was and no temp file behind.
+#[test]
+fn failed_save_keeps_the_previous_index() {
+    let rig = Rig::new(&[("a.py", "x = 'buildword'\n")], false).saving(0);
+    rig.build();
+    let saved = std::fs::read(rig.index_path()).expect("the build saved the index");
+    let engine = rig.engine.read().unwrap();
+    for (point, action) in [
+        (
+            "save.write",
+            Action::IoError(std::io::ErrorKind::StorageFull),
+        ),
+        (
+            "save.rename",
+            Action::IoError(std::io::ErrorKind::PermissionDenied),
+        ),
+    ] {
+        rig.arm_save(point, action, None);
+        let result = engine.save_index(&rig.index_path(), &rig.config);
+        rig.disarm_save(point);
+        assert!(result.is_err(), "{point}: the save should fail");
+        assert!(
+            std::fs::read(rig.index_path()).unwrap() == saved,
+            "{point}: the previous index changed"
+        );
+        assert_eq!(rig.index_leftovers(), Vec::<String>::new(), "{point}");
+    }
+    // A rename that fails once is tried again with the old index moved
+    // aside, which is put back if that fails too (above).
+    rig.arm_save(
+        "save.rename",
+        Action::IoError(std::io::ErrorKind::PermissionDenied),
+        Some(1),
+    );
+    engine
+        .save_index(&rig.index_path(), &rig.config)
+        .expect("the second rename works");
+    rig.disarm_save("save.rename");
+    assert_eq!(rig.index_leftovers(), Vec::<String>::new());
+    assert!(PersistedIndex::load(&rig.index_path()).is_ok());
+}
+
+/// Updates whose save failed still count: the next save (here, at
+/// shutdown) writes them. They used to be forgotten, so the shutdown
+/// skipped its save and the saved index lacked them.
+#[test]
+fn updates_whose_save_failed_are_saved_at_shutdown() {
+    let mut rig = Rig::new(&[("a.py", "x = 'oldword'\n"), ("b.py", "y = 1\n")], true).saving(1);
+    rig.build();
+    rig.start_watching();
+    rig.arm_save(
+        "save.write",
+        Action::IoError(std::io::ErrorKind::StorageFull),
+        None,
+    );
+    std::thread::sleep(Duration::from_millis(1100));
+    // A new size, so the saved index shows which version it holds.
+    let new_text = "x = 'a longer newword'\n";
+    rig.write("a.py", new_text);
+    rig.wait_for("the change to be applied", |r| {
+        r.found_in("newword") == ["a.py"]
+    });
+    // The save after the update has failed by the time nothing is pending.
+    rig.wait_for("nothing pending", |r| r.pending() == 0);
+    std::thread::sleep(Duration::from_millis(300));
+    rig.disarm_save("save.write");
+    rig.stop_watching();
+
+    let saved = PersistedIndex::load(&rig.index_path()).unwrap();
+    let a = saved
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("a.py"))
+        .expect("a.py in the saved index");
+    assert_eq!(
+        a.size,
+        new_text.len() as u64,
+        "the saved index is out of date"
+    );
 }

@@ -939,10 +939,13 @@ fn process_batch(
                     None
                 }
                 Err(_) => {
+                    // Tried again and reported like a file that could not
+                    // be read; it used to be left out without a word.
                     tracing::error!(
                         path = %path.display(),
-                        "Phase1 panicked during read/trigram extraction; skipping file"
+                        "Phase1 panicked during read/trigram extraction; will retry"
                     );
+                    read_failures.failed(path, Instant::now());
                     None
                 }
             }
@@ -973,8 +976,9 @@ fn process_batch(
                 Err(_) => {
                     tracing::error!(
                         path = %path_for_log.display(),
-                        "Phase2 panicked during symbol extraction"
+                        "Phase2 panicked during symbol extraction; will retry"
                     );
+                    read_failures.failed(&path_for_log, Instant::now());
                     None
                 }
             }
@@ -1131,21 +1135,18 @@ fn log_completion_stats(
 
 /// Called by the file-watcher loop after each applied batch with the number
 /// of file updates (indexed + removed) since the last save. Saves once that
-/// reaches `save_after_updates` and returns whether it did, so the caller
-/// can reset its counter.
+/// reaches `save_after_updates` and returns whether it saved, so the caller
+/// can reset its counter. A save that failed (disk full) returns false, so
+/// the updates still count and the next batch, or the shutdown, tries
+/// again; they used to be forgotten, and the shutdown skipped its save.
 pub fn save_on_watcher_update(
     indexer_config: &IndexerConfig,
     engine: &Arc<RwLock<SearchEngine>>,
     updates_since_save: usize,
 ) -> bool {
-    if indexer_config.save_after_updates > 0
+    indexer_config.save_after_updates > 0
         && updates_since_save >= indexer_config.save_after_updates
-    {
-        save_index_if_needed(indexer_config, engine, true, updates_since_save, 0);
-        true
-    } else {
-        false
-    }
+        && save_index_if_needed(indexer_config, engine, true, updates_since_save, 0)
 }
 
 /// Save the index on shutdown if any watcher updates were applied since the
@@ -1166,23 +1167,24 @@ pub fn save_after_watcher_shutdown(
     save_index_if_needed(indexer_config, engine, true, updates_since_save, 0);
 }
 
-/// Save the index to disk if configured and appropriate.
+/// Save the index to disk if configured and appropriate. False when a
+/// save was due and failed.
 fn save_index_if_needed(
     indexer_config: &IndexerConfig,
     index_engine: &Arc<RwLock<SearchEngine>>,
     loaded_from_persistence: bool,
     total_indexed: usize,
     removed_files_count: usize,
-) {
+) -> bool {
     let Some(ref index_path_str) = indexer_config.index_path else {
-        return;
+        return true;
     };
     if indexer_config.index_read_only {
         info!(
             path = %index_path_str,
             "Not saving the index: another server holds its lock (see the error at startup)"
         );
-        return;
+        return true;
     }
 
     // Only save if the index actually changed since it was loaded.
@@ -1199,7 +1201,7 @@ fn save_index_if_needed(
 
     if !should_save {
         info!("Index unchanged, skipping save");
-        return;
+        return true;
     }
 
     let index_path = Path::new(index_path_str);
@@ -1220,16 +1222,19 @@ fn save_index_if_needed(
                     path = %index_path.display(),
                     "Failed to save index. {hint}"
                 );
+                false
             } else {
                 info!(
                     path = %index_path.display(),
                     files = engine.get_stats().num_files,
                     "Index saved successfully"
                 );
+                true
             }
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to acquire read lock to save index");
+            false
         }
     }
 }

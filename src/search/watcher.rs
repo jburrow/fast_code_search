@@ -151,6 +151,17 @@ impl FileWatcher {
         let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
             match result {
                 Ok(event) => {
+                    if cfg!(feature = "failpoints")
+                        && event
+                            .paths
+                            .iter()
+                            .any(|p| crate::faults::fires("watch.overflow", p))
+                    {
+                        // As if the OS queue overflowed: this event is lost.
+                        warn!("File watcher lost events; the watched paths will be rescanned");
+                        handler_rescan.store(true, Ordering::Release);
+                        return;
+                    }
                     if event.need_rescan() {
                         warn!("File watcher lost events; the watched paths will be rescanned");
                         handler_rescan.store(true, Ordering::Release);

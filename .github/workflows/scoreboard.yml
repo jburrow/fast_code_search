@@ -12,6 +12,11 @@ name: Scale scoreboard
 # Nightly with the full ten-minute stream; on pull requests that touch
 # locking, watching, saving or limits with a two-minute stream, and the
 # table in the job summary.
+#
+# The second job kills the server with SIGKILL at random moments (during a
+# build, a load, a stream of edits, a burst, a shutdown save), starts it
+# again and checks the index comes back right (examples/chaos.rs). Pull
+# requests use a fixed seed; other runs a new one, printed in the log.
 
 on:
   schedule:
@@ -30,7 +35,10 @@ on:
       - "src/diagnostics/**"
       - "src/config.rs"
       - "src/main.rs"
+      - "src/index/persistence.rs"
+      - "src/index_lock.rs"
       - "examples/scoreboard.rs"
+      - "examples/chaos.rs"
       - "examples/support/**"
       - "benches/scoreboard/**"
       - ".github/workflows/scoreboard.yml"
@@ -92,4 +100,49 @@ jobs:
             scoreboard.md
             scoreboard.json
             ${{ runner.temp }}/score/run/server-*.log
+          if-no-files-found: ignore
+
+  chaos:
+    name: Kill and restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the server and the harness
+        run: cargo build --release --bins --example chaos
+
+      - name: Kill and restart
+        run: |
+          target/release/examples/chaos --dir "$RUNNER_TEMP/chaos" \
+            --files 20000 --rounds "$ROUNDS" --seed "$SEED" \
+            --markdown chaos.md --json chaos.json
+        env:
+          ROUNDS: ${{ github.event_name == 'pull_request' && '40' || '100' }}
+          SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
+
+      - name: Report
+        if: always()
+        run: test -f chaos.md && cat chaos.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the rounds and the logs of failed ones
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chaos
+          path: |
+            chaos.md
+            chaos.json
+            ${{ runner.temp }}/chaos/run/failed-*.log
           if-no-files-found: ignore

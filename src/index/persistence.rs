@@ -41,6 +41,56 @@ static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Makes every temp file name unique within the process.
 static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Where a save of `path` writes before it renames: this prefix, then the
+/// process id and a counter (`index.bin.tmp.<pid>.<n>`).
+fn temp_prefix(path: &Path) -> std::path::PathBuf {
+    let mut name = path.with_extension("bin.tmp").into_os_string();
+    name.push(".");
+    name.into()
+}
+
+/// Move a finished temp file over the index.
+fn replace(tmp_path: &Path, path: &Path) -> std::io::Result<()> {
+    crate::faults::io("save.rename", path)?;
+    std::fs::rename(tmp_path, path)
+}
+
+/// Remove the temp files earlier saves of `path` left behind, and return
+/// how many there were and their size in bytes.
+///
+/// A save that is killed (`kill -9`, a power cut) leaves its temp file, as
+/// large as the index, and nothing used to remove it: each kill during a
+/// save cost that much disk for good. Call it only while holding the index
+/// lock (`crate::index_lock`) and before this process saves, so no other
+/// save can be writing one of these files.
+pub fn remove_stale_temp_files(path: &Path) -> (usize, u64) {
+    let prefix = temp_prefix(path);
+    let (Some(dir), Some(prefix)) = (prefix.parent(), prefix.file_name()) else {
+        return (0, 0);
+    };
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
+    let prefix = prefix.to_string_lossy();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    let (mut count, mut bytes) = (0, 0);
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(&*prefix) {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        if std::fs::remove_file(entry.path()).is_ok() {
+            count += 1;
+            bytes += size;
+        }
+    }
+    (count, bytes)
+}
+
 /// The posting lists of a *loaded* index: the directory plus the mapped
 /// bitmap region they point into. Bitmaps are deserialized straight from
 /// the mapping by [`PersistedIndex::restore_trigram_index`]; nothing is
@@ -285,11 +335,13 @@ impl PersistedIndex {
 
         // Unique per process and per call so a concurrent writer (another
         // process sharing `index_path`) can never truncate our in-flight file.
-        let tmp_path = path.with_extension(format!(
-            "bin.tmp.{}.{}",
+        let mut tmp_path = temp_prefix(path).into_os_string();
+        tmp_path.push(format!(
+            "{}.{}",
             std::process::id(),
             TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let tmp_path = std::path::PathBuf::from(tmp_path);
 
         let result = self.write_then_rename(path, &tmp_path, trigrams);
         if result.is_err() {
@@ -367,6 +419,7 @@ impl PersistedIndex {
 
             // Flush the BufWriter explicitly so I/O errors (e.g. disk full) surface
             // here instead of being silently swallowed when the writer is dropped.
+            crate::faults::io("save.write", path).with_context(|| err("body"))?;
             writer.flush().with_context(|| err("body"))?;
             drop(writer);
 
@@ -385,11 +438,12 @@ impl PersistedIndex {
             // Exclusive lock released as `file` drops at end of scope.
         }
 
-        // Atomic replace. On Windows, rename onto an existing file can fail, so
-        // fall back to remove-then-rename — but only while our temp file still
-        // exists; if the source is gone there is nothing to put in place of
-        // the target and removing it would destroy the last good index.
-        if let Err(e) = std::fs::rename(tmp_path, path) {
+        // Atomic replace. On Windows, rename onto an existing file can fail
+        // (the file is open elsewhere), so the old index is moved aside and
+        // the rename tried again; if that fails too the old index is put
+        // back. It used to be deleted first, so a second failure left no
+        // index at all.
+        if let Err(e) = replace(tmp_path, path) {
             if !tmp_path.exists() {
                 return Err(anyhow::Error::new(e).context(format!(
                     "Failed to atomically replace index file: {} (temp file {} vanished)",
@@ -397,14 +451,31 @@ impl PersistedIndex {
                     tmp_path.display()
                 )));
             }
-            tracing::debug!(error = %e, "Direct rename failed; retrying after removing target");
-            let _ = std::fs::remove_file(path);
-            std::fs::rename(tmp_path, path).with_context(|| {
-                format!(
+            tracing::debug!(error = %e, "Direct rename failed; retrying with the old index moved aside");
+            let aside = tmp_path.with_extension("old");
+            if std::fs::rename(path, &aside).is_err() {
+                return Err(anyhow::Error::new(e).context(format!(
                     "Failed to atomically replace index file: {}",
                     path.display()
-                )
-            })?;
+                )));
+            }
+            if let Err(e) = replace(tmp_path, path) {
+                let _ = std::fs::rename(&aside, path);
+                return Err(anyhow::Error::new(e).context(format!(
+                    "Failed to atomically replace index file: {}",
+                    path.display()
+                )));
+            }
+            let _ = std::fs::remove_file(&aside);
+        }
+        // Make the rename itself durable: without this a power cut soon
+        // after the save could bring back the previous index (never a torn
+        // one). Best effort; Windows cannot open a folder this way.
+        #[cfg(unix)]
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            if let Ok(d) = std::fs::File::open(dir) {
+                let _ = d.sync_all();
+            }
         }
 
         Ok(())
@@ -1060,6 +1131,29 @@ mod tests {
         // Re-saving over an existing index works (covers Windows rename-over path).
         save_sample(&index_path);
         assert!(PersistedIndex::load(&index_path).is_ok());
+    }
+
+    /// A save killed half way leaves its temp file; the next start removes
+    /// it (and only it: other files next to the index stay).
+    #[test]
+    fn test_stale_temp_files_are_removed() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let index_path = temp_dir.path().join("index.bin");
+        save_sample(&index_path);
+        let dead = temp_dir.path().join("index.bin.tmp.4242.0");
+        let aside = temp_dir.path().join("index.bin.tmp.4242.old");
+        std::fs::write(&dead, vec![0u8; 1000]).unwrap();
+        std::fs::write(&aside, vec![0u8; 24]).unwrap();
+        let other = temp_dir.path().join("index.bin.lock");
+        std::fs::write(&other, b"").unwrap();
+        let other_index = temp_dir.path().join("other.bin.tmp.1.0");
+        std::fs::write(&other_index, b"x").unwrap();
+
+        assert_eq!(remove_stale_temp_files(&index_path), (2, 1024));
+        assert!(!dead.exists() && !aside.exists());
+        assert!(other.exists() && other_index.exists() && index_path.exists());
+        assert!(PersistedIndex::load(&index_path).is_ok());
+        assert_eq!(remove_stale_temp_files(&index_path), (0, 0));
     }
 
     fn leftover_temp_files(dir: &Path) -> Vec<PathBuf> {

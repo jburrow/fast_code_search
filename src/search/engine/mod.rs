@@ -858,6 +858,7 @@ impl PartialIndexedFile {
         let racy = modified.is_none_or(is_racy);
 
         crate::faults::io("parse.read", path)?;
+        crate::faults::panic_point("parse.panic", path);
         let raw_bytes = std::fs::read(path)?;
         // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
         let (content, transcoded) = match String::from_utf8(raw_bytes) {
@@ -1040,6 +1041,7 @@ impl PreIndexedFile {
             // panic protection: tree-sitter can stack overflow on deeply
             // nested or malformed files.
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::faults::panic_point("parse.symbols", &partial.path);
                 extractor
                     .extract_all_with_refs(&partial.content)
                     .unwrap_or_default()
