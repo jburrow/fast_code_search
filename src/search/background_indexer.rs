@@ -829,7 +829,78 @@ fn process_batches(
         );
     }
 
+    total_indexed += retry_unreadable(
+        &mut batch_num,
+        files_discovered,
+        index_engine,
+        index_progress,
+        index_progress_tx,
+        indexer_config,
+        shutdown,
+    );
+
     (total_indexed, batch_num)
+}
+
+/// Read the files the build could not read once more, after the first
+/// retry wait. Any still unreadable are left to the watcher's retries, or,
+/// with watching off, given up on and reported (see `ReadFailures`): the
+/// build used to leave them out without a word.
+#[allow(clippy::too_many_arguments)]
+fn retry_unreadable(
+    batch_num: &mut usize,
+    files_discovered: &Arc<AtomicUsize>,
+    index_engine: &Arc<RwLock<SearchEngine>>,
+    index_progress: &SharedIndexingProgress,
+    index_progress_tx: &ProgressBroadcaster,
+    indexer_config: &IndexerConfig,
+    shutdown: &Arc<AtomicBool>,
+) -> usize {
+    let read_failures = Arc::clone(
+        &index_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .watch_backlog
+            .read_failures,
+    );
+    let mut indexed = 0;
+    if let Some(due) = read_failures.next_due() {
+        std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        let mut batch = read_failures.take_due(Instant::now());
+        if !batch.is_empty() && !shutdown.load(Ordering::Acquire) {
+            info!(
+                files = batch.len(),
+                "Reading files that could not be read the first time"
+            );
+            indexed = process_batch(
+                &mut batch,
+                batch_num,
+                files_discovered,
+                index_engine,
+                index_progress,
+                index_progress_tx,
+                &indexer_config.exclude_files,
+                indexer_config.transcode_non_utf8,
+                indexer_config.enable_symbols,
+                indexer_config.max_file_size,
+            );
+        }
+    }
+    if !indexer_config.watch {
+        let gave_up = read_failures.give_up_all();
+        if !gave_up.is_empty() {
+            tracing::warn!(
+                files = gave_up.len(),
+                first = ?&gave_up[..gave_up.len().min(20)],
+                "Some files could not be read and are left out of the index"
+            );
+            let mut engine = engine_lock::write(index_engine);
+            for path in &gave_up {
+                engine.remove_file(path);
+            }
+        }
+    }
+    indexed
 }
 
 /// Process a single batch of files.
@@ -866,6 +937,13 @@ fn process_batch(
     // allocations inside the per-file parallel filter closure.
     let normalized_exclude_files: Vec<String> =
         exclude_files.iter().map(|e| e.replace('\\', "/")).collect();
+    let read_failures = std::sync::Arc::clone(
+        &index_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .watch_backlog
+            .read_failures,
+    );
     let partial_with_flags: Vec<(PartialIndexedFile, bool)> = batch
         .par_iter()
         .filter(|path| {
@@ -885,9 +963,21 @@ fn process_batch(
             // so one pathological file cannot unwind the rayon worker and kill the
             // entire background-indexing thread.
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                PartialIndexedFile::process(path, transcode_non_utf8, max_file_size)
+                PartialIndexedFile::process_checked(path, transcode_non_utf8, max_file_size)
             })) {
-                Ok(opt) => opt,
+                Ok(Ok(opt)) => {
+                    if !read_failures.is_empty() {
+                        read_failures.cleared(path);
+                    }
+                    opt
+                }
+                Ok(Err(e)) => {
+                    // Tried again at the end of the build, then by the
+                    // watcher; counted until then (see `ReadFailures`).
+                    tracing::debug!(path = %path.display(), error = %e, "Could not read file; will retry");
+                    read_failures.failed(path, Instant::now());
+                    None
+                }
                 Err(_) => {
                     tracing::error!(
                         path = %path.display(),

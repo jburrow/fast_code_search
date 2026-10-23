@@ -138,8 +138,19 @@ These follow from fcs being a code search server rather than a line filter.
   `dist`, Python virtual environments) are not indexed, so they are never
   searched, even when git tracks them (ripgrep searches a tracked
   `build/`). Ignore files apply as in ripgrep: `.gitignore`, `.ignore`,
-  `.git/info/exclude` and your global git excludes (`core.excludesFile`),
-  at startup and for files the watcher sees change.
+  `.rgignore`, `.git/info/exclude` and your global git excludes
+  (`core.excludesFile`), with the same precedence. When the watcher sees a
+  `.gitignore`, `.ignore` or `.rgignore` change, appear or go away (a
+  branch switch, say), it re-checks every file under that folder, as a
+  restart would. Edits to `.git/info/exclude` or the global excludes file
+  are applied at the next start, since nothing under `.git` is watched.
+- **Files that can't be read.** ripgrep prints an error for a file it
+  cannot open and searches the rest. fcs tries such a file again for about
+  half a minute (it is often locked for a moment by an editor, a build or
+  a virus scanner), then leaves it out of the index and says so with every
+  search ("1 file could not be read and is left out of the index"); the
+  server log names it, and it is indexed again when it next changes and
+  can be read.
 
 ## Known differences
 

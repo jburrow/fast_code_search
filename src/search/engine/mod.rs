@@ -24,7 +24,9 @@ mod query;
 mod scope;
 mod text;
 
-pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness, WatchBacklog};
+pub use freshness::{
+    unix_now_ms, IndexFreshness, PathFreshness, ReadFailures, WatchBacklog, MAX_READ_ATTEMPTS,
+};
 pub use impact::{
     ImpactFileSummary, ImpactOptions, ImpactReport, ImpactScope, SymbolImpact, TierCounts, UseLine,
     UseTier, UserFile, DEFAULT_IMPACT_FILES, DEFAULT_IMPACT_LINES, MAX_IMPACT_SYMBOLS,
@@ -791,14 +793,40 @@ impl PartialIndexedFile {
         transcode_non_utf8: bool,
         max_file_size: u64,
     ) -> Option<(Self, bool)> {
+        Self::process_checked(path, transcode_non_utf8, max_file_size)
+            .ok()
+            .flatten()
+    }
+
+    /// [`Self::process`], telling a file that could not be read (`Err`:
+    /// permission denied, a sharing violation, an I/O error) apart from one
+    /// that is not indexed (`Ok(None)`: gone, too large, binary). The
+    /// watcher retries the first and drops the second.
+    pub fn process_checked(
+        path: &Path,
+        transcode_non_utf8: bool,
+        max_file_size: u64,
+    ) -> std::io::Result<Option<(Self, bool)>> {
+        match Self::process_inner(path, transcode_non_utf8, max_file_size) {
+            Ok(file) => Ok(Some(file)),
+            Err(Unindexed::Skipped) => Ok(None),
+            Err(Unindexed::Unreadable(e)) => Err(e),
+        }
+    }
+
+    fn process_inner(
+        path: &Path,
+        transcode_non_utf8: bool,
+        max_file_size: u64,
+    ) -> Result<(Self, bool), Unindexed> {
         let max_size = if max_file_size == 0 {
             Self::DEFAULT_MAX_FILE_SIZE
         } else {
             max_file_size
         };
-        let metadata = std::fs::metadata(path).ok()?;
+        let metadata = std::fs::metadata(path)?;
         if metadata.len() > max_size {
-            return None;
+            return Err(Unindexed::Skipped);
         }
         // Capture what we are about to read so persistence records the indexed
         // content's identity, not the on-disk state at save time.
@@ -806,13 +834,14 @@ impl PartialIndexedFile {
         let mtime = crate::index::persistence::mtime_secs_of(&metadata);
         let modified = metadata.modified().ok();
 
-        let raw_bytes = std::fs::read(path).ok()?;
+        crate::faults::io("parse.read", path)?;
+        let raw_bytes = std::fs::read(path)?;
         // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
         let (content, transcoded) = match String::from_utf8(raw_bytes) {
             Ok(s) => (crate::utils::strip_utf8_bom_owned(s), false), // UTF-8 fast path — zero-copy consume
             Err(e) => {
                 if !transcode_non_utf8 {
-                    return None; // Transcoding disabled
+                    return Err(Unindexed::Skipped); // Transcoding disabled
                 }
                 let raw_bytes = e.into_bytes(); // Recover the original bytes
                 match crate::utils::transcode_to_utf8(&raw_bytes) {
@@ -824,7 +853,7 @@ impl PartialIndexedFile {
                         );
                         (result.content, true)
                     }
-                    _ => return None, // Binary or unrecognizable
+                    _ => return Err(Unindexed::Skipped), // Binary or unrecognizable
                 }
             }
         };
@@ -835,7 +864,7 @@ impl PartialIndexedFile {
                 path = %path.display(),
                 "Skipping binary-looking file during indexing"
             );
-            return None;
+            return Err(Unindexed::Skipped);
         }
 
         // Structural checks only gate tree-sitter: a file with a >100 KB line or
@@ -876,7 +905,7 @@ impl PartialIndexedFile {
         let mut trigrams = extract_unique_trigrams_lowercase(&filename_stem);
         trigrams.extend(extract_unique_trigrams_lowercase(&content));
 
-        Some((
+        Ok((
             PartialIndexedFile {
                 path: path.to_path_buf(),
                 trigrams,
@@ -889,6 +918,26 @@ impl PartialIndexedFile {
             },
             transcoded,
         ))
+    }
+}
+
+/// Why [`PartialIndexedFile::process_inner`] produced no file.
+enum Unindexed {
+    /// Not indexed by the rules: gone, too large, binary, not UTF-8.
+    Skipped,
+    /// Could not be read.
+    Unreadable(std::io::Error),
+}
+
+impl From<std::io::Error> for Unindexed {
+    fn from(e: std::io::Error) -> Self {
+        // A file that is gone is simply not indexed; its delete event (or
+        // the sibling check) removes it.
+        if e.kind() == std::io::ErrorKind::NotFound {
+            Unindexed::Skipped
+        } else {
+            Unindexed::Unreadable(e)
+        }
     }
 }
 
@@ -929,8 +978,16 @@ impl FileParser {
     /// large to index. Reads owned content (no live mmap, so a file being
     /// rewritten concurrently cannot SIGBUS us).
     pub fn parse(&self, path: &Path) -> Option<PreIndexedFile> {
-        PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size)
-            .map(|(partial, _)| PreIndexedFile::from_partial(partial, self.enable_symbols))
+        self.parse_checked(path).ok().flatten()
+    }
+
+    /// [`Self::parse`], with `Err` for a file that could not be read (see
+    /// [`PartialIndexedFile::process_checked`]).
+    pub fn parse_checked(&self, path: &Path) -> std::io::Result<Option<PreIndexedFile>> {
+        Ok(
+            PartialIndexedFile::process_checked(path, self.transcode_non_utf8, self.max_file_size)?
+                .map(|(partial, _)| PreIndexedFile::from_partial(partial, self.enable_symbols)),
+        )
     }
 }
 

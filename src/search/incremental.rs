@@ -176,18 +176,50 @@ pub fn plan_changes(
     plan
 }
 
+/// Files read and parsed for a plan; `None` for a file that is not indexed
+/// (gone, too large, binary), whose entry is removed.
+pub type ParsedFiles = Vec<(PathBuf, Option<crate::search::PreIndexedFile>)>;
+
 /// Read and parse the files a plan will index, in parallel. Needs no lock.
+/// A file that could not be read is removed (as the initial build leaves it
+/// out); the watch loop uses [`parse_planned_checked`] to retry it instead.
 pub fn parse_planned(
     parser: crate::search::engine::FileParser,
     plan: &ChangePlan,
 ) -> Vec<(PathBuf, Option<crate::search::PreIndexedFile>)> {
-    plan.index
+    let (mut parsed, unreadable) = parse_planned_checked(parser, plan);
+    parsed.extend(unreadable.into_iter().map(|(p, _)| (p, None)));
+    parsed
+}
+
+/// [`parse_planned`], keeping the files that could not be read (permission
+/// denied, locked by another program, an I/O error) out of the parsed list
+/// and returning them on their own, so their index entries stay as they
+/// were until a retry reads them.
+pub fn parse_planned_checked(
+    parser: crate::search::engine::FileParser,
+    plan: &ChangePlan,
+) -> (ParsedFiles, Vec<(PathBuf, std::io::Error)>) {
+    let results: Vec<(
+        PathBuf,
+        std::io::Result<Option<crate::search::PreIndexedFile>>,
+    )> = plan
+        .index
         .par_iter()
         .map(|p| {
             crate::diagnostics::capture::watcher_progress(1);
-            (p.clone(), parser.parse(p))
+            (p.clone(), parser.parse_checked(p))
         })
-        .collect()
+        .collect();
+    let mut parsed = Vec::with_capacity(results.len());
+    let mut unreadable = Vec::new();
+    for (path, result) in results {
+        match result {
+            Ok(file) => parsed.push((path, file)),
+            Err(e) => unreadable.push((path, e)),
+        }
+    }
+    (parsed, unreadable)
 }
 
 /// Apply a plan and its parsed files under the caller's write lock: the

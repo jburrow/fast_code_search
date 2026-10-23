@@ -9,9 +9,10 @@
 
 use crate::config::IndexerConfig;
 use crate::search::background_indexer::{save_after_watcher_shutdown, save_on_watcher_update};
+use crate::search::engine::ReadFailures;
 use crate::search::engine_lock;
 use crate::search::incremental::{
-    apply_plan, parse_planned, plan_changes, ChangeOutcome, ChangePlan,
+    apply_plan, parse_planned_checked, plan_changes, ChangeOutcome, ChangePlan,
 };
 use crate::search::watcher::{FileChange, FileWatcher, WatcherConfig};
 use crate::search::SearchEngine;
@@ -20,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// A burst of events (branch switch, formatter run, generated files) is
 /// gathered until no event has arrived for this long, so it is applied under
@@ -59,13 +60,18 @@ pub fn start_watcher(indexer: &IndexerConfig) -> Result<FileWatcher> {
 pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
     info!("File watcher started");
     let queued = watcher.queued_counter();
-    let applying = with_engine_write(&cfg.engine, |engine| {
+    let (applying, read_failures) = with_engine_write(&cfg.engine, |engine| {
         engine.watching = true;
         engine.watch_backlog.queued = queued;
-        Arc::clone(&engine.watch_backlog.applying)
+        (
+            Arc::clone(&engine.watch_backlog.applying),
+            Arc::clone(&engine.watch_backlog.read_failures),
+        )
     })
     .unwrap_or_default();
     let mut updates_since_save: usize = 0;
+    // A burst whose apply panicked, to try once more (see `PANIC_RETRY`).
+    let mut after_panic: Option<(Vec<FileChange>, Instant)> = None;
     loop {
         if cfg.shutdown.load(Ordering::Acquire) {
             info!("File watcher stopping for shutdown");
@@ -73,7 +79,16 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
             save_after_watcher_shutdown(&cfg.indexer, &cfg.engine, updates_since_save);
             return;
         }
-        let mut changes = match watcher.recv_timeout(Duration::from_secs(1)) {
+        // Wake for the next read retry or panic retry, if one is due sooner.
+        let wait = [
+            read_failures.next_due(),
+            after_panic.as_ref().map(|(_, at)| *at),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|at| at.saturating_duration_since(Instant::now()))
+        .fold(Duration::from_secs(1), Duration::min);
+        let mut changes = match watcher.recv_timeout(wait) {
             Some(first) => gather_burst(&watcher, first, cfg.batch_window, &applying),
             None => Vec::new(),
         };
@@ -81,6 +96,31 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
         let rescan = watcher.take_rescan();
         applying.fetch_add(rescan.len(), Ordering::AcqRel);
         changes.extend(rescan.into_iter().map(FileChange::Modified));
+        // Files that could not be read last time (already counted as
+        // pending while they wait).
+        let now = Instant::now();
+        changes.extend(
+            read_failures
+                .take_due(now)
+                .into_iter()
+                .map(FileChange::Modified),
+        );
+        let retrying = match after_panic.take() {
+            Some((burst, at)) if at <= now => burst,
+            other => {
+                after_panic = other;
+                Vec::new()
+            }
+        };
+        if changes.is_empty() && retrying.is_empty() {
+            continue;
+        }
+        if !retrying.is_empty() {
+            // Apply the panicked burst on its own, a change at a time: a
+            // change that panics again is the culprit and is left out.
+            retry_after_panic(&cfg, &read_failures, &retrying);
+            updates_since_save += retrying.len();
+        }
         if changes.is_empty() {
             continue;
         }
@@ -99,6 +139,17 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
         // Already cleared, unless planning panicked before it took over the
         // count of the gathered events.
         applying.store(0, Ordering::Release);
+        if report.is_none() {
+            // Not dropped: tried again shortly (a panic can be a race with
+            // the disk changing under the burst), and counted until then.
+            error!(
+                events = changes.len(),
+                "File watcher failed applying a burst of changes; trying it again in {} s",
+                PANIC_RETRY.as_secs()
+            );
+            applying.fetch_add(changes.len(), Ordering::AcqRel);
+            after_panic = Some((changes.clone(), Instant::now() + PANIC_RETRY));
+        }
         if let Some(r) = &report {
             crate::diagnostics::capture::record_burst(
                 changes.len(),
@@ -128,8 +179,68 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
     }
 }
 
+/// How long after a burst panicked it is tried again.
+const PANIC_RETRY: Duration = Duration::from_secs(1);
+
+/// Apply a burst that panicked, one change at a time. A change that panics
+/// again is given up on: its files are removed from the index and reported
+/// as unreadable (see [`ReadFailures`]) until they change again. A panic
+/// used to drop the whole burst without a word, leaving its files out of
+/// date until each changed again.
+fn retry_after_panic(cfg: &WatchLoopConfig, read_failures: &ReadFailures, burst: &[FileChange]) {
+    let applying = read_engine(&cfg.engine, |e| Arc::clone(&e.watch_backlog.applying));
+    for (i, change) in burst.iter().enumerate() {
+        if apply_burst(&cfg.engine, std::slice::from_ref(change), &cfg.indexer).is_none() {
+            let paths = change_paths(change);
+            error!(
+                paths = ?paths,
+                "File watcher failed applying this change twice; its files are left out of \
+                 the index until they change again"
+            );
+            for path in &paths {
+                read_failures.give_up(path);
+            }
+            forget_paths(&cfg.engine, &paths);
+        }
+        // apply_burst clears the count; the rest of the burst is still to do.
+        if let Some(applying) = &applying {
+            applying.store(burst.len() - i - 1, Ordering::Release);
+        }
+    }
+}
+
+/// The paths a change names.
+fn change_paths(change: &FileChange) -> Vec<PathBuf> {
+    match change {
+        FileChange::Modified(p) | FileChange::Deleted(p) => vec![p.clone()],
+        FileChange::Renamed { from, to } => vec![from.clone(), to.clone()],
+    }
+}
+
+/// Remove `paths` (files, or every file under a directory) from the index.
+fn forget_paths(engine: &Arc<RwLock<SearchEngine>>, paths: &[PathBuf]) {
+    with_engine_write(engine, |engine| {
+        for path in paths {
+            if !engine.remove_file(path) {
+                engine.remove_files_under(path);
+            }
+        }
+    });
+}
+
+/// Run `f` under the engine read lock, recovering a poisoned lock.
+fn read_engine<R>(
+    engine: &Arc<RwLock<SearchEngine>>,
+    f: impl FnOnce(&SearchEngine) -> R,
+) -> Option<R> {
+    let guard = engine
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guarded("read", || f(&guard))
+}
+
 /// What applying a burst did and how long it kept searches out.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BurstReport {
     /// Files indexed and removed.
     pub outcome: ChangeOutcome,
@@ -140,6 +251,9 @@ pub struct BurstReport {
     pub longest_hold: Duration,
     /// From start to finish, planning and parsing included.
     pub elapsed: Duration,
+    /// Files that could not be read; they are tried again later (see
+    /// [`ReadFailures`]) and keep their previous index entry until then.
+    pub unreadable: usize,
 }
 
 /// Apply a burst the way the server does: work out what it means under a
@@ -155,7 +269,11 @@ pub struct BurstReport {
 /// `watch_backlog.applying`, which searches report: first as the events,
 /// then as the files they came to. The count is cleared when the burst ends.
 ///
-/// `None` if a step panicked; the rest of the burst is then skipped.
+/// A file that cannot be read keeps its index entry and is recorded in the
+/// engine's [`ReadFailures`] to be tried again; one given up on is removed.
+///
+/// `None` if a step panicked; the rest of the burst is then skipped (the
+/// watch loop tries it again).
 pub fn apply_burst(
     engine: &Arc<RwLock<SearchEngine>>,
     changes: &[FileChange],
@@ -163,16 +281,18 @@ pub fn apply_burst(
 ) -> Option<BurstReport> {
     let started = Instant::now();
     let pool = watch_pool();
-    let (plan, parser, applying) = guarded("planning", || {
+    let (plan, parser, applying, read_failures) = guarded("planning", || {
         let engine = engine
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let applying = Arc::clone(&engine.watch_backlog.applying);
+        let read_failures = Arc::clone(&engine.watch_backlog.read_failures);
         pool.install(|| {
             (
                 plan_changes(&engine, changes, indexer),
                 engine.file_parser(),
                 applying,
+                read_failures,
             )
         })
     })?;
@@ -187,12 +307,50 @@ pub fn apply_burst(
     applying
         .0
         .store(plan.remove.len() + plan.index.len(), Ordering::Release);
-    let parsed = guarded("parsing", || pool.install(|| parse_planned(parser, &plan)))?;
+    let (mut parsed, unreadable) = guarded("parsing", || {
+        pool.install(|| parse_planned_checked(parser, &plan))
+    })?;
+
+    // Whatever was read, or is gone, no longer needs a retry; what could
+    // not be read is retried later and keeps its entry meanwhile, unless
+    // it has failed too often.
+    let mut report = BurstReport {
+        unreadable: unreadable.len(),
+        ..BurstReport::default()
+    };
+    if !read_failures.is_empty() {
+        let failed: std::collections::HashSet<&PathBuf> =
+            unreadable.iter().map(|(p, _)| p).collect();
+        for change in changes {
+            for path in change_paths(change) {
+                if !failed.contains(&path) {
+                    read_failures.cleared(&path);
+                }
+            }
+        }
+        for (path, _) in &parsed {
+            read_failures.cleared(path);
+        }
+    }
+    let now = Instant::now();
+    for (path, e) in unreadable {
+        let attempts_left = !read_failures.failed(&path, now);
+        if attempts_left {
+            debug!(path = %path.display(), error = %e, "Could not read changed file; will retry");
+        } else {
+            warn!(
+                path = %path.display(),
+                error = %e,
+                "Could not read changed file after repeated tries; leaving it out of the index \
+                 until it changes again"
+            );
+            parsed.push((path, None));
+        }
+    }
 
     // The removals go in one step and the files in steps, each under its
     // own write lock, so a big burst never holds searches back for longer
     // than one step.
-    let mut report = BurstReport::default();
     let removals = ChangePlan {
         remove: plan.remove,
         index: Vec::new(),
@@ -207,7 +365,6 @@ pub fn apply_burst(
         &applying.0,
     )?;
     applied(&applying.0, removing);
-    let mut parsed = parsed;
     while !parsed.is_empty() {
         // Searches that queued during the last step go first.
         std::thread::sleep(STEP_GAP);
@@ -279,7 +436,12 @@ fn install(
         let chunk = std::mem::replace(parsed, rest);
         let files = chunk.len();
         let plan = plan.take().unwrap_or_default();
-        report.outcome += guarded("update", || apply_plan(&mut guard, plan, chunk))?;
+        report.outcome += guarded("update", || {
+            for (path, _) in &chunk {
+                crate::faults::panic_point("watch.apply", path);
+            }
+            apply_plan(&mut guard, plan, chunk)
+        })?;
         applied(applying, files);
         if parsed.is_empty() || held.elapsed() >= budget {
             break;

@@ -24,6 +24,12 @@ bounded queue fills up), the watched roots are reconciled with the disk
 instead. Reconciling skips files whose size and modification time match
 what was indexed, so it costs a walk and a stat per file, not a rebuild.
 
+**Ignore files.** A change to a `.gitignore`, `.ignore` or `.rgignore`
+(edited, created, deleted, or swapped by a branch switch) reconciles the
+folder it is in, so files it now ignores leave the index and files it no
+longer ignores join it, as a restart would. Before, each file kept its
+old state until the file itself changed.
+
 ## Changes during the initial build
 
 Files are read outside the write lock, so a file can be edited, renamed
@@ -151,6 +157,37 @@ overflowed the watcher's event queue twice, so it reconciled the whole
 tree as well (about 40 s of walking a million files, during which the
 pending count does not move); the rest is installing.
 
+## Files that can't be read
+
+A file can fail to read for a moment: an editor, a build or a virus
+scanner holds it open (a sharing violation on Windows), or its
+permissions change while it is rewritten. The initial build and the
+watcher tell this apart from a file that is simply not indexed (gone, too
+large, binary):
+
+- The build tries the file once more at its end. With watching on, the
+  watcher then keeps trying it.
+- The watcher leaves the file's entry as it was and tries again after
+  1 s, then 2, 4, 8 and 16 s. Until then the change counts as still to
+  apply, so searches report it.
+- After six failed tries (about half a minute) the file is given up on:
+  it is removed from the index, as ripgrep skips a file it cannot open,
+  the server log names it, and every search says how many files could
+  not be read. When it next changes and can be read, it is indexed and
+  the count drops.
+
+A failed read used to remove the file from the index without a word
+until it next changed.
+
+## When applying a batch fails
+
+A panic while a batch is applied (a bug, or the disk changing under it in
+a way the code did not expect) is caught, so the watcher keeps running.
+The batch is not dropped: it is applied again a second later, one change
+at a time, and a change that fails again is removed from the index and
+reported as a file that could not be read. The batch used to be skipped,
+leaving its files out of date until each changed again.
+
 ## Saving
 
 After `save_after_updates` file changes the index is saved; it is also
@@ -174,6 +211,12 @@ searches continuously while a burst of changes is applied and fails if a
 search is turned away or waits too long; another holds a long search while
 a burst waits to be installed and checks that other searches are answered
 and report the changes still to apply.
+
+`tests/fault_injection.rs` makes reads fail and the install step panic
+on purpose, through fault points compiled in only with the `failpoints`
+feature (`cargo test --features failpoints --test fault_injection`), and
+checks that each failure is retried, counted while it lasts, and reported
+once given up on.
 
 For larger trees, `examples/watch_load.rs` generates a tree of small
 scripts (a million, if you like), streams rewrites, creates and deletes

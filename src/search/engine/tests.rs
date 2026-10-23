@@ -3982,7 +3982,11 @@ fn python_import_tree(root: &std::path::Path, files: usize) -> Vec<std::path::Pa
         let dir = if i % 2 == 0 { "pkg" } else { "pkg/sub" };
         let p = root.join(format!("{dir}/m{i}.py"));
         let next = (i + 1) % files;
-        let next_dir = if next % 2 == 0 { "pkg" } else { "pkg.sub" };
+        let next_dir = if next.is_multiple_of(2) {
+            "pkg"
+        } else {
+            "pkg.sub"
+        };
         fs::write(
             &p,
             format!("import os\nfrom {next_dir} import m{next}\nfrom .missing{i} import x\n\ndef f{i}():\n    return m{next}\n"),

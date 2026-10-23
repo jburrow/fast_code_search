@@ -730,13 +730,29 @@ function formatAge(ms) {
 /**
  * The freshness note beside the timing, or null when there is nothing to
  * warn about: a file watcher keeps the index current and has applied every
- * change it has seen, or no scan has finished yet (the progress panel
- * covers the first build).
- * @param {{watching?: boolean, synced_at_ms?: number, pending_changes?: number}|undefined} index `index` of a search response
+ * change it has seen, no scan has finished yet (the progress panel covers
+ * the first build), and every file could be read.
+ * @param {{watching?: boolean, synced_at_ms?: number, pending_changes?: number, unreadable_files?: number}|undefined} index `index` of a search response
  * @param {number} nowMs
  * @returns {{text: string, title: string}|null}
  */
 function indexFreshnessLabel(index, nowMs) {
+    const label = indexSyncLabel(index, nowMs);
+    const n = (index && index.unreadable_files) || 0;
+    if (n <= 0) return label;
+    const files = `${n.toLocaleString('en-US')} file${n === 1 ? '' : 's'}`;
+    const unreadable = {
+        text: `${files} unreadable`,
+        title: `${files} could not be read and ${n === 1 ? 'is' : 'are'} left out of the index, `
+            + 'so results do not include them. The server log names them; they are indexed '
+            + 'again when they change and can be read.',
+    };
+    if (!label) return unreadable;
+    return { text: `${label.text} · ${unreadable.text}`, title: `${label.title} ${unreadable.title}` };
+}
+
+/** The watcher-backlog or watching-off part of {@link indexFreshnessLabel}. */
+function indexSyncLabel(index, nowMs) {
     if (index && index.watching && index.pending_changes > 0) {
         const n = index.pending_changes;
         const changes = `${n.toLocaleString('en-US')} file change${n === 1 ? '' : 's'}`;

@@ -471,6 +471,12 @@ test('indexFreshnessLabel: names the changes the watcher has not applied yet', (
     assert.equal(H.indexFreshnessLabel({ watching: true, pending_changes: 1 }, 0).text,
         'Index updating · 1 file change to apply');
     assert.equal(H.indexFreshnessLabel({ watching: true, pending_changes: 0 }, 0), null);
+    // Files that could not be read are reported, alone or after the backlog.
+    assert.equal(H.indexFreshnessLabel({ watching: true, unreadable_files: 1 }, 0).text,
+        '1 file unreadable');
+    const both = H.indexFreshnessLabel({ watching: true, pending_changes: 2, unreadable_files: 3 }, 0);
+    assert.equal(both.text, 'Index updating · 2 file changes to apply · 3 files unreadable');
+    assert.match(both.title, /3 files could not be read and are left out of the index/);
 });
 
 test('indexFreshnessLabel: says how old the index is when watching is off', () => {
