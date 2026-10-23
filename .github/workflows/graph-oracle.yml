@@ -1,10 +1,13 @@
 name: graph oracle
 
 # Does the dependency graph draw the edges the languages' own resolvers
-# draw? examples/graph_oracle.rs (the comparison `fcs check` runs) compares fcs's import graph with grimp on
-# Django and with TypeScript's resolveModuleName on Vite, and fails when a
-# change misses or adds more edges than the recorded baseline. Lower the
-# baselines when a fix closes a gap.
+# draw? examples/graph_oracle.rs (the comparison `fcs check` runs) compares
+# fcs's import graph with grimp on Django, generated deep trees and
+# generated monorepo layouts, and with TypeScript's resolveModuleName on
+# Vite and a generated workspace monorepo. Every edge fcs misses or draws
+# wrongly must be a known gap listed in benches/graph/known_gaps.toml (each
+# tied to a row of the book's graph-support page), with its exact count: a
+# new miss fails, and so does a fix until its gap is lowered or removed.
 
 on:
   push:
@@ -15,6 +18,7 @@ on:
       - "src/**"
       - "examples/graph_oracle.rs"
       - "scripts/graph-oracle/**"
+      - "benches/graph/**"
       - "tests/python_codebase.rs"
       - "tests/support/**"
       - "Cargo.toml"
@@ -77,21 +81,36 @@ jobs:
         run: |
           python src/check/oracle/py.py bench-corpus/django > py.json
           ./target/release/examples/graph_oracle bench-corpus/django --oracle py.json --lang py \
-            --max-missing 0 --max-extra 0 --markdown graph-py.md
+            --gaps benches/graph/known_gaps.toml --corpus django --markdown graph-py.md
 
       - name: Python (grimp on a package nested 14 levels deep)
         run: |
           python scripts/graph-oracle/deep_python_tree.py deep-py 14
           python src/check/oracle/py.py deep-py > py-deep.json
           ./target/release/examples/graph_oracle deep-py --oracle py-deep.json --lang py \
-            --max-missing 0 --max-extra 0 --markdown graph-py-deep.md
+            --gaps benches/graph/known_gaps.toml --corpus deep-py --markdown graph-py-deep.md
 
       - name: Python (grimp on a repository whose root folder has __init__.py)
         run: |
           python scripts/graph-oracle/deep_python_tree.py root-init-py 4 --root-init
           python src/check/oracle/py.py root-init-py > py-root-init.json
           ./target/release/examples/graph_oracle root-init-py --oracle py-root-init.json --lang py \
-            --max-missing 0 --max-extra 0 --markdown graph-py-root-init.md
+            --gaps benches/graph/known_gaps.toml --corpus root-init-py --markdown graph-py-root-init.md
+
+      # Repositories laid out like real monorepos, generated with seed 1
+      # (scripts/graph-oracle/layouts.py): projects side by side each with
+      # its own src/, a root folder that is a package, and a namespace
+      # package split over two folders. oracle.env tells grimp what is on
+      # sys.path.
+      - name: Python (generated monorepo layouts)
+        run: |
+          for layout in monorepo root-init namespace; do
+            python scripts/graph-oracle/layouts.py "$layout" "py-$layout" --seed 1
+            (set -a; . "py-$layout/oracle.env"; set +a
+             python src/check/oracle/py.py "py-$layout" > "py-$layout.json")
+            ./target/release/examples/graph_oracle "py-$layout" --oracle "py-$layout.json" --lang py \
+              --gaps benches/graph/known_gaps.toml --corpus "py-$layout" --markdown "graph-layout-$layout.md"
+          done
 
       # Seeded generated Python trees whose generator knows every edge,
       # definition and reference (tests/support/pygen.rs). grimp and Python
@@ -111,8 +130,17 @@ jobs:
         run: |
           (cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) > ts.json
           ./target/release/examples/graph_oracle bench-corpus/vite --oracle ts.json --lang ts \
-            --max-missing 7 --max-extra 1 --markdown graph-ts.md
+            --gaps benches/graph/known_gaps.toml --corpus vite --markdown graph-ts.md
+
+      # npm workspaces with tsconfig paths and extends, barrels, .mts/.cts,
+      # installed as symlinks (scripts/graph-oracle/ts_layouts.mjs).
+      - name: TypeScript (generated workspace monorepo)
+        run: |
+          node scripts/graph-oracle/ts_layouts.mjs ts-workspaces --seed 1
+          (cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../ts-workspaces) > ts-workspaces.json
+          ./target/release/examples/graph_oracle ts-workspaces --oracle ts-workspaces.json --lang ts \
+            --gaps benches/graph/known_gaps.toml --corpus ts-workspaces --markdown graph-ts-workspaces.md
 
       - name: Report
         if: always()
-        run: cat graph-py.md graph-py-deep.md graph-py-root-init.md graph-ts.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        run: cat graph-py.md graph-py-deep.md graph-py-root-init.md graph-layout-*.md graph-ts.md graph-ts-workspaces.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
