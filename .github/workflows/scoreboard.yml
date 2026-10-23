@@ -1,0 +1,95 @@
+name: Scale scoreboard
+
+# The real server binary on a generated tree of 200,000 files, searched
+# over HTTP while the tree changes the way branch switches, formatters and
+# builds change it (examples/scoreboard.rs). Every scenario reports the same
+# numbers: searches turned away, latency, how long until the index matches
+# the disk, peak memory, CPU, diagnostic captures, crashes, and what
+# GET /api/check finds. A number over its target in
+# benches/scoreboard/targets.toml fails the run. The book's "Scale
+# scoreboard" page has the targets and the measurements behind them.
+#
+# Nightly with the full ten-minute stream; on pull requests that touch
+# locking, watching, saving or limits with a two-minute stream, and the
+# table in the job summary.
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "src/search/engine_lock.rs"
+      - "src/search/watch_loop.rs"
+      - "src/search/watcher.rs"
+      - "src/search/incremental.rs"
+      - "src/search/background_indexer.rs"
+      - "src/search/integrity.rs"
+      - "src/search/engine/**"
+      - "src/web/**"
+      - "src/diagnostics/**"
+      - "src/config.rs"
+      - "src/main.rs"
+      - "examples/scoreboard.rs"
+      - "examples/support/**"
+      - "benches/scoreboard/**"
+      - ".github/workflows/scoreboard.yml"
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Generated files"
+        default: "200000"
+      stream_seconds:
+        description: "How long the stream scenario changes files"
+        default: "600"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  scoreboard:
+    name: Scale scoreboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the server and the harness
+        run: cargo build --release --bins --example scoreboard
+
+      - name: Run the scoreboard
+        run: |
+          nproc; free -m | head -2
+          target/release/examples/scoreboard --dir "$RUNNER_TEMP/score" \
+            --files "$FILES" --stream-seconds "$STREAM" \
+            --targets benches/scoreboard/targets.toml \
+            --markdown scoreboard.md --json scoreboard.json
+        env:
+          FILES: ${{ github.event.inputs.files || '200000' }}
+          STREAM: ${{ github.event.inputs.stream_seconds || (github.event_name == 'pull_request' && '120' || '600') }}
+
+      - name: Report
+        if: always()
+        run: test -f scoreboard.md && cat scoreboard.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the numbers and the server log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scoreboard
+          path: |
+            scoreboard.md
+            scoreboard.json
+            ${{ runner.temp }}/score/run/server-*.log
+          if-no-files-found: ignore

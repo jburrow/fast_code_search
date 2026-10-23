@@ -201,8 +201,11 @@ pub fn record_burst(
     });
 }
 
-/// A search waited `waited` for the index lock (`got`: and then had it).
-/// Called by `engine_lock::read_within`.
+/// A search waited `waited` for the index lock (`got`: and then had it),
+/// not counting the time it held back for a waiting writer (at most
+/// `engine_lock::MAX_READER_DEFER`): that is by design, and with long
+/// searches it alone can pass the threshold. Called by
+/// `engine_lock::read_within`.
 pub fn lock_waited(waited: Duration, got: bool) {
     let Some(r) = RECORDER.get() else { return };
     if waited < r.settings.lock_wait {
@@ -434,12 +437,22 @@ fn sample_state(w: &Watched, r: &Recorder) -> StateSample {
     s
 }
 
+/// A backlog the watcher applies as much as within this long counts as kept
+/// up with, for the `backlog` capture. Measured with `examples/scoreboard.rs`
+/// (`stream`: 200 files a second on 200,000 files): the watcher kept 400 to
+/// 1,250 changes pending for ten minutes, each a few seconds' work, and the
+/// capture fired after 300 s for a backlog that was never more than seconds
+/// old.
+const KEEPING_UP: Duration = Duration::from_secs(10);
+
 /// The watchdog's memory between samples: since when each condition has
 /// held, and which have been captured this time round.
 #[derive(Debug)]
 struct Watchdog {
     lock_busy_since: Option<Instant>,
     pending_since: Option<Instant>,
+    /// Watcher progress over the last [`KEEPING_UP`], oldest first.
+    recent_progress: std::collections::VecDeque<(Instant, u64)>,
     watcher_progress: u64,
     watcher_moved: Instant,
     indexing: Option<String>,
@@ -453,6 +466,7 @@ impl Watchdog {
         Self {
             lock_busy_since: None,
             pending_since: None,
+            recent_progress: std::collections::VecDeque::new(),
             watcher_progress: 0,
             watcher_moved: now,
             indexing: None,
@@ -498,7 +512,22 @@ impl Watchdog {
             ));
         }
 
-        if s.pending_changes == 0 {
+        self.recent_progress.push_back((now, s.watcher_progress));
+        while self
+            .recent_progress
+            .front()
+            .is_some_and(|&(t, _)| now.saturating_duration_since(t) > KEEPING_UP)
+        {
+            self.recent_progress.pop_front();
+        }
+        let applied_lately = self
+            .recent_progress
+            .front()
+            .map_or(0, |&(_, p)| s.watcher_progress.saturating_sub(p));
+        // A steady stream of changes never brings the backlog to zero; a
+        // watcher that applies as much as is pending within `KEEPING_UP`
+        // is keeping up with it, not falling behind.
+        if s.pending_changes == 0 || s.pending_changes as u64 <= applied_lately {
             self.pending_since = None;
         }
         let pending_for = if s.pending_changes > 0 {
@@ -1558,6 +1587,40 @@ mod tests {
         // Caught up: everything re-arms.
         assert!(dog.check(at(43), &sample(0, 31), &cfg, &None).is_empty());
         assert!(dog.fired.is_empty());
+    }
+
+    /// A steady stream of changes keeps a few hundred pending for ever;
+    /// the watcher applying them as fast as they come is not a backlog.
+    #[test]
+    fn watchdog_lets_a_watcher_keep_up_with_a_stream() {
+        let mut cfg = settings(Path::new("."));
+        cfg.backlog = Duration::from_secs(300);
+        let t0 = Instant::now();
+        let mut dog = Watchdog::new(t0);
+        for s in 0..600 {
+            // 200 changes a second applied, 400 to 1,200 pending.
+            let pending = 400 + (s as usize * 37) % 800;
+            let fired = dog.check(
+                t0 + Duration::from_secs(s),
+                &sample(pending, 200 * s),
+                &cfg,
+                &None,
+            );
+            assert!(fired.is_empty(), "second {s}: {fired:?}");
+        }
+        // The stream outgrows the watcher: 5,000 pending, 100 a second
+        // applied. That is a backlog, 300 s on.
+        let mut fired = Vec::new();
+        for s in 600..901 {
+            fired.extend(dog.check(
+                t0 + Duration::from_secs(s),
+                &sample(5000, 120_000 + 100 * (s - 600)),
+                &cfg,
+                &None,
+            ));
+        }
+        assert_eq!(fired.len(), 1, "{fired:?}");
+        assert_eq!(fired[0].kind, kind::BACKLOG);
     }
 
     #[test]

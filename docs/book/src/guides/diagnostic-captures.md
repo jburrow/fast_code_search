@@ -20,12 +20,12 @@ The startup log says where captures go. Nothing leaves the machine.
 | Capture | When | Default |
 |---|---|---|
 | `slow_search` | A search took longer than this, from the request to the reply | `slow_search_secs = 5` |
-| `lock_wait` | A search waited longer than this for the index lock (a watcher step or a save held it) | `lock_wait_secs = 2` |
+| `lock_wait` | A search waited longer than this for the index lock (a watcher step or a save held it), not counting the time it held back so a waiting step could get in | `lock_wait_secs = 2` |
 | `watcher_stalled` | The watcher had changes to apply and made no progress (planned, parsed or installed nothing) for this long | `stall_secs = 120` |
 | `indexer_stalled` | The index build reported no progress for this long | `stall_secs` |
 | `search_stuck` | A search has been running for this long | `stall_secs` |
 | `lock_held` | The index lock was never free for this long | `stall_secs` |
-| `backlog` | The watcher has had changes to apply for this long without a break: it is falling behind, though still moving | `backlog_secs = 300` |
+| `backlog` | The watcher has had changes to apply for this long without a break: it is falling behind, though still moving (a backlog it works off within 10 s, as under a steady stream of edits, does not count) | `backlog_secs = 300` |
 
 The last four are hangs. Their captures also say what every thread is doing
 (see below).
@@ -56,12 +56,12 @@ lock waits are part of it.
 
 Earlier runs set the other bounds:
 
-- A search waits for an install step at most about a second plus its
-  hold-back for a waiting writer: as long as recent searches took, 250 ms
-  to 2 s (see [Incremental updates](../how-it-works/incremental.md)). So
-  with quick searches, 2 s of waiting means a step held the lock longer
-  than it is designed to; with searches of a second or more, look at
-  their length first.
+- A search waits for an install step at most about a second, after
+  holding back for a waiting writer for a little longer than recent
+  searches took, 250 ms to 2 s (see
+  [Incremental updates](../how-it-works/incremental.md)). The holding back
+  is left out of `lock_wait`, so 2 s of waiting means a step held the lock
+  longer than it is designed to.
 - The longest the watcher goes without counting progress while healthy is
   a full-tree rescan after its event queue overflowed: about 40 s walking
   a million files. `stall_secs = 120` leaves three times that.
