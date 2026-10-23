@@ -51,9 +51,11 @@ lock, so searches keep being answered while a batch is read from disk:
    the searches running on the shared thread pool are not queued behind
    a burst.
 3. **Install** (write lock, in steps). The removals go first, with a
-   single pass over every posting list; then the parsed files, at most
-   512 per step, each step under its own write lock with a short pause
-   between steps for the searches that arrived meanwhile. A modified file
+   single pass over every posting list; then the parsed files, 512 at a
+   time, each step under its own write lock with a short pause between
+   steps for the searches that arrived meanwhile. A step that had to wait
+   for searches to get the lock keeps installing for about as long as it
+   waited, up to one second (see "Catching up" below). A modified file
    keeps its id; edges *into* it are kept, and a file that was deleted
    and comes back regains its dependents. A path is looked up again at
    install time, since the index may have changed since it was planned
@@ -84,9 +86,9 @@ every couple of milliseconds. While it waits, a new search holds back for
 up to 250 ms so the running ones can finish and the step can get in, and
 then goes ahead whether or not it did. A search therefore waits for a
 step's short hold (tens of milliseconds), never for other searches. A
-search that arrives during a step waits for it, up to five seconds, before
-it gets a 503 with `Retry-After: 1` (gRPC: `UNAVAILABLE`), which `fcs` and
-the web UI retry on their own.
+search that arrives during a step waits for it (about a second at most);
+one still waiting after five seconds gets a 503 with `Retry-After: 1`
+(gRPC: `UNAVAILABLE`), which `fcs` and the web UI retry on their own.
 
 While changes wait to be applied, searches see the index as it was. They
 say so rather than pass it off as current: the `index` part of every
@@ -119,6 +121,36 @@ tree as well. Without that holding back
 the watcher did not get in once in a 30 s run on a 200,000-file tree, so
 nothing was applied at all.
 
+## Catching up
+
+A step gets the lock only once the searches running at that moment have
+finished, so while people search each step costs about one search's
+wait. With a fixed 512 files per step that made the watcher crawl: on
+the 200,000-file tree with four threads searching (about half a second
+per search), a change of 100,000 files was applied at about 400 files a
+second and was still 17,000 files behind four minutes after the change.
+The server looked as if it was updating for ever, with the "file changes
+to apply" count barely moving. Nobody searching, the same change applied
+at about 5,000 files a second.
+
+A step now stays in about as long as it waited to get in, capped at one
+second: the watcher installs at least as much as it waits, so a backlog
+drains at half speed or better however busy the searches are, and a
+search waits at most about a second for a step. `watch_load` now keeps
+searching after the changes stop and measures how long until the index
+matches the disk again:
+
+| Tree | Change | Version | Index matches disk | Slowest search | Mean search |
+|---|---|---|---|---|---|
+| 200,000 files | 100,000 rewritten at once | before | not after 240 s (17,200 files behind) | 2.2 s | 547 ms |
+| | | after | 10 s after the change stopped | 2.1 s | 717 ms |
+| 1,000,000 files | 200,000 rewritten at once | after | 214 s | 2.3 s | 866 ms |
+
+No search was turned away in any of these runs. The million-file run
+overflowed the watcher's event queue twice, so it reconciled the whole
+tree as well (about 40 s of walking a million files, during which the
+pending count does not move); the rest is installing.
+
 ## Saving
 
 After `save_after_updates` file changes the index is saved; it is also
@@ -136,6 +168,8 @@ live index with a fresh index of the same disk: the file set, every hit
 for every vocabulary word, symbol definitions and dependency edges. The
 random sequences print their seed; replay one with
 `FCS_WATCH_SEED=<seed> cargo test --test watch_harness`. Another test
+holds a long search while a burst waits and checks that the step that
+waited installs more than one chunk. Another test
 searches continuously while a burst of changes is applied and fails if a
 search is turned away or waits too long; another holds a long search while
 a burst waits to be installed and checks that other searches are answered
@@ -147,7 +181,10 @@ into it through the real watch loop while threads search, and reports how
 many searches were answered or turned away and the latency percentiles.
 `--mixed` searches the way the web handler does, with queries that read
 most of the tree; a large `--burst` with a long `--interval-ms` is a bulk
-change such as a branch switch:
+change such as a branch switch. After the changes stop it keeps searching
+until the index matches the disk again and reports how long that took, or
+"NOT SETTLED" after `--settle-seconds`; `--index-path` adds checkpoint
+saves:
 
 ```text
 cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000 \

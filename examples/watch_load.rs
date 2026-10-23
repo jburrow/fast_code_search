@@ -56,6 +56,17 @@ struct Args {
     /// regex queries instead of one cheap literal.
     #[arg(long)]
     mixed: bool,
+    /// After the changes stop, how long the index may take to match the
+    /// disk again before the run is reported as stuck.
+    #[arg(long, default_value_t = 300)]
+    settle_seconds: u64,
+    /// Persist the index here and checkpoint it every `--save-after`
+    /// applied changes, as a server with `save_after_updates` does.
+    #[arg(long)]
+    index_path: Option<PathBuf>,
+    /// See `--index-path`.
+    #[arg(long, default_value_t = 10_000)]
+    save_after: usize,
 }
 
 /// The `--mixed` queries: (regex, text). Common words make a search read
@@ -133,6 +144,52 @@ fn generate(root: &Path, files: usize) {
     eprintln!("generated {files} files in {:.1?}", t.elapsed());
 }
 
+/// Files on disk the index does not have as they are now, and changes the
+/// watcher reports as not applied yet.
+fn stale_files(engine: &RwLock<SearchEngine>, root: &Path) -> (usize, usize) {
+    let on_disk: Vec<PathBuf> = walk(root);
+    let Some(engine) = engine_lock::read_within(engine, engine_lock::SEARCH_READ_WAIT) else {
+        return (usize::MAX, usize::MAX);
+    };
+    let stale: Vec<&PathBuf> = on_disk
+        .iter()
+        .filter(|p| match engine.find_file_id_exact(p) {
+            Some(id) => !engine.is_unchanged_on_disk(id, p),
+            None => true,
+        })
+        .collect();
+    if std::env::var_os("WATCH_LOAD_SHOW_STALE").is_some() {
+        for p in stale.iter().take(5) {
+            eprintln!(
+                "  stale: {} (indexed: {})",
+                p.display(),
+                engine.find_file_id_exact(p).is_some()
+            );
+        }
+    }
+    let stale = stale.len();
+    let indexed = engine.get_stats().num_files;
+    // Deleted files still in the index.
+    let gone = indexed.saturating_sub(on_disk.len());
+    (stale + gone, engine.freshness().pending_changes)
+}
+
+fn walk(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
 fn percentile(sorted: &[Duration], p: f64) -> Duration {
     if sorted.is_empty() {
         return Duration::ZERO;
@@ -150,6 +207,15 @@ fn main() {
     let root = args.dir.canonicalize().unwrap();
     let config = IndexerConfig {
         paths: vec![root.to_string_lossy().to_string()],
+        index_path: args
+            .index_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        save_after_updates: if args.index_path.is_some() {
+            args.save_after
+        } else {
+            0
+        },
         ..Default::default()
     };
     let engine = Arc::new(RwLock::new(SearchEngine::new()));
@@ -248,14 +314,43 @@ fn main() {
         rev += 1;
         std::thread::sleep(Duration::from_millis(args.interval_ms));
     }
-    // Let the last burst land.
-    std::thread::sleep(Duration::from_secs(3));
+    // The searches keep going while the watcher catches up: a watcher that
+    // stops making progress shows up here as files the index never gets.
+    let streamed_for = t.elapsed();
+    let settle = Instant::now();
+    let mut last_report = Instant::now();
+    let settled = loop {
+        let (stale, pending) = stale_files(&engine, &root);
+        if stale == 0 && pending == 0 {
+            break true;
+        }
+        if settle.elapsed() > Duration::from_secs(args.settle_seconds) {
+            eprintln!(
+                "NOT SETTLED: {stale} files differ from the index, {pending} changes pending"
+            );
+            break false;
+        }
+        if last_report.elapsed() > Duration::from_secs(10) {
+            eprintln!(
+                "settling: {stale} files differ, {pending} changes pending, {:.0?}",
+                settle.elapsed()
+            );
+            last_report = Instant::now();
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    let settled_in = settle.elapsed();
     stop.store(true, Ordering::Relaxed);
     for r in readers {
         r.join().unwrap();
     }
     shutdown.store(true, Ordering::Release);
+    let shutting_down = Instant::now();
     watch.join().unwrap();
+    eprintln!(
+        "streamed {streamed_for:.0?}; settled={settled} in {settled_in:.1?}; watcher stopped in {:.1?}",
+        shutting_down.elapsed()
+    );
 
     let mut lat = latencies.lock().unwrap().clone();
     lat.sort();

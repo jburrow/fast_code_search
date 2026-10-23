@@ -179,26 +179,36 @@ pub fn apply_burst(
         .store(plan.remove.len() + plan.index.len(), Ordering::Release);
     let parsed = guarded("parsing", || pool.install(|| parse_planned(parser, &plan)))?;
 
-    // The removals go in one step and the files in steps of at most
-    // INSTALL_CHUNK, each under its own write lock, so a big burst never
-    // holds searches back for longer than one step.
+    // The removals go in one step and the files in steps, each under its
+    // own write lock, so a big burst never holds searches back for longer
+    // than one step.
     let mut report = BurstReport::default();
     let removals = ChangePlan {
         remove: plan.remove,
         index: Vec::new(),
     };
     let removing = removals.remove.len();
-    install(engine, removals, Vec::new(), &mut report)?;
+    install(
+        engine,
+        removals,
+        &mut Vec::new(),
+        Duration::ZERO,
+        &mut report,
+        &applying.0,
+    )?;
     applied(&applying.0, removing);
     let mut parsed = parsed;
     while !parsed.is_empty() {
         // Searches that queued during the last step go first.
         std::thread::sleep(STEP_GAP);
-        let rest = parsed.split_off(parsed.len().min(INSTALL_CHUNK));
-        let step = parsed.len();
-        install(engine, ChangePlan::default(), parsed, &mut report)?;
-        applied(&applying.0, step);
-        parsed = rest;
+        install(
+            engine,
+            ChangePlan::default(),
+            &mut parsed,
+            MAX_HOLD,
+            &mut report,
+            &applying.0,
+        )?;
     }
     report.elapsed = started.elapsed();
     Some(report)
@@ -211,32 +221,61 @@ fn applied(applying: &AtomicUsize, n: usize) {
     });
 }
 
-/// Files installed per write-lock step; see [`apply_burst`].
+/// Files installed at a time; a step installs one or more of these.
 pub const INSTALL_CHUNK: usize = 512;
+
+/// The longest a step holds the write lock past its first
+/// [`INSTALL_CHUNK`] files.
+///
+/// A step waits for a moment when no search holds the lock, which while
+/// people search is about as long as one search. Installing a fixed 512
+/// files per step then made the watcher apply a few hundred files a second
+/// on a tree whose searches take half a second: measured with
+/// `examples/watch_load.rs --mixed` on 200,000 files, 100,000 rewritten
+/// files were still 17,000 behind four minutes later, and the server looked
+/// as if it was updating for ever. A step now stays in about as long as it
+/// waited to get in, up to this cap, so a backlog drains at half speed or
+/// better while a search waits at most this long for a step.
+pub const MAX_HOLD: Duration = Duration::from_secs(1);
 
 /// The pause between install steps. Longer than a waiting search's
 /// longest back-off (see [`crate::search::engine_lock`]), so the searches
 /// that arrived during a step are answered before the next one starts.
 const STEP_GAP: Duration = Duration::from_millis(20);
 
-/// One install step of [`apply_burst`], added to `report`.
+/// One install step of [`apply_burst`], added to `report`: `plan` and the
+/// first [`INSTALL_CHUNK`] of `parsed` (taken off it), then more chunks
+/// for as long as the lock took to get, up to `max_hold`. Each installed
+/// chunk is taken off `applying`.
 fn install(
     engine: &Arc<RwLock<SearchEngine>>,
     plan: ChangePlan,
-    parsed: Vec<(PathBuf, Option<crate::search::PreIndexedFile>)>,
+    parsed: &mut Vec<(PathBuf, Option<crate::search::PreIndexedFile>)>,
+    max_hold: Duration,
     report: &mut BurstReport,
+    applying: &AtomicUsize,
 ) -> Option<()> {
     if plan.remove.is_empty() && parsed.is_empty() {
         return Some(());
     }
-    let (outcome, held) = with_engine_write(engine, |engine| {
-        let held = Instant::now();
-        let outcome = apply_plan(engine, plan, parsed);
-        (outcome, held.elapsed())
-    })?;
-    report.outcome += outcome;
+    let asked = Instant::now();
+    let mut guard = engine_lock::write(engine);
+    let budget = asked.elapsed().min(max_hold);
+    let held = Instant::now();
+    let mut plan = Some(plan);
+    loop {
+        let rest = parsed.split_off(parsed.len().min(INSTALL_CHUNK));
+        let chunk = std::mem::replace(parsed, rest);
+        let files = chunk.len();
+        let plan = plan.take().unwrap_or_default();
+        report.outcome += guarded("update", || apply_plan(&mut guard, plan, chunk))?;
+        applied(applying, files);
+        if parsed.is_empty() || held.elapsed() >= budget {
+            break;
+        }
+    }
     report.steps += 1;
-    report.longest_hold = report.longest_hold.max(held);
+    report.longest_hold = report.longest_hold.max(held.elapsed());
     Some(())
 }
 
