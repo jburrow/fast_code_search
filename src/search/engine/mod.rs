@@ -17,6 +17,7 @@ use tracing::warn;
 
 mod freshness;
 mod impact;
+mod invariants;
 mod paths;
 mod persist;
 mod progress;
@@ -31,6 +32,7 @@ pub use impact::{
     ImpactFileSummary, ImpactOptions, ImpactReport, ImpactScope, SymbolImpact, TierCounts, UseLine,
     UseTier, UserFile, DEFAULT_IMPACT_FILES, DEFAULT_IMPACT_LINES, MAX_IMPACT_SYMBOLS,
 };
+pub use invariants::{FileCheck, InvariantReport};
 pub use paths::{PathMatch, PathQuery, PathSearch};
 pub use progress::*;
 pub use scope::{GraphScope, MAX_SCOPE_HOPS};

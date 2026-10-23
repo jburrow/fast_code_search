@@ -17,6 +17,7 @@
 - [Performance and memory](guides/performance.md)
 - [Troubleshooting](guides/troubleshooting.md)
 - [Diagnostic captures](guides/diagnostic-captures.md)
+- [Checking a live index](guides/checking-the-index.md)
 - [Upgrading](guides/upgrading.md)
 - [Deployment](imported/deployment.md)
 

@@ -131,6 +131,25 @@ pub struct CheckArgs {
     /// Skip the dependency graph check
     #[arg(long)]
     pub no_graph: bool,
+    /// Check the running server's index instead (see --server): does it
+    /// agree with itself, does indexed content match the disk, and does it
+    /// hold the files a fresh walk finds. Prints counts only, so the output
+    /// is safe to share; add --show-paths for example file names
+    #[arg(long)]
+    pub live: bool,
+    /// With --live: files whose content to read and check, spread over the
+    /// index (0 skips it)
+    #[arg(long, default_value_t = 2000, value_name = "N", requires = "live")]
+    pub content: usize,
+    /// With --live: read and check every indexed file (slow on large trees)
+    #[arg(long, requires = "live")]
+    pub all_content: bool,
+    /// With --live: skip the walk of the disk
+    #[arg(long, requires = "live")]
+    pub no_discovery: bool,
+    /// With --live: show example file names for each kind of problem
+    #[arg(long, requires = "live")]
+    pub show_paths: bool,
 }
 
 /// `fcs impact`.
@@ -1064,8 +1083,53 @@ pub fn main_with_args(args: Vec<std::ffi::OsString>) -> i32 {
     }
 }
 
+/// `fcs check --live`: the server's own check of its index
+/// (`/api/check`). Exit 1 when it found problems.
+fn check_live(session: &Session, args: &CheckArgs) -> Result<i32> {
+    session.note(&format!(
+        "checking the index of the server at {}…",
+        session.server
+    ));
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        // Reading every file of a large index takes a while.
+        .timeout(Duration::from_secs(3600))
+        .build()
+        .context("building HTTP client")?;
+    let mut url = format!(
+        "{}/api/check?content={}&discovery={}&examples={}",
+        session.server,
+        args.content,
+        !args.no_discovery,
+        if args.show_paths { 20 } else { 0 }
+    );
+    if args.all_content {
+        url.push_str("&all=true");
+    }
+    let resp = client
+        .get(&url)
+        .send()
+        .with_context(|| format!("server not reachable at {}", session.server))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        anyhow::bail!("the server answered {status}: {body}");
+    }
+    let report: crate::search::integrity::IntegrityReport =
+        resp.json().context("reading the check report")?;
+    let text = match session.format {
+        Format::Json => serde_json::to_string_pretty(&report)? + "\n",
+        _ => report.render(args.show_paths),
+    };
+    print!("{text}");
+    Ok(i32::from(report.problems() > 0))
+}
+
 /// `fcs check`: see [`crate::check::run_check`].
 fn check(session: &Session, args: &CheckArgs) -> Result<i32> {
+    if args.live {
+        return check_live(session, args);
+    }
     let mut indexer = session
         .config
         .as_ref()

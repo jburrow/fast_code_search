@@ -345,24 +345,7 @@ pub(crate) fn effective_max_size(config: &IndexerConfig) -> u64 {
     }
 }
 
-/// The same eligibility rules discovery applies, for a single watcher path:
-/// exclude patterns (glob), include extensions, binary extensions, size cap,
-/// and the exact-path `exclude_files` list.
-pub fn is_eligible_file(path: &Path, config: &IndexerConfig) -> bool {
-    if config.is_file_excluded(path) {
-        return false;
-    }
-    crate::search::file_discovery::is_eligible(path, &discovery_config(config, Vec::new()))
-}
-
 /// Discovery settings for `paths` with the indexer's eligibility rules.
 fn discovery_config(config: &IndexerConfig, paths: Vec<String>) -> FileDiscoveryConfig {
-    FileDiscoveryConfig {
-        paths,
-        exclude_patterns: config.exclude_patterns.clone(),
-        include_extensions: config.include_extensions.clone(),
-        max_file_size: Some(effective_max_size(config)),
-        respect_gitignore: config.respect_gitignore,
-        ..Default::default()
-    }
+    config.discovery_config(paths)
 }

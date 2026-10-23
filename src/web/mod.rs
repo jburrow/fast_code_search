@@ -249,6 +249,7 @@ pub fn create_router_with_options(
         .route("/api/ready", get(api::ready_handler))
         .route("/metrics", get(api::metrics_handler))
         .route("/api/diagnostics", get(api::diagnostics_handler))
+        .route("/api/check", get(api::check_handler))
         .route("/api/dependents", get(api::dependents_handler))
         .route("/api/dependencies", get(api::dependencies_handler))
         .route("/api/graph/neighborhood", get(graph::neighborhood_handler))

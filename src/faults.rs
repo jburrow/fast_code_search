@@ -14,6 +14,8 @@
 //! Points:
 //! - `parse.read`: reading a file to index it (initial build and watcher).
 //! - `watch.apply`: installing a parsed watcher burst (panics).
+//! - `watch.lose`: the watch loop drops a change event, as a backend that
+//!   loses events would (the background scrub must find and fix it).
 
 use std::path::Path;
 
@@ -101,6 +103,18 @@ pub fn io(name: &str, path: &Path) -> std::io::Result<()> {
     }
     let _ = (name, path);
     Ok(())
+}
+
+/// A decision fault point: true when `name` is armed for `path` (any
+/// action), for faults that change what the code does rather than fail.
+#[inline]
+pub fn fires(name: &str, path: &Path) -> bool {
+    #[cfg(feature = "failpoints")]
+    if registry::fire(name, path).is_some() {
+        return true;
+    }
+    let _ = (name, path);
+    false
 }
 
 /// A panic fault point: panics when `name` is armed for `path`.

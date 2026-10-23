@@ -135,6 +135,11 @@ respect_gitignore = true
 # Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
 include_extensions = []
 
+# More extensions never to read, on top of the built-in binary list
+# (images, archives, fonts, office documents, media, compiled objects)
+# Example: ["dat", "parquet"]
+extra_binary_extensions = []
+
 # Patterns to exclude from indexing
 exclude_patterns = [
     "**/node_modules/**",
@@ -253,4 +258,12 @@ thread_stacks = true
 # Keep query text, file paths and quoted text in captures. Off: captures say
 # how long a query was, not what it was.
 include_queries = false
+
+# Background scrub: check indexed files against the disk a few at a time,
+# and index again any the index has out of step (a lost change). Counts are
+# in /api/diagnostics and `fcs check --live`. About 0.1% of a core.
+scrub = true
+scrub_files_per_minute = 3000
+# Minutes between checks of the index's own consistency (0: never).
+scrub_invariants_minutes = 60.0
 ```

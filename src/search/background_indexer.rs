@@ -509,12 +509,8 @@ fn run_indexing_pipeline(
 
     // Spawn file discovery thread
     let discovery_handle = spawn_discovery_thread(
-        paths_to_index.to_vec(),
+        indexer_config.discovery_config(paths_to_index.to_vec()),
         stale_files,
-        indexer_config.exclude_patterns.clone(),
-        indexer_config.include_extensions.clone(),
-        crate::search::incremental::effective_max_size(indexer_config),
-        indexer_config.respect_gitignore,
         tx,
         files_discovered.clone(),
         discovery_done.clone(),
@@ -570,12 +566,8 @@ fn run_indexing_pipeline(
 /// Spawn the file discovery thread.
 #[allow(clippy::too_many_arguments)]
 fn spawn_discovery_thread(
-    paths_to_index: Vec<String>,
+    discovery_config: FileDiscoveryConfig,
     stale_files: Vec<PathBuf>,
-    exclude_patterns: Vec<String>,
-    include_extensions: Vec<String>,
-    max_file_size: u64,
-    respect_gitignore: bool,
     tx: SyncSender<PathBuf>,
     files_discovered: Arc<AtomicUsize>,
     discovery_done: Arc<AtomicBool>,
@@ -589,8 +581,9 @@ fn spawn_discovery_thread(
         // FileDiscoveryIterator uses, so stale files are subject to identical
         // exclusion rules. The previous trim-and-substring approach diverged
         // (e.g. it wrongly excluded `.github/` for a `**/.git/**` pattern).
+        let max_file_size = discovery_config.max_file_size.unwrap_or(u64::MAX);
         let stale_exclude_filter = crate::search::path_filter::PathFilter::exclude_only(
-            &exclude_patterns,
+            &discovery_config.exclude_patterns,
         )
         .unwrap_or_else(|e| {
             tracing::warn!(
@@ -643,17 +636,6 @@ fn spawn_discovery_thread(
         }
 
         // Then discover files from paths that need indexing.
-        // Pass the original (unstripped) patterns — FileDiscoveryIterator
-        // calls compile_exclude_patterns() internally.
-        let discovery_config = FileDiscoveryConfig {
-            paths: paths_to_index,
-            exclude_patterns,
-            include_extensions,
-            max_file_size: Some(max_file_size),
-            respect_gitignore,
-            ..Default::default()
-        };
-
         for path in FileDiscoveryIterator::new(&discovery_config) {
             if shutdown.load(Ordering::Acquire) {
                 break;

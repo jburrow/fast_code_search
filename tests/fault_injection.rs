@@ -183,6 +183,10 @@ impl Rig {
 
 impl Drop for Rig {
     fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let report = self.engine.read().unwrap().check_invariants();
+            assert!(report.is_clean(), "{report}");
+        }
         self.shutdown.store(true, Ordering::Release);
         if let Some(h) = self.watch.take() {
             let _ = h.join();
@@ -344,4 +348,62 @@ fn watcher_picks_up_a_file_the_build_could_not_read() {
     });
     rig.wait_for("nothing pending", |r| r.pending() == 0);
     assert_eq!(rig.unreadable(), 0);
+}
+
+/// A change the watcher never hears about (a backend that drops events)
+/// is found by the background scrub, counted, and indexed again.
+#[test]
+fn scrub_finds_and_fixes_a_lost_change() {
+    use fast_code_search::search::integrity::{run_scrub, ScrubConfig};
+    let mut rig = Rig::new(&[("a.py", "x = 'oldword'\n"), ("b.py", "y = 1\n")], true);
+    rig.build();
+    rig.start_watching();
+    let scrub = std::thread::spawn({
+        let (engine, shutdown) = (rig.engine.clone(), rig.shutdown.clone());
+        move || {
+            run_scrub(
+                engine,
+                ScrubConfig {
+                    files_per_minute: 6_000,
+                    invariants_every: Some(Duration::from_millis(500)),
+                    suspect_for: Duration::from_millis(300),
+                },
+                shutdown,
+            )
+        }
+    });
+    rig.arm("watch.lose", "a.py", Action::Panic, None);
+    // Not the same second as the build, so the change shows in the mtime.
+    std::thread::sleep(Duration::from_millis(1100));
+    rig.write("a.py", "x = 'newword'\n");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(rig.found_in("newword").is_empty(), "the change was lost");
+    rig.disarm("watch.lose", "a.py");
+    rig.wait_for("the scrub to index the file again", |r| {
+        r.found_in("newword") == ["a.py"]
+    });
+    let stats = rig
+        .engine
+        .read()
+        .unwrap()
+        .watch_backlog
+        .scrub
+        .lock()
+        .unwrap()
+        .clone();
+    assert_eq!(stats.drift.get("changed"), Some(&1), "{stats:?}");
+    assert_eq!(stats.requeued, 1);
+    rig.wait_for("a consistency check", |r| {
+        r.engine
+            .read()
+            .unwrap()
+            .watch_backlog
+            .scrub
+            .lock()
+            .unwrap()
+            .invariant_checks
+            > 0
+    });
+    rig.shutdown.store(true, Ordering::Release);
+    scrub.join().unwrap();
 }

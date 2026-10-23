@@ -110,8 +110,12 @@ pub struct TrigramIndex {
     // Map from trigram to set of document IDs containing that trigram
     // FxHashMap is faster than std HashMap for small keys like Trigram
     trigram_to_docs: FxHashMap<Trigram, RoaringBitmap>,
-    // Cached bitmap of all document IDs (for regex fallback)
-    all_docs_cache: Option<RoaringBitmap>,
+    // Every document added and not removed, whether or not it has any
+    // trigram: the candidates for a query with no trigram of its own (a
+    // short query, a regex with no literal). It used to be the union of the
+    // posting lists, so a file shorter than three bytes with a short name
+    // (`x.py` holding `ab`) was never searched by such a query.
+    all_docs: RoaringBitmap,
 }
 
 impl TrigramIndex {
@@ -131,9 +135,7 @@ impl TrigramIndex {
                 .insert(doc_id);
         }
 
-        if let Some(cache) = self.all_docs_cache.as_mut() {
-            cache.insert(doc_id);
-        }
+        self.all_docs.insert(doc_id);
     }
 
     /// Add a document using pre-computed trigrams (for parallel indexing)
@@ -145,11 +147,7 @@ impl TrigramIndex {
                 .insert(doc_id);
         }
 
-        // Keep the all-documents cache warm across incremental adds instead of
-        // forcing a full union over every posting list on the next short query.
-        if let Some(cache) = self.all_docs_cache.as_mut() {
-            cache.insert(doc_id);
-        }
+        self.all_docs.insert(doc_id);
     }
 
     /// Remove a document from the index (for incremental updates / deletions).
@@ -167,9 +165,7 @@ impl TrigramIndex {
                 docs.remove(doc_id);
             }
         });
-        if let Some(cache) = self.all_docs_cache.as_mut() {
-            cache.remove(doc_id);
-        }
+        self.all_docs.remove(doc_id);
     }
 
     /// Remove many documents in a single pass over the posting lists.
@@ -195,9 +191,7 @@ impl TrigramIndex {
                 *docs -= doomed;
             }
         });
-        if let Some(cache) = self.all_docs_cache.as_mut() {
-            *cache -= doomed;
-        }
+        self.all_docs -= doomed;
     }
 
     /// Release over-allocated bucket memory from incremental inserts.
@@ -210,13 +204,7 @@ impl TrigramIndex {
     /// to pre-compute the all_documents bitmap for faster regex fallback queries.
     /// Also shrinks the internal HashMap to release over-allocated bucket memory.
     pub fn finalize(&mut self) {
-        if self.all_docs_cache.is_none() {
-            let mut all_docs = RoaringBitmap::new();
-            for docs in self.trigram_to_docs.values() {
-                all_docs |= docs;
-            }
-            self.all_docs_cache = Some(all_docs);
-        }
+        self.all_docs.optimize();
         // Run-length encode dense posting lists: ubiquitous trigrams (spaces,
         // "the", newline+indent) cover nearly every document and shrink from
         // an 8 KB bitmap container per 65k docs to a few bytes, on disk and
@@ -275,19 +263,15 @@ impl TrigramIndex {
         self.trigram_to_docs.len()
     }
 
-    /// All document IDs in the index.
-    ///
-    /// Borrowed from the cache that `finalize()` maintains; only an index that
-    /// has never been finalized pays for a fresh union.
+    /// All document IDs in the index, with or without trigrams.
     pub fn all_documents(&self) -> std::borrow::Cow<'_, RoaringBitmap> {
-        if let Some(ref cached) = self.all_docs_cache {
-            return std::borrow::Cow::Borrowed(cached);
-        }
-        let mut all_docs = RoaringBitmap::new();
-        for docs in self.trigram_to_docs.values() {
-            all_docs |= docs;
-        }
-        std::borrow::Cow::Owned(all_docs)
+        std::borrow::Cow::Borrowed(&self.all_docs)
+    }
+
+    /// Set the documents the index holds (after [`Self::from_trigram_map`],
+    /// whose posting lists do not name documents without trigrams).
+    pub fn set_documents(&mut self, docs: RoaringBitmap) {
+        self.all_docs = docs;
     }
 
     /// Get a reference to the internal trigram-to-docs map for persistence
@@ -295,11 +279,23 @@ impl TrigramIndex {
         &self.trigram_to_docs
     }
 
+    /// The posting lists, to corrupt on purpose in tests of the self-check.
+    #[cfg(test)]
+    pub(crate) fn trigram_map_mut(&mut self) -> &mut FxHashMap<Trigram, RoaringBitmap> {
+        &mut self.trigram_to_docs
+    }
+
     /// Restore the index from a persisted trigram map
+    /// The documents are taken from the posting lists; call
+    /// [`Self::set_documents`] when some may have no trigram.
     pub fn from_trigram_map(trigram_to_docs: FxHashMap<Trigram, RoaringBitmap>) -> Self {
+        let mut all_docs = RoaringBitmap::new();
+        for docs in trigram_to_docs.values() {
+            all_docs |= docs;
+        }
         Self {
             trigram_to_docs,
-            all_docs_cache: None,
+            all_docs,
         }
     }
 }
@@ -356,8 +352,6 @@ mod tests {
         doomed.insert(2);
         idx.remove_documents(&doomed);
 
-        // Cache was updated in place (still present, still correct).
-        assert!(idx.all_docs_cache.is_some());
         let all: Vec<u32> = idx.all_documents().iter().collect();
         assert_eq!(all, vec![1]);
         // "wor" only appeared in removed docs -> pruned; "hel" survives with doc 1.
@@ -373,10 +367,14 @@ mod tests {
             .collect();
         assert_eq!(hel, vec![1]);
 
-        // Adding keeps the cache warm too.
+        // Adding keeps it current too, even for a document too short to
+        // have a trigram.
         idx.add_document(3, "hello again");
-        assert!(idx.all_docs_cache.is_some());
-        assert_eq!(idx.all_documents().len(), 2);
+        idx.add_document(4, "ab");
+        assert_eq!(
+            idx.all_documents().iter().collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
     }
 
     #[test]
