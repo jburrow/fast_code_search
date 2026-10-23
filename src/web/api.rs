@@ -1232,7 +1232,7 @@ fn get_stats_from_engine(engine: &super::AppState) -> ProgressStats {
 /// only means some other thread panicked, not that the index is unusable.
 pub(super) fn try_read_engine(
     engine: &std::sync::RwLock<SearchEngine>,
-) -> Result<std::sync::RwLockReadGuard<'_, SearchEngine>, (StatusCode, String)> {
+) -> Result<engine_lock::ReadGuard<'_, SearchEngine>, (StatusCode, String)> {
     engine_lock::read_within(engine, engine_lock::SEARCH_READ_WAIT).ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,

@@ -326,10 +326,12 @@ fn main() {
                         if mixed { "mixed" } else { "text" },
                         &query,
                     );
-                    let guard = if no_wait {
-                        engine.try_read().ok()
+                    let guard: Option<Box<dyn std::ops::Deref<Target = SearchEngine>>> = if no_wait
+                    {
+                        engine.try_read().ok().map(|g| Box::new(g) as _)
                     } else {
                         engine_lock::read_within(&engine, engine_lock::SEARCH_READ_WAIT)
+                            .map(|g| Box::new(g) as _)
                     };
                     match guard {
                         Some(guard) => {

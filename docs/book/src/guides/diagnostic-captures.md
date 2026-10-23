@@ -56,10 +56,12 @@ lock waits are part of it.
 
 Earlier runs set the other bounds:
 
-- A search waits for an install step at most about 1.3 s: up to 250 ms
-  holding back for a waiting writer, then a step's hold of at most one
-  second (see [Incremental updates](../how-it-works/incremental.md)). So
-  2 s of waiting means a step held the lock longer than it is designed to.
+- A search waits for an install step at most about a second plus its
+  hold-back for a waiting writer: as long as recent searches took, 250 ms
+  to 2 s (see [Incremental updates](../how-it-works/incremental.md)). So
+  with quick searches, 2 s of waiting means a step held the lock longer
+  than it is designed to; with searches of a second or more, look at
+  their length first.
 - The longest the watcher goes without counting progress while healthy is
   a full-tree rescan after its event queue overflowed: about 40 s walking
   a million files. `stall_secs = 120` leaves three times that.

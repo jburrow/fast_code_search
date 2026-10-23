@@ -25,6 +25,7 @@ wrote every line and knows the answer.
 | `tests/contract_walk.rs` | one search walked to its last hit through every surface: REST at several page sizes and random offsets, gRPC, MCP over HTTP and `fcs mcp`, `fcs` (piped, `-l`, offline) and the web page in headless Chromium with LOAD MORE and "Show N more hits" pressed until they are gone; no hit twice or missing, each file's hits together, files by best hit, honest counts | the engine's exhaustive list, itself checked against the files on disk and the generator's reference key | `cargo test --test contract_walk` (the web page needs Playwright, see below) |
 | `tests/rank_snapshot.rs` | the first 20 hits and the total of about a hundred searches; the same corpus at two places on disk must rank the same | `tests/snapshots/rank_order.txt`, changed only on purpose | `cargo test --test rank_snapshot` |
 | `tests/discovery_oracle.rs` | which files are indexed (the build and the watcher's per-file check) on random trees of `.gitignore`, `.ignore`, `.rgignore` and `.git/info/exclude` rules; the FILES box with a regex | `rg --files`, and `rg` over the path list | `cargo test --test discovery_oracle` (needs `rg`) |
+| `tests/lock_sim.rs` | the engine lock and the watcher's install steps under minutes of made-up load (back-to-back half-second searches, one 20 s search among quick ones, a busy server during a branch switch): every search answered, no search waits past its hold-back plus one step, backlogs drain at half speed or better, a slow search delays only the writer | bounds derived from the protocol, on a simulated clock (`fast_code_search::sim`): the real lock code, the same schedule on every run and OS, four minutes in about a second | `cargo test --test lock_sim` (`-- --ignored --nocapture` prints the tuning table) |
 | `tests/fault_injection.rs` | failed reads, panics while applying changes, lost changes: each is retried, reported and repaired | expected recovery | `cargo test --features failpoints --test fault_injection` |
 | `examples/rg_backtest.rs` | fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (`--history reload`) and filled by the watcher (`--history watch`) | `rg` | see [Correctness against ripgrep](../benchmarks/correctness.md) |
 | `examples/graph_oracle.rs` | the import graph on Django, Vite and generated deep trees | grimp, TypeScript's resolver | CI job "graph oracle" |
@@ -123,6 +124,10 @@ generated Python trees with grimp (job "graph oracle").
   a parent's `.ignore` should beat a `.gitignore` next to the file; and
   rules above a nested repository were dropped inside it (discovery
   oracle).
+- Searches held back a fixed 250 ms for a waiting install step, too short
+  for half-second searches: the watcher drained a backlog at 8% of its
+  speed, not the "half speed or better" the docs claimed (lock
+  simulation; see [Incremental updates](incremental.md#holding-back-as-long-as-a-search-runs)).
 - Earlier probes found a crash when a large file was rewritten during a
   search, "server unavailable" at the end of a build, and lost changes
   after failed reads or a panic; the fault and watch tests cover them.

@@ -389,7 +389,7 @@ pub fn apply_burst(
     applied(&applying.0, removing);
     while !parsed.is_empty() {
         // Searches that queued during the last step go first.
-        std::thread::sleep(STEP_GAP);
+        crate::sim::sleep(STEP_GAP);
         install(
             engine,
             ChangePlan::default(),
@@ -425,13 +425,17 @@ pub const INSTALL_CHUNK: usize = 512;
 /// files were still 17,000 behind four minutes later, and the server looked
 /// as if it was updating for ever. A step now stays in about as long as it
 /// waited to get in, up to this cap, so a backlog drains at half speed or
-/// better while a search waits at most this long for a step.
+/// better while a search waits at most this long for a step. That holds
+/// only while the wait stays under the cap, which is why new searches hold
+/// back about as long as a search runs (`engine_lock::DEFER`): with a
+/// shorter hold-back, new searches keep the writer out past the running
+/// ones and the drain fell to 8% speed in `tests/lock_sim.rs`.
 pub const MAX_HOLD: Duration = Duration::from_secs(1);
 
 /// The pause between install steps. Longer than a waiting search's
 /// longest back-off (see [`crate::search::engine_lock`]), so the searches
 /// that arrived during a step are answered before the next one starts.
-const STEP_GAP: Duration = Duration::from_millis(20);
+pub const STEP_GAP: Duration = Duration::from_millis(20);
 
 /// One install step of [`apply_burst`], added to `report`: `plan` and the
 /// first [`INSTALL_CHUNK`] of `parsed` (taken off it), then more chunks
@@ -448,12 +452,8 @@ fn install(
     if plan.remove.is_empty() && parsed.is_empty() {
         return Some(());
     }
-    let asked = Instant::now();
-    let mut guard = engine_lock::write(engine);
-    let budget = asked.elapsed().min(max_hold);
-    let held = Instant::now();
     let mut plan = Some(plan);
-    loop {
+    let held = install_step(engine, max_hold, |engine| {
         let rest = parsed.split_off(parsed.len().min(INSTALL_CHUNK));
         let chunk = std::mem::replace(parsed, rest);
         let files = chunk.len();
@@ -462,16 +462,39 @@ fn install(
             for (path, _) in &chunk {
                 crate::faults::panic_point("watch.apply", path);
             }
-            apply_plan(&mut guard, plan, chunk)
+            apply_plan(engine, plan, chunk)
         })?;
         applied(applying, files);
-        if parsed.is_empty() || held.elapsed() >= budget {
+        Some(!parsed.is_empty())
+    })?;
+    report.steps += 1;
+    report.longest_hold = report.longest_hold.max(held);
+    Some(())
+}
+
+/// The step policy of `install`, apart from what a chunk is: take the
+/// write lock, install a first chunk (`chunk` returns whether more are
+/// left, `None` to stop), then more for as long as the lock took to get,
+/// up to `max_hold`. Returns how long the lock was held.
+///
+/// Public so the lock simulation (`tests/lock_sim.rs`) runs this policy,
+/// not a copy of it, with chunks that take a simulated time.
+pub fn install_step<T>(
+    lock: &RwLock<T>,
+    max_hold: Duration,
+    mut chunk: impl FnMut(&mut T) -> Option<bool>,
+) -> Option<Duration> {
+    let asked = crate::sim::now();
+    let mut guard = engine_lock::write(lock);
+    let held = crate::sim::now();
+    let budget = (held - asked).min(max_hold);
+    loop {
+        let more = chunk(&mut guard)?;
+        if !more || crate::sim::now() - held >= budget {
             break;
         }
     }
-    report.steps += 1;
-    report.longest_hold = report.longest_hold.max(held.elapsed());
-    Some(())
+    Some(crate::sim::now() - held)
 }
 
 /// The threads the watcher plans and parses on. Searches scan files on
