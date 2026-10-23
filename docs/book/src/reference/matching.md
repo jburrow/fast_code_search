@@ -139,7 +139,14 @@ These follow from fcs being a code search server rather than a line filter.
   searched, even when git tracks them (ripgrep searches a tracked
   `build/`). Ignore files apply as in ripgrep: `.gitignore`, `.ignore`,
   `.rgignore`, `.git/info/exclude` and your global git excludes
-  (`core.excludesFile`), with the same precedence. When the watcher sees a
+  (`core.excludesFile`), with the same precedence: a rule in an `.rgignore`
+  or `.ignore` anywhere above a file beats a `.gitignore` rule next to it; a
+  folder that is ignored stays ignored whatever a rule deeper down says
+  (`!a/b/` after `/a` brings nothing back, as in git); and `.gitignore`
+  files apply outside git repositories and above nested ones, as with
+  `rg --no-require-git`. The build and the watcher's per-file check are
+  both compared with `rg --files` on random trees of ignore files
+  (`tests/discovery_oracle.rs`). When the watcher sees a
   `.gitignore`, `.ignore` or `.rgignore` change, appear or go away (a
   branch switch, say), it re-checks every file under that folder, as a
   restart would. Edits to `.git/info/exclude` or the global excludes file

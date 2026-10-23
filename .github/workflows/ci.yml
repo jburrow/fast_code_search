@@ -85,6 +85,25 @@ jobs:
           fi
           exit "$status"
 
+      # The contract walk (tests/contract_walk.rs) runs in the step above
+      # without its browser leg; here with it: the web page in headless
+      # Chromium, LOAD MORE and "Show N more hits" pressed to the end, must
+      # show the same hits in the same order as every other surface.
+      - name: Walk every surface, the web page included
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -o pipefail
+          npm install --no-save --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          status=0
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" FCS_REQUIRE_BROWSER=1 \
+            cargo test --release --test contract_walk --no-fail-fast 2>&1 | tee test-walk.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash .github/scripts/annotate-test-log.sh test-walk.log
+          fi
+          exit "$status"
+
       - name: Run tests (semantic feature)
         shell: bash
         run: |

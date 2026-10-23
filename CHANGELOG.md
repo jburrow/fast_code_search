@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The watcher could index files the build leaves out, by ignore rules.**
+  When a file changed, the watcher decided whether it was ignored
+  differently from the walk that builds the index (and from ripgrep): a
+  rule deeper down (`!a/b/` after `/a`) let files back in from a folder
+  that is ignored; the nearest ignore file decided, where a parent's
+  `.ignore` or `.rgignore` rule should beat a `.gitignore` next to the
+  file; and rules in folders above a nested repository were not applied
+  inside it. Such files became searchable after an edit and disappeared
+  again at the next restart. The check now follows ripgrep's rules, and
+  both are compared with `rg --files` on random trees of ignore files.
 - **Folders ignored by a parent's `.gitignore` stayed out only until
   something happened in them.** With `sub/` in the root `.gitignore`, the
   watcher indexed everything in `pkg/sub` when the folder was created,
@@ -98,6 +108,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-deps`/`-rdeps` scopes, after a build and after the watcher rewrites the
   tree; grimp and Python check the key itself. Book page: How it works >
   How fcs is tested.
+- **Every surface walked to the last hit, and the first page pinned.**
+  `tests/contract_walk.rs` runs searches with thousands of hits through
+  REST, gRPC, MCP (HTTP and `fcs mcp`), `fcs` and the web page in headless
+  Chromium, pressing LOAD MORE and "Show N more hits" until they are gone,
+  and every surface must show the same hits in the same order with honest
+  counts. `tests/rank_snapshot.rs` keeps the first page of about a hundred
+  searches in a file, so a change that reorders results shows in its pull
+  request. The ripgrep backtest also runs on an index restarted from disk
+  and on one the watcher filled (`--history reload|watch`), with regexes
+  made up from the corpus (`--generate-regex`), and
+  `tests/discovery_oracle.rs` compares the indexed files and the FILES box
+  with `rg`.
 - **The index checks itself.** `fcs check --live` asks the running server
   whether its index agrees with itself, whether indexed files still match
   the disk, and whether it holds the files a fresh walk finds. It prints

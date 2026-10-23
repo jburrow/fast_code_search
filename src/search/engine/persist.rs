@@ -627,7 +627,9 @@ impl SearchEngine {
         // change never takes effect for files already in the index.
         if let Some(config) = config {
             use rayon::prelude::*;
-            let probe = crate::search::EligibilityProbe::new(&config.discovery_config(Vec::new()));
+            let probe = crate::search::EligibilityProbe::new(
+                &config.discovery_config(config.paths.clone()),
+            );
             let ineligible = file_statuses
                 .par_iter_mut()
                 .filter(|(_, status)| matches!(status, FileStatus::Valid))

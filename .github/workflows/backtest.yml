@@ -20,6 +20,7 @@ on:
       - "src/**"
       - "examples/rg_backtest.rs"
       - "tests/search_properties.rs"
+      - "tests/discovery_oracle.rs"
       - "benches/rg_backtest.toml"
       - "tests/fixtures/backtest/**"
       - "Cargo.toml"
@@ -71,10 +72,34 @@ jobs:
           rg --version | head -1
           cargo run --release --example rg_backtest -- \
             bench-corpus/tokio bench-corpus/django tests/fixtures/backtest \
-            --check-paging --check-defaults --generate 500 --seed "$SEED" \
-            --markdown backtest.md --json backtest.json
+            --check-paging --check-defaults --generate 500 --generate-regex 500 \
+            --seed "$SEED" --markdown backtest.md --json backtest.json
         env:
           SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
+
+      # The same backtest on an index that got there another way: built by
+      # the server's indexer, saved and loaded again as a restart does; and
+      # filled by the watcher, file by file in random bursts. Plus regexes
+      # made up from the corpora (--generate-regex).
+      - name: Run the backtest on a reloaded and a watched index
+        run: |
+          for history in reload watch; do
+            cargo run --release --example rg_backtest -- \
+              bench-corpus/tokio bench-corpus/django tests/fixtures/backtest \
+              --check-paging --generate 300 --generate-regex 300 --seed "$SEED" \
+              --history "$history" --markdown "backtest-$history.md"
+          done
+        env:
+          SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
+
+      # Which files are indexed, against `rg --files`, on random trees of
+      # ignore files (tests/discovery_oracle.rs).
+      - name: Discovery against ripgrep
+        run: cargo test --release --test discovery_oracle
+        env:
+          FCS_REQUIRE_RG: "1"
+          PROPTEST_CASES: "1000"
+          PROPTEST_RNG_SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
 
       # Random text (case-folding oddities, multi-byte characters) and
       # random literal and regex queries through the engine and rg; a fixed
@@ -88,7 +113,10 @@ jobs:
 
       - name: Report
         if: always()
-        run: test -f backtest.md && cat backtest.md >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          for f in backtest.md backtest-reload.md backtest-watch.md; do
+            test -f "$f" && head -c 200000 "$f" >> "$GITHUB_STEP_SUMMARY" || true
+          done
 
       - name: Upload the report
         if: always()
@@ -98,4 +126,6 @@ jobs:
           path: |
             backtest.md
             backtest.json
+            backtest-reload.md
+            backtest-watch.md
           if-no-files-found: ignore

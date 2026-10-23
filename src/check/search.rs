@@ -351,6 +351,113 @@ pub fn generate(c: &Corpus, n: usize, seed: u64) -> Vec<TextQuery> {
     out
 }
 
+/// `n` regexes made up from the corpus, seeded: a random line's
+/// identifiers and text turned into the shapes people write (word
+/// boundaries, `\d+` for digits, a prefix and `\w+`, a call `\s*\(`,
+/// anchors, two names in order with `.*?` or `.{0,N}` between, an
+/// alternation, `(?i)`, classes, an escaped piece of the line with its
+/// punctuation). Each is compared with `rg -e` as is; they exercise the
+/// regex planner (which trigrams a pattern must contain) on real text,
+/// where the hand-written regex queries are few.
+pub fn generate_regex(c: &Corpus, n: usize, seed: u64) -> Vec<String> {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(seed ^ 0x5eed_1e9e);
+    let mut files: Vec<&String> = c.indexed.iter().collect();
+    files.sort();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut attempts = 0;
+    while out.len() < n && attempts < n * 100 && !files.is_empty() {
+        attempts += 1;
+        let file = files[rng.random_range(0..files.len())];
+        let Some(text) = c.read_display(file) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        if lines.is_empty() {
+            continue;
+        }
+        let line = lines[rng.random_range(0..lines.len())];
+        let words: Vec<&str> = line
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|w| w.chars().count() >= 3)
+            .collect();
+        if words.is_empty() {
+            continue;
+        }
+        let i = rng.random_range(0..words.len());
+        let w = words[i];
+        let e = regex::escape(w);
+        let next = words.get(i + 1).map(|v| regex::escape(v));
+        let prefix: String = w.chars().take(rng.random_range(2..=4)).collect();
+        let pattern = match rng.random_range(0..13) {
+            0 => format!(r"\b{e}\b"),
+            1 => {
+                // Each run of digits becomes \d+, each run of letters
+                // after the first three \w*.
+                let mut p = String::new();
+                let mut last = ' ';
+                for (k, ch) in w.chars().enumerate() {
+                    let class = if ch.is_ascii_digit() {
+                        'd'
+                    } else if k >= 3 && ch.is_alphabetic() {
+                        'w'
+                    } else {
+                        p.push_str(&regex::escape(&ch.to_string()));
+                        ' '
+                    };
+                    if class != ' ' && class != last {
+                        p.push_str(if class == 'd' { r"\d+" } else { r"\w*" });
+                    }
+                    last = class;
+                }
+                p
+            }
+            2 => format!(r"{}\w+", regex::escape(&prefix)),
+            3 => format!(r"{e}\s*\("),
+            4 => format!(r"^\s*{e}"),
+            5 => format!(r"{e}\s*$"),
+            6 => match &next {
+                Some(v) => format!(r"{e}.*?{v}"),
+                None => continue,
+            },
+            7 => match &next {
+                Some(v) => format!(r"{e}.{{0,{}}}{v}", rng.random_range(1..12)),
+                None => continue,
+            },
+            8 => {
+                let v = words[rng.random_range(0..words.len())];
+                format!("{e}|{}", regex::escape(v))
+            }
+            9 => format!("(?i){}", regex::escape(&w.to_uppercase())),
+            10 => format!(
+                r"[A-Za-z_]{}\b",
+                regex::escape(&w.chars().skip(1).collect::<String>())
+            ),
+            11 => format!(r"(?:{e})[^A-Za-z0-9_]"),
+            _ => {
+                // A piece of the line around a punctuation mark, escaped.
+                let chars: Vec<char> = line.trim().chars().collect();
+                let punct: Vec<usize> = (0..chars.len())
+                    .filter(|&k| chars[k].is_ascii_punctuation())
+                    .collect();
+                if punct.is_empty() {
+                    continue;
+                }
+                let at = punct[rng.random_range(0..punct.len())];
+                let from = at.saturating_sub(rng.random_range(0..6));
+                let to = (at + rng.random_range(1..6)).min(chars.len());
+                regex::escape(&chars[from..to].iter().collect::<String>())
+            }
+        };
+        if pattern.len() < 3 || pattern.contains('\n') || !seen.insert(pattern.clone()) {
+            continue;
+        }
+        out.push(pattern);
+    }
+    out
+}
+
 /// The shortest form of a differing query that still differs: characters
 /// dropped from either end, one at a time.
 pub fn shrink(c: &Corpus, rg: &str, q: &TextQuery) -> Result<TextQuery> {

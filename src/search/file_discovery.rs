@@ -123,6 +123,15 @@ pub struct EligibilityProbe {
     /// with the chain cached per directory a file costs one map lookup.
     ignore_chains: Arc<std::sync::RwLock<rustc_hash::FxHashMap<PathBuf, Arc<IgnoreChain>>>>,
 
+    /// Whether each folder is ignored, as a walk decides it (an ignored
+    /// folder is never entered), cached per folder like `ignore_chains`.
+    dirs_ignored: Arc<std::sync::RwLock<rustc_hash::FxHashMap<PathBuf, bool>>>,
+
+    /// The indexed roots (as given and canonical). A walk starts at a root
+    /// and never checks the root itself against ignore files, so folder
+    /// checks stop there too.
+    roots: Vec<PathBuf>,
+
     /// Compiled exclude glob filter.
     exclude_filter: PathFilter,
 
@@ -137,7 +146,10 @@ pub struct EligibilityProbe {
 }
 
 impl EligibilityProbe {
-    /// Build the rules from `config` (`config.paths` is ignored).
+    /// Build the rules from `config`. `config.paths` are the indexed roots:
+    /// folders above them are not checked against ignore files, as a walk
+    /// from a root never checks them. Without roots, folders are checked up
+    /// to the repository root (the first folder holding `.git`).
     pub fn new(config: &FileDiscoveryConfig) -> Self {
         // Build a PathFilter from the exclude patterns. Patterns are matched against
         // the full OS path of each discovered file so that patterns like
@@ -150,6 +162,16 @@ impl EligibilityProbe {
         Self {
             respect_gitignore: config.respect_gitignore,
             ignore_chains: Arc::new(std::sync::RwLock::new(Default::default())),
+            dirs_ignored: Arc::new(std::sync::RwLock::new(Default::default())),
+            roots: config
+                .paths
+                .iter()
+                .flat_map(|p| {
+                    let p = PathBuf::from(p);
+                    let canonical = p.canonicalize().ok().filter(|c| *c != p);
+                    std::iter::once(p).chain(canonical)
+                })
+                .collect(),
             exclude_filter,
             include_extensions: config
                 .include_extensions
@@ -176,61 +198,88 @@ impl EligibilityProbe {
     /// to index everything in an ignored folder that was created, renamed
     /// in, or had an ignore file of its own written.
     pub fn is_dir_ignored(&self, dir: &Path) -> bool {
-        if !self.respect_gitignore {
+        self.respect_gitignore && self.dir_ignored(dir)
+    }
+
+    /// Is `path` ignored, as a walk decides it: every folder between the
+    /// root and the file is checked as a folder, and an ignored folder is
+    /// never entered, so a rule deeper down (`!a/b/` after `/a`) cannot
+    /// bring a file back from it, as in git and ripgrep. Then the file
+    /// itself, where the nearest ignore file with a rule for it decides.
+    ///
+    /// (This used to ask each ignore file about the file and its parents
+    /// in one go, from the file upwards, so `!a/b/` let `a/b/x` in although
+    /// the walk never entered `a`: the watcher indexed a file the build did
+    /// not, until the next restart dropped it.)
+    fn is_gitignored_cached(&self, path: &Path) -> bool {
+        let Some(dir) = path.parent() else {
+            return false;
+        };
+        self.dir_ignored(dir) || self.decides(path, false)
+    }
+
+    /// The nearest ignore file with a rule for `path` (a file or folder),
+    /// looking only at `path` itself, not its parents.
+    fn decides(&self, path: &Path, is_dir: bool) -> bool {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        self.ignore_chain(parent).ignores(path, is_dir)
+    }
+
+    /// Is folder `dir`, or a folder above it below the walk's start, ignored?
+    fn dir_ignored(&self, dir: &Path) -> bool {
+        // Where a walk starts: an indexed root, or without one the
+        // repository root. It is never checked itself.
+        if self.roots.iter().any(|r| r == dir)
+            || (self.roots.is_empty() && dir.join(".git").exists())
+        {
             return false;
         }
         let Some(parent) = dir.parent() else {
             return false;
         };
-        for gi in self.ignore_chain(parent).iter() {
-            match gi.matched_path_or_any_parents(dir, true) {
-                ignore::Match::Ignore(_) => return true,
-                ignore::Match::Whitelist(_) => return false,
-                ignore::Match::None => {}
+        if let Ok(map) = self.dirs_ignored.read() {
+            if let Some(&ignored) = map.get(dir) {
+                return ignored;
             }
         }
-        false
-    }
-
-    /// [`is_gitignored`] using the per-directory matcher cache.
-    fn is_gitignored_cached(&self, path: &Path) -> bool {
-        let Some(dir) = path.parent() else {
-            return false;
+        let under_root = self.roots.is_empty() || self.roots.iter().any(|r| dir.starts_with(r));
+        let ignored = if under_root {
+            self.dir_ignored(parent) || self.decides(dir, true)
+        } else {
+            // Outside every root (a path the watcher reports above them):
+            // only the folder's own rule.
+            self.decides(dir, true)
         };
-        let chain = self.ignore_chain(dir);
-        for gi in chain.iter() {
-            match gi.matched_path_or_any_parents(path, false) {
-                ignore::Match::Ignore(_) => return true,
-                ignore::Match::Whitelist(_) => return false,
-                ignore::Match::None => {}
-            }
+        if let Ok(mut map) = self.dirs_ignored.write() {
+            map.insert(dir.to_path_buf(), ignored);
         }
-        false
+        ignored
     }
 
-    /// The matchers that apply to files in `dir`: its own `.gitignore` /
-    /// `.ignore` followed by its ancestors' up to (and including) the first
-    /// directory containing `.git`. Built recursively from the parent's
-    /// chain so every directory is examined once.
+    /// The ignore files that apply to entries of `dir`: its own and every
+    /// ancestor's (the walk reads its root's parents' too, and with
+    /// `require_git(false)` does not stop at a repository's root), and the
+    /// user's global excludes rooted at the nearest repository. Built
+    /// recursively from the parent's chain so every directory is examined
+    /// once.
     fn ignore_chain(&self, dir: &Path) -> Arc<IgnoreChain> {
         if let Ok(map) = self.ignore_chains.read() {
             if let Some(chain) = map.get(dir) {
                 return chain.clone();
             }
         }
-        let mut chain: IgnoreChain = Vec::new();
-        if let Some(gi) = gitignore_for_dir(dir) {
-            chain.push(gi);
+        let mut chain = IgnoreChain::default();
+        chain.dirs.extend(ignores_for_dir(dir));
+        let parent = dir.parent().map(|p| self.ignore_chain(p));
+        if let Some(parent) = &parent {
+            chain.dirs.extend(parent.dirs.iter().cloned());
         }
-        match dir.parent() {
-            Some(parent) if !dir.join(".git").exists() => {
-                chain.extend(self.ignore_chain(parent).iter().cloned());
-            }
-            // The repository root (or the top of a tree that is not in
-            // one): the user's global excludes (`core.excludesFile`) apply
-            // last, as in the initial walk.
-            _ => chain.extend(global_gitignore_for_repo(dir)),
-        }
+        chain.global = match parent {
+            Some(parent) if !dir.join(".git").exists() => parent.global.clone(),
+            _ => global_gitignore_for_repo(dir),
+        };
         let chain = Arc::new(chain);
         if let Ok(mut map) = self.ignore_chains.write() {
             map.insert(dir.to_path_buf(), chain.clone());
@@ -435,31 +484,11 @@ pub fn is_eligible(path: &Path, config: &FileDiscoveryConfig) -> bool {
     EligibilityProbe::new(config).is_eligible_path(path, None)
 }
 
-/// Is `path` ignored by a `.gitignore` / `.ignore` file in one of its
-/// ancestor directories (nearest wins, like git)? Used for single watcher
-/// paths, where there is no directory walk to consult. Ancestors above the
-/// first directory containing `.git` are not consulted.
+/// Is `path` ignored by the ignore files above it, as a walk from its
+/// repository's root decides? See [`EligibilityProbe`], which caches the
+/// matchers when checking many paths.
 pub fn is_gitignored(path: &Path) -> bool {
-    let mut dirs: Vec<&Path> = Vec::new();
-    let mut cur = path.parent();
-    while let Some(d) = cur {
-        dirs.push(d);
-        if d.join(".git").exists() {
-            break;
-        }
-        cur = d.parent();
-    }
-    // Check from the file's own directory outwards; the nearest explicit
-    // decision (ignore or whitelist) wins, then the user's global excludes.
-    let global = dirs.last().copied().and_then(global_gitignore_for_repo);
-    for gi in dirs.into_iter().filter_map(gitignore_for_dir).chain(global) {
-        match gi.matched_path_or_any_parents(path, false) {
-            ignore::Match::Ignore(_) => return true,
-            ignore::Match::Whitelist(_) => return false,
-            ignore::Match::None => {}
-        }
-    }
-    false
+    EligibilityProbe::new(&FileDiscoveryConfig::default()).is_gitignored_cached(path)
 }
 
 /// The user's global git excludes (`core.excludesFile`, by default
@@ -483,9 +512,42 @@ fn global_gitignore_for_repo(root: &Path) -> Option<Arc<ignore::gitignore::Gitig
     gi
 }
 
-/// Matchers applying to one directory, nearest first (see
+/// One directory's ignore files, compiled, in [`IGNORE_FILES`] order.
+type DirIgnores = [Option<ignore::gitignore::Gitignore>; 4];
+
+/// The ignore files that apply in one directory (see
 /// [`EligibilityProbe::ignore_chain`]).
-type IgnoreChain = Vec<Arc<ignore::gitignore::Gitignore>>;
+#[derive(Default)]
+struct IgnoreChain {
+    /// Each directory's files, nearest first.
+    dirs: Vec<Arc<DirIgnores>>,
+    /// The user's global excludes, if any.
+    global: Option<Arc<ignore::gitignore::Gitignore>>,
+}
+
+impl IgnoreChain {
+    /// Do the ignore files ignore `path` (an entry of the chain's
+    /// directory)? As ripgrep decides (the `ignore` crate's
+    /// `matched_ignore`): one kind of ignore file at a time, in precedence
+    /// order, the nearest file of that kind with a rule for `path` decides,
+    /// so an `.ignore` rule two folders up beats a `.gitignore` rule next
+    /// to the file; then the global excludes. Only `path` itself is
+    /// matched, not its parents: a walk has already decided those.
+    fn ignores(&self, path: &Path, is_dir: bool) -> bool {
+        let global = self.global.as_deref();
+        let kinds = (0..IGNORE_FILES.len())
+            .flat_map(|k| self.dirs.iter().filter_map(move |d| d[k].as_ref()))
+            .chain(global);
+        for gi in kinds {
+            match gi.matched(path, is_dir) {
+                ignore::Match::Ignore(_) => return true,
+                ignore::Match::Whitelist(_) => return false,
+                ignore::Match::None => {}
+            }
+        }
+        false
+    }
+}
 
 /// Compiled ignore matchers per directory, keyed by the modification time
 /// and size of each of that directory's ignore files (`.git/info/exclude`,
@@ -498,15 +560,14 @@ type IgnoreChain = Vec<Arc<ignore::gitignore::Gitignore>>;
 /// the key.
 type IgnoreKey = [Option<(std::time::SystemTime, u64)>; 4];
 
-/// A directory's ignore files, lowest precedence first: a later file's
-/// rules win. In git a `.gitignore` overrides `.git/info/exclude`; in
-/// ripgrep `.ignore` overrides `.gitignore` and `.rgignore` overrides both.
-const IGNORE_FILES: [&str; 4] = [".git/info/exclude", ".gitignore", ".ignore", ".rgignore"];
-type IgnoreCache =
-    std::collections::HashMap<PathBuf, (IgnoreKey, Arc<ignore::gitignore::Gitignore>)>;
+/// The kinds of ignore file, highest precedence first, as ripgrep ranks
+/// them: `.rgignore` over `.ignore` over `.gitignore` over
+/// `.git/info/exclude` (and git's own `.gitignore` over `info/exclude`).
+const IGNORE_FILES: [&str; 4] = [".rgignore", ".ignore", ".gitignore", ".git/info/exclude"];
+type IgnoreCache = std::collections::HashMap<PathBuf, (IgnoreKey, Arc<DirIgnores>)>;
 static IGNORE_CACHE: OnceLock<Mutex<IgnoreCache>> = OnceLock::new();
 
-fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
+fn ignores_for_dir(dir: &Path) -> Option<Arc<DirIgnores>> {
     // A repository root's `.git/info/exclude` applies like a `.gitignore`
     // there, as the initial walk (`git_exclude`) and git itself apply it:
     // without it the watcher indexed an excluded file once it changed, and
@@ -528,13 +589,13 @@ fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
             }
         }
     }
-    let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
-    for (name, present) in IGNORE_FILES.iter().zip(&key) {
-        if present.is_some() {
-            builder.add(dir.join(name));
-        }
-    }
-    let gi = Arc::new(builder.build().ok()?);
+    let gi: Arc<DirIgnores> = Arc::new(std::array::from_fn(|k| {
+        key[k].and_then(|_| {
+            let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
+            builder.add(dir.join(IGNORE_FILES[k]));
+            builder.build().ok()
+        })
+    }));
     if let Ok(mut guard) = cache.lock() {
         guard.insert(dir.to_path_buf(), (key, gi.clone()));
     }
@@ -621,6 +682,64 @@ mod tests {
             );
             assert_eq!(is_gitignored(&root.join(file)), !kept, "{file}");
         }
+    }
+
+    /// The per-path check decides as the walk does, in the three cases the
+    /// discovery oracle (tests/discovery_oracle.rs) found it did not: a rule
+    /// cannot bring a file back from an ignored folder; an `.ignore` rule
+    /// further up beats a `.gitignore` rule next to the file; and the rules
+    /// above a nested repository still apply to it.
+    #[test]
+    fn test_per_path_check_agrees_with_the_walk() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        for (path, text) in [
+            (".gitignore", "/a\n!a/b/\n*.log\n"),
+            ("a/b/f.py", "x"),
+            (".ignore", "c/**/f.py\n"),
+            ("c/.gitignore", "!f.py\n"),
+            ("c/f.py", "x"),
+            ("c/g.py", "x"),
+            ("nested/.git/HEAD", "x"),
+            ("nested/x.log", "x"),
+            ("nested/x.py", "x"),
+        ] {
+            std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+            std::fs::write(root.join(path), text).unwrap();
+        }
+        let cfg = FileDiscoveryConfig {
+            paths: vec![root.to_string_lossy().to_string()],
+            exclude_patterns: vec!["**/.git/**".into()],
+            ..Default::default()
+        };
+        let mut found: Vec<String> = FileDiscoveryIterator::new(&cfg)
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .filter(|p| p.ends_with(".py") || p.ends_with(".log"))
+            .collect();
+        found.sort();
+        assert_eq!(found, vec!["c/g.py", "nested/x.py"]);
+
+        let probe = EligibilityProbe::new(&cfg);
+        for (file, kept) in [
+            ("a/b/f.py", false),
+            ("c/f.py", false),
+            ("c/g.py", true),
+            ("nested/x.log", false),
+            ("nested/x.py", true),
+        ] {
+            assert_eq!(
+                probe.is_eligible_path(&root.join(file), None),
+                kept,
+                "{file}"
+            );
+        }
+        assert!(probe.is_dir_ignored(&root.join("a/b")));
+        assert!(!probe.is_dir_ignored(&root.join("c")));
     }
 
     #[test]

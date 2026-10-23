@@ -140,7 +140,7 @@ pub fn plan_changes(
 
     // Each path is planned on its own (stats, directory walks), in
     // parallel; removals are applied before additions whatever the order.
-    let probe = EligibilityProbe::new(&discovery_config(config, Vec::new()));
+    let probe = EligibilityProbe::new(&discovery_config(config, config.paths.clone()));
     let parts: Vec<(ChangePlan, Option<PathBuf>)> = order
         .par_iter()
         .map(|path| {
