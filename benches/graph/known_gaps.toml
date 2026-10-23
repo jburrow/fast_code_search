@@ -1,0 +1,85 @@
+# Every import edge the graph oracle (examples/graph_oracle.rs) finds fcs
+# missing, or drawing wrongly, on each CI corpus, sorted by reason. Each gap
+# names the row of docs/book/src/reference/graph-support.md it is, so the
+# list is the known limitations, not a number to stay under.
+#
+# The run fails when an edge fits no gap (a bug, or a limitation to
+# document here and on that page) and when a gap's count changes (a fix
+# lowers it: lower the count or remove the gap; a rise is a regression).
+#
+# `spec`, `from` and `to` are regexes on the import text, the importer and
+# the target as the report prints them (the corpus folder's name first).
+# Generated corpora are written with seed 1 (see the workflow).
+
+# --- Vite 6.3.5 (TypeScript's resolveModuleName) ---
+
+[[gap]]
+corpus = "vite"
+kind = "missing"
+spec = '^#'
+count = 4
+doc = "package.json `imports` (`#name`)"
+
+[[gap]]
+corpus = "vite"
+kind = "missing"
+spec = '^\./(bar)?$'
+count = 2
+doc = "A folder's own package.json `main`"
+
+[[gap]]
+corpus = "vite"
+kind = "missing"
+spec = '\.js$'
+to = '\.ts$'
+count = 1
+doc = "`./x.js` when both x.js and x.ts exist: fcs takes x.js (as Node and bundlers do), TypeScript x.ts"
+
+[[gap]]
+corpus = "vite"
+kind = "extra"
+to = 'syntax-error\.js$'
+count = 1
+doc = "`./x.js` when both x.js and x.ts exist: fcs takes x.js (as Node and bundlers do), TypeScript x.ts"
+
+# --- Generated: npm workspaces (scripts/graph-oracle/ts_layouts.mjs) ---
+
+[[gap]]
+corpus = "ts-workspaces"
+kind = "missing"
+spec = '^#'
+count = 1
+doc = "package.json `imports` (`#name`)"
+
+[[gap]]
+corpus = "ts-workspaces"
+kind = "missing"
+spec = '^@acme/ui/theme$'
+count = 1
+doc = "`exports` subpath maps (here a package importing itself by name)"
+
+# --- Generated: Python layouts (scripts/graph-oracle/layouts.py) ---
+
+[[gap]]
+corpus = "py-monorepo"
+kind = "missing"
+to = '/libs/lib_\w+/src/'
+count = 330
+doc = "Other sys.path entries: another project's `src/` in the same repository"
+
+[[gap]]
+corpus = "py-namespace"
+kind = "missing"
+from = '^py-namespace/src/acme/'
+to = '^py-namespace/plugins/src/acme/'
+count = 51
+doc = "Other sys.path entries: a namespace package's portion in another folder"
+
+[[gap]]
+corpus = "py-namespace"
+kind = "missing"
+from = '^py-namespace/plugins/src/acme/'
+spec = '^from \.'
+to = '^py-namespace/src/acme/'
+count = 13
+doc = "Other sys.path entries: a relative import into a namespace package's portion in another folder"

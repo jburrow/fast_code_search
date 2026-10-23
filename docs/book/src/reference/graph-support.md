@@ -67,7 +67,8 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 | `src/` layouts (`tests/` importing `src/pkg`) | yes: each of those folders' `src/` is tried too |
 | Absolute imports from a file nested any number of folders deep | yes: every ancestor folder is tried |
 | A repository whose root folder has an `__init__.py`, run with that folder on `sys.path` (`import app.models`) | yes: when nothing else resolves the import, the outermost package folder is tried as a root if it is the repository root (`.git`) or no folder above it holds an indexed file |
-| Other `sys.path` entries (`pyproject.toml`, `setup.cfg`, `PYTHONPATH`) | **no**: no configuration is read, so a package in a sibling folder (`lib/mypkg/` imported from `apps/x/main.py`, with `lib` put on `PYTHONPATH` by your setup) is not found and the import counts as external |
+| Other `sys.path` entries (`pyproject.toml`, `setup.cfg`, `PYTHONPATH`) | **no**: no configuration is read, so a package in a sibling folder (`lib/mypkg/` imported from `apps/x/main.py`, with `lib` put on `PYTHONPATH` by your setup) is not found and the import counts as external. This includes a monorepo of projects side by side, each with its own `src/` and installed into one environment (`services/billing` importing `libs/lib_db/src/lib_db`): imports within a project resolve, imports of another project do not |
+| Namespace packages (no `__init__.py`) | within one folder, yes; a namespace package split over several folders on `sys.path` (`src/acme/core` and `plugins/src/acme/x`) only where one portion's folder is an ancestor's `src/` of the other, so imports into the other portion, absolute or relative, are mostly missed |
 | `.pyi` stubs as import targets | **no** |
 | Standard library, installed packages | no edge, by design |
 
@@ -81,7 +82,7 @@ a file `foo.rs` that is not the module. Config read: `Cargo.toml`.
 | `import x = require('./x')` (TypeScript) | yes |
 | Relative specifiers (`./`, `../`, `.`, `..`) | yes |
 | `@/x`, `~/x` | yes: tsconfig `paths` when it maps them, else from the nearest folder with a `package.json` or `tsconfig.json` (else the repository root), trying `src/x` then `x` |
-| Extension probing | the exact file; `.js`/`.jsx` written for a `.ts`/`.tsx` file, `.mjs` for `.mts`, `.cjs` for `.cts`; then `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json` appended; then `index` with each of those extensions |
+| Extension probing | the exact file; `.js`/`.jsx` written for a `.ts`/`.tsx` file, `.mjs` for `.mts`, `.cjs` for `.cts`; then `.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json` appended; then `index` with each of those extensions. When both `x.js` and `x.ts` exist, `./x.js` is `x.js` (as Node and bundlers load it), where TypeScript picks `x.ts` |
 | Imports of stylesheets, `.vue`/`.svelte` components and other assets | yes, when the file is indexed (a bundler resolves them; TypeScript does not) |
 | A folder's own `package.json` `main` (`import './lib'` where `lib/package.json` names the entry) | **no** |
 | `package.json` `imports` (`#name`) and a package importing itself by name | **no** |
@@ -102,16 +103,30 @@ wrongly:
 | Language | Oracle | Repository | Result |
 |---|---|---|---|
 | Python | [grimp](https://github.com/python-grimp/grimp) 3.17 (`src/check/oracle/py.py`) | Django 5.2 | 3,041 of 3,041 edges, none extra |
-| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`src/check/oracle/ts.mjs`) | Vite 6.3.5 | 99.6% of edges, 1 extra; 4 of the 7 misses are `package.json` `imports` (`#name`); 221 workspace-package edges the oracle cannot see without an install are listed apart |
+| Python | grimp | a package nested 14 levels deep; a repository whose root folder has `__init__.py` (`scripts/graph-oracle/deep_python_tree.py`) | every edge, none extra |
+| Python | grimp, with every project's `src/` on `sys.path` | generated: services and libraries side by side, each its own project with `src/` (`layouts.py monorepo`) | 368 of 698 edges, none extra; the 330 missed are imports of another project (other `sys.path` entries, above) |
+| Python | grimp | generated: a root folder that is a package, three top-level packages importing each other (`layouts.py root-init`) | 468 of 468 edges, none extra |
+| Python | grimp | generated: a namespace package split over `src/` and `plugins/src/` (`layouts.py namespace`) | 98 of 162 edges, none extra; the 64 missed cross from one portion to the other (namespace packages, above) |
+| TypeScript, JavaScript | TypeScript 5.9 `ts.resolveModuleName` under each file's tsconfig (`src/check/oracle/ts.mjs`) | Vite 6.3.5 | 1,613 of 1,620 edges, 1 extra: 4 `package.json` `imports` (`#name`), 2 folders with their own `package.json` `main`, and one `./x.js` where `x.ts` exists too (the extra is its other side); 221 workspace-package edges the oracle cannot see without an install are listed apart |
+| TypeScript, JavaScript | TypeScript | generated: npm workspaces installed as symlinks, a root `tsconfig.base.json` with `paths` that each project `extends`, barrels, `.mts`/`.cts`, `import type`, `import()`, `require` (`scripts/graph-oracle/ts_layouts.mjs`) | 388 of 390 edges, none extra: one `#name` import and one `exports` subpath |
 
-CI runs both, and fails if a change misses or adds more edges than that.
+Every edge fcs misses or draws wrongly on these is listed, with its reason
+and count, in `benches/graph/known_gaps.toml`. CI ("graph oracle") fails
+when an edge is not on that list (a bug, or a gap to document here) and
+when a listed count changes, so a fix shows up as a gap to lower or
+remove. The generated repositories are written with seed 1.
 
 ```sh
 python3 src/check/oracle/py.py bench-corpus/django > py.json
 cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
 (cd scripts/graph-oracle && npm ci)   # pins TypeScript
 (cd scripts/graph-oracle && node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) > ts.json
-cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
+cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts \
+    --gaps benches/graph/known_gaps.toml --corpus vite
+python3 scripts/graph-oracle/layouts.py monorepo py-monorepo --seed 1
+(set -a; . py-monorepo/oracle.env; set +a; python3 src/check/oracle/py.py py-monorepo) > py-monorepo.json
+cargo run --release --example graph_oracle -- py-monorepo --oracle py-monorepo.json --lang py \
+    --gaps benches/graph/known_gaps.toml --corpus py-monorepo
 ```
 
 To run the same comparison on your own code, use `fcs check` (see

@@ -162,6 +162,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made up from the corpus (`--generate-regex`), and
   `tests/discovery_oracle.rs` compares the indexed files and the FILES box
   with `rg`.
+- **The import graph is checked on monorepo layouts.** Generated
+  repositories shaped like real ones (`scripts/graph-oracle/layouts.py`,
+  `ts_layouts.mjs`): Python projects side by side each with its own
+  `src/`, a root folder that is a package, a namespace package split over
+  two folders, and npm workspaces with tsconfig `paths` and `extends`,
+  barrels and `.mts`/`.cts`. grimp and TypeScript give the answer. Every
+  edge fcs misses or draws wrongly, there and on Django and Vite, is now
+  a known gap listed with its reason and exact count in
+  `benches/graph/known_gaps.toml`, instead of a count to stay under. The
+  Python oracle (`fcs check` included) now builds one graph across
+  `ROOT` and `ROOT/src`, so imports from one into the other are compared
+  too.
 - **Kill and restart.** `examples/chaos.rs` kills the server binary with
   SIGKILL at random moments (during a build, a load from disk, a stream of
   edits, a periodic save, a burst of changes, and the save at shutdown),
