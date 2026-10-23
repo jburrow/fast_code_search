@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Every search waited 4 to 5 s soon after a restart.** An index loaded
+  from disk keeps its unresolved imports (`import os`, packages outside
+  the indexed folders) but not each file's import list. At the end of the
+  restart's check of the tree, each of those imports got one last try, all
+  at once under the index lock: 368,000 of them on a tree of 200,000
+  files. They are now tried in short steps like the rest of the import
+  graph; the slowest search after a restart fell from 4.0 s to under 1 s.
+- **The `backlog` diagnostic capture fired under steady edits.** It fired
+  when changes had been pending for 300 s without a break, which a steady
+  stream of edits always causes. It now fires only when the watcher could
+  not have applied what is pending in the last 10 s.
 - **The watcher could fall far behind while people searched.** While an
   install step waits for the index, new searches hold back so the running
   ones can finish and the step gets in. They held back a fixed 250 ms, so
@@ -131,6 +142,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made up from the corpus (`--generate-regex`), and
   `tests/discovery_oracle.rs` compares the indexed files and the FILES box
   with `rg`.
+- **A scale scoreboard.** `examples/scoreboard.rs` runs the server binary
+  over HTTP in seven scenarios (cold build, warm restart, branch switch, a
+  ten-minute stream of edits, overloaded searching, saves under load, and
+  an event-queue overflow) and reports the same numbers for each: searches
+  turned away, latency, time until the index matches the disk, memory,
+  CPU, diagnostic captures, crashes and what `/api/check` finds. Targets
+  are in `benches/scoreboard/targets.toml`; the "Scale scoreboard"
+  workflow runs it at 200,000 files nightly and on pull requests that
+  touch locking or watching. Book page: Benchmarks > Scale scoreboard.
 - **The lock protocol on a simulated clock.** `fast_code_search::sim` runs
   threads in turns on simulated time, and the engine lock and the
   watcher's install steps read and sleep through it, so
@@ -188,6 +208,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   N file changes to apply"; `fcs` and the MCP tools print it as a note.
 
 ### Changed
+- **`lock_wait` captures leave out the holding back.** A search holds back
+  while an install step waits (up to 2 s, as long as recent searches
+  take), and that alone could pass the 2 s threshold. The capture now
+  counts only the time a writer kept the search out, so it still means a
+  step or a save held the lock longer than it should.
 - `rdeps:` and `deps:` filters no longer read every indexed path to find
   their file (when it is given as results print it, with or without `:N`)
   nor copy every unresolved import to count the broken ones. On a

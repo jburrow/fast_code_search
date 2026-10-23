@@ -30,6 +30,7 @@ wrote every line and knows the answer.
 | `examples/rg_backtest.rs` | fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (`--history reload`) and filled by the watcher (`--history watch`) | `rg` | see [Correctness against ripgrep](../benchmarks/correctness.md) |
 | `examples/graph_oracle.rs` | the import graph on Django, Vite and generated deep trees | grimp, TypeScript's resolver | CI job "graph oracle" |
 | `examples/ref_oracle.rs`, `examples/impact_oracle.rs` | Python references and diff impact on real repositories | Jedi | CI jobs "ref oracle", "impact oracle" |
+| `examples/scoreboard.rs` | the server binary over HTTP in seven scenarios (cold build, warm restart, branch switch, ten-minute stream, slow mix, saves under load, event-queue overflow): searches turned away, latency, time until the index matches the disk, memory, CPU, diagnostic captures, crashes, `/api/check` | targets in `benches/scoreboard/targets.toml` | nightly and on pull requests that touch locking or watching (workflow "Scale scoreboard"), see [Scale scoreboard](../benchmarks/scoreboard.md) |
 | `examples/watch_load.rs`, `examples/limits_bench.rs` | searches answered and latency while a large tree changes; where limits bite | measured numbers | by hand, see [Incremental updates](incremental.md#how-this-is-tested) |
 
 Every test that drives the index also runs its self-checks
@@ -128,6 +129,10 @@ generated Python trees with grimp (job "graph oracle").
   for half-second searches: the watcher drained a backlog at 8% of its
   speed, not the "half speed or better" the docs claimed (lock
   simulation; see [Incremental updates](incremental.md#holding-back-as-long-as-a-search-runs)).
+- After every restart from a saved index, every search waited 4 to 5 s
+  while the import graph's parked imports were retried in one lock hold;
+  a `backlog` diagnostic fired under steady edits the watcher kept up with
+  (scale scoreboard).
 - Earlier probes found a crash when a large file was rewritten during a
   search, "server unavailable" at the end of a build, and lost changes
   after failed reads or a panic; the fault and watch tests cover them.

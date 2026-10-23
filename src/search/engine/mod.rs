@@ -1223,13 +1223,16 @@ impl FileMetadata {
 /// [`SearchEngine::begin_settling_imports`].
 #[derive(Debug, Default)]
 pub struct ImportSettling {
+    /// Parked imports of files whose import list is not known, to try once
+    /// more (indices into the waiting list), before the importers.
+    orphans: Vec<usize>,
     importers: Vec<u32>,
 }
 
 impl ImportSettling {
-    /// Importers not resolved yet.
+    /// Parked imports and importers not resolved yet.
     pub fn remaining(&self) -> usize {
-        self.importers.len()
+        self.orphans.len() + self.importers.len()
     }
 }
 
@@ -1648,16 +1651,18 @@ impl SearchEngine {
     /// are resolved against the files indexed when their step runs.
     pub fn begin_settling_imports(&mut self) -> ImportSettling {
         // Queued and parked imports of files whose import list is not
-        // known get one final attempt now; every file with a known list is
+        // known get one final attempt; every file with a known list is
         // resolved from scratch in the steps below, so its queued imports
-        // need no attempt here (on a loaded index that is every file, and
-        // resolving them all at once here was one long lock hold). Still
-        // unresolved imports stay parked so they are persisted and retried
-        // after a later incremental add.
+        // need no attempt here. Still unresolved imports stay parked so
+        // they are persisted and retried after a later incremental add.
         let specs = &self.import_specs;
         self.pending_imports
             .retain(|(id, _, _)| !specs.contains_key(id));
         self.resolve_pending_now();
+        // The parked ones are tried in the steps too: an index restored
+        // from disk keeps its parked imports but not the import lists, so
+        // there every parked import is one of these (368,000 on a tree of
+        // 200,000 files), and trying them all here held the lock for 4 s.
         let orphans: Vec<usize> = (0..self.waiting_imports.len())
             .filter(|&i| {
                 self.waiting_imports[i]
@@ -1665,7 +1670,6 @@ impl SearchEngine {
                     .is_some_and(|(id, _, _)| !self.import_specs.contains_key(id))
             })
             .collect();
-        self.retry_waiting(orphans);
         self.recently_added_stems.clear();
         // Imports resolved while the build was still adding files may have
         // fallen back to a package whose module was indexed later; resolve
@@ -1675,12 +1679,22 @@ impl SearchEngine {
         importers.sort_unstable();
         self.dirty_importers.clear();
         self.graph_settled = true;
-        ImportSettling { importers }
+        ImportSettling { orphans, importers }
     }
 
-    /// Resolve up to `max` more importers of `settling`; true when all are
+    /// Resolve up to `max` more importers of `settling` (parked imports first,
+    /// up to `8 * max` of them a step); true when all are
     /// done (the waiting list is then compacted).
     pub fn settle_imports_step(&mut self, settling: &mut ImportSettling, max: usize) -> bool {
+        if !settling.orphans.is_empty() {
+            // Parked imports are single specs: several per importer's worth.
+            let take = settling.orphans.len().min(max.saturating_mul(8));
+            let step: Vec<usize> = settling.orphans.drain(..take).collect();
+            self.retry_waiting(step);
+            if !settling.orphans.is_empty() || !settling.importers.is_empty() {
+                return false;
+            }
+        }
         let take = settling.importers.len().min(max);
         let step: FxHashSet<u32> = settling.importers.drain(..take).collect();
         self.recompute_importers(step);

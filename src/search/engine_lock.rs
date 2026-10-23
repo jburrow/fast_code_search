@@ -228,6 +228,9 @@ pub fn read_deferring<T>(
     let deadline = started + wait;
     // Fixed at arrival, so a search's hold-back does not grow while it waits.
     let hold_back = sim::with_gate(&GATE, |g| defer.per_search(g));
+    // The diagnostics count the wait after holding back: the time a writer
+    // kept the search out, which is what a slow step or save looks like.
+    let mut blocked_from = started;
     let mut backoff = Duration::from_micros(200);
     loop {
         let now = sim::now();
@@ -238,7 +241,9 @@ pub fn read_deferring<T>(
                 (_, None) => false,
             }
         });
-        if !deferring {
+        if deferring {
+            blocked_from = now;
+        } else {
             let guard = match engine.try_read() {
                 Ok(guard) => Some(guard),
                 Err(TryLockError::Poisoned(poisoned)) => {
@@ -249,13 +254,13 @@ pub fn read_deferring<T>(
             };
             if let Some(guard) = guard {
                 let now = sim::now();
-                crate::diagnostics::capture::lock_waited(now - started, true);
+                crate::diagnostics::capture::lock_waited(now - blocked_from, true);
                 return Some(ReadGuard { guard, since: now });
             }
         }
         let now = sim::now();
         if now >= deadline {
-            crate::diagnostics::capture::lock_waited(now - started, false);
+            crate::diagnostics::capture::lock_waited(now - blocked_from, false);
             return None;
         }
         sim::sleep(backoff.min(deadline - now));

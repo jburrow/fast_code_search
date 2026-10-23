@@ -4081,6 +4081,63 @@ fn test_import_settling_in_steps_matches_one_go() {
     );
 }
 
+/// An index restored from disk keeps its parked imports but not the
+/// import lists, so at the end of the reconcile every parked import gets
+/// its last try. That runs in steps too: tried all at once it held the
+/// write lock for 4 s on a tree of 200,000 files (`examples/scoreboard.rs`,
+/// warm restart).
+#[test]
+fn test_parked_imports_of_a_loaded_index_settle_in_steps() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = python_import_tree(temp_dir.path(), 40);
+    let index_path = temp_dir.path().join("idx.fcsidx");
+    let config = crate::config::IndexerConfig {
+        paths: vec![temp_dir.path().to_string_lossy().into_owned()],
+        ..Default::default()
+    };
+    {
+        age_files(temp_dir.path());
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(temp_dir.path());
+        for p in &paths {
+            engine.index_file(p).unwrap();
+        }
+        engine.resolve_imports();
+        engine.finalize();
+        engine.save_index(&index_path, &config).unwrap();
+    }
+    let load = || {
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(temp_dir.path());
+        engine
+            .load_index_with_progress(&index_path, &config, |_, _, _, _| {})
+            .unwrap();
+        engine
+    };
+
+    let mut whole = load();
+    whole.resolve_imports();
+
+    let mut stepped = load();
+    let mut settling = stepped.begin_settling_imports();
+    assert_eq!(
+        settling.remaining(),
+        80,
+        "every parked import (os and .missingN) is left to the steps"
+    );
+    let mut steps = 1;
+    while !stepped.settle_imports_step(&mut settling, 1) {
+        steps += 1;
+        assert!(settling.remaining() <= 80 - 8 * (steps - 1));
+    }
+    assert_eq!(steps, 10, "8 parked imports a step");
+
+    assert_eq!(edge_list(&stepped), edge_list(&whole));
+    assert_eq!(edge_list(&whole).len(), 40);
+    assert_eq!(stepped.waiting_imports_count(), 80);
+    assert_eq!(whole.waiting_imports_count(), 80);
+}
+
 /// A saved index loaded into a side engine and adopted keeps the live
 /// engine's state (building, watching, the watcher's backlog counters)
 /// and answers searches like a direct load.

@@ -53,6 +53,7 @@
 - [Ranking quality](benchmarks/ranking-quality.md)
 - [Correctness against ripgrep](benchmarks/correctness.md)
 - [Search limits](benchmarks/search-limits.md)
+- [Scale scoreboard](benchmarks/scoreboard.md)
 
 # Project
 
