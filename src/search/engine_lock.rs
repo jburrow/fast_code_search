@@ -71,7 +71,10 @@ pub fn read_within(
         let deferring = WRITERS_WAITING.load(Ordering::Acquire) > 0 && Instant::now() < defer_until;
         if !deferring {
             match engine.try_read() {
-                Ok(guard) => return Some(guard),
+                Ok(guard) => {
+                    crate::diagnostics::capture::lock_waited(started.elapsed(), true);
+                    return Some(guard);
+                }
                 Err(TryLockError::Poisoned(poisoned)) => {
                     error!("Search engine lock was poisoned; recovering for read");
                     return Some(poisoned.into_inner());
@@ -81,6 +84,7 @@ pub fn read_within(
         }
         let now = Instant::now();
         if now >= deadline {
+            crate::diagnostics::capture::lock_waited(started.elapsed(), false);
             return None;
         }
         std::thread::sleep(backoff.min(deadline - now));

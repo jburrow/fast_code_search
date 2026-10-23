@@ -93,6 +93,105 @@ pub struct Config {
 
     #[serde(default)]
     pub mcp: McpConfig,
+
+    #[serde(default)]
+    pub diagnostics: DiagnosticsConfig,
+}
+
+/// Self-diagnosis (`[diagnostics]`): when on, the server notices when it is
+/// slow or stuck and writes what it was doing to a file you can look at
+/// later (`fcs diagnose`). Off by default. Thresholds are measured; see the
+/// book's "Diagnostic captures" page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsConfig {
+    /// Write diagnostic captures (default: false).
+    #[serde(default)]
+    pub capture: bool,
+    /// Where captures go. Empty (the default): a `diagnostics` folder next
+    /// to the index, or the user cache folder when there is no index file.
+    #[serde(default)]
+    pub dir: String,
+    /// A search slower than this, from the request to the reply, is captured.
+    #[serde(default = "default_diag_slow_search_secs")]
+    pub slow_search_secs: f64,
+    /// A search that waited longer than this for the index lock is captured.
+    #[serde(default = "default_diag_lock_wait_secs")]
+    pub lock_wait_secs: f64,
+    /// Work that makes no progress for this long is a hang: the watcher with
+    /// changes to apply, the index build, a search that has not finished,
+    /// or the index lock never free. The capture says what every thread is
+    /// doing.
+    #[serde(default = "default_diag_stall_secs")]
+    pub stall_secs: f64,
+    /// The watcher still has changes to apply after this long without a
+    /// break: it is falling behind.
+    #[serde(default = "default_diag_backlog_secs")]
+    pub backlog_secs: f64,
+    /// Seconds before the same kind of capture is written again.
+    #[serde(default = "default_diag_min_interval_secs")]
+    pub min_interval_secs: f64,
+    /// Captures kept; the oldest are deleted.
+    #[serde(default = "default_diag_max_files")]
+    pub max_files: usize,
+    /// Megabytes of captures kept; the oldest are deleted.
+    #[serde(default = "default_diag_max_total_mb")]
+    pub max_total_mb: u64,
+    /// Log lines kept for each capture.
+    #[serde(default = "default_diag_log_lines")]
+    pub log_lines: usize,
+    /// On a hang, record every thread's stack with `gdb` (or `eu-stack`)
+    /// when one is installed. It pauses the server for a second or two.
+    #[serde(default = "default_true")]
+    pub thread_stacks: bool,
+    /// Keep query text, file paths and quoted text in captures. Off by
+    /// default: captures then say how long a query was, not what it was.
+    #[serde(default)]
+    pub include_queries: bool,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self {
+            capture: false,
+            dir: String::new(),
+            slow_search_secs: default_diag_slow_search_secs(),
+            lock_wait_secs: default_diag_lock_wait_secs(),
+            stall_secs: default_diag_stall_secs(),
+            backlog_secs: default_diag_backlog_secs(),
+            min_interval_secs: default_diag_min_interval_secs(),
+            max_files: default_diag_max_files(),
+            max_total_mb: default_diag_max_total_mb(),
+            log_lines: default_diag_log_lines(),
+            thread_stacks: true,
+            include_queries: false,
+        }
+    }
+}
+
+fn default_diag_slow_search_secs() -> f64 {
+    5.0
+}
+fn default_diag_lock_wait_secs() -> f64 {
+    2.0
+}
+fn default_diag_stall_secs() -> f64 {
+    120.0
+}
+fn default_diag_backlog_secs() -> f64 {
+    300.0
+}
+fn default_diag_min_interval_secs() -> f64 {
+    300.0
+}
+fn default_diag_max_files() -> usize {
+    50
+}
+fn default_diag_max_total_mb() -> u64 {
+    100
+}
+fn default_diag_log_lines() -> usize {
+    300
 }
 
 /// Search limits (`[search]`), applied to every front end: web UI, REST,
@@ -650,6 +749,9 @@ impl Config {
         if let Some(p) = &mut self.server.static_dir {
             *p = expand_path(p, base_dir);
         }
+        if !self.diagnostics.dir.is_empty() {
+            self.diagnostics.dir = expand_path(&self.diagnostics.dir, base_dir);
+        }
         for e in &mut self.indexer.include_extensions {
             *e = e.trim_start_matches('.').to_string();
         }
@@ -804,6 +906,23 @@ impl Config {
             anyhow::bail!("indexer.batch_size must be at least 1");
         }
         self.validate_limits(&mut warnings)?;
+        let d = &self.diagnostics;
+        for (key, v) in [
+            ("slow_search_secs", d.slow_search_secs),
+            ("lock_wait_secs", d.lock_wait_secs),
+            ("stall_secs", d.stall_secs),
+            ("backlog_secs", d.backlog_secs),
+        ] {
+            anyhow::ensure!(
+                v.is_finite() && v > 0.0,
+                "diagnostics.{key} must be a number of seconds above 0 (got {v})"
+            );
+        }
+        anyhow::ensure!(
+            d.min_interval_secs.is_finite() && d.min_interval_secs >= 0.0,
+            "diagnostics.min_interval_secs must be 0 or more (got {})",
+            d.min_interval_secs
+        );
         if let Some(index_path) = &self.indexer.index_path {
             let p = Path::new(index_path);
             if let Some(parent) = p.parent() {
@@ -1136,6 +1255,40 @@ otlp_endpoint = "http://localhost:4317"
 # Service name reported to the collector
 # Env override: OTEL_SERVICE_NAME
 service_name = "fast_code_search"
+
+[diagnostics]
+# Self-diagnosis: when the server is slow or stuck, write what it was doing
+# to a JSON file you can look at later with `fcs diagnose`. Nothing leaves
+# the machine. Off by default.
+capture = false
+
+# Where captures go. Empty: a `diagnostics` folder next to index_path.
+dir = ""
+
+# What counts as slow or stuck, in seconds. The defaults sit well above what
+# was measured on a healthy server under heavy load (see the book's
+# "Diagnostic captures" page).
+slow_search_secs = 5.0
+lock_wait_secs = 2.0
+stall_secs = 120.0
+backlog_secs = 300.0
+
+# Seconds before the same kind of capture is written again, and how many
+# captures (and megabytes) are kept; the oldest are deleted.
+min_interval_secs = 300.0
+max_files = 50
+max_total_mb = 100
+
+# Log lines kept in each capture.
+log_lines = 300
+
+# On a hang, record every thread's stack with gdb or eu-stack if installed
+# (pauses the server for a second or two).
+thread_stacks = true
+
+# Keep query text, file paths and quoted text in captures. Off: captures say
+# how long a query was, not what it was.
+include_queries = false
 "#;
 
 /// Version tag of the symbol/reference extraction (tags queries, reference

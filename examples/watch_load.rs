@@ -12,13 +12,18 @@
 //!     [--burst 200] [--interval-ms 100] [--seconds 20] [--readers 4] [--mixed]
 //! ```
 //!
+//! `--capture-dir DIR` turns diagnostic captures on with the default
+//! thresholds (as `[diagnostics] capture = true` does) and reports what was
+//! captured: on a healthy run, nothing should be.
+//!
 //! `--mixed` searches the way the web handler does (`SearchEngine::run` with
 //! the default limits), cycling through rare, common and regex queries, so
 //! some searches scan most of the tree. A big `--burst` with a long
 //! `--interval-ms` is a bulk change (a branch switch, a formatter run).
 
 use clap::Parser;
-use fast_code_search::config::IndexerConfig;
+use fast_code_search::config::{DiagnosticsConfig, IndexerConfig};
+use fast_code_search::diagnostics::capture;
 use fast_code_search::search::{
     create_progress_broadcaster, engine_lock, run_background_indexer, watch_loop,
     BackgroundIndexerConfig, IndexingProgress, SearchEngine, WatchLoopConfig,
@@ -67,6 +72,10 @@ struct Args {
     /// See `--index-path`.
     #[arg(long, default_value_t = 10_000)]
     save_after: usize,
+    /// Turn diagnostic captures on, writing to this folder, with the
+    /// default `[diagnostics]` thresholds.
+    #[arg(long)]
+    capture_dir: Option<PathBuf>,
 }
 
 /// The `--mixed` queries: (regex, text). Common words make a search read
@@ -203,6 +212,11 @@ fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
+    if let Some(dir) = &args.capture_dir {
+        let mut settings = capture::Settings::resolve(&DiagnosticsConfig::default(), None);
+        settings.dir = dir.clone();
+        capture::init(settings).expect("capture dir");
+    }
     generate(&args.dir, args.files);
     let root = args.dir.canonicalize().unwrap();
     let config = IndexerConfig {
@@ -219,11 +233,18 @@ fn main() {
         ..Default::default()
     };
     let engine = Arc::new(RwLock::new(SearchEngine::new()));
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+    let watchdog_stop = Arc::new(AtomicBool::new(false));
+    capture::start_watchdog(capture::Watched {
+        engine: engine.clone(),
+        progress: Some(progress.clone()),
+        shutdown: watchdog_stop.clone(),
+    });
     let t = Instant::now();
     run_background_indexer(BackgroundIndexerConfig {
         indexer_config: config.clone(),
         engine: engine.clone(),
-        progress: Arc::new(RwLock::new(IndexingProgress::default())),
+        progress,
         progress_tx: create_progress_broadcaster(),
         shutdown: Arc::new(AtomicBool::new(false)),
     });
@@ -265,6 +286,11 @@ fn main() {
                     n += 1;
                     let query = format!("task_{}_", n * 7919 % 1000);
                     let t = Instant::now();
+                    let mut probe = capture::SearchProbe::start(
+                        "load",
+                        if mixed { "mixed" } else { "text" },
+                        &query,
+                    );
                     let guard = if no_wait {
                         engine.try_read().ok()
                     } else {
@@ -272,6 +298,7 @@ fn main() {
                     };
                     match guard {
                         Some(guard) => {
+                            probe.locked();
                             if mixed {
                                 std::hint::black_box(mixed_search(&guard, n));
                             } else {
@@ -369,4 +396,16 @@ fn main() {
         percentile(&lat, 0.99),
         lat.last().copied().unwrap_or_default(),
     );
+    watchdog_stop.store(true, Ordering::Release);
+    if let Some(dir) = &args.capture_dir {
+        // Captures are written on threads of their own; let them finish.
+        std::thread::sleep(Duration::from_secs(2));
+        let (captures, _) = capture::load_captures(dir);
+        let mut kinds: Vec<String> = captures
+            .iter()
+            .map(|(_, c)| c.trigger.kind.clone())
+            .collect();
+        kinds.sort();
+        println!("captures={} {:?}", captures.len(), kinds);
+    }
 }

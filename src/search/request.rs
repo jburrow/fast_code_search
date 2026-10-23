@@ -31,6 +31,16 @@ pub enum SearchMode {
 }
 
 impl SearchMode {
+    /// The mode's name, lower case.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Regex => "regex",
+            Self::Symbols => "symbols",
+            Self::References => "references",
+        }
+    }
+
     /// The mode for a front end's boolean flags; `references` cannot be
     /// combined with the other two.
     pub fn from_flags(regex: bool, symbols: bool, references: bool) -> Result<Self, String> {

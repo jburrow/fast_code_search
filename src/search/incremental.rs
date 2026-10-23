@@ -122,6 +122,7 @@ pub fn plan_changes(
     let parts: Vec<(ChangePlan, Option<PathBuf>)> = order
         .par_iter()
         .map(|path| {
+            crate::diagnostics::capture::watcher_progress(1);
             let mut part = ChangePlan::default();
             let is_dir = path.is_dir();
             match ops[path] {
@@ -160,7 +161,10 @@ pub fn parse_planned(
 ) -> Vec<(PathBuf, Option<crate::search::PreIndexedFile>)> {
     plan.index
         .par_iter()
-        .map(|p| (p.clone(), parser.parse(p)))
+        .map(|p| {
+            crate::diagnostics::capture::watcher_progress(1);
+            (p.clone(), parser.parse(p))
+        })
         .collect()
 }
 

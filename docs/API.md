@@ -373,6 +373,12 @@ At startup and before each save the server checks free space and free
 inodes on the filesystem holding the index (and inodes where indexed
 source lives), and warns when either is low.
 
+`[diagnostics] capture = true` makes the server write a JSON file whenever
+it is slow (a search over `slow_search_secs`, a lock wait over
+`lock_wait_secs`) or stuck (no progress for `stall_secs`), saying what it
+was doing; `fcs diagnose` summarizes them. Off by default; see the book's
+[Diagnostic captures](book/src/guides/diagnostic-captures.md).
+
 Changing exclude patterns, extensions, the size cap or a `.gitignore` takes
 effect on the next start: files that are no longer eligible are dropped
 when the persisted index is reconciled.

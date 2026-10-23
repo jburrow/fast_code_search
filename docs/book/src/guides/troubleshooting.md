@@ -5,7 +5,7 @@
 | `fcs: cannot reach the search server` | Server not running, or listening elsewhere | `fcs status`; start the server or pass `--server URL` / set `$FCS_SERVER`; see [Run at startup](../imported/run-at-startup.md) |
 | `fcs` says it is searching the on-disk index | Server down, `index_path` known | Fine for a quick answer (results may be behind the tree); start the server for live results |
 | Web UI shows "Index is currently being updated" briefly | An install step of the file watcher held the write lock for more than five seconds (rare: a step holds it for about a second at most) | Wait; the UI retries on its own. If constant, a build is running (see the Index page) |
-| Results bar says "Index updating · N file changes to apply" | The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was | Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug, so please capture a thread dump (`gdb -p <pid> -batch -ex "thread apply all bt"`) and the log |
+| Results bar says "Index updating · N file changes to apply" | The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was | Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug: with [diagnostic captures](diagnostic-captures.md) on, the server writes what it was doing itself (`fcs diagnose`); otherwise capture a thread dump (`gdb -p <pid> -batch -ex "thread apply all bt"`) and the log |
 | A file you edited is not found | Watcher off, or the inotify limit was hit | Set `watch = true`; on Linux check the log for "Failed to watch" and raise `fs.inotify.max_user_watches` |
 | Files from an excluded directory still appear | Rules changed while the server ran | Restart; reconciliation drops files the current rules exclude |
 | Results stop at "50+ (scan budget reached)" | Broad query, budget hit | Narrow with `file:`, `lang:` or a longer literal; use Load more / `--offset` for the next page |
@@ -35,7 +35,11 @@
   `RUST_LOG=info` is the default.
 - `/metrics` exposes request counters and a latency histogram for
   Prometheus.
+- With `[diagnostics] capture = true` the server writes a file whenever it
+  is slow or stuck, saying what it was doing; `fcs diagnose` summarizes
+  them. See [Diagnostic captures](diagnostic-captures.md).
 
 If none of that explains it, open a
 [bug report](https://github.com/jburrow/fast_code_search/issues/new/choose)
-with the version, the query and the log lines around the problem.
+with the version, the query and the log lines around the problem, and any
+diagnostic captures.

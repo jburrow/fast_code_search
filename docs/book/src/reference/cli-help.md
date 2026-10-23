@@ -17,14 +17,15 @@ Exit status: 0 = matches found, 1 = no matches, 2 = error.
 Usage: fcs [OPTIONS] <COMMAND>
 
 Commands:
-  search   Search file contents (the default; `fcs QUERY` works too)
-  refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
-  symbols  Search symbol definitions (functions, types, classes, ...) only
-  impact   The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
-  status   Show whether the server is reachable and what it has indexed
-  mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
-  check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
-  help     Print this message or the help of the given subcommand(s)
+  search    Search file contents (the default; `fcs QUERY` works too)
+  refs      Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
+  symbols   Search symbol definitions (functions, types, classes, ...) only
+  impact    The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
+  status    Show whether the server is reachable and what it has indexed
+  mcp       Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
+  check     Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
+  diagnose  Summarize the server's diagnostic captures (written when `[diagnostics] capture = true` and the server is slow or stuck)
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
       --server <URL>
@@ -86,6 +87,7 @@ Examples:
   fcs status                    is the server up, what does it hold
   fcs mcp                       MCP over stdio, for coding agents
   fcs check                     compare fcs with ripgrep and the import resolvers
+  fcs diagnose                  what the server's diagnostic captures say
 ```
 
 ## `fcs search --help`
@@ -128,17 +130,14 @@ Options:
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
+      --exclude <GLOB>
+          Skip files matching this glob (repeatable)
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --exclude <GLOB>
-          Skip files matching this glob (repeatable)
-
-      --offline
-          Search the on-disk index directly instead of asking the server
 
       --rank <RANK>
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
@@ -146,22 +145,25 @@ Options:
           [default: auto]
           [possible values: auto, fast, full]
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
 
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
-
       --max-files <N>
           Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --deps <PATH[:N]>
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -171,11 +173,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --json
-          Shorthand for --format json
-
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
@@ -236,17 +238,14 @@ Options:
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
+      --exclude <GLOB>
+          Skip files matching this glob (repeatable)
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --exclude <GLOB>
-          Skip files matching this glob (repeatable)
-
-      --offline
-          Search the on-disk index directly instead of asking the server
 
       --rank <RANK>
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
@@ -254,22 +253,25 @@ Options:
           [default: auto]
           [possible values: auto, fast, full]
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
 
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
-
       --max-files <N>
           Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --deps <PATH[:N]>
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -279,11 +281,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --json
-          Shorthand for --format json
-
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
@@ -344,17 +346,14 @@ Options:
   -g, --glob <GLOB>
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
+      --exclude <GLOB>
+          Skip files matching this glob (repeatable)
+
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --exclude <GLOB>
-          Skip files matching this glob (repeatable)
-
-      --offline
-          Search the on-disk index directly instead of asking the server
 
       --rank <RANK>
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
@@ -362,22 +361,25 @@ Options:
           [default: auto]
           [possible values: auto, fast, full]
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --timeout-ms <MS>
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
 
-      --index-path <FILE>
-          Index file for offline searches (default: the config's index_path)
-
       --max-files <N>
           Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --deps <PATH[:N]>
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
 
       --format <FORMAT>
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -387,11 +389,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --json
-          Shorthand for --format json
-
       --rdeps <PATH[:N]>
           Only search this file and the files that import it (as `--deps`)
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
@@ -625,6 +627,63 @@ Options:
       --no-graph
           Skip the dependency graph check
 
+      --server <URL>
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config <FILE>
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path <FILE>
+          Index file for offline searches (default: the config's index_path)
+
+      --format <FORMAT>
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
+
+      --json
+          Shorthand for --format json
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color <COLOR>
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `fcs diagnose --help`
+
+```text
+Summarize the server's diagnostic captures (written when `[diagnostics] capture = true` and the server is slow or stuck)
+
+Usage: fcs diagnose [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]
+          The captures folder (default: the configuration's `[diagnostics]` dir, else `diagnostics` next to its index)
+
+Options:
       --server <URL>
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 

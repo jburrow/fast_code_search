@@ -16,6 +16,7 @@
 - [Configuration cookbook](guides/configuration.md)
 - [Performance and memory](guides/performance.md)
 - [Troubleshooting](guides/troubleshooting.md)
+- [Diagnostic captures](guides/diagnostic-captures.md)
 - [Upgrading](guides/upgrading.md)
 - [Deployment](imported/deployment.md)
 

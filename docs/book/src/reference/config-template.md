@@ -219,4 +219,38 @@ otlp_endpoint = "http://localhost:4317"
 # Service name reported to the collector
 # Env override: OTEL_SERVICE_NAME
 service_name = "fast_code_search"
+
+[diagnostics]
+# Self-diagnosis: when the server is slow or stuck, write what it was doing
+# to a JSON file you can look at later with `fcs diagnose`. Nothing leaves
+# the machine. Off by default.
+capture = false
+
+# Where captures go. Empty: a `diagnostics` folder next to index_path.
+dir = ""
+
+# What counts as slow or stuck, in seconds. The defaults sit well above what
+# was measured on a healthy server under heavy load (see the book's
+# "Diagnostic captures" page).
+slow_search_secs = 5.0
+lock_wait_secs = 2.0
+stall_secs = 120.0
+backlog_secs = 300.0
+
+# Seconds before the same kind of capture is written again, and how many
+# captures (and megabytes) are kept; the oldest are deleted.
+min_interval_secs = 300.0
+max_files = 50
+max_total_mb = 100
+
+# Log lines kept in each capture.
+log_lines = 300
+
+# On a hang, record every thread's stack with gdb or eu-stack if installed
+# (pauses the server for a second or two).
+thread_stacks = true
+
+# Keep query text, file paths and quoted text in captures. Off: captures say
+# how long a query was, not what it was.
+include_queries = false
 ```

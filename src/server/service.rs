@@ -193,6 +193,11 @@ impl CodeSearch for CodeSearchService {
         let (matches, limits_hit, scope_files) = tokio::task::spawn_blocking(move || {
             // Held for the search's real lifetime, not the RPC future's.
             let _permit = permit;
+            let mut probe = crate::diagnostics::capture::SearchProbe::start(
+                "grpc",
+                request.mode.name(),
+                &request.query,
+            );
             // Wait briefly for a writer (a watcher batch step) rather than
             // turning the search away the moment one holds the lock.
             let Some(engine) = crate::search::engine_lock::read_within(
@@ -203,10 +208,12 @@ impl CodeSearch for CodeSearchService {
                     "Index is currently being updated, please retry shortly",
                 ));
             };
+            probe.locked();
 
             let outcome = engine
                 .run(&request, limits)
                 .map_err(Status::invalid_argument)?;
+            probe.searched(&outcome.info, outcome.matches.len());
             let hops: Vec<Option<u32>> = outcome
                 .matches
                 .iter()
