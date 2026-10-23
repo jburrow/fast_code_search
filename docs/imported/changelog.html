@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-1b2b2e49.js";
+            window.path_to_searchindex_js = "../searchindex-b6f6ae17.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-19c5e137.js"></script>
@@ -188,6 +188,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>A large change no longer leaves the index “updating” for minutes
+while people search.</strong> Each watcher step got the lock only after the
+running searches finished and then installed just 512 files, so with
+searches running the watcher applied a few hundred files a second. On a
+200,000-file tree, 100,000 rewritten files were still 17,000 behind four
+minutes later. A step now stays in about as long as it waited, up to
+one second; the same change is applied 10 s after it stops, and on a
+million-file tree 200,000 changed files catch up in about 3.5 minutes,
+with no search turned away. <code>examples/watch_load.rs</code> now checks that
+the index matches the disk again after the load.</li>
 <li><strong>Searches no longer stop while the file watcher applies many changes.</strong>
 One slow search plus any watcher step used to stop every other search
 until the slow one finished, and those still waiting after five seconds

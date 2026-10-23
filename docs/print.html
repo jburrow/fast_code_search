@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1b2b2e49.js";
+            window.path_to_searchindex_js = "searchindex-b6f6ae17.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-19c5e137.js"></script>
@@ -1023,9 +1023,10 @@ rather than queueing.</li>
 <h2 id="incremental-updates"><a class="header" href="#incremental-updates">Incremental updates</a></h2>
 <p>The watcher gathers events for up to two seconds, reads and parses the
 changed files in parallel without the write lock, and installs them in
-steps of at most 512 files. Each step takes the write lock in a moment when
-no search holds it, so a long search never makes the others wait for the
-watcher; while changes are still to be applied, searches say how many (see
+steps. Each step takes the write lock in a moment when no search holds it,
+so a long search never makes the others wait for the watcher, and stays in
+about as long as it waited (at most a second), so a large change is
+applied while people search instead of trickling in; while changes are still to be applied, searches say how many (see
 <a href="#incremental-updates-1">Incremental indexing</a>). On Linux one inotify watch is
 installed per kept directory; excluded trees get none. If the limit is
 hit the log says so; raise it with
@@ -1044,8 +1045,8 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tbody>
 <tr><td><code>fcs: cannot reach the search server</code></td><td>Server not running, or listening elsewhere</td><td><code>fcs status</code>; start the server or pass <code>--server URL</code> / set <code>$FCS_SERVER</code>; see <a href="#running-the-server-at-login">Run at startup</a></td></tr>
 <tr><td><code>fcs</code> says it is searching the on-disk index</td><td>Server down, <code>index_path</code> known</td><td>Fine for a quick answer (results may be behind the tree); start the server for live results</td></tr>
-<tr><td>Web UI shows “Index is currently being updated” briefly</td><td>An install step of the file watcher held the write lock for more than five seconds (rare: a step installs at most 512 files)</td><td>Wait; the UI retries on its own. If constant, a build is running (see the Index page)</td></tr>
-<tr><td>Results bar says “Index updating · N file changes to apply”</td><td>The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was</td><td>Search again shortly; the count drops as the changes are installed</td></tr>
+<tr><td>Web UI shows “Index is currently being updated” briefly</td><td>An install step of the file watcher held the write lock for more than five seconds (rare: a step holds it for about a second at most)</td><td>Wait; the UI retries on its own. If constant, a build is running (see the Index page)</td></tr>
+<tr><td>Results bar says “Index updating · N file changes to apply”</td><td>The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was</td><td>Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug, so please capture a thread dump (<code>gdb -p &lt;pid&gt; -batch -ex "thread apply all bt"</code>) and the log</td></tr>
 <tr><td>A file you edited is not found</td><td>Watcher off, or the inotify limit was hit</td><td>Set <code>watch = true</code>; on Linux check the log for “Failed to watch” and raise <code>fs.inotify.max_user_watches</code></td></tr>
 <tr><td>Files from an excluded directory still appear</td><td>Rules changed while the server ran</td><td>Restart; reconciliation drops files the current rules exclude</td></tr>
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
@@ -4201,9 +4202,11 @@ parsed in parallel on the watcher’s own threads (half the cores), so
 the searches running on the shared thread pool are not queued behind
 a burst.</li>
 <li><strong>Install</strong> (write lock, in steps). The removals go first, with a
-single pass over every posting list; then the parsed files, at most
-512 per step, each step under its own write lock with a short pause
-between steps for the searches that arrived meanwhile. A modified file
+single pass over every posting list; then the parsed files, 512 at a
+time, each step under its own write lock with a short pause between
+steps for the searches that arrived meanwhile. A step that had to wait
+for searches to get the lock keeps installing for about as long as it
+waited, up to one second (see “Catching up” below). A modified file
 keeps its id; edges <em>into</em> it are kept, and a file that was deleted
 and comes back regains its dependents. A path is looked up again at
 install time, since the index may have changed since it was planned
@@ -4231,9 +4234,9 @@ every couple of milliseconds. While it waits, a new search holds back for
 up to 250 ms so the running ones can finish and the step can get in, and
 then goes ahead whether or not it did. A search therefore waits for a
 step’s short hold (tens of milliseconds), never for other searches. A
-search that arrives during a step waits for it, up to five seconds, before
-it gets a 503 with <code>Retry-After: 1</code> (gRPC: <code>UNAVAILABLE</code>), which <code>fcs</code> and
-the web UI retry on their own.</p>
+search that arrives during a step waits for it (about a second at most);
+one still waiting after five seconds gets a 503 with <code>Retry-After: 1</code>
+(gRPC: <code>UNAVAILABLE</code>), which <code>fcs</code> and the web UI retry on their own.</p>
 <p>While changes wait to be applied, searches see the index as it was. They
 say so rather than pass it off as current: the <code>index</code> part of every
 search response carries <code>pending_changes</code>, the events the watcher has
@@ -4268,6 +4271,38 @@ and in the bulk run the watcher’s event queue filled, so it reconciled the
 tree as well. Without that holding back
 the watcher did not get in once in a 30 s run on a 200,000-file tree, so
 nothing was applied at all.</p>
+<h2 id="catching-up"><a class="header" href="#catching-up">Catching up</a></h2>
+<p>A step gets the lock only once the searches running at that moment have
+finished, so while people search each step costs about one search’s
+wait. With a fixed 512 files per step that made the watcher crawl: on
+the 200,000-file tree with four threads searching (about half a second
+per search), a change of 100,000 files was applied at about 400 files a
+second and was still 17,000 files behind four minutes after the change.
+The server looked as if it was updating for ever, with the “file changes
+to apply” count barely moving. Nobody searching, the same change applied
+at about 5,000 files a second.</p>
+<p>A step now stays in about as long as it waited to get in, capped at one
+second: the watcher installs at least as much as it waits, so a backlog
+drains at half speed or better however busy the searches are, and a
+search waits at most about a second for a step. <code>watch_load</code> now keeps
+searching after the changes stop and measures how long until the index
+matches the disk again:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tree</th><th>Change</th><th>Version</th><th>Index matches disk</th><th>Slowest search</th><th>Mean search</th></tr>
+</thead>
+<tbody>
+<tr><td>200,000 files</td><td>100,000 rewritten at once</td><td>before</td><td>not after 240 s (17,200 files behind)</td><td>2.2 s</td><td>547 ms</td></tr>
+<tr><td></td><td></td><td>after</td><td>10 s after the change stopped</td><td>2.1 s</td><td>717 ms</td></tr>
+<tr><td>1,000,000 files</td><td>200,000 rewritten at once</td><td>after</td><td>214 s</td><td>2.3 s</td><td>866 ms</td></tr>
+</tbody>
+</table>
+</div>
+<p>No search was turned away in any of these runs. The million-file run
+overflowed the watcher’s event queue twice, so it reconciled the whole
+tree as well (about 40 s of walking a million files, during which the
+pending count does not move); the rest is installing.</p>
 <h2 id="saving"><a class="header" href="#saving">Saving</a></h2>
 <p>After <code>save_after_updates</code> file changes the index is saved; it is also
 saved on shutdown when anything changed since the last save, so an edit
@@ -4282,6 +4317,8 @@ live index with a fresh index of the same disk: the file set, every hit
 for every vocabulary word, symbol definitions and dependency edges. The
 random sequences print their seed; replay one with
 <code>FCS_WATCH_SEED=&lt;seed&gt; cargo test --test watch_harness</code>. Another test
+holds a long search while a burst waits and checks that the step that
+waited installs more than one chunk. Another test
 searches continuously while a burst of changes is applied and fails if a
 search is turned away or waits too long; another holds a long search while
 a burst waits to be installed and checks that other searches are answered
@@ -4292,7 +4329,10 @@ into it through the real watch loop while threads search, and reports how
 many searches were answered or turned away and the latency percentiles.
 <code>--mixed</code> searches the way the web handler does, with queries that read
 most of the tree; a large <code>--burst</code> with a long <code>--interval-ms</code> is a bulk
-change such as a branch switch:</p>
+change such as a branch switch. After the changes stop it keeps searching
+until the index matches the disk again and reports how long that took, or
+“NOT SETTLED” after <code>--settle-seconds</code>; <code>--index-path</code> adds checkpoint
+saves:</p>
 <pre><code class="language-text">cargo run --release --example watch_load -- --dir /tmp/fcs-load --files 1000000 \
     --burst 50000 --interval-ms 10000 --seconds 40 --mixed
 </code></pre>
@@ -5146,6 +5186,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>A large change no longer leaves the index “updating” for minutes
+while people search.</strong> Each watcher step got the lock only after the
+running searches finished and then installed just 512 files, so with
+searches running the watcher applied a few hundred files a second. On a
+200,000-file tree, 100,000 rewritten files were still 17,000 behind four
+minutes later. A step now stays in about as long as it waited, up to
+one second; the same change is applied 10 s after it stops, and on a
+million-file tree 200,000 changed files catch up in about 3.5 minutes,
+with no search turned away. <code>examples/watch_load.rs</code> now checks that
+the index matches the disk again after the load.</li>
 <li><strong>Searches no longer stop while the file watcher applies many changes.</strong>
 One slow search plus any watcher step used to stop every other search
 until the slow one finished, and those still waiting after five seconds
