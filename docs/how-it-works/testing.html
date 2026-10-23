@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9e414cb8.js";
+            window.path_to_searchindex_js = "../searchindex-0ab9609a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -210,11 +210,12 @@ wrote every line and knows the answer.</p>
 <tr><td><code>tests/rank_snapshot.rs</code></td><td>the first 20 hits and the total of about a hundred searches; the same corpus at two places on disk must rank the same</td><td><code>tests/snapshots/rank_order.txt</code>, changed only on purpose</td><td><code>cargo test --test rank_snapshot</code></td></tr>
 <tr><td><code>tests/discovery_oracle.rs</code></td><td>which files are indexed (the build and the watcher’s per-file check) on random trees of <code>.gitignore</code>, <code>.ignore</code>, <code>.rgignore</code> and <code>.git/info/exclude</code> rules; the FILES box with a regex</td><td><code>rg --files</code>, and <code>rg</code> over the path list</td><td><code>cargo test --test discovery_oracle</code> (needs <code>rg</code>)</td></tr>
 <tr><td><code>tests/lock_sim.rs</code></td><td>the engine lock and the watcher’s install steps under minutes of made-up load (back-to-back half-second searches, one 20 s search among quick ones, a busy server during a branch switch): every search answered, no search waits past its hold-back plus one step, backlogs drain at half speed or better, a slow search delays only the writer</td><td>bounds derived from the protocol, on a simulated clock (<code>fast_code_search::sim</code>): the real lock code, the same schedule on every run and OS, four minutes in about a second</td><td><code>cargo test --test lock_sim</code> (<code>-- --ignored --nocapture</code> prints the tuning table)</td></tr>
-<tr><td><code>tests/fault_injection.rs</code></td><td>failed reads, panics while applying changes, lost changes: each is retried, reported and repaired</td><td>expected recovery</td><td><code>cargo test --features failpoints --test fault_injection</code></td></tr>
+<tr><td><code>tests/fault_injection.rs</code></td><td>failed reads (permission, out of file handles, a file gone between listing and reading), a slow disk, panics while reading, parsing or applying changes, lost changes and lost events, a save onto a full disk or a failed rename: each is retried, reported or repaired, searches are not held up, and the saved index stays whole</td><td>expected recovery</td><td><code>cargo test --features failpoints --test fault_injection</code> (fault points are listed in <code>src/faults.rs</code>)</td></tr>
 <tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (<code>--history reload</code>) and filled by the watcher (<code>--history watch</code>)</td><td><code>rg</code></td><td>see <a href="../benchmarks/correctness.html">Correctness against ripgrep</a></td></tr>
 <tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
 <tr><td><code>examples/ref_oracle.rs</code>, <code>examples/impact_oracle.rs</code></td><td>Python references and diff impact on real repositories</td><td>Jedi</td><td>CI jobs “ref oracle”, “impact oracle”</td></tr>
 <tr><td><code>examples/scoreboard.rs</code></td><td>the server binary over HTTP in seven scenarios (cold build, warm restart, branch switch, ten-minute stream, slow mix, saves under load, event-queue overflow): searches turned away, latency, time until the index matches the disk, memory, CPU, diagnostic captures, crashes, <code>/api/check</code></td><td>targets in <code>benches/scoreboard/targets.toml</code></td><td>nightly and on pull requests that touch locking or watching (workflow “Scale scoreboard”), see <a href="../benchmarks/scoreboard.html">Scale scoreboard</a></td></tr>
+<tr><td><code>examples/chaos.rs</code></td><td><code>kill -9</code> of the server binary at random moments during a build, a load, a stream of edits, a periodic save, a burst and the shutdown save; after each, a restart must load the saved index (never reject it), leave no temp file, catch up with every change and pass <code>/api/check</code></td><td>the files on disk</td><td>nightly and on pull requests that touch saving or watching (workflow “Scale scoreboard”, job “Kill and restart”), see <a href="#killed-at-any-moment">below</a></td></tr>
 <tr><td><code>examples/watch_load.rs</code>, <code>examples/limits_bench.rs</code></td><td>searches answered and latency while a large tree changes; where limits bite</td><td>measured numbers</td><td>by hand, see <a href="incremental.html#how-this-is-tested">Incremental updates</a></td></tr>
 </tbody>
 </table>
@@ -262,6 +263,57 @@ NODE_PATH=/tmp/pw/node_modules FCS_REQUIRE_BROWSER=1 cargo test --release --test
 </code></pre>
 <p>Without Playwright the leg prints a note and is skipped; CI’s Linux test
 job sets <code>FCS_REQUIRE_BROWSER</code>, so there it fails instead.</p>
+<h2 id="killed-at-any-moment"><a class="header" href="#killed-at-any-moment">Killed at any moment</a></h2>
+<p><code>examples/chaos.rs</code> starts the server binary on a generated tree of 20,000
+files and kills it with SIGKILL, round after round, at a random moment of
+one of these:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Kind</th><th>Killed</th></tr>
+</thead>
+<tbody>
+<tr><td><code>build</code></td><td>during a build from scratch, which saves a checkpoint every quarter of the tree</td></tr>
+<tr><td><code>load</code></td><td>while it loads the saved index and checks the tree</td></tr>
+<tr><td><code>stream</code></td><td>while 300 files a second are rewritten, created and removed, and saved every 300 updates; the edits go on for a second after the kill</td></tr>
+<tr><td><code>save</code></td><td>0 to 20 ms after one of those saves begins (it watches for the save’s temp file every millisecond)</td></tr>
+<tr><td><code>burst</code></td><td>while the watcher installs a tenth of the files rewritten at once</td></tr>
+<tr><td><code>shutdown</code></td><td>0 to 20 ms after the save at shutdown (SIGTERM) begins</td></tr>
+</tbody>
+</table>
+</div>
+<p>After each kill it starts the server again and requires: the saved index
+is loaded, or there was none (a kill must never leave one the next start
+rejects); no temp file of a killed save is left once the server answers;
+the server becomes ready and catches up (nothing pending, the changed
+files indexed as they are on disk); <code>/api/check?all=true</code> finds nothing;
+and it does not crash. The seed is printed, and <code>--seed N</code> replays the
+same kill moments; a failing round keeps its server log as
+<code>failed-&lt;round&gt;.log</code>.</p>
+<p>60 rounds on a 4 vCPU VM, 2026-10-23 (seed 4):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Killed during</th><th>Rounds</th><th>Killed mid save</th><th>No index after</th><th>Index rejected</th><th>Temp files left</th><th>Slowest ready</th><th>Slowest catch-up</th><th>Check problems</th></tr>
+</thead>
+<tbody>
+<tr><td>build</td><td>10</td><td>1</td><td>3</td><td>0</td><td>0</td><td>1.8 s</td><td>1.8 s</td><td>0</td></tr>
+<tr><td>load</td><td>10</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0.3 s</td><td>0.5 s</td><td>0</td></tr>
+<tr><td>stream</td><td>10</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0.4 s</td><td>0.8 s</td><td>0</td></tr>
+<tr><td>save</td><td>10</td><td>10</td><td>0</td><td>0</td><td>0</td><td>0.3 s</td><td>0.8 s</td><td>0</td></tr>
+<tr><td>burst</td><td>10</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0.3 s</td><td>0.8 s</td><td>0</td></tr>
+<tr><td>shutdown</td><td>10</td><td>10</td><td>0</td><td>0</td><td>0</td><td>0.4 s</td><td>0.8 s</td><td>0</td></tr>
+</tbody>
+</table>
+</div>
+<p>“No index after” is a build killed before its first checkpoint: the next
+start builds from scratch. A build killed later loads the checkpoint and
+indexes the rest. CI runs 40 rounds on pull requests (seed 1) and 100
+nightly (a new seed).</p>
+<p>This tests a killed process, not a power cut: the kernel still writes out
+what the process wrote. A save fsyncs its file before the rename and, on
+Linux and macOS, the folder after it, so a power cut should leave either
+the old index or the new one; nothing here simulates that.</p>
 <h2 id="reproducing-a-failure"><a class="header" href="#reproducing-a-failure">Reproducing a failure</a></h2>
 <ul>
 <li>proptest suites print the shrunk sequence or query that failed, which is
@@ -303,6 +355,11 @@ simulation; see <a href="incremental.html#holding-back-as-long-as-a-search-runs"
 while the import graph’s parked imports were retried in one lock hold;
 a <code>backlog</code> diagnostic fired under steady edits the watcher kept up with
 (scale scoreboard).</li>
+<li>A save killed half way left a temp file as large as the index, for
+good; a save that failed (disk full) was forgotten, so the shutdown
+skipped its save; a failed rename deleted the index before trying
+again; and a panic while reading a file during the build left it out
+without a word (fault points and the kill-and-restart run).</li>
 <li>Earlier probes found a crash when a large file was rewritten during a
 search, “server unavailable” at the end of a build, and lost changes
 after failed reads or a panic; the fault and watch tests cover them.</li>

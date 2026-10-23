@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9e414cb8.js";
+            window.path_to_searchindex_js = "../searchindex-0ab9609a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -188,6 +188,26 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Every save killed half way left a file as large as the index.</strong> A
+save writes a temp file next to the index and renames it into place; a
+server killed during the save (<code>kill -9</code>, a power cut, the OOM killer)
+left the temp file, and nothing removed it. The server now removes them
+when it starts.</li>
+<li><strong>A save that failed was forgotten.</strong> With <code>save_after_updates</code>, the
+count of unsaved updates was reset whether the save worked or not, so
+after a save onto a full disk the shutdown skipped its save and the
+saved index lacked those updates (the next start re-read the files, so
+no search was wrong, but it took longer). The count now stays until a
+save works.</li>
+<li><strong>A failed rename could delete the index.</strong> When moving the new index
+into place failed, the old index was deleted before trying again, so a
+second failure left no index at all. The old index is now moved aside
+and put back if the second try fails.</li>
+<li><strong>A panic while reading a file left it out of the index without a
+word.</strong> During the build, a file whose reading or parsing panicked was
+skipped and not reported. It is now tried again at the end of the
+build, and reported as unreadable if it keeps failing, like a file that
+cannot be read.</li>
 <li><strong>Every search waited 4 to 5 s soon after a restart.</strong> An index loaded
 from disk keeps its unresolved imports (<code>import os</code>, packages outside
 the indexed folders) but not each file’s import list. At the end of the
@@ -323,6 +343,18 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>Kill and restart.</strong> <code>examples/chaos.rs</code> kills the server binary with
+SIGKILL at random moments (during a build, a load from disk, a stream of
+edits, a periodic save, a burst of changes, and the save at shutdown),
+starts it again and checks that it loads the saved index, leaves no temp
+file, catches up with every change and passes <code>/api/check</code>. The “Scale
+scoreboard” workflow runs it nightly and on pull requests that touch
+saving or watching (job “Kill and restart”).</li>
+<li><strong>More fault points</strong> (<code>--features failpoints</code>, <code>src/faults.rs</code>): out of
+file handles, a file gone between listing and reading, a slow disk, a
+panic while reading or parsing a file, events lost by the OS, a save
+onto a full disk and a failed rename, each with a test in
+<code>tests/fault_injection.rs</code>.</li>
 <li><strong>A scale scoreboard.</strong> <code>examples/scoreboard.rs</code> runs the server binary
 over HTTP in seven scenarios (cold build, warm restart, branch switch, a
 ten-minute stream of edits, overloaded searching, saves under load, and

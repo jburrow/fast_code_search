@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-9e414cb8.js";
+            window.path_to_searchindex_js = "../searchindex-0ab9609a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -212,7 +212,8 @@ live ids on load, so ids stay stable across restarts.</p>
 <ul>
 <li><strong>Atomic.</strong> A save writes a unique temporary file next to the target,
 fsyncs it, and renames it into place; saves are serialized within the
-process. A crash leaves the previous index intact.</li>
+process. A crash leaves the previous index intact, and the next start
+removes the temporary file a killed save left.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
 <li><strong>Pinned.</strong> <code>tests/fixtures/index-v8.fcsidx</code> is compared byte for byte
