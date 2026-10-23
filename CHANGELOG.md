@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Rewriting a large file while it was searched could crash the server.**
+  Files over 1 MB were memory-mapped, and when another program truncated
+  and rewrote one while a search read it, the server died with SIGBUS.
+  Files are now read into memory when searched, so nothing can change
+  under a search. The 3-second "vm.max_map_count is very low" pause at
+  startup is gone with the mapping.
+- **No more "server unavailable" at the end of a large build or while a
+  saved index loads.** Resolving the dependency graph at the end of a
+  build held the write lock for seconds (about 6 s on 300,000 files), and
+  loading a saved index held it for the whole load, so searches were
+  turned away. Both now work outside the lock and hold it only for short
+  steps or the final swap; a 300,000-file cold build and restart answered
+  every search.
+- **Ignore files behave like ripgrep's.** `.rgignore` is honoured, and
+  when a `.gitignore`, `.ignore` or `.rgignore` changes (a branch switch,
+  say) the watcher re-checks the files under it, so newly ignored files
+  leave the index and newly allowed ones join it. Before, each file kept
+  its old state until it changed itself.
+- **A file that can't be read is retried and reported, not silently
+  dropped.** A read that failed (a file locked by an editor or virus
+  scanner, permissions changing mid-save) removed the file from the index
+  until it next changed, and the initial build left such a file out
+  without a word. The watcher now keeps the old entry and retries for
+  about half a minute; then the file is left out and every search says
+  how many files could not be read. A panic while applying watcher
+  changes used to skip the whole batch; the batch is now applied again,
+  and a change that fails twice is reported the same way.
 - **A large change no longer leaves the index "updating" for minutes
   while people search.** Each watcher step got the lock only after the
   running searches finished and then installed just 512 files, so with
@@ -31,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexing).
 
 ### Added
+- **Fault-injection tests.** A `failpoints` cargo feature compiles in
+  named fault points (`src/faults.rs`) that tests arm to make a read fail
+  or a step panic; `tests/fault_injection.rs` uses them to check that the
+  build and the watcher retry and report failures. CI runs them on every
+  platform.
 - **Diagnostic captures.** With `[diagnostics] capture = true` the server
   notices when it is slow or stuck and writes what it was doing to a JSON
   file: a search slower than 5 s or kept waiting over 2 s for the index

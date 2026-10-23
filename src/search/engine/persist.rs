@@ -395,15 +395,9 @@ impl SearchEngine {
                     .max_by_key(|(_, key)| key.len())
                     .map(|(base, _)| base.clone());
 
-                // Use len_if_mapped() to avoid triggering lazy loading during save
-                // If file isn't mapped yet, get size from filesystem
                 let size = match recorded {
                     Some((_, sz)) => sz as usize,
-                    None => mapped_file.len_if_mapped().unwrap_or_else(|| {
-                        std::fs::metadata(&mapped_file.path)
-                            .map(|m| m.len() as usize)
-                            .unwrap_or(0)
-                    }),
+                    None => mapped_file.len().unwrap_or(0),
                 };
 
                 files.push(PersistedFileMetadata {

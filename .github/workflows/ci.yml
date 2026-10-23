@@ -55,6 +55,19 @@ jobs:
           fi
           exit "$status"
 
+      # Fault points (src/faults.rs) are compiled in only with this feature:
+      # failed reads and panics injected into the indexer and watcher.
+      - name: Run fault-injection tests
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          cargo test --verbose --features failpoints --test fault_injection --no-fail-fast 2>&1 | tee test-faults.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash .github/scripts/annotate-test-log.sh test-faults.log
+          fi
+          exit "$status"
+
       - name: Run tests (semantic feature)
         shell: bash
         run: |

@@ -105,15 +105,37 @@ pub fn plan_changes(
         }
         ops.insert(path.clone(), op);
     };
+    let mut ignore_dirs: Vec<PathBuf> = Vec::new();
     for change in changes {
-        match change {
-            FileChange::Modified(p) => set(p, Op::Modify),
-            FileChange::Deleted(p) => set(p, Op::Delete),
+        let paths: &[&PathBuf] = match change {
+            FileChange::Modified(p) => {
+                set(p, Op::Modify);
+                &[p]
+            }
+            FileChange::Deleted(p) => {
+                set(p, Op::Delete);
+                &[p]
+            }
             FileChange::Renamed { from, to } => {
                 set(from, Op::Delete);
                 set(to, Op::Modify);
+                &[from, to]
             }
-        }
+        };
+        ignore_dirs.extend(
+            paths
+                .iter()
+                .filter(|p| is_ignore_file(p))
+                .filter_map(|p| p.parent().map(Path::to_path_buf)),
+        );
+    }
+    // An ignore file that changed, appeared or went away changes which files
+    // under its directory are indexed: reconcile the directory with the
+    // disk, as a restart would. (Each file used to keep its old state until
+    // it changed itself, so a branch switch that edited `.gitignore` left
+    // newly ignored files searchable and newly allowed ones missing.)
+    for dir in ignore_dirs {
+        set(&dir, Op::Modify);
     }
 
     // Each path is planned on its own (stats, directory walks), in
@@ -154,18 +176,50 @@ pub fn plan_changes(
     plan
 }
 
+/// Files read and parsed for a plan; `None` for a file that is not indexed
+/// (gone, too large, binary), whose entry is removed.
+pub type ParsedFiles = Vec<(PathBuf, Option<crate::search::PreIndexedFile>)>;
+
 /// Read and parse the files a plan will index, in parallel. Needs no lock.
+/// A file that could not be read is removed (as the initial build leaves it
+/// out); the watch loop uses [`parse_planned_checked`] to retry it instead.
 pub fn parse_planned(
     parser: crate::search::engine::FileParser,
     plan: &ChangePlan,
 ) -> Vec<(PathBuf, Option<crate::search::PreIndexedFile>)> {
-    plan.index
+    let (mut parsed, unreadable) = parse_planned_checked(parser, plan);
+    parsed.extend(unreadable.into_iter().map(|(p, _)| (p, None)));
+    parsed
+}
+
+/// [`parse_planned`], keeping the files that could not be read (permission
+/// denied, locked by another program, an I/O error) out of the parsed list
+/// and returning them on their own, so their index entries stay as they
+/// were until a retry reads them.
+pub fn parse_planned_checked(
+    parser: crate::search::engine::FileParser,
+    plan: &ChangePlan,
+) -> (ParsedFiles, Vec<(PathBuf, std::io::Error)>) {
+    let results: Vec<(
+        PathBuf,
+        std::io::Result<Option<crate::search::PreIndexedFile>>,
+    )> = plan
+        .index
         .par_iter()
         .map(|p| {
             crate::diagnostics::capture::watcher_progress(1);
-            (p.clone(), parser.parse(p))
+            (p.clone(), parser.parse_checked(p))
         })
-        .collect()
+        .collect();
+    let mut parsed = Vec::with_capacity(results.len());
+    let mut unreadable = Vec::new();
+    for (path, result) in results {
+        match result {
+            Ok(file) => parsed.push((path, file)),
+            Err(e) => unreadable.push((path, e)),
+        }
+    }
+    (parsed, unreadable)
 }
 
 /// Apply a plan and its parsed files under the caller's write lock: the
@@ -270,6 +324,15 @@ fn reconcile_dir(engine: &SearchEngine, dir: &Path, config: &IndexerConfig, plan
             .into_iter()
             .filter(|id| !keep.contains(id)),
     );
+}
+
+/// Is `path` an ignore file whose rules decide what is indexed under its
+/// directory (`.gitignore`, `.ignore`, `.rgignore`)?
+fn is_ignore_file(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some(".gitignore" | ".ignore" | ".rgignore")
+    )
 }
 
 /// `max_file_size = 0` means "the default" everywhere (engine, watcher,

@@ -375,6 +375,22 @@ impl Harness {
         self.note(format!("delete dir {rel}"));
     }
 
+    /// Write (or, with `None`, delete) the ignore file `name` in directory
+    /// `dir`, as a branch switch or a hand edit does.
+    fn set_ignore(&mut self, dir: &str, name: &str, rules: Option<&str>) {
+        let path = self.path(&join(dir, name));
+        match rules {
+            Some(r) => {
+                std::fs::write(&path, r).unwrap();
+                self.note(format!("write {dir}/{name}: {r:?}"));
+            }
+            None => {
+                let _ = std::fs::remove_file(&path);
+                self.note(format!("delete {dir}/{name}"));
+            }
+        }
+    }
+
     fn mkdir_with_files(&mut self, rel: &str, n: usize, ext: &str) {
         for i in 0..n {
             let file = format!("{rel}/n{i}.{ext}");
@@ -390,7 +406,7 @@ impl Harness {
         let n = *counter;
         let files = self.files();
         let dirs = self.dirs();
-        match self.rng.below(10) {
+        match self.rng.below(11) {
             0 | 1 => match self.rng.pick(&files).cloned() {
                 Some(f) => self.edit(&f),
                 None => return false,
@@ -455,6 +471,32 @@ impl Harness {
                     &format!("moved{n}"),
                 );
                 self.rename_dir(&d, &to);
+            }
+            10 => {
+                // Ignore a file or a whole kind of file in a directory, or
+                // stop ignoring them.
+                let dir = self.rng.pick(&dirs).cloned().unwrap_or_default();
+                let name = [".gitignore", ".ignore", ".rgignore"][self.rng.below(3)];
+                if self.path(&join(&dir, name)).exists() {
+                    self.set_ignore(&dir, name, None);
+                } else {
+                    let in_dir: Vec<String> = files
+                        .iter()
+                        .filter(|f| Path::new(f).parent() == Some(Path::new(&dir)))
+                        .map(|f| {
+                            Path::new(f)
+                                .file_name()
+                                .unwrap()
+                                .to_string_lossy()
+                                .to_string()
+                        })
+                        .collect();
+                    let rule = match self.rng.pick(&in_dir) {
+                        Some(f) if self.rng.below(2) == 0 => format!("{f}\n"),
+                        _ => "*.ts\n".to_string(),
+                    };
+                    self.set_ignore(&dir, name, Some(&rule));
+                }
             }
             _ => {
                 let candidates: Vec<String> = dirs
@@ -590,6 +632,17 @@ fn watch_everyday_operations_converge() {
     h.rename("app/core/m9.py", "web/src/m6_dir/m9.py");
     h.delete_dir("web/src/m6_dir");
     h.assert_converges("move a file into a directory, then delete the directory");
+    // Ignore files apply as soon as they change, as they would after a
+    // restart: newly ignored files leave the index, allowed ones return.
+    h.set_ignore("app", ".gitignore", Some("m1.py\n"));
+    h.assert_converges("ignore a file in .gitignore");
+    h.set_ignore("web", ".rgignore", Some("src/ui/\n"));
+    h.assert_converges("ignore a directory in .rgignore");
+    h.set_ignore("app", ".gitignore", Some("m3.py\n"));
+    h.assert_converges("edit .gitignore to ignore another file");
+    h.set_ignore("web", ".rgignore", None);
+    h.set_ignore("app", ".gitignore", None);
+    h.assert_converges("delete the ignore files");
     // app/m4.py imports m0: the edge must go with the file and come back
     // with it.
     h.delete("app/m0.py");

@@ -112,6 +112,8 @@ default = []
 semantic = ["ndarray", "hnsw_rs", "sha2"]
 # Semantic engine with ONNX embedding models (requires ONNX Runtime at run time).
 ml-models = ["semantic", "ort", "tokenizers"]
+# Fault points tests can arm (see src/faults.rs). Never in release builds.
+failpoints = []
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = [

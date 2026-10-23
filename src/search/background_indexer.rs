@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
-use tracing::info;
+use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 /// Channel buffer size for file discovery pipeline.
 const CHANNEL_BUFFER: usize = 5000;
@@ -398,14 +398,12 @@ fn try_load_persisted_index(
     let pb_manager = ProgressBarManager::new();
     pb_manager.set_spinner("📂 Loading persisted index...");
 
+    // Load into a side engine with the same settings and swap it in under
+    // one short write lock: the load takes seconds on a large tree, and
+    // holding the engine's write lock for all of it turned searches away.
+    let mut loaded = engine_lock::write(index_engine).empty_with_settings();
     let result = {
-        let mut engine = match index_engine.write() {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to acquire engine lock");
-                return (None, false);
-            }
-        };
+        let engine = &mut loaded;
 
         // Create a callback that updates both WebSocket progress and terminal progress bar
         let progress_ref = index_progress;
@@ -433,10 +431,8 @@ fn try_load_persisted_index(
 
     match result {
         Ok(result) => {
-            let files_loaded = index_engine
-                .read()
-                .map(|e| e.get_stats().num_files)
-                .unwrap_or(0);
+            let files_loaded = loaded.get_stats().num_files;
+            engine_lock::write(index_engine).adopt_index(loaded);
 
             println!(
                 "✅ Loaded {} files from persisted index",
@@ -833,7 +829,78 @@ fn process_batches(
         );
     }
 
+    total_indexed += retry_unreadable(
+        &mut batch_num,
+        files_discovered,
+        index_engine,
+        index_progress,
+        index_progress_tx,
+        indexer_config,
+        shutdown,
+    );
+
     (total_indexed, batch_num)
+}
+
+/// Read the files the build could not read once more, after the first
+/// retry wait. Any still unreadable are left to the watcher's retries, or,
+/// with watching off, given up on and reported (see `ReadFailures`): the
+/// build used to leave them out without a word.
+#[allow(clippy::too_many_arguments)]
+fn retry_unreadable(
+    batch_num: &mut usize,
+    files_discovered: &Arc<AtomicUsize>,
+    index_engine: &Arc<RwLock<SearchEngine>>,
+    index_progress: &SharedIndexingProgress,
+    index_progress_tx: &ProgressBroadcaster,
+    indexer_config: &IndexerConfig,
+    shutdown: &Arc<AtomicBool>,
+) -> usize {
+    let read_failures = Arc::clone(
+        &index_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .watch_backlog
+            .read_failures,
+    );
+    let mut indexed = 0;
+    if let Some(due) = read_failures.next_due() {
+        std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        let mut batch = read_failures.take_due(Instant::now());
+        if !batch.is_empty() && !shutdown.load(Ordering::Acquire) {
+            info!(
+                files = batch.len(),
+                "Reading files that could not be read the first time"
+            );
+            indexed = process_batch(
+                &mut batch,
+                batch_num,
+                files_discovered,
+                index_engine,
+                index_progress,
+                index_progress_tx,
+                &indexer_config.exclude_files,
+                indexer_config.transcode_non_utf8,
+                indexer_config.enable_symbols,
+                indexer_config.max_file_size,
+            );
+        }
+    }
+    if !indexer_config.watch {
+        let gave_up = read_failures.give_up_all();
+        if !gave_up.is_empty() {
+            tracing::warn!(
+                files = gave_up.len(),
+                first = ?&gave_up[..gave_up.len().min(20)],
+                "Some files could not be read and are left out of the index"
+            );
+            let mut engine = engine_lock::write(index_engine);
+            for path in &gave_up {
+                engine.remove_file(path);
+            }
+        }
+    }
+    indexed
 }
 
 /// Process a single batch of files.
@@ -870,6 +937,13 @@ fn process_batch(
     // allocations inside the per-file parallel filter closure.
     let normalized_exclude_files: Vec<String> =
         exclude_files.iter().map(|e| e.replace('\\', "/")).collect();
+    let read_failures = std::sync::Arc::clone(
+        &index_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .watch_backlog
+            .read_failures,
+    );
     let partial_with_flags: Vec<(PartialIndexedFile, bool)> = batch
         .par_iter()
         .filter(|path| {
@@ -889,9 +963,21 @@ fn process_batch(
             // so one pathological file cannot unwind the rayon worker and kill the
             // entire background-indexing thread.
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                PartialIndexedFile::process(path, transcode_non_utf8, max_file_size)
+                PartialIndexedFile::process_checked(path, transcode_non_utf8, max_file_size)
             })) {
-                Ok(opt) => opt,
+                Ok(Ok(opt)) => {
+                    if !read_failures.is_empty() {
+                        read_failures.cleared(path);
+                    }
+                    opt
+                }
+                Ok(Err(e)) => {
+                    // Tried again at the end of the build, then by the
+                    // watcher; counted until then (see `ReadFailures`).
+                    tracing::debug!(path = %path.display(), error = %e, "Could not read file; will retry");
+                    read_failures.failed(path, Instant::now());
+                    None
+                }
                 Err(_) => {
                     tracing::error!(
                         path = %path.display(),
@@ -970,36 +1056,62 @@ fn process_batch(
 }
 
 /// Finalize import resolution after all batches are processed.
+///
+/// Resolving every importer again takes seconds on a large tree (6 s at
+/// 300,000 files), so it runs in steps that each hold the write lock for
+/// about [`SETTLE_HOLD`], with searches answered in between; one hold for
+/// all of it turned every search away at the end of each build.
 fn finalize_imports(
     index_engine: &Arc<RwLock<SearchEngine>>,
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
 ) {
-    let mut engine = engine_lock::write(index_engine);
+    let mut settling = {
+        let mut engine = engine_lock::write(index_engine);
+        let pending_count = engine.pending_imports_count();
+        if pending_count > 0 {
+            broadcast_progress(index_progress, index_progress_tx, |p| {
+                p.status = IndexingStatus::ResolvingImports;
+                p.current_path = None;
+                p.message = format!(
+                    "Resolving {} remaining import dependencies...",
+                    pending_count
+                );
+            });
 
-    let pending_count = engine.pending_imports_count();
-
-    if pending_count > 0 {
-        broadcast_progress(index_progress, index_progress_tx, |p| {
-            p.status = IndexingStatus::ResolvingImports;
-            p.current_path = None;
-            p.message = format!(
-                "Resolving {} remaining import dependencies...",
-                pending_count
+            info!(
+                pending_imports = pending_count,
+                "Resolving remaining import dependencies..."
             );
-        });
-
-        info!(
-            pending_imports = pending_count,
-            "Resolving remaining import dependencies..."
-        );
+        }
+        // Always: besides the remaining imports, this resolves every importer
+        // once against the complete file set and settles the graph for watch
+        // updates.
+        engine.begin_settling_imports()
+    };
+    let mut steps = 0usize;
+    loop {
+        let mut engine = engine_lock::write(index_engine);
+        let held = Instant::now();
+        let done = loop {
+            if engine.settle_imports_step(&mut settling, SETTLE_CHUNK) {
+                break true;
+            }
+            if held.elapsed() >= SETTLE_HOLD {
+                break false;
+            }
+        };
+        drop(engine);
+        steps += 1;
+        if done {
+            break;
+        }
+        std::thread::sleep(SETTLE_GAP);
     }
-    // Always: besides the remaining imports, this resolves every importer
-    // once against the complete file set and settles the graph for watch
-    // updates.
-    engine.resolve_imports();
+    debug!(steps, "Import resolution settled");
 
     info!("Finalizing index...");
+    let mut engine = engine_lock::write(index_engine);
     engine.finalize();
 
     let stats = engine.get_stats();
@@ -1008,6 +1120,16 @@ fn finalize_imports(
         "Import resolution completed"
     );
 }
+
+/// Importers resolved at a time while settling the graph at the end of a
+/// build; a step resolves chunks until it has held the lock [`SETTLE_HOLD`].
+const SETTLE_CHUNK: usize = 1024;
+
+/// About the longest one settling step holds the write lock.
+const SETTLE_HOLD: Duration = Duration::from_millis(250);
+
+/// The pause between settling steps, so waiting searches are answered.
+const SETTLE_GAP: Duration = Duration::from_millis(20);
 
 /// Log completion statistics.
 fn log_completion_stats(

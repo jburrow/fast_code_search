@@ -3,6 +3,7 @@ pub mod cli;
 pub mod config;
 pub mod dependencies;
 pub mod diagnostics;
+pub mod faults;
 pub mod impact;
 pub mod index;
 pub mod index_lock;

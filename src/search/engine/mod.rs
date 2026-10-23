@@ -24,7 +24,9 @@ mod query;
 mod scope;
 mod text;
 
-pub use freshness::{unix_now_ms, IndexFreshness, PathFreshness, WatchBacklog};
+pub use freshness::{
+    unix_now_ms, IndexFreshness, PathFreshness, ReadFailures, WatchBacklog, MAX_READ_ATTEMPTS,
+};
 pub use impact::{
     ImpactFileSummary, ImpactOptions, ImpactReport, ImpactScope, SymbolImpact, TierCounts, UseLine,
     UseTier, UserFile, DEFAULT_IMPACT_FILES, DEFAULT_IMPACT_LINES, MAX_IMPACT_SYMBOLS,
@@ -791,14 +793,40 @@ impl PartialIndexedFile {
         transcode_non_utf8: bool,
         max_file_size: u64,
     ) -> Option<(Self, bool)> {
+        Self::process_checked(path, transcode_non_utf8, max_file_size)
+            .ok()
+            .flatten()
+    }
+
+    /// [`Self::process`], telling a file that could not be read (`Err`:
+    /// permission denied, a sharing violation, an I/O error) apart from one
+    /// that is not indexed (`Ok(None)`: gone, too large, binary). The
+    /// watcher retries the first and drops the second.
+    pub fn process_checked(
+        path: &Path,
+        transcode_non_utf8: bool,
+        max_file_size: u64,
+    ) -> std::io::Result<Option<(Self, bool)>> {
+        match Self::process_inner(path, transcode_non_utf8, max_file_size) {
+            Ok(file) => Ok(Some(file)),
+            Err(Unindexed::Skipped) => Ok(None),
+            Err(Unindexed::Unreadable(e)) => Err(e),
+        }
+    }
+
+    fn process_inner(
+        path: &Path,
+        transcode_non_utf8: bool,
+        max_file_size: u64,
+    ) -> Result<(Self, bool), Unindexed> {
         let max_size = if max_file_size == 0 {
             Self::DEFAULT_MAX_FILE_SIZE
         } else {
             max_file_size
         };
-        let metadata = std::fs::metadata(path).ok()?;
+        let metadata = std::fs::metadata(path)?;
         if metadata.len() > max_size {
-            return None;
+            return Err(Unindexed::Skipped);
         }
         // Capture what we are about to read so persistence records the indexed
         // content's identity, not the on-disk state at save time.
@@ -806,13 +834,14 @@ impl PartialIndexedFile {
         let mtime = crate::index::persistence::mtime_secs_of(&metadata);
         let modified = metadata.modified().ok();
 
-        let raw_bytes = std::fs::read(path).ok()?;
+        crate::faults::io("parse.read", path)?;
+        let raw_bytes = std::fs::read(path)?;
         // Attempt zero-copy consume: String::from_utf8 reuses the Vec allocation when valid.
         let (content, transcoded) = match String::from_utf8(raw_bytes) {
             Ok(s) => (crate::utils::strip_utf8_bom_owned(s), false), // UTF-8 fast path — zero-copy consume
             Err(e) => {
                 if !transcode_non_utf8 {
-                    return None; // Transcoding disabled
+                    return Err(Unindexed::Skipped); // Transcoding disabled
                 }
                 let raw_bytes = e.into_bytes(); // Recover the original bytes
                 match crate::utils::transcode_to_utf8(&raw_bytes) {
@@ -824,7 +853,7 @@ impl PartialIndexedFile {
                         );
                         (result.content, true)
                     }
-                    _ => return None, // Binary or unrecognizable
+                    _ => return Err(Unindexed::Skipped), // Binary or unrecognizable
                 }
             }
         };
@@ -835,7 +864,7 @@ impl PartialIndexedFile {
                 path = %path.display(),
                 "Skipping binary-looking file during indexing"
             );
-            return None;
+            return Err(Unindexed::Skipped);
         }
 
         // Structural checks only gate tree-sitter: a file with a >100 KB line or
@@ -876,7 +905,7 @@ impl PartialIndexedFile {
         let mut trigrams = extract_unique_trigrams_lowercase(&filename_stem);
         trigrams.extend(extract_unique_trigrams_lowercase(&content));
 
-        Some((
+        Ok((
             PartialIndexedFile {
                 path: path.to_path_buf(),
                 trigrams,
@@ -889,6 +918,26 @@ impl PartialIndexedFile {
             },
             transcoded,
         ))
+    }
+}
+
+/// Why [`PartialIndexedFile::process_inner`] produced no file.
+enum Unindexed {
+    /// Not indexed by the rules: gone, too large, binary, not UTF-8.
+    Skipped,
+    /// Could not be read.
+    Unreadable(std::io::Error),
+}
+
+impl From<std::io::Error> for Unindexed {
+    fn from(e: std::io::Error) -> Self {
+        // A file that is gone is simply not indexed; its delete event (or
+        // the sibling check) removes it.
+        if e.kind() == std::io::ErrorKind::NotFound {
+            Unindexed::Skipped
+        } else {
+            Unindexed::Unreadable(e)
+        }
     }
 }
 
@@ -929,8 +978,16 @@ impl FileParser {
     /// large to index. Reads owned content (no live mmap, so a file being
     /// rewritten concurrently cannot SIGBUS us).
     pub fn parse(&self, path: &Path) -> Option<PreIndexedFile> {
-        PartialIndexedFile::process(path, self.transcode_non_utf8, self.max_file_size)
-            .map(|(partial, _)| PreIndexedFile::from_partial(partial, self.enable_symbols))
+        self.parse_checked(path).ok().flatten()
+    }
+
+    /// [`Self::parse`], with `Err` for a file that could not be read (see
+    /// [`PartialIndexedFile::process_checked`]).
+    pub fn parse_checked(&self, path: &Path) -> std::io::Result<Option<PreIndexedFile>> {
+        Ok(
+            PartialIndexedFile::process_checked(path, self.transcode_non_utf8, self.max_file_size)?
+                .map(|(partial, _)| PreIndexedFile::from_partial(partial, self.enable_symbols)),
+        )
     }
 }
 
@@ -1134,6 +1191,20 @@ impl FileMetadata {
     }
 }
 
+/// Importers still to resolve again at the end of a build; see
+/// [`SearchEngine::begin_settling_imports`].
+#[derive(Debug, Default)]
+pub struct ImportSettling {
+    importers: Vec<u32>,
+}
+
+impl ImportSettling {
+    /// Importers not resolved yet.
+    pub fn remaining(&self) -> usize {
+        self.importers.len()
+    }
+}
+
 pub struct SearchEngine {
     pub file_store: LazyFileStore,
     pub trigram_index: TrigramIndex,
@@ -1255,6 +1326,33 @@ impl SearchEngine {
             watching: false,
             watch_backlog: WatchBacklog::default(),
         }
+    }
+
+    /// An empty engine with this one's settings (roots, symbol, encoding
+    /// and size settings), to load a saved index into without holding this
+    /// engine's lock; see [`Self::adopt_index`].
+    pub fn empty_with_settings(&self) -> Self {
+        let mut fresh = Self::new();
+        fresh.enable_symbols = self.enable_symbols;
+        fresh.transcode_non_utf8 = self.transcode_non_utf8;
+        fresh.max_file_size = self.max_file_size;
+        fresh.show_root_name = self.show_root_name;
+        fresh.root_paths = self.root_paths.clone();
+        fresh.root_labels = self.root_labels.clone();
+        fresh
+    }
+
+    /// Take over the index `loaded` holds (files, postings, symbols, graph,
+    /// freshness times), keeping this engine's live state: whether it is
+    /// building or watching, and the watcher's backlog counters. Loading a
+    /// saved index takes seconds on a large tree; loading it into a side
+    /// engine and adopting it under one short write lock keeps searches
+    /// answered meanwhile (they see the index being built, and say so).
+    pub fn adopt_index(&mut self, mut loaded: SearchEngine) {
+        loaded.building = self.building;
+        loaded.watching = self.watching;
+        loaded.watch_backlog = std::mem::take(&mut self.watch_backlog);
+        *self = loaded;
     }
 
     /// Register an indexed root path so that `make_display_path` can produce
@@ -1496,25 +1594,64 @@ impl SearchEngine {
     /// 1. Parallel path resolution using rayon (CPU-bound, thread-safe)
     /// 2. Sequential graph insertion (requires &mut self)
     pub fn resolve_imports(&mut self) {
-        // Everything queued for this batch, plus one final attempt at every
-        // parked import (the last file may have landed without a matching
-        // stem, e.g. a `.d.ts`). Still-unresolved imports stay parked so they
-        // are persisted and retried after a later incremental add.
+        let mut settling = self.begin_settling_imports();
+        while !self.settle_imports_step(&mut settling, usize::MAX) {}
+    }
+
+    /// Start [`Self::resolve_imports`] so it can run in steps, each under
+    /// its own write lock: on a large tree resolving every importer again
+    /// takes seconds, and one lock hold for all of it turned searches away
+    /// at the end of every build. Searches between the steps see a graph
+    /// part way through being settled, while the index still reports
+    /// itself as building.
+    ///
+    /// The graph counts as settled from here on, so a file the watcher
+    /// adds or removes between steps re-resolves the importers that
+    /// mention it, as it would after the build; the importers still to do
+    /// are resolved against the files indexed when their step runs.
+    pub fn begin_settling_imports(&mut self) -> ImportSettling {
+        // Queued and parked imports of files whose import list is not
+        // known get one final attempt now; every file with a known list is
+        // resolved from scratch in the steps below, so its queued imports
+        // need no attempt here (on a loaded index that is every file, and
+        // resolving them all at once here was one long lock hold). Still
+        // unresolved imports stay parked so they are persisted and retried
+        // after a later incremental add.
+        let specs = &self.import_specs;
+        self.pending_imports
+            .retain(|(id, _, _)| !specs.contains_key(id));
         self.resolve_pending_now();
-        let all: Vec<usize> = (0..self.waiting_imports.len())
-            .filter(|&i| self.waiting_imports[i].is_some())
+        let orphans: Vec<usize> = (0..self.waiting_imports.len())
+            .filter(|&i| {
+                self.waiting_imports[i]
+                    .as_ref()
+                    .is_some_and(|(id, _, _)| !self.import_specs.contains_key(id))
+            })
             .collect();
-        self.retry_waiting(all);
+        self.retry_waiting(orphans);
         self.recently_added_stems.clear();
         // Imports resolved while the build was still adding files may have
         // fallen back to a package whose module was indexed later; resolve
         // every importer once more against the complete file set, so the
         // graph does not depend on the order files were indexed in.
-        let everyone: FxHashSet<u32> = self.import_specs.keys().copied().collect();
+        let mut importers: Vec<u32> = self.import_specs.keys().copied().collect();
+        importers.sort_unstable();
         self.dirty_importers.clear();
-        self.recompute_importers(everyone);
-        self.compact_waiting_imports();
         self.graph_settled = true;
+        ImportSettling { importers }
+    }
+
+    /// Resolve up to `max` more importers of `settling`; true when all are
+    /// done (the waiting list is then compacted).
+    pub fn settle_imports_step(&mut self, settling: &mut ImportSettling, max: usize) -> bool {
+        let take = settling.importers.len().min(max);
+        let step: FxHashSet<u32> = settling.importers.drain(..take).collect();
+        self.recompute_importers(step);
+        if settling.importers.is_empty() {
+            self.compact_waiting_imports();
+            return true;
+        }
+        false
     }
 
     /// Remember `imports` as `id`'s complete import list.
@@ -1900,17 +2037,11 @@ impl SearchEngine {
         self.symbol_cache.shrink_to_fit();
     }
 
-    /// Size on disk of file `id` as indexed (0 when unknown). Small files
-    /// are read rather than memory-mapped, so the mapped size alone said
-    /// "0 bytes" for a typical tree.
+    /// Size on disk of file `id` as indexed (0 when unknown).
     pub fn indexed_size(&self, id: u32) -> u64 {
         match self.indexed_meta.get(id as usize) {
-            Some(&(_, size)) if size > 0 => size,
-            _ => self
-                .file_store
-                .get(id)
-                .and_then(|f| f.len_if_mapped())
-                .unwrap_or(0) as u64,
+            Some(&(_, size)) => size,
+            None => 0,
         }
     }
 

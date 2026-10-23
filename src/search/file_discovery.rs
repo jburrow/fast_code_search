@@ -253,6 +253,9 @@ impl FileDiscoveryIterator {
                             // The user's global excludes, as rg and git apply.
                             .git_global(true)
                             .ignore(true)
+                            // As ripgrep: `.rgignore` rules take precedence
+                            // over `.ignore` and `.gitignore`.
+                            .add_custom_ignore_filename(".rgignore")
                             .parents(true)
                             // Honour .gitignore in trees that are not git
                             // repositories too, so discovery agrees with the
@@ -462,39 +465,37 @@ fn global_gitignore_for_repo(root: &Path) -> Option<Arc<ignore::gitignore::Gitig
 /// [`EligibilityProbe::ignore_chain`]).
 type IgnoreChain = Vec<Arc<ignore::gitignore::Gitignore>>;
 
-/// Compiled ignore matchers per directory, keyed by the modification times
-/// of that directory's `.gitignore` / `.ignore`.
+/// Compiled ignore matchers per directory, keyed by the modification time
+/// and size of each of that directory's ignore files (`.git/info/exclude`,
+/// `.gitignore`, `.ignore`, `.rgignore`).
 ///
 /// Compiling a matcher means parsing the file and building a regex per
 /// pattern; doing that for every ancestor on every watcher event cost about
 /// 10 ms per event on a repository with a typical root `.gitignore`. A
-/// changed ignore file is picked up because its mtime is part of the key.
-type IgnoreKey = (
-    Option<std::time::SystemTime>,
-    Option<std::time::SystemTime>,
-    Option<std::time::SystemTime>,
-);
+/// changed ignore file is picked up because its mtime and size are part of
+/// the key.
+type IgnoreKey = [Option<(std::time::SystemTime, u64)>; 4];
+
+/// A directory's ignore files, lowest precedence first: a later file's
+/// rules win. In git a `.gitignore` overrides `.git/info/exclude`; in
+/// ripgrep `.ignore` overrides `.gitignore` and `.rgignore` overrides both.
+const IGNORE_FILES: [&str; 4] = [".git/info/exclude", ".gitignore", ".ignore", ".rgignore"];
 type IgnoreCache =
     std::collections::HashMap<PathBuf, (IgnoreKey, Arc<ignore::gitignore::Gitignore>)>;
 static IGNORE_CACHE: OnceLock<Mutex<IgnoreCache>> = OnceLock::new();
 
 fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
-    let mtime = |name: &str| {
-        std::fs::metadata(dir.join(name))
-            .ok()
-            .filter(|m| m.is_file())
-            .and_then(|m| m.modified().ok())
-    };
     // A repository root's `.git/info/exclude` applies like a `.gitignore`
     // there, as the initial walk (`git_exclude`) and git itself apply it:
     // without it the watcher indexed an excluded file once it changed, and
     // the next restart dropped it again.
-    let key: IgnoreKey = (
-        mtime(".gitignore"),
-        mtime(".ignore"),
-        mtime(".git/info/exclude"),
-    );
-    if key.0.is_none() && key.1.is_none() && key.2.is_none() {
+    let key: IgnoreKey = IGNORE_FILES.map(|name| {
+        std::fs::metadata(dir.join(name))
+            .ok()
+            .filter(|m| m.is_file())
+            .and_then(|m| Some((m.modified().ok()?, m.len())))
+    });
+    if key.iter().all(Option::is_none) {
         return None;
     }
     let cache = IGNORE_CACHE.get_or_init(|| Mutex::new(IgnoreCache::new()));
@@ -506,16 +507,10 @@ fn gitignore_for_dir(dir: &Path) -> Option<Arc<ignore::gitignore::Gitignore>> {
         }
     }
     let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
-    // Lowest precedence first: a later file's rules win, and in git a
-    // `.gitignore` overrides `.git/info/exclude`.
-    if key.2.is_some() {
-        builder.add(dir.join(".git").join("info").join("exclude"));
-    }
-    if key.0.is_some() {
-        builder.add(dir.join(".gitignore"));
-    }
-    if key.1.is_some() {
-        builder.add(dir.join(".ignore"));
+    for (name, present) in IGNORE_FILES.iter().zip(&key) {
+        if present.is_some() {
+            builder.add(dir.join(name));
+        }
     }
     let gi = Arc::new(builder.build().ok()?);
     if let Ok(mut guard) = cache.lock() {
@@ -553,6 +548,57 @@ mod tests {
         assert!(!is_gitignored(&file), "edited .gitignore must be re-read");
         std::fs::remove_file(root.join(".gitignore")).unwrap();
         assert!(!is_gitignored(&file));
+    }
+
+    /// `.rgignore` is honoured as ripgrep honours it, with ripgrep's
+    /// precedence (`.rgignore` over `.ignore` over `.gitignore`), by the
+    /// directory walk and by the per-path check the watcher uses alike.
+    #[test]
+    fn test_rgignore_and_ignore_file_precedence() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join("out/o.py"), "x").unwrap();
+        std::fs::write(root.join("a.py"), "x").unwrap();
+        std::fs::write(root.join("b.py"), "x").unwrap();
+        std::fs::write(root.join("c.py"), "x").unwrap();
+        // .gitignore ignores a and b; .ignore lets b back; .rgignore ignores
+        // out/ and c, and lets a back.
+        std::fs::write(root.join(".gitignore"), "a.py\nb.py\n").unwrap();
+        std::fs::write(root.join(".ignore"), "!b.py\n").unwrap();
+        std::fs::write(root.join(".rgignore"), "out/\nc.py\n!a.py\n").unwrap();
+
+        let cfg = FileDiscoveryConfig {
+            paths: vec![root.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        let mut found: Vec<String> = FileDiscoveryIterator::new(&cfg)
+            .filter(|p| p.extension().is_some_and(|e| e == "py"))
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        found.sort();
+        assert_eq!(found, vec!["a.py", "b.py"]);
+
+        let probe = EligibilityProbe::new(&cfg);
+        for (file, kept) in [
+            ("a.py", true),
+            ("b.py", true),
+            ("c.py", false),
+            ("out/o.py", false),
+        ] {
+            assert_eq!(
+                probe.is_eligible_path(&root.join(file), None),
+                kept,
+                "{file}"
+            );
+            assert_eq!(is_gitignored(&root.join(file)), !kept, "{file}");
+        }
     }
 
     #[test]
