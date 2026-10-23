@@ -581,6 +581,9 @@ fn main() -> Result<()> {
         roots.len(),
         started.elapsed().as_secs_f64()
     );
+    // A broken index answers less without any error; check it first.
+    let invariants = corpus.engine.check_invariants();
+    anyhow::ensure!(invariants.is_clean(), "{invariants}");
 
     let mut queries = set.query.clone();
     if args.generate > 0 {

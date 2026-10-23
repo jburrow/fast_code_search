@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Short queries missed very small files.** A file shorter than three
+  bytes with a name shorter than three letters (`x.py` holding `ab`) has no
+  trigram, and queries without a trigram of their own (two characters, a
+  regex with no literal) scanned only files some posting list named, so rg
+  found the line and fcs did not. The index now keeps the set of all its
+  files, after a load and incremental changes too.
+- **`indexer.extra_binary_extensions` works.** The matching reference
+  documented it, but the configuration rejected it as an unknown key. Every
+  file walk and eligibility check now takes its settings from one place.
 - **Rewriting a large file while it was searched could crash the server.**
   Files over 1 MB were memory-mapped, and when another program truncated
   and rewrote one while a search read it, the server died with SIGBUS.
@@ -58,6 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexing).
 
 ### Added
+- **The index checks itself.** `fcs check --live` asks the running server
+  whether its index agrees with itself, whether indexed files still match
+  the disk, and whether it holds the files a fresh walk finds. It prints
+  counts only, so the output is safe to share (`--show-paths` for file
+  names); `GET /api/check` returns the same as JSON. A background scrub
+  (`[diagnostics] scrub`, on by default) reads 3,000 files a minute, about
+  0.1% of a core. It logs and re-indexes any file the index has out of
+  step, which is a lost change, and checks the index's own consistency
+  hourly; the counts are on the diagnostics page. The watch, fault and
+  backtest harnesses now run the same checks after every scenario. Book
+  page: Guides > Checking a live index.
 - **Fault-injection tests.** A `failpoints` cargo feature compiles in
   named fault points (`src/faults.rs`) that tests arm to make a read fail
   or a step panic; `tests/fault_injection.rs` uses them to check that the

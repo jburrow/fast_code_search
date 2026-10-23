@@ -370,6 +370,29 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Background scrub: checks the index against the disk a few files at a
+    // time and has the watcher index again any file found out of step.
+    if config.diagnostics.scrub && !config.indexer.paths.is_empty() {
+        let scrub = fast_code_search::search::integrity::ScrubConfig {
+            files_per_minute: config.diagnostics.scrub_files_per_minute,
+            invariants_every: (config.diagnostics.scrub_invariants_minutes > 0.0).then(|| {
+                std::time::Duration::from_secs_f64(
+                    config.diagnostics.scrub_invariants_minutes * 60.0,
+                )
+            }),
+            suspect_for: fast_code_search::search::integrity::SUSPECT_FOR,
+        };
+        let (engine, scrub_shutdown) = (shared_engine.clone(), shutdown.clone());
+        if let Err(e) = std::thread::Builder::new()
+            .name("fcs-scrub".into())
+            .spawn(move || {
+                fast_code_search::search::integrity::run_scrub(engine, scrub, scrub_shutdown)
+            })
+        {
+            tracing::error!(error = %e, "Failed to start the index scrub");
+        }
+    }
+
     // Create gRPC service with shared engine
     let search_service = server::create_server_with_engine_config_limits(
         shared_engine.clone(),

@@ -76,6 +76,11 @@ struct Args {
     /// default `[diagnostics]` thresholds.
     #[arg(long)]
     capture_dir: Option<PathBuf>,
+    /// After the build, time the self-checks (`check_invariants`, and
+    /// `check_file` over this many files), then exit: the evidence for the
+    /// scrub's defaults.
+    #[arg(long)]
+    integrity_cost: Option<usize>,
 }
 
 /// The `--mixed` queries: (regex, text). Common words make a search read
@@ -253,6 +258,36 @@ fn main() {
         engine.read().unwrap().get_stats().num_files,
         t.elapsed()
     );
+
+    if let Some(n) = args.integrity_cost {
+        let e = engine.read().unwrap();
+        for _ in 0..3 {
+            let t = Instant::now();
+            let report = e.check_invariants();
+            eprintln!(
+                "check_invariants: {:.0?} over {} files, {} violations",
+                t.elapsed(),
+                report.files,
+                report.total()
+            );
+        }
+        let ids = e.live_file_ids();
+        let ids = &ids[..n.min(ids.len())];
+        let t = Instant::now();
+        let current = ids
+            .iter()
+            .filter(|&&id| e.check_file(id) == Some(fast_code_search::search::FileCheck::Current))
+            .count();
+        let took = t.elapsed();
+        eprintln!(
+            "check_file: {} files in {:.0?} ({:.0} files/s on one thread), {} current",
+            ids.len(),
+            took,
+            ids.len() as f64 / took.as_secs_f64(),
+            current
+        );
+        return;
+    }
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let watcher = watch_loop::start_watcher(&config).expect("watcher");

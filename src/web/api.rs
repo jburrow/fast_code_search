@@ -1758,6 +1758,15 @@ pub async fn diagnostics_handler(
             config,
             service,
             captures: diagnostics::capture::status(),
+            scrub: {
+                let s = engine
+                    .watch_backlog
+                    .scrub
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                s.enabled.then_some(s)
+            },
             index: KeywordIndexDiagnostics {
                 num_files: stats.num_files,
                 total_size_bytes: stats.total_size,
@@ -1781,4 +1790,71 @@ pub async fn diagnostics_handler(
         )
     })?
     .map_err(ApiError::from)
+}
+
+/// Query for `/api/check`.
+#[derive(Debug, Deserialize)]
+pub struct CheckQuery {
+    /// Files whose content to read and check, spread over the index
+    /// (default 2,000; 0 skips the content check).
+    #[serde(default)]
+    pub content: Option<usize>,
+    /// Check the content of every file (slow on a large index).
+    #[serde(default)]
+    pub all: bool,
+    /// Walk the disk and compare the indexed file set (default true).
+    #[serde(default)]
+    pub discovery: Option<bool>,
+    /// Example paths kept per kind of difference (default 5, at most 100).
+    #[serde(default)]
+    pub examples: Option<usize>,
+}
+
+/// `GET /api/check`: check the live index against itself and the disk (see
+/// [`crate::search::integrity`]). One check runs at a time; a second gets
+/// 429. Reads only: searches go on, and the watcher waits at most for one
+/// short read-locked step.
+pub async fn check_handler(
+    State(state): State<WebState>,
+    ApiQuery(params): ApiQuery<CheckQuery>,
+) -> Result<Json<crate::search::integrity::IntegrityReport>, ApiError> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::AcqRel) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "a check is already running; try again when it has finished".to_string(),
+        )
+            .into());
+    }
+    struct Done;
+    impl Drop for Done {
+        fn drop(&mut self) {
+            RUNNING.store(false, Ordering::Release);
+        }
+    }
+    let config = state.indexer_config.clone();
+    let opts = crate::search::integrity::IntegrityOptions {
+        content_files: if params.all {
+            None
+        } else {
+            Some(params.content.unwrap_or(2_000))
+        },
+        discovery: params.discovery.unwrap_or(true) && config.is_some(),
+        examples: params.examples.unwrap_or(5).min(100),
+    };
+    let engine = state.engine.clone();
+    let report = tokio::task::spawn_blocking(move || {
+        let _done = Done;
+        let config = config.map(|c| (*c).clone()).unwrap_or_default();
+        crate::search::integrity::check(&engine, &config, &opts)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("check failed: {e}"),
+        )
+    })?;
+    Ok(Json(report))
 }

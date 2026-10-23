@@ -14,9 +14,7 @@ pub mod graph;
 pub mod search;
 
 use crate::config::IndexerConfig;
-use crate::search::{
-    FileDiscoveryConfig, FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile, SearchEngine,
-};
+use crate::search::{FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile, SearchEngine};
 use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashSet;
@@ -35,14 +33,7 @@ impl Corpus {
     /// with `config`'s discovery settings, then resolve the import graph.
     pub fn build(config: &IndexerConfig) -> Result<Self> {
         let roots: Vec<PathBuf> = config.paths.iter().map(PathBuf::from).collect();
-        let discovery = FileDiscoveryConfig {
-            paths: config.paths.clone(),
-            exclude_patterns: config.exclude_patterns.clone(),
-            include_extensions: config.include_extensions.clone(),
-            max_file_size: Some(config.max_file_size),
-            respect_gitignore: config.respect_gitignore,
-            ..Default::default()
-        };
+        let discovery = config.discovery_config(config.paths.clone());
         let files: Vec<PathBuf> = FileDiscoveryIterator::new(&discovery).collect();
         let mut engine = SearchEngine::new();
         for r in &roots {
@@ -161,6 +152,14 @@ pub fn run_check(
     ));
     let mut code = 0;
     let mut md = String::from("# fcs check\n\n");
+    let invariants = corpus.engine.check_invariants();
+    if !invariants.is_clean() {
+        code = 1;
+        md += &format!(
+            "## Index self-check\n\nA fresh index of these files does not agree with itself; \
+             please report this.\n\n```\n{invariants}```\n\n"
+        );
+    }
 
     if opts.queries > 0 {
         md += "## Search vs ripgrep\n\n";

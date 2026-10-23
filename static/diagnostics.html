@@ -102,6 +102,30 @@
                 </div>`;
         }
 
+        // The background scrub: files checked against the disk, and any the
+        // index had out of step (each was queued to index again).
+        function renderScrub(scrub) {
+            if (!scrub) return '';
+            const n = (v) => Number(v || 0).toLocaleString('en-US');
+            const drift = Object.entries(scrub.drift || {});
+            const driftTotal = drift.reduce((a, [, v]) => a + Number(v || 0), 0);
+            const violations = Object.entries(scrub.invariant_violations || {});
+            const row = (label, value, warn) => `
+                <div class="sample-file"${warn ? ' style="color: var(--warn);"' : ''}><strong>${label}:</strong> ${escapeHtml(value)}</div>`;
+            return `
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <h3>Index scrub</h3>
+                    <div class="sample-files">
+                        ${row('Files checked against disk', `${n(scrub.files_checked)} (${n(scrub.passes)} full passes)`)}
+                        ${row('Out of step', driftTotal === 0 ? 'none'
+                            : `${n(driftTotal)}: ${drift.map(([k, v]) => `${k} ${n(v)}`).join(', ')}; queued to index again`, driftTotal > 0)}
+                        ${row('Consistency checks', scrub.invariant_checks === 0 ? 'not run yet'
+                            : `${n(scrub.invariant_checks)}, last ${violations.length === 0 ? 'clean'
+                                : violations.map(([k, v]) => `${k} ${n(v)}`).join(', ')} (${n(scrub.last_invariant_check_ms)} ms)`, violations.length > 0)}
+                    </div>
+                </div>`;
+        }
+
         function renderDiagnostics(data) {
             // Every string below comes from the server and, through it, from
             // file names in arbitrary indexed repositories: escape all of them.
@@ -125,6 +149,7 @@
                 </div>
 
                 ${renderService(data.service)}
+                ${renderScrub(data.scrub)}
 
                 <div class="cards-grid">
                     <div class="card">

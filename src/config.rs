@@ -148,6 +148,17 @@ pub struct DiagnosticsConfig {
     /// default: captures then say how long a query was, not what it was.
     #[serde(default)]
     pub include_queries: bool,
+    /// Check the index against the disk in the background, a few files at
+    /// a time, and index again any file found out of step (default: true).
+    #[serde(default = "default_true")]
+    pub scrub: bool,
+    /// Files the scrub reads and checks per minute (0: none).
+    #[serde(default = "default_scrub_files_per_minute")]
+    pub scrub_files_per_minute: usize,
+    /// Minutes between the scrub's checks of the index's own consistency
+    /// (0: never). Each holds a read lock for about 0.6 s per 200,000 files.
+    #[serde(default = "default_scrub_invariants_minutes")]
+    pub scrub_invariants_minutes: f64,
 }
 
 impl Default for DiagnosticsConfig {
@@ -165,6 +176,9 @@ impl Default for DiagnosticsConfig {
             log_lines: default_diag_log_lines(),
             thread_stacks: true,
             include_queries: false,
+            scrub: true,
+            scrub_files_per_minute: default_scrub_files_per_minute(),
+            scrub_invariants_minutes: default_scrub_invariants_minutes(),
         }
     }
 }
@@ -183,6 +197,17 @@ fn default_diag_backlog_secs() -> f64 {
 }
 fn default_diag_min_interval_secs() -> f64 {
     300.0
+}
+/// 50 files a second: measured at 52,000 files a second on one thread
+/// (`examples/watch_load.rs --integrity-cost`), so about 0.1% of a core,
+/// and a pass over a million files in under six hours.
+fn default_scrub_files_per_minute() -> usize {
+    3_000
+}
+/// Hourly: the check took 0.6 s on 200,000 files (about 3 s on a
+/// million), during which the watcher waits; searches do not.
+fn default_scrub_invariants_minutes() -> f64 {
+    60.0
 }
 fn default_diag_max_files() -> usize {
     50
@@ -474,6 +499,11 @@ pub struct IndexerConfig {
     #[serde(default)]
     pub include_extensions: Vec<String>,
 
+    /// More extensions to treat as binary and never read, on top of the
+    /// built-in list (images, archives, fonts, media, compiled objects).
+    #[serde(default)]
+    pub extra_binary_extensions: Vec<String>,
+
     /// Glob-like patterns to exclude (matched as path substrings during discovery)
     #[serde(default = "default_exclude_patterns")]
     pub exclude_patterns: Vec<String>,
@@ -633,6 +663,7 @@ impl Default for IndexerConfig {
         Self {
             paths: Vec::new(),
             include_extensions: Vec::new(),
+            extra_binary_extensions: Vec::new(),
             exclude_patterns: default_exclude_patterns(),
             respect_gitignore: true,
             max_file_size: default_max_file_size(),
@@ -652,6 +683,22 @@ impl Default for IndexerConfig {
 }
 
 impl IndexerConfig {
+    /// The file-discovery settings for `paths`: every walk and eligibility
+    /// check (initial build, watcher, saved-index load, `fcs check`, the
+    /// gRPC Index call) builds them here, so a setting can't be honoured by
+    /// one and forgotten by another (`extra_binary_extensions` was
+    /// documented and accepted by none).
+    pub fn discovery_config(&self, paths: Vec<String>) -> crate::search::FileDiscoveryConfig {
+        crate::search::FileDiscoveryConfig {
+            paths,
+            exclude_patterns: self.exclude_patterns.clone(),
+            include_extensions: self.include_extensions.clone(),
+            max_file_size: Some(crate::search::incremental::effective_max_size(self)),
+            extra_binary_extensions: self.extra_binary_extensions.clone(),
+            respect_gitignore: self.respect_gitignore,
+        }
+    }
+
     /// Generate a fingerprint of the indexer configuration
     /// Used to detect config changes that require re-indexing
     pub fn fingerprint(&self) -> String {
@@ -1171,6 +1218,11 @@ respect_gitignore = true
 # Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
 include_extensions = []
 
+# More extensions never to read, on top of the built-in binary list
+# (images, archives, fonts, office documents, media, compiled objects)
+# Example: ["dat", "parquet"]
+extra_binary_extensions = []
+
 # Patterns to exclude from indexing
 exclude_patterns = [
     "**/node_modules/**",
@@ -1289,6 +1341,14 @@ thread_stacks = true
 # Keep query text, file paths and quoted text in captures. Off: captures say
 # how long a query was, not what it was.
 include_queries = false
+
+# Background scrub: check indexed files against the disk a few at a time,
+# and index again any the index has out of step (a lost change). Counts are
+# in /api/diagnostics and `fcs check --live`. About 0.1% of a core.
+scrub = true
+scrub_files_per_minute = 3000
+# Minutes between checks of the index's own consistency (0: never).
+scrub_invariants_minutes = 60.0
 "#;
 
 /// Version tag of the symbol/reference extraction (tags queries, reference
@@ -1330,6 +1390,29 @@ pub fn expand_path(raw: &str, base_dir: Option<&Path>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `extra_binary_extensions` (documented in the matching reference) is
+    /// accepted and honoured by the walk and by the watcher's eligibility
+    /// check alike. It used to be rejected as an unknown key.
+    #[test]
+    fn test_extra_binary_extensions_skip_files_everywhere() {
+        let cfg: Config =
+            toml::from_str("[indexer]\nextra_binary_extensions = [\"dat\"]\n").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.dat"), "plain text\n").unwrap();
+        std::fs::write(root.join("b.py"), "plain text\n").unwrap();
+        let discovery = cfg
+            .indexer
+            .discovery_config(vec![root.to_string_lossy().to_string()]);
+        let found: Vec<_> = crate::search::FileDiscoveryIterator::new(&discovery)
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(found, ["b.py"]);
+        let probe = crate::search::EligibilityProbe::new(&discovery);
+        assert!(!probe.is_eligible_path(&root.join("a.dat"), None));
+        assert!(probe.is_eligible_path(&root.join("b.py"), None));
+    }
 
     /// Roadmap 4.5: a misspelled key is an error, not a silently ignored
     /// default; the generated template must parse; validate() catches bad

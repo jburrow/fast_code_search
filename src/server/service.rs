@@ -330,23 +330,10 @@ impl CodeSearch for CodeSearchService {
         let indexer_config = self.indexer_config.clone().unwrap_or_default();
         let paths = req.paths.clone();
         let (files_indexed, total_size, stats) = tokio::task::spawn_blocking(move || {
-            use crate::search::{
-                FileDiscoveryConfig, FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile,
-            };
+            use crate::search::{FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile};
             use rayon::prelude::*;
 
-            let discovery = FileDiscoveryConfig {
-                paths: paths.clone(),
-                exclude_patterns: indexer_config.exclude_patterns.clone(),
-                include_extensions: indexer_config.include_extensions.clone(),
-                max_file_size: Some(if indexer_config.max_file_size == 0 {
-                    PartialIndexedFile::DEFAULT_MAX_FILE_SIZE
-                } else {
-                    indexer_config.max_file_size
-                }),
-                respect_gitignore: indexer_config.respect_gitignore,
-                ..Default::default()
-            };
+            let discovery = indexer_config.discovery_config(paths.clone());
             let files: Vec<std::path::PathBuf> = FileDiscoveryIterator::new(&discovery)
                 .filter(|p| !indexer_config.is_file_excluded(p))
                 .collect();

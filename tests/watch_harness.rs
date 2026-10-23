@@ -17,7 +17,8 @@
 use fast_code_search::config::IndexerConfig;
 use fast_code_search::search::{
     create_progress_broadcaster, engine_lock, run_background_indexer, watch_loop,
-    BackgroundIndexerConfig, FileChange, IndexingProgress, SearchEngine, WatchLoopConfig,
+    BackgroundIndexerConfig, FileChange, FileCheck, IndexingProgress, SearchEngine,
+    WatchLoopConfig,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -527,6 +528,30 @@ impl Harness {
         loop {
             let live = snapshot(&self.engine.read().unwrap(), &self.root);
             if live == want {
+                // Beyond what searches show: the index agrees with itself,
+                // and every file's content is in it as on disk.
+                let engine = self.engine.read().unwrap();
+                let report = engine.check_invariants();
+                assert!(
+                    report.is_clean(),
+                    "{context}: {report}\noperations:\n  {}",
+                    self.log.join("\n  ")
+                );
+                for id in engine.live_file_ids() {
+                    let check = engine.check_file(id);
+                    assert_eq!(
+                        check,
+                        Some(FileCheck::Current),
+                        "{context}: {:?}\noperations:\n  {}",
+                        engine.get_file_path(id),
+                        self.log.join("\n  ")
+                    );
+                }
+                let oracle_report = oracle.read().unwrap().check_invariants();
+                assert!(
+                    oracle_report.is_clean(),
+                    "{context}: fresh index: {oracle_report}"
+                );
                 return;
             }
             if Instant::now() > deadline {

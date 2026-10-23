@@ -609,14 +609,7 @@ impl SearchEngine {
         // change never takes effect for files already in the index.
         if let Some(config) = config {
             use rayon::prelude::*;
-            let probe = crate::search::EligibilityProbe::new(&crate::search::FileDiscoveryConfig {
-                paths: Vec::new(),
-                exclude_patterns: config.exclude_patterns.clone(),
-                include_extensions: config.include_extensions.clone(),
-                max_file_size: Some(crate::search::incremental::effective_max_size(config)),
-                respect_gitignore: config.respect_gitignore,
-                ..Default::default()
-            });
+            let probe = crate::search::EligibilityProbe::new(&config.discovery_config(Vec::new()));
             let ineligible = file_statuses
                 .par_iter_mut()
                 .filter(|(_, status)| matches!(status, FileStatus::Valid))
@@ -706,6 +699,10 @@ impl SearchEngine {
             let remapped =
                 Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
+            // The saved files are compacted: every id is a live file,
+            // including any too short to have a trigram.
+            self.trigram_index
+                .set_documents((0..self.file_store.len() as u32).collect());
             self.trigram_index.finalize();
             mark("trigrams");
         }

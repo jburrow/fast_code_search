@@ -4,6 +4,7 @@ pub mod engine_lock;
 pub mod file_discovery;
 pub mod fold;
 pub mod incremental;
+pub mod integrity;
 pub mod path_filter;
 pub mod query_syntax;
 pub mod ranking;
@@ -17,12 +18,12 @@ pub use background_indexer::{
     BackgroundIndexerConfig,
 };
 pub use engine::{
-    create_progress_broadcaster, unix_now_ms, BudgetRule, GraphScope, ImpactOptions, ImpactReport,
-    IndexFreshness, IndexingProgress, IndexingStatus, LoadIndexResult, LoadingPhase,
-    PartialIndexedFile, PathFreshness, PathMatch, PathQuery, PathSearch, PreIndexedFile,
-    ProgressBroadcaster, QueryRun, RankMode, ReadFailures, SearchEngine, SearchLimit, SearchLimits,
-    SearchMatch, SearchRankingInfo, SearchSettings, SearchStats, SharedIndexingProgress,
-    WatchBacklog,
+    create_progress_broadcaster, unix_now_ms, BudgetRule, FileCheck, GraphScope, ImpactOptions,
+    ImpactReport, IndexFreshness, IndexingProgress, IndexingStatus, InvariantReport,
+    LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch, PathQuery,
+    PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, ReadFailures,
+    SearchEngine, SearchLimit, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
+    SearchStats, SharedIndexingProgress, WatchBacklog,
 };
 pub use file_discovery::{
     discover_files, EligibilityProbe, FileDiscoveryConfig, FileDiscoveryIterator,

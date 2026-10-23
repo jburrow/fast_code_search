@@ -276,6 +276,9 @@ pub struct KeywordDiagnosticsResponse {
     /// Diagnostic captures, when `[diagnostics] capture` is on
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub captures: Option<capture::CaptureStatus>,
+    /// The background scrub's findings, when `[diagnostics] scrub` is on
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrub: Option<crate::search::integrity::ScrubStats>,
     /// Index statistics
     pub index: KeywordIndexDiagnostics,
     /// Self-test results

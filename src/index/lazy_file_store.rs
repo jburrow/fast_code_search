@@ -337,6 +337,77 @@ impl LazyFileStore {
         self.files.reserve(additional);
         self.path_to_id.reserve(additional);
     }
+
+    /// Ids of every live (non-tombstoned) file.
+    pub fn live_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..self.files.len() as u32).filter(|id| !self.tombstoned.contains(id))
+    }
+
+    /// Check that the path map, the directory index and the tombstones
+    /// agree. Each problem is pushed to `out` as (kind, detail).
+    pub fn check_consistency(&self, out: &mut Vec<(&'static str, String)>) {
+        for id in self.live_ids() {
+            let path = &self.files[id as usize].path;
+            match self.path_to_id.get(&**path) {
+                Some(&found) if found == id => {}
+                found => out.push((
+                    "path_map",
+                    format!("file {id} ({}) maps back to {found:?}", path.display()),
+                )),
+            }
+            let in_dir = path
+                .parent()
+                .map(|d| self.dirs.files_in(d).iter().filter(|&&f| f == id).count())
+                .unwrap_or(1);
+            if in_dir != 1 {
+                out.push((
+                    "dir_index",
+                    format!(
+                        "file {id} ({}) listed {in_dir} times in its folder",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        if self.path_to_id.len() != self.live_len() {
+            out.push((
+                "path_map",
+                format!(
+                    "{} paths mapped for {} live files",
+                    self.path_to_id.len(),
+                    self.live_len()
+                ),
+            ));
+        }
+        for (path, &id) in &self.path_to_id {
+            if self.tombstoned.contains(&id) {
+                out.push((
+                    "path_map",
+                    format!("{} maps to removed file {id}", path.display()),
+                ));
+            }
+        }
+        let dir_files: usize = self.dirs.nodes.values().map(|n| n.files.len()).sum();
+        if dir_files != self.live_len() {
+            out.push((
+                "dir_index",
+                format!(
+                    "{dir_files} files in the folder index for {} live files",
+                    self.live_len()
+                ),
+            ));
+        }
+        if let Some(&bad) = self
+            .tombstoned
+            .iter()
+            .find(|&&id| id as usize >= self.files.len())
+        {
+            out.push((
+                "tombstones",
+                format!("removed id {bad} was never allocated"),
+            ));
+        }
+    }
 }
 
 /// Live file ids by parent directory, plus each directory's subdirectories,

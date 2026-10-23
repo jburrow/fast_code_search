@@ -51,6 +51,11 @@ pub struct WatchBacklog {
     /// Files that could not be read when indexed, being retried or given
     /// up on (shared by the initial build and the watcher).
     pub read_failures: Arc<ReadFailures>,
+    /// Paths the background scrub found out of step with the disk, for the
+    /// watcher to index again.
+    pub requeue: Arc<std::sync::Mutex<Vec<PathBuf>>>,
+    /// What the background scrub has checked and found so far.
+    pub scrub: Arc<std::sync::Mutex<crate::search::integrity::ScrubStats>>,
 }
 
 impl WatchBacklog {

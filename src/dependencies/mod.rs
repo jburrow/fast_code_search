@@ -1132,6 +1132,92 @@ impl DependencyIndex {
         *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// Check that both edge maps and the counts agree and that every edge
+    /// joins live files. Each problem is pushed to `out` as (kind, detail).
+    pub fn check_consistency(
+        &self,
+        is_live: impl Fn(u32) -> bool,
+        out: &mut Vec<(&'static str, String)>,
+    ) {
+        for (&from, targets) in &self.imports {
+            if targets.is_empty() {
+                out.push(("graph", format!("file {from} has an empty import set")));
+            }
+            if !is_live(from) {
+                out.push((
+                    "graph",
+                    format!("removed file {from} still imports {} files", targets.len()),
+                ));
+            }
+            for &to in targets {
+                if !is_live(to) {
+                    out.push(("graph", format!("file {from} imports removed file {to}")));
+                }
+                if !self.imported_by.get(&to).is_some_and(|s| s.contains(&from)) {
+                    out.push((
+                        "graph",
+                        format!("edge {from} -> {to} missing from the reverse map"),
+                    ));
+                }
+            }
+        }
+        for (&to, sources) in &self.imported_by {
+            for &from in sources {
+                if !self.imports.get(&from).is_some_and(|s| s.contains(&to)) {
+                    out.push((
+                        "graph",
+                        format!("reverse edge {from} -> {to} has no forward edge"),
+                    ));
+                }
+            }
+            if self.import_counts.get(&to).copied().unwrap_or(0) as usize != sources.len() {
+                out.push((
+                    "graph",
+                    format!(
+                        "file {to} has {} importers but a cached count of {:?}",
+                        sources.len(),
+                        self.import_counts.get(&to)
+                    ),
+                ));
+            }
+        }
+        for (&id, &count) in &self.import_counts {
+            if !self.imported_by.contains_key(&id) {
+                out.push((
+                    "graph",
+                    format!("file {id} has a cached count of {count} and no importers"),
+                ));
+            }
+        }
+        for (&id, path) in &self.id_to_path {
+            if !is_live(id) {
+                out.push((
+                    "graph",
+                    format!("removed file {id} is still registered for import resolution"),
+                ));
+            }
+            if self.path_to_id.get(path) != Some(&id) {
+                out.push((
+                    "graph",
+                    format!(
+                        "file {id} ({}) does not resolve back to itself",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        if self.path_to_id.len() != self.id_to_path.len() {
+            out.push((
+                "graph",
+                format!(
+                    "{} paths registered for {} files",
+                    self.path_to_id.len(),
+                    self.id_to_path.len()
+                ),
+            ));
+        }
+    }
+
     /// Canonical path a file id is registered under.
     pub fn path_of(&self, file_id: u32) -> Option<&Path> {
         self.id_to_path.get(&file_id).map(PathBuf::as_path)

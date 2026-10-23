@@ -4115,3 +4115,161 @@ fn test_adopt_loaded_index_keeps_live_state() {
     );
     assert_eq!(edge_list(&live).len(), 10);
 }
+
+/// A file with no trigram at all (shorter than three bytes, name shorter
+/// than three letters) is still searched by queries that have no trigram
+/// of their own: a short query, a regex with no literal. They used to scan
+/// only files named by some posting list, so rg found `ab` in `x.py` and
+/// fcs did not; after a save and load, and after an incremental add, too.
+#[test]
+fn test_file_without_trigrams_is_searched_by_short_queries() {
+    use crate::config::IndexerConfig;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    fs::write(root.join("x.py"), "ab").unwrap();
+    fs::write(root.join("longername.py"), "ab cd\n").unwrap();
+    let files = |hits: Vec<SearchMatch>| -> Vec<String> {
+        let mut f: Vec<String> = hits
+            .into_iter()
+            .map(|m| m.file_path.rsplit('/').next().unwrap().to_string())
+            .collect();
+        f.sort();
+        f
+    };
+    let check = |engine: &SearchEngine, when: &str| {
+        assert_eq!(
+            files(engine.search("ab", 100)),
+            ["longername.py", "x.py"],
+            "plain search {when}"
+        );
+        assert_eq!(
+            files(engine.search_regex("^a", "", "", 100).unwrap()),
+            ["longername.py", "x.py"],
+            "regex search {when}"
+        );
+    };
+
+    let mut engine = SearchEngine::new();
+    let pre: Vec<PreIndexedFile> = ["x.py", "longername.py"]
+        .iter()
+        .filter_map(|n| {
+            PartialIndexedFile::process(&root.join(n), true, 0)
+                .map(|(p, _)| PreIndexedFile::from_partial(p, true))
+        })
+        .collect();
+    engine.index_batch(pre);
+    engine.finalize();
+    check(&engine, "after a build");
+
+    let index_path = dir.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    engine.save_index(&index_path, &config).unwrap();
+    let mut loaded = SearchEngine::new();
+    loaded.load_index(&index_path).unwrap();
+    check(&loaded, "after a save and load");
+
+    fs::write(root.join("y.py"), "ab").unwrap();
+    loaded.update_file(&root.join("y.py")).unwrap();
+    assert_eq!(
+        files(loaded.search("ab", 100)),
+        ["longername.py", "x.py", "y.py"],
+        "after an incremental add"
+    );
+}
+
+/// The self-check is clean through a build, edits, removals and a save
+/// and load, and names each kind of damage done to the index on purpose.
+#[test]
+fn test_check_invariants_clean_then_catches_damage() {
+    use crate::config::IndexerConfig;
+    use crate::index::Trigram;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let paths = python_import_tree(&root, 12);
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&root);
+    let pre: Vec<PreIndexedFile> = paths
+        .iter()
+        .filter_map(|p| {
+            PartialIndexedFile::process(p, true, 0)
+                .map(|(p, _)| PreIndexedFile::from_partial(p, true))
+        })
+        .collect();
+    engine.index_batch(pre);
+    engine.resolve_imports();
+    engine.finalize();
+    let report = engine.check_invariants();
+    assert!(report.is_clean(), "{report}");
+    assert_eq!(report.files, paths.len());
+
+    // Edits and removals keep it clean.
+    fs::write(&paths[0], "import os\n\ndef rewritten():\n    return 1\n").unwrap();
+    engine.update_file(&paths[0]).unwrap();
+    let removed = engine.find_file_id_exact(&paths[1]).unwrap();
+    assert!(engine.remove_file(&paths[1]));
+    engine.resolve_imports_incremental();
+    let report = engine.check_invariants();
+    assert!(report.is_clean(), "{report}");
+    for id in engine.live_file_ids() {
+        assert_eq!(engine.check_file(id), Some(FileCheck::Current));
+    }
+
+    // And a save and load.
+    let index_path = dir.path().join("index.bin");
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    engine.save_index(&index_path, &config).unwrap();
+    let mut loaded = SearchEngine::new();
+    loaded.load_index(&index_path).unwrap();
+    let report = loaded.check_invariants();
+    assert!(report.is_clean(), "{report}");
+
+    // Damage: a live file dropped from a posting list it belongs in.
+    let id = engine.find_file_id_exact(&paths[2]).unwrap();
+    let trigram = Trigram::new(*b"def");
+    engine
+        .trigram_index
+        .trigram_map_mut()
+        .get_mut(&trigram)
+        .unwrap()
+        .remove(id);
+    assert_eq!(engine.check_file(id), Some(FileCheck::MissingTrigrams(1)));
+
+    // A removed file left in a posting list.
+    engine
+        .trigram_index
+        .trigram_map_mut()
+        .get_mut(&trigram)
+        .unwrap()
+        .insert(removed);
+    let report = engine.check_invariants();
+    assert_eq!(
+        report.counts.get("posting_to_removed_file"),
+        Some(&1),
+        "{report}"
+    );
+
+    // A live file missing from the set short queries scan.
+    let mut all = engine.trigram_index.all_documents().into_owned();
+    all.remove(id);
+    engine.trigram_index.set_documents(all);
+    let report = engine.check_invariants();
+    assert_eq!(
+        report.counts.get("file_not_in_all_documents"),
+        Some(&1),
+        "{report}"
+    );
+
+    // Changed and deleted files are told apart from damage.
+    fs::write(&paths[3], "changed on disk\n").unwrap();
+    let changed = engine.find_file_id_exact(&paths[3]).unwrap();
+    assert_eq!(engine.check_file(changed), Some(FileCheck::Changed));
+    fs::remove_file(&paths[4]).unwrap();
+    let gone = engine.find_file_id_exact(&paths[4]).unwrap();
+    assert_eq!(engine.check_file(gone), Some(FileCheck::Gone));
+}

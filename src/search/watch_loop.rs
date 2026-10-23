@@ -96,6 +96,19 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
         let rescan = watcher.take_rescan();
         applying.fetch_add(rescan.len(), Ordering::AcqRel);
         changes.extend(rescan.into_iter().map(FileChange::Modified));
+        // Files the scrub found out of step with the disk.
+        let requeued: Vec<PathBuf> = read_engine(&cfg.engine, |e| {
+            std::mem::take(
+                &mut *e
+                    .watch_backlog
+                    .requeue
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()),
+            )
+        })
+        .unwrap_or_default();
+        applying.fetch_add(requeued.len(), Ordering::AcqRel);
+        changes.extend(requeued.into_iter().map(FileChange::Modified));
         // Files that could not be read last time (already counted as
         // pending while they wait).
         let now = Instant::now();
@@ -112,6 +125,15 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
                 Vec::new()
             }
         };
+        if cfg!(feature = "failpoints") {
+            let before = changes.len();
+            changes.retain(|c| {
+                !change_paths(c)
+                    .iter()
+                    .any(|p| crate::faults::fires("watch.lose", p))
+            });
+            applied(&applying, before - changes.len());
+        }
         if changes.is_empty() && retrying.is_empty() {
             continue;
         }

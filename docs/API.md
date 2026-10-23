@@ -27,6 +27,7 @@ when the request timeout is hit.
 | `GET /api/health` | Liveness (`{"status":"healthy","version":…,"problems":N}`); `problems` counts startup and storage problems |
 | `GET /api/ready` | Readiness: 200 once there is an index to search, 503 otherwise |
 | `GET /api/diagnostics` | Index health, extension breakdown, self-tests, and `service`: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status `degraded`) |
+| `GET /api/check` | Check the live index against itself and the disk: invariant violations, content and discovery differences, and the background scrub's findings, as counts with example paths. Parameters `content` (files to read, default 2000), `all`, `discovery` (default true), `examples` (default 5). One at a time (429 while one runs). See the book's "Checking a live index" |
 | `GET /metrics` | Prometheus text format (request counters, latency histogram, index gauges) |
 | `WS /ws/progress` | Live indexing progress frames |
 
