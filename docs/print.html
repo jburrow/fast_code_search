@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-09bfe366.js";
+            window.path_to_searchindex_js = "searchindex-665954fb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ba5bc6a0.js"></script>
@@ -1155,10 +1155,12 @@ what was captured. On a healthy run, nothing should be:</p>
 lock waits are part of it.</p>
 <p>Earlier runs set the other bounds:</p>
 <ul>
-<li>A search waits for an install step at most about 1.3 s: up to 250 ms
-holding back for a waiting writer, then a step’s hold of at most one
-second (see <a href="#incremental-updates-1">Incremental updates</a>). So
-2 s of waiting means a step held the lock longer than it is designed to.</li>
+<li>A search waits for an install step at most about a second plus its
+hold-back for a waiting writer: as long as recent searches took, 250 ms
+to 2 s (see <a href="#incremental-updates-1">Incremental updates</a>). So
+with quick searches, 2 s of waiting means a step held the lock longer
+than it is designed to; with searches of a second or more, look at
+their length first.</li>
 <li>The longest the watcher goes without counting progress while healthy is
 a full-tree rescan after its event queue overflowed: about 40 s walking
 a million files. <code>stall_secs = 120</code> leaves three times that.</li>
@@ -4623,11 +4625,16 @@ other search for as long as the slow one ran, and searches still waiting
 after five seconds got “Index is currently being updated”.</p>
 <p>Writers no longer queue. An install step (and each batch of the initial
 build) takes the write lock in a moment when no search holds it, trying
-every couple of milliseconds. While it waits, a new search holds back for
-up to 250 ms so the running ones can finish and the step can get in, and
-then goes ahead whether or not it did. A search therefore waits for a
-step’s short hold (tens of milliseconds), never for other searches. A
-search that arrives during a step waits for it (about a second at most);
+every couple of milliseconds. While it waits, a new search holds back so
+the running ones can finish and the step can get in, and then goes ahead
+whether or not it did. It holds back a little longer than recent
+searches took (one and a half times the 90th percentile of the last 32),
+at least 250 ms and at most 2 s: the running searches need about that
+long to finish, and a search let in sooner keeps the step out too (see
+<a href="#catching-up">Catching up</a>).
+A search therefore waits for a step’s short hold and a typical search’s
+length, never for one slow search. A search that arrives during a step
+waits for it (about a second at most);
 one still waiting after five seconds gets a 503 with <code>Retry-After: 1</code>
 (gRPC: <code>UNAVAILABLE</code>), which <code>fcs</code> and the web UI retry on their own.</p>
 <p>While changes wait to be applied, searches see the index as it was. They
@@ -4696,6 +4703,57 @@ matches the disk again:</p>
 overflowed the watcher’s event queue twice, so it reconciled the whole
 tree as well (about 40 s of walking a million files, during which the
 pending count does not move); the rest is installing.</p>
+<h3 id="holding-back-as-long-as-a-search-runs"><a class="header" href="#holding-back-as-long-as-a-search-runs">Holding back as long as a search runs</a></h3>
+<p>“Half speed or better” holds only while a step waits less than its one
+second cap, and that needs the running searches to finish without new
+ones taking their place. Until 0.19 a new search held back for a fixed
+250 ms. With searches longer than that it went ahead while the earlier
+ones still ran, the step then waited for it as well, and so on: the step
+waited past its cap, held for only a second, and the drain fell far
+below half speed.</p>
+<p><code>tests/lock_sim.rs</code> shows it. It runs the real lock code and step policy
+on a simulated clock (<code>fast_code_search::sim</code>), so searches of any
+length and minutes of load run in about a second, the same schedule on
+every run and OS. Three made-up loads, the worst of five seeds each, with
+the one second cap:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Load (installing alone takes)</th><th>Holding back</th><th>Drained after</th><th>Longest search wait</th></tr>
+</thead>
+<tbody>
+<tr><td>4 people, 0.4–0.6 s searches back to back, 100,000 files (4.9 s)</td><td>none</td><td>not in 600 s</td><td>23 ms</td></tr>
+<tr><td></td><td>250 ms</td><td>62.1 s</td><td>1.25 s</td></tr>
+<tr><td></td><td>500 ms</td><td>10.1 s</td><td>0.81 s</td></tr>
+<tr><td></td><td>adaptive</td><td>10.5 s</td><td>1.64 s</td></tr>
+<tr><td>1 search of 20 s and quick searches, 10 files</td><td>250 ms</td><td>20.0 s</td><td>0.25 s</td></tr>
+<tr><td></td><td>1 s</td><td>20.1 s</td><td>1.0 s</td></tr>
+<tr><td></td><td>adaptive</td><td>20.0 s</td><td>0.25 s</td></tr>
+<tr><td>12 people with quick searches, 2 with 1–4 s ones, 30,000 files (2.4 s)</td><td>250 ms</td><td>11.4 s</td><td>1.14 s</td></tr>
+<tr><td></td><td>500 ms</td><td>8.6 s</td><td>1.47 s</td></tr>
+<tr><td></td><td>adaptive</td><td>11.4 s</td><td>1.14 s</td></tr>
+</tbody>
+</table>
+</div>
+<p>Any fixed value works only for searches shorter than it, and the longer
+the value, the longer quick searches wait behind one slow one (second
+load). So a search holds back for one and a half times the 90th
+percentile of how long the last 32 searches held the index, between
+250 ms and 2 s: on a large tree whose searches take half a second it
+holds back about 0.9 s, while one slow search among quick ones does not
+raise it. The factor is there because a search that holds back for less
+than the running ones take can get in before they end; with exactly the
+90th percentile, the first load drained in up to 22 s. Before any search
+has finished, the hold-back is 250 ms, which is why the first step of the
+first load waits longer (the longest search wait in that row). Holding
+back only for a fixed window after the step starts to wait (instead of
+from each search’s arrival) did no better: in the first load the step
+never got in.
+The one second cap stays: with a 2 s cap the busy load drained in 6.6 s
+instead of 11.4 s, but a search then waited up to 2.1 s for a step; with
+500 ms, quick searches waited less but the first load took 11.7 s.
+<code>cargo test --release --test lock_sim -- --ignored --nocapture</code> prints the
+full table (four caps and nine hold-back rules).</p>
 <h2 id="files-that-cant-be-read"><a class="header" href="#files-that-cant-be-read">Files that can’t be read</a></h2>
 <p>A file can fail to read for a moment: an editor, a build or a virus
 scanner holds it open (a sharing violation on Windows), or its
@@ -4894,6 +4952,7 @@ wrote every line and knows the answer.</p>
 <tr><td><code>tests/contract_walk.rs</code></td><td>one search walked to its last hit through every surface: REST at several page sizes and random offsets, gRPC, MCP over HTTP and <code>fcs mcp</code>, <code>fcs</code> (piped, <code>-l</code>, offline) and the web page in headless Chromium with LOAD MORE and “Show N more hits” pressed until they are gone; no hit twice or missing, each file’s hits together, files by best hit, honest counts</td><td>the engine’s exhaustive list, itself checked against the files on disk and the generator’s reference key</td><td><code>cargo test --test contract_walk</code> (the web page needs Playwright, see below)</td></tr>
 <tr><td><code>tests/rank_snapshot.rs</code></td><td>the first 20 hits and the total of about a hundred searches; the same corpus at two places on disk must rank the same</td><td><code>tests/snapshots/rank_order.txt</code>, changed only on purpose</td><td><code>cargo test --test rank_snapshot</code></td></tr>
 <tr><td><code>tests/discovery_oracle.rs</code></td><td>which files are indexed (the build and the watcher’s per-file check) on random trees of <code>.gitignore</code>, <code>.ignore</code>, <code>.rgignore</code> and <code>.git/info/exclude</code> rules; the FILES box with a regex</td><td><code>rg --files</code>, and <code>rg</code> over the path list</td><td><code>cargo test --test discovery_oracle</code> (needs <code>rg</code>)</td></tr>
+<tr><td><code>tests/lock_sim.rs</code></td><td>the engine lock and the watcher’s install steps under minutes of made-up load (back-to-back half-second searches, one 20 s search among quick ones, a busy server during a branch switch): every search answered, no search waits past its hold-back plus one step, backlogs drain at half speed or better, a slow search delays only the writer</td><td>bounds derived from the protocol, on a simulated clock (<code>fast_code_search::sim</code>): the real lock code, the same schedule on every run and OS, four minutes in about a second</td><td><code>cargo test --test lock_sim</code> (<code>-- --ignored --nocapture</code> prints the tuning table)</td></tr>
 <tr><td><code>tests/fault_injection.rs</code></td><td>failed reads, panics while applying changes, lost changes: each is retried, reported and repaired</td><td>expected recovery</td><td><code>cargo test --features failpoints --test fault_injection</code></td></tr>
 <tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (<code>--history reload</code>) and filled by the watcher (<code>--history watch</code>)</td><td><code>rg</code></td><td>see <a href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></td></tr>
 <tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
@@ -4978,6 +5037,10 @@ files back from an ignored folder; the nearest ignore file won even when
 a parent’s <code>.ignore</code> should beat a <code>.gitignore</code> next to the file; and
 rules above a nested repository were dropped inside it (discovery
 oracle).</li>
+<li>Searches held back a fixed 250 ms for a waiting install step, too short
+for half-second searches: the watcher drained a backlog at 8% of its
+speed, not the “half speed or better” the docs claimed (lock
+simulation; see <a href="#holding-back-as-long-as-a-search-runs">Incremental updates</a>).</li>
 <li>Earlier probes found a crash when a large file was rewritten during a
 search, “server unavailable” at the end of a build, and lost changes
 after failed reads or a panic; the fault and watch tests cover them.</li>
@@ -5739,6 +5802,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>The watcher could fall far behind while people searched.</strong> While an
+install step waits for the index, new searches hold back so the running
+ones can finish and the step gets in. They held back a fixed 250 ms, so
+with searches longer than that a new one got in before the running ones
+ended and the step kept waiting: in a simulation with four people
+running half-second searches back to back, a change that takes 5 s to
+install took up to 62 s. A search now holds back for one and a half
+times the 90th percentile of recent searches’ length (250 ms to 2 s);
+the same change takes about 10 s, and quick searches still wait only
+250 ms behind one slow one. The docs claimed “half speed or better”
+regardless; the book’s “Incremental updates” page now has the table.</li>
 <li><strong>The watcher could index files the build leaves out, by ignore rules.</strong>
 When a file changed, the watcher decided whether it was ignored
 differently from the walk that builds the index (and from ripgrep): a
@@ -5852,6 +5926,13 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>The lock protocol on a simulated clock.</strong> <code>fast_code_search::sim</code> runs
+threads in turns on simulated time, and the engine lock and the
+watcher’s install steps read and sleep through it, so
+<code>tests/lock_sim.rs</code> runs the real code under minutes of made-up search
+load in about a second, the same on every run and OS. It found the
+watcher fix above, and its tuning table is the evidence for the
+hold-back and <code>MAX_HOLD</code> values.</li>
 <li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
 whether its index agrees with itself, whether indexed files still match
 the disk, and whether it holds the files a fresh walk finds. It prints

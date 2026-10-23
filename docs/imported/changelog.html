@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-09bfe366.js";
+            window.path_to_searchindex_js = "../searchindex-665954fb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ba5bc6a0.js"></script>
@@ -188,6 +188,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>The watcher could fall far behind while people searched.</strong> While an
+install step waits for the index, new searches hold back so the running
+ones can finish and the step gets in. They held back a fixed 250 ms, so
+with searches longer than that a new one got in before the running ones
+ended and the step kept waiting: in a simulation with four people
+running half-second searches back to back, a change that takes 5 s to
+install took up to 62 s. A search now holds back for one and a half
+times the 90th percentile of recent searches’ length (250 ms to 2 s);
+the same change takes about 10 s, and quick searches still wait only
+250 ms behind one slow one. The docs claimed “half speed or better”
+regardless; the book’s “Incremental updates” page now has the table.</li>
 <li><strong>The watcher could index files the build leaves out, by ignore rules.</strong>
 When a file changed, the watcher decided whether it was ignored
 differently from the walk that builds the index (and from ripgrep): a
@@ -301,6 +312,13 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>The lock protocol on a simulated clock.</strong> <code>fast_code_search::sim</code> runs
+threads in turns on simulated time, and the engine lock and the
+watcher’s install steps read and sleep through it, so
+<code>tests/lock_sim.rs</code> runs the real code under minutes of made-up search
+load in about a second, the same on every run and OS. It found the
+watcher fix above, and its tuning table is the evidence for the
+hold-back and <code>MAX_HOLD</code> values.</li>
 <li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
 whether its index agrees with itself, whether indexed files still match
 the disk, and whether it holds the files a fresh walk finds. It prints

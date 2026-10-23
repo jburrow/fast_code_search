@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-09bfe366.js";
+            window.path_to_searchindex_js = "../searchindex-665954fb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ba5bc6a0.js"></script>
@@ -239,10 +239,12 @@ what was captured. On a healthy run, nothing should be:</p>
 lock waits are part of it.</p>
 <p>Earlier runs set the other bounds:</p>
 <ul>
-<li>A search waits for an install step at most about 1.3 s: up to 250 ms
-holding back for a waiting writer, then a step’s hold of at most one
-second (see <a href="../how-it-works/incremental.html">Incremental updates</a>). So
-2 s of waiting means a step held the lock longer than it is designed to.</li>
+<li>A search waits for an install step at most about a second plus its
+hold-back for a waiting writer: as long as recent searches took, 250 ms
+to 2 s (see <a href="../how-it-works/incremental.html">Incremental updates</a>). So
+with quick searches, 2 s of waiting means a step held the lock longer
+than it is designed to; with searches of a second or more, look at
+their length first.</li>
 <li>The longest the watcher goes without counting progress while healthy is
 a full-tree rescan after its event queue overflowed: about 40 s walking
 a million files. <code>stall_secs = 120</code> leaves three times that.</li>
