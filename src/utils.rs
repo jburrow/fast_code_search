@@ -600,16 +600,13 @@ mod tests {
     }
 }
 
-/// System limits information relevant to mmap-heavy workloads
+/// Process limits worth logging at startup: a million-file tree opens many
+/// files while it is indexed and watched.
 #[derive(Debug, Clone)]
 pub struct SystemLimits {
-    /// Current vm.max_map_count (Linux only)
-    pub max_map_count: Option<u64>,
-    /// Current process mmap count (Linux only)
-    pub current_map_count: Option<usize>,
     /// Current open file descriptor count
     pub open_fds: Option<usize>,
-    /// Max file descriptor limit (soft)
+    /// System-wide file descriptor limit
     pub max_fds: Option<u64>,
 }
 
@@ -618,108 +615,29 @@ impl SystemLimits {
     pub fn collect() -> Self {
         #[cfg(target_os = "linux")]
         {
-            let max_map_count = std::fs::read_to_string("/proc/sys/vm/max_map_count")
+            let open_fds = std::fs::read_dir("/proc/self/fd")
                 .ok()
-                .and_then(|s| s.trim().parse().ok());
-
-            let current_map_count = std::process::id().try_into().ok().and_then(|pid: i32| {
-                std::fs::read_to_string(format!("/proc/{}/maps", pid))
-                    .ok()
-                    .map(|s| s.lines().count())
-            });
-
-            let open_fds = std::process::id().try_into().ok().and_then(|pid: i32| {
-                std::fs::read_dir(format!("/proc/{}/fd", pid))
-                    .ok()
-                    .map(|entries| entries.count())
-            });
-
+                .map(|entries| entries.count());
             let max_fds = std::fs::read_to_string("/proc/sys/fs/file-max")
                 .ok()
                 .and_then(|s| s.trim().parse().ok());
-
-            Self {
-                max_map_count,
-                current_map_count,
-                open_fds,
-                max_fds,
-            }
+            Self { open_fds, max_fds }
         }
         #[cfg(not(target_os = "linux"))]
         {
             Self {
-                max_map_count: None,
-                current_map_count: None,
                 open_fds: None,
                 max_fds: None,
             }
         }
     }
 
-    /// Check if the system is approaching mmap limits
-    pub fn approaching_limit(&self) -> Option<String> {
-        if let (Some(current), Some(max)) = (self.current_map_count, self.max_map_count) {
-            let usage_pct = (current as f64 / max as f64) * 100.0;
-            if usage_pct > 80.0 {
-                return Some(format!(
-                    "WARNING: High mmap usage: {}/{} ({:.1}%). Consider increasing vm.max_map_count",
-                    current, max, usage_pct
-                ));
-            }
-        }
-        None
-    }
-
-    /// Calculate safe mmap limit (85% of max to leave headroom)
-    pub fn safe_mmap_limit(&self) -> Option<usize> {
-        self.max_map_count.map(|max| ((max as f64) * 0.85) as usize)
-    }
-
     /// Log current system limits
     pub fn log_limits(&self) {
         tracing::info!(
-            max_map_count = ?self.max_map_count,
-            current_map_count = ?self.current_map_count,
             open_fds = ?self.open_fds,
             max_fds = ?self.max_fds,
             "System resource limits"
         );
-
-        if let Some(warning) = self.approaching_limit() {
-            tracing::warn!("{}", warning);
-        }
-    }
-
-    /// Check if system limits are too low and provide actionable advice
-    pub fn check_and_warn(&self) -> Option<String> {
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(max_map) = self.max_map_count {
-                if max_map < 131072 {
-                    return Some(format!(
-                        "\n⚠️  WARNING: vm.max_map_count is {} (very low!)\n\
-                        \n\
-                        When the mmap limit is hit, files will still be indexed but served via \
-                        direct read instead of mmap (slower). For full performance, increase the limit.\n\
-                        \n\
-                        === SOLUTIONS (choose one) ===\n\
-                        \n\
-                        1. WITH sudo: Increase system limit (recommended)\n\
-                           sudo sysctl -w vm.max_map_count=524288\n\
-                           echo 'vm.max_map_count=524288' | sudo tee -a /etc/sysctl.conf\n\
-                        \n\
-                        2. WITHOUT sudo: Enable low_memory_mode in config.toml\n\
-                           [indexer]\n\
-                           low_memory_mode = true\n\
-                           max_file_size = 2097152  # 2MB to further reduce memory\n\
-                           exclude_patterns = [\"node_modules\", \"target\", \".git\", \"build\"]\n\
-                        \n\
-                        Low memory mode reduces mmap usage so fewer files hit the fallback path.\n",
-                        max_map
-                    ));
-                }
-            }
-        }
-        None
     }
 }

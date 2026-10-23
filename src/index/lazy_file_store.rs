@@ -1,151 +1,52 @@
-//! Lazy file store with on-demand memory mapping
+//! Lazy file store: registers file paths and reads their content on demand.
 //!
-//! This module provides a file store that registers file paths at startup
-//! but only memory-maps them when they are first accessed. This dramatically
-//! reduces startup time when loading from a persisted index.
+//! Paths are registered at startup (or as files are indexed) and content is
+//! read from disk only when a search or the viewer needs it. This keeps
+//! startup instant when loading a persisted index, and a million-file index
+//! holds no file content between requests.
 
 use anyhow::{Context, Result};
-use memmap2::Mmap;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tracing::warn;
 
-/// A registered file whose content is served lazily.
+/// A registered file whose content is read from disk on every access.
+///
+/// Content is always read into an owned buffer, never through a memory map.
+/// Files above 1 MiB used to be mapped, and an editor or tool rewriting one
+/// in place (truncate, then write: lockfiles, bundles, generated JSON) while
+/// a search read it made the next touch of a page past the new end of file
+/// an uncatchable SIGBUS that killed the server. An owned read just sees
+/// the file as it is. A mapping also kept serving a replaced file's old
+/// inode, and counted toward `vm.max_map_count`.
 ///
 /// The per-file footprint is what a million-file index pays for, so the entry
-/// is kept to the path (one `Arc` shared with the store's path map), a size
-/// class, an encoding tag, and one lazily created cell that only files above
-/// [`MMAP_THRESHOLD_BYTES`] ever allocate. Small files (essentially all source
-/// files) are read into an owned buffer on every access and cache nothing.
+/// is kept to the path (one `Arc` shared with the store's path map) and an
+/// encoding tag.
 pub struct LazyMappedFile {
     /// The canonical file path, interned once and shared with the store's
     /// path-to-id map.
     pub path: Arc<Path>,
-    /// State only a large (memory-mapped) file needs. Never allocated for
-    /// small files.
-    large: OnceLock<Box<LargeState>>,
     /// Detected encoding name for diagnostics (`Some(None)` = natively UTF-8
     /// or not text; unset = not read yet).
     detected_encoding: OnceLock<Option<&'static str>>,
-    /// How this file's content is served: 0 = not decided yet, 1 = small
-    /// (owned `fs::read` per access, never mmapped), 2 = large (mmap).
-    size_class: AtomicU8,
 }
-
-/// Lazily created state for a file above the mmap threshold.
-struct LargeState {
-    /// The mapping, or why it could not be created. Without a mapping the
-    /// content is read from disk on every access (nothing is cached, so a
-    /// long-running server cannot accumulate heap across requests).
-    mmap: Result<Mmap, String>,
-    /// Transcoded UTF-8 for a mapped non-UTF-8 file (`Some(None)` = not text).
-    transcoded: OnceLock<Option<String>>,
-}
-
-impl LargeState {
-    fn open(path: &Path) -> Self {
-        let mmap = match File::open(path) {
-            Ok(file) => {
-                // SAFETY: mapping a file we just opened read-only. Files above
-                // the threshold are rare and the mapping is only ever read.
-                match unsafe { Mmap::map(&file) } {
-                    Ok(mmap) => Ok(mmap),
-                    Err(e) => Err(format!("Failed to mmap {}: {}", path.display(), e)),
-                }
-            }
-            Err(e) => Err(format!("Failed to open {}: {}", path.display(), e)),
-        };
-        Self {
-            mmap,
-            transcoded: OnceLock::new(),
-        }
-    }
-
-    fn mapped(mmap: Mmap) -> Self {
-        Self {
-            mmap: Ok(mmap),
-            transcoded: OnceLock::new(),
-        }
-    }
-}
-
-/// Files at or below this size are read into an owned buffer on every access
-/// instead of being memory-mapped.
-///
-/// Reading through a live mapping is unsafe against concurrent truncation:
-/// an editor rewriting a file in place shrinks it, and the next touch of a
-/// mapped page past the new EOF is an uncatchable SIGBUS that kills the whole
-/// server. Owned reads are also what keeps the number of mappings far below
-/// `vm.max_map_count` (65 530 by default) on large trees. Files above the
-/// threshold (rare in code) keep the zero-copy mapping.
-pub const MMAP_THRESHOLD_BYTES: u64 = 1024 * 1024;
-
-const SIZE_CLASS_UNKNOWN: u8 = 0;
-const SIZE_CLASS_SMALL: u8 = 1;
-const SIZE_CLASS_LARGE: u8 = 2;
 
 impl LazyMappedFile {
-    /// Create a new lazy file entry (does NOT open or map the file)
+    /// Create a new lazy file entry (does not read the file).
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self::from_shared(Arc::from(path.as_ref()))
     }
 
-    /// Create an entry around an already-interned path (no copy).
+    /// Create an entry around an interned path.
     pub fn from_shared(path: Arc<Path>) -> Self {
         Self {
             path,
-            large: OnceLock::new(),
             detected_encoding: OnceLock::new(),
-            size_class: AtomicU8::new(SIZE_CLASS_UNKNOWN),
         }
-    }
-
-    fn into_small(self) -> Self {
-        self.size_class.store(SIZE_CLASS_SMALL, Ordering::Relaxed);
-        self
-    }
-
-    /// Create an entry around an already-mapped large file (immediate indexing).
-    pub fn with_mmap(path: Arc<Path>, mmap: Mmap) -> Self {
-        let file = Self::from_shared(path);
-        file.size_class.store(SIZE_CLASS_LARGE, Ordering::Relaxed);
-        let _ = file.large.set(Box::new(LargeState::mapped(mmap)));
-        file
-    }
-
-    /// If this file is small (by a one-time stat, or by construction), read
-    /// it into an owned buffer. `None` means "large: use the mapping".
-    fn read_small(&self) -> Result<Option<Vec<u8>>> {
-        let class = match self.size_class.load(Ordering::Relaxed) {
-            SIZE_CLASS_UNKNOWN => {
-                let meta = std::fs::metadata(&self.path)
-                    .with_context(|| format!("Failed to stat {}", self.path.display()))?;
-                let class = if meta.len() <= MMAP_THRESHOLD_BYTES {
-                    SIZE_CLASS_SMALL
-                } else {
-                    SIZE_CLASS_LARGE
-                };
-                self.size_class.store(class, Ordering::Relaxed);
-                class
-            }
-            c => c,
-        };
-        if class != SIZE_CLASS_SMALL {
-            return Ok(None);
-        }
-        let bytes = std::fs::read(&self.path)
-            .with_context(|| format!("Failed to read {}", self.path.display()))?;
-        Ok(Some(bytes))
-    }
-
-    /// Read a large file whose mapping is unavailable. Nothing is cached.
-    fn read_unmapped(&self) -> Result<Vec<u8>> {
-        std::fs::read(&self.path)
-            .with_context(|| format!("Failed to read {} (mmap unavailable)", self.path.display()))
     }
 
     /// Validate / transcode an owned buffer into text.
@@ -168,108 +69,39 @@ impl LazyMappedFile {
         }
     }
 
-    /// The large-file state, creating the mapping on first use.
-    fn large_state(&self) -> &LargeState {
-        self.large
-            .get_or_init(|| Box::new(LargeState::open(&self.path)))
+    /// The file's bytes as they are on disk now.
+    fn read(&self) -> Result<Vec<u8>> {
+        std::fs::read(&self.path).with_context(|| format!("Failed to read {}", self.path.display()))
     }
 
-    /// Get a reference to the file's bytes as a `Cow`.
-    ///
-    /// `Cow::Owned` for small files (fresh read) and for large files whose
-    /// mapping failed; `Cow::Borrowed` (zero-copy) for mapped files.
-    fn get_bytes(&self) -> Result<Cow<'_, [u8]>> {
-        if let Some(bytes) = self.read_small()? {
-            return Ok(Cow::Owned(bytes));
-        }
-        match &self.large_state().mmap {
-            Ok(mmap) => Ok(Cow::Borrowed(&mmap[..])),
-            Err(_) => Ok(Cow::Owned(self.read_unmapped()?)),
-        }
-    }
-
-    /// Whether a memory mapping currently exists for this file.
-    pub fn is_mapped(&self) -> bool {
-        matches!(self.large.get(), Some(st) if st.mmap.is_ok())
-    }
-
-    /// Get the content as a `Cow<str>`.
-    ///
-    /// Zero-copy borrow for mapped files; owned for small files and for large
-    /// files whose mapping failed. A leading UTF-8 byte order mark is not
-    /// part of the text. UTF-8 is validated on every access (the
-    /// bytes behind a mapping can change if the file is rewritten on disk).
+    /// The content as text, read from disk now. A leading UTF-8 byte order
+    /// mark is not part of the text; non-UTF-8 text is transcoded.
     pub fn as_str(&self) -> Result<Cow<'_, str>> {
-        if let Some(bytes) = self.read_small()? {
-            return self.owned_to_str(bytes);
-        }
-        let st = self.large_state();
-        let mmap = match &st.mmap {
-            Ok(mmap) => mmap,
-            Err(_) => {
-                let bytes = self.read_unmapped()?;
-                return self.owned_to_str(bytes);
-            }
-        };
-        let bytes = &mmap[..];
-        if let Ok(s) = std::str::from_utf8(bytes) {
-            return Ok(Cow::Borrowed(crate::utils::strip_utf8_bom(s)));
-        }
-        // Non-UTF-8 mapped file: transcode once and keep the result.
-        let transcoded =
-            st.transcoded
-                .get_or_init(|| match crate::utils::transcode_to_utf8(bytes) {
-                    Ok(Some(result)) => {
-                        let _ = self.detected_encoding.set(Some(result.encoding_name));
-                        tracing::info!(
-                            path = %self.path.display(),
-                            encoding = result.encoding_name,
-                            "Transcoded non-UTF-8 file"
-                        );
-                        Some(result.content)
-                    }
-                    _ => {
-                        let _ = self.detected_encoding.set(None);
-                        None
-                    }
-                });
-        match transcoded {
-            Some(s) => Ok(Cow::Borrowed(s.as_str())),
-            None => anyhow::bail!("File is not valid text: {}", self.path.display()),
-        }
+        self.owned_to_str(self.read()?)
     }
 
     /// Get the detected encoding name, if the file was transcoded.
-    /// Returns None if the file is natively UTF-8 or hasn't been accessed yet.
+    /// Returns None if the file is natively UTF-8 or hasn't been read yet.
     pub fn detected_encoding(&self) -> Option<&'static str> {
         self.detected_encoding.get().copied().flatten()
     }
 
-    /// Returns true if this mapped file was transcoded from a non-UTF-8 encoding.
+    /// Returns true if the file was transcoded from a non-UTF-8 encoding
+    /// when it was last read.
     pub fn was_transcoded(&self) -> bool {
-        self.large
-            .get()
-            .and_then(|st| st.transcoded.get())
-            .map(|opt| opt.is_some())
-            .unwrap_or(false)
+        self.detected_encoding().is_some()
     }
 
-    /// Get the content as bytes (see [`Self::as_str`] for the borrow rules).
+    /// The content as bytes, read from disk now.
     pub fn as_bytes(&self) -> Result<Cow<'_, [u8]>> {
-        self.get_bytes()
+        Ok(Cow::Owned(self.read()?))
     }
 
-    /// Get the file size (reads or maps the file).
+    /// The file's size on disk now.
     pub fn len(&self) -> Result<usize> {
-        Ok(self.get_bytes()?.len())
-    }
-
-    /// Get the file size if already mapped, without triggering a map
-    pub fn len_if_mapped(&self) -> Option<usize> {
-        self.large
-            .get()
-            .and_then(|st| st.mmap.as_ref().ok())
-            .map(|m| m.len())
+        Ok(std::fs::metadata(&self.path)
+            .with_context(|| format!("Failed to stat {}", self.path.display()))?
+            .len() as usize)
     }
 
     /// Check if the file is empty
@@ -278,13 +110,9 @@ impl LazyMappedFile {
     }
 }
 
-/// Store for lazily memory-mapped files
-///
-/// Files are registered by path at startup, but only memory-mapped when
-/// first accessed. This provides near-instant startup even with millions of files.
-///
-/// Automatically detects system mmap limits on Linux and prevents indexing
-/// too many files to avoid allocation errors.
+/// Store of indexed files: paths are registered up front, content is read
+/// when it is needed (see [`LazyMappedFile`]). Registering is near instant
+/// even with millions of files.
 pub struct LazyFileStore {
     /// Files indexed by ID
     files: Vec<LazyMappedFile>,
@@ -300,61 +128,22 @@ pub struct LazyFileStore {
     /// Tombstoned slots are hidden from `get`/`get_path`/lookups and never
     /// reused, so existing file IDs stay stable. Typically tiny.
     tombstoned: std::collections::HashSet<u32>,
-    /// Statistics: number of files that have been mapped
-    mapped_count: AtomicUsize,
     /// Statistics: total bytes of content indexed (accumulated as files are added)
     total_content_bytes: AtomicU64,
-    /// Safe mmap limit (85% of system max, None on non-Linux)
-    mmap_safe_limit: Option<usize>,
-    /// Guard so the mmap-limit warning is only emitted once
-    mmap_limit_warned: AtomicBool,
 }
 
 impl LazyFileStore {
     pub fn new() -> Self {
-        let limits = crate::utils::SystemLimits::collect();
-        let mmap_safe_limit = limits.safe_mmap_limit();
-
-        if let Some(limit) = mmap_safe_limit {
-            tracing::info!(
-                max_map_count = ?limits.max_map_count,
-                safe_limit = limit,
-                "Mmap limit detected (85% of max), will switch to direct read fallback if reached (search still works, retrieval is slower)"
-            );
-        }
-
         Self {
             files: Vec::new(),
             path_to_id: HashMap::new(),
             dirs: DirIndex::default(),
             tombstoned: std::collections::HashSet::new(),
-            mapped_count: AtomicUsize::new(0),
             total_content_bytes: AtomicU64::new(0),
-            mmap_safe_limit,
-            mmap_limit_warned: AtomicBool::new(false),
         }
     }
 
-    /// Check if we are approaching the mmap limit
-    fn check_mmap_limit(&self) -> Result<()> {
-        if let Some(limit) = self.mmap_safe_limit {
-            let current = self.mapped_count.load(Ordering::Relaxed);
-            if current >= limit {
-                anyhow::bail!(
-                    "Reached mmap limit ({}/{}). Remaining files will be indexed \
-                    without mmap (direct read fallback active — retrieval is slower).",
-                    current,
-                    limit
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Register a file path and return its ID (does NOT map the file)
-    ///
-    /// This is extremely fast as it only stores the path.
-    /// The file will be memory-mapped on first access via `get()`.
+    /// Register a file path and return its ID (does not read the file).
     pub fn register_file(&mut self, path: impl AsRef<Path>) -> u32 {
         let path = path.as_ref();
         if let Some(&existing_id) = self.path_to_id.get(path) {
@@ -367,22 +156,15 @@ impl LazyFileStore {
         id
     }
 
-    /// Register multiple file paths in bulk (does NOT map any files)
+    /// Register multiple file paths in bulk (does not read any files)
     ///
     /// Returns a vector of file IDs in the same order as the input paths.
     pub fn register_files_bulk(&mut self, paths: &[PathBuf]) -> Vec<u32> {
         paths.iter().map(|p| self.register_file(p)).collect()
     }
 
-    /// Add a file with immediate mapping (for fresh indexing)
-    ///
-    /// This is used during initial indexing when we need to read the file
-    /// content immediately for trigram extraction.
-    ///
-    /// When the OS mmap limit is reached the file is still registered in the
-    /// store (so it appears in search results and the correct file count is
-    /// reported). The lazy `get_bytes()` path will fall back to `fs::read` at
-    /// result-retrieval time instead of returning nothing.
+    /// Add a file found during indexing: its canonical path is registered
+    /// and its size counted. The content is read when it is needed.
     pub fn add_file(&mut self, path: impl AsRef<Path>) -> Result<u32> {
         let path = path.as_ref();
 
@@ -403,68 +185,14 @@ impl LazyFileStore {
         if let Some(&existing_id) = self.path_to_id.get(canonical.as_path()) {
             return Ok(existing_id);
         }
-        let shared: Arc<Path> = Arc::from(canonical);
-
-        // If the mmap limit has been reached, register the path without mapping.
-        // Content will be read via fs::read() fallback when search results are retrieved.
-        if let Err(limit_err) = self.check_mmap_limit() {
-            // Warn only once — every subsequent file would produce the same message.
-            if self
-                .mmap_limit_warned
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                tracing::warn!(
-                    "{}  Further files will be indexed without mmap and served via \
-                    direct read (search still works, retrieval is slower). \
-                    Increase vm.max_map_count to restore full performance.",
-                    limit_err
-                );
-            }
-            let id = self.files.len() as u32;
-            self.link(shared.clone(), id);
-            self.files.push(LazyMappedFile::from_shared(shared));
-            // Estimate content bytes from file metadata so stats stay accurate
-            if let Ok(meta) = std::fs::metadata(path) {
-                self.total_content_bytes
-                    .fetch_add(meta.len(), Ordering::Relaxed);
-            }
-            return Ok(id);
-        }
-
-        // Small files (the overwhelming majority of source files) are never
-        // mapped: they are served by owned reads. See MMAP_THRESHOLD_BYTES.
         let size = std::fs::metadata(path)
             .with_context(|| format!("Failed to stat file: {}", path.display()))?
             .len();
-        if size <= MMAP_THRESHOLD_BYTES {
-            let id = self.files.len() as u32;
-            self.link(shared.clone(), id);
-            self.files
-                .push(LazyMappedFile::from_shared(shared).into_small());
-            self.total_content_bytes.fetch_add(size, Ordering::Relaxed);
-            return Ok(id);
-        }
-
-        // Large file: open and map immediately (zero-copy retrieval).
-        let file =
-            File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
-        let mmap = unsafe {
-            Mmap::map(&file).with_context(|| format!("Failed to mmap file: {}", path.display()))?
-        };
-
-        // Track content size before storing
-        let content_size = mmap.len() as u64;
-
+        let shared: Arc<Path> = Arc::from(canonical);
         let id = self.files.len() as u32;
         self.link(shared.clone(), id);
-        self.files.push(LazyMappedFile::with_mmap(shared, mmap));
-
-        // Update mapped count and content bytes
-        self.mapped_count.fetch_add(1, Ordering::Relaxed);
-        self.total_content_bytes
-            .fetch_add(content_size, Ordering::Relaxed);
-
+        self.files.push(LazyMappedFile::from_shared(shared));
+        self.total_content_bytes.fetch_add(size, Ordering::Relaxed);
         Ok(id)
     }
 
@@ -486,18 +214,15 @@ impl LazyFileStore {
                 self.path_to_id.remove(&*p);
                 self.dirs.remove(&p, id);
             }
-            // Drop the mapping and cached content now: a tombstoned slot
-            // kept its `Mmap` (and transcoded copy) alive for the life of
-            // the store, so every removed large file stayed resident.
             *f = LazyMappedFile::from_shared(p);
         }
         self.tombstoned.insert(id);
     }
 
-    /// Replace the entry for an existing id with a fresh, unmapped one so a stale
-    /// memory map and cached UTF-8/transcode results are dropped. The id and its
-    /// path are preserved; the next access maps the file fresh. Un-tombstones the
-    /// id if it had been removed. Returns false if `id` is out of range.
+    /// Replace the entry for an existing id with a fresh one, dropping what it
+    /// recorded about the old content (its encoding). The id and its path are
+    /// preserved. Un-tombstones the id if it had been removed. Returns false
+    /// if `id` is out of range.
     pub fn refresh_file_by_id(&mut self, id: u32) -> bool {
         if let Some(f) = self.files.get_mut(id as usize) {
             let p = f.path.clone();
@@ -519,15 +244,6 @@ impl LazyFileStore {
     /// Check if the store is empty
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
-    }
-
-    /// Get total size of all MAPPED files (not all registered files)
-    pub fn total_mapped_size(&self) -> u64 {
-        self.files
-            .iter()
-            .filter_map(|f| f.len_if_mapped())
-            .map(|len| len as u64)
-            .sum()
     }
 
     /// Get total content bytes that have been indexed
@@ -614,11 +330,6 @@ impl LazyFileStore {
     /// Number of live (non-tombstoned) files.
     pub fn live_len(&self) -> usize {
         self.files.len().saturating_sub(self.tombstoned.len())
-    }
-
-    /// Get the number of files that have been actually mapped
-    pub fn mapped_count(&self) -> usize {
-        self.mapped_count.load(Ordering::Relaxed)
     }
 
     /// Pre-reserve capacity for a known number of files
@@ -732,39 +443,6 @@ impl Default for LazyFileStore {
 }
 
 #[cfg(test)]
-impl LazyMappedFile {
-    /// A large file whose mapping failed, forcing every access through the
-    /// uncached `fs::read` path.
-    pub(crate) fn with_mmap_failure(path: impl AsRef<Path>) -> Self {
-        let file = Self::new(path);
-        file.size_class.store(SIZE_CLASS_LARGE, Ordering::Relaxed);
-        let _ = file.large.set(Box::new(LargeState {
-            mmap: Err("simulated mmap failure".to_string()),
-            transcoded: OnceLock::new(),
-        }));
-        file
-    }
-}
-
-#[cfg(test)]
-impl LazyFileStore {
-    /// Construct a store with an explicit mmap limit, used in tests to simulate
-    /// a constrained system without requiring a real OS limit change.
-    pub(crate) fn with_limit(mmap_safe_limit: Option<usize>) -> Self {
-        Self {
-            files: Vec::new(),
-            path_to_id: HashMap::new(),
-            dirs: DirIndex::default(),
-            tombstoned: std::collections::HashSet::new(),
-            mapped_count: AtomicUsize::new(0),
-            total_content_bytes: AtomicU64::new(0),
-            mmap_safe_limit,
-            mmap_limit_warned: AtomicBool::new(false),
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -777,25 +455,9 @@ mod tests {
         std::fs::write(&file_path, "hello world").expect("Failed to write test file");
 
         let lazy = LazyMappedFile::new(&file_path);
-
-        // Should NOT be mapped yet
-        assert!(!lazy.is_mapped());
-        assert!(lazy.len_if_mapped().is_none());
-
-        // A small file is served by owned reads and is NEVER mapped (see
-        // MMAP_THRESHOLD_BYTES): safe against concurrent truncation.
         assert_eq!(lazy.as_str().unwrap(), "hello world");
-        assert!(!lazy.is_mapped());
         assert_eq!(lazy.len().unwrap(), 11);
-
-        // A file above the threshold is mapped on first access.
-        let big_path = temp_dir.path().join("big.txt");
-        let big = "x".repeat(MMAP_THRESHOLD_BYTES as usize + 1);
-        std::fs::write(&big_path, &big).unwrap();
-        let lazy_big = LazyMappedFile::new(&big_path);
-        assert_eq!(lazy_big.as_str().unwrap().len(), big.len());
-        assert!(lazy_big.is_mapped());
-        assert_eq!(lazy_big.len_if_mapped(), Some(big.len()));
+        assert!(!lazy.was_transcoded());
     }
 
     /// Review 1.10: a suffix lookup only matches whole path components, so
@@ -848,14 +510,10 @@ mod tests {
         assert_eq!(id1, 0);
         assert_eq!(id2, 1);
         assert_eq!(store.len(), 2);
-        assert_eq!(store.mapped_count(), 0); // Nothing mapped yet!
 
-        // Access one file: small files are read, not mapped.
+        // Access one file.
         let f1 = store.get(id1).unwrap();
         assert_eq!(f1.as_str().unwrap(), "hello");
-        assert!(!store.get(id1).unwrap().is_mapped());
-        assert!(!store.get(id2).unwrap().is_mapped());
-        assert_eq!(store.mapped_count(), 0);
     }
 
     #[test]
@@ -874,7 +532,6 @@ mod tests {
 
         assert_eq!(ids.len(), 100);
         assert_eq!(store.len(), 100);
-        assert_eq!(store.mapped_count(), 0); // Nothing mapped!
 
         // Access just one file
         let content = store.get(50).unwrap().as_str().unwrap();
@@ -907,93 +564,13 @@ mod tests {
         // get_path works without mapping
         let path = store.get_path(id).expect("Failed to get path");
         assert!(path.ends_with("test.txt"));
-        assert_eq!(store.mapped_count(), 0); // Still not mapped!
     }
 
     #[test]
     fn test_lazy_file_nonexistent() {
         let lazy = LazyMappedFile::new("/nonexistent/path/to/file.txt");
-        assert!(!lazy.is_mapped());
-
-        // Trying to access will fail (the stat fails before any mapping).
         assert!(lazy.as_str().is_err());
-        assert!(!lazy.is_mapped());
-    }
-
-    // ---------------------------------------------------------------------------
-    // Mmap-limit fallback tests
-    // ---------------------------------------------------------------------------
-
-    /// When the mmap limit is set to 0 (fully exhausted), `add_file` must still
-    /// register every file so that trigrams and the file count are correct.
-    #[test]
-    fn test_add_file_past_mmap_limit_still_registers() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let paths: Vec<PathBuf> = (0..5)
-            .map(|i| {
-                let p = temp_dir.path().join(format!("file{}.txt", i));
-                std::fs::write(&p, format!("content {}", i)).unwrap();
-                p
-            })
-            .collect();
-
-        // Limit = 2: first 2 files get an mmap, the rest fall back to direct read
-        let mut store = LazyFileStore::with_limit(Some(2));
-        for path in &paths {
-            store
-                .add_file(path)
-                .expect("add_file must succeed past mmap limit");
-        }
-
-        // All 5 files must be registered
-        assert_eq!(store.len(), 5, "All files must appear in the store");
-    }
-
-    /// Files registered past the mmap limit must still return their full content
-    /// via the direct-read fallback so search results are never lost.
-    #[test]
-    fn test_files_past_mmap_limit_return_content() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let paths: Vec<PathBuf> = (0..4)
-            .map(|i| {
-                let p = temp_dir.path().join(format!("file{}.txt", i));
-                std::fs::write(&p, format!("hello from file {}", i)).unwrap();
-                p
-            })
-            .collect();
-
-        // Limit = 1: only the first file gets a real mmap
-        let mut store = LazyFileStore::with_limit(Some(1));
-        for path in &paths {
-            store
-                .add_file(path)
-                .expect("add_file must succeed past mmap limit");
-        }
-
-        // Every file (including those beyond the mmap limit) must be readable
-        for i in 0..4u32 {
-            let file = store.get(i).expect("file must be retrievable by id");
-            let content = file
-                .as_str()
-                .expect("content must be readable via fallback");
-            assert_eq!(content, format!("hello from file {}", i));
-        }
-    }
-
-    /// `get_bytes()` falls back to `fs::read` when mmap fails for an individual
-    /// file (simulated by deleting the file between registration and mmap init).
-    #[test]
-    fn test_get_bytes_falls_back_when_mmap_fails() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let file_path = temp_dir.path().join("test.txt");
-        std::fs::write(&file_path, "fallback content").unwrap();
-
-        // Register without an up-front mmap so ensure_mapped is called lazily
-        let lazy = LazyMappedFile::new(&file_path);
-        assert!(!lazy.is_mapped());
-
-        // Normal access succeeds (mmap or read, either is fine)
-        assert_eq!(lazy.as_str().unwrap(), "fallback content");
+        assert!(lazy.len().is_err());
     }
 
     #[test]
@@ -1016,49 +593,64 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // Unmapped large files and memory footprint
+    // Reads, rewrites and memory footprint
     // ---------------------------------------------------------------------------
 
-    /// A large file whose mapping failed is read from disk on every access:
-    /// nothing is cached, so a rewrite is visible immediately and a
-    /// long-running server holds no heap for it between requests.
+    /// Every access reads the file as it is on disk now, whatever its size:
+    /// a rewrite is visible immediately and nothing is held between reads.
     #[test]
-    fn test_unmapped_large_file_reads_per_access() {
+    fn test_files_are_read_fresh_on_every_access() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let file_path = temp_dir.path().join("test.txt");
-        std::fs::write(&file_path, "first content").unwrap();
-
-        let file = LazyMappedFile::with_mmap_failure(&file_path);
-        assert!(!file.is_mapped());
-        assert_eq!(file.as_str().unwrap(), "first content");
+        let file_path = temp_dir.path().join("big.txt");
+        let first = format!("first {}", "x".repeat(2 * 1024 * 1024));
+        std::fs::write(&file_path, &first).unwrap();
+        let file = LazyMappedFile::new(&file_path);
+        assert_eq!(file.as_str().unwrap().len(), first.len());
         std::fs::write(&file_path, "second content").unwrap();
         assert_eq!(file.as_str().unwrap(), "second content");
         assert_eq!(file.as_bytes().unwrap().as_ref(), b"second content");
-        assert!(!file.is_mapped());
-        assert!(!file.was_transcoded());
+        assert_eq!(file.len().unwrap(), 14);
     }
 
-    /// Large files are mapped once and stay mapped; small files never map.
+    /// A large file rewritten in place (truncated, then written: what most
+    /// tools do to lockfiles, bundles and generated JSON) while searches read
+    /// it. Through a memory map the next touch of a page past the new end of
+    /// file was a SIGBUS that killed the server (this test process too).
     #[test]
-    fn test_large_file_maps_once_small_never() {
+    fn test_large_file_rewritten_in_place_while_read() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let file_path = temp_dir.path().join("big.txt");
-        let content = format!("mmap content{}", "x".repeat(MMAP_THRESHOLD_BYTES as usize));
+        let file_path = temp_dir.path().join("lock.json");
+        let content = "\"needle\": 1,\n".repeat(200_000); // ~2.6 MB
         std::fs::write(&file_path, &content).unwrap();
-
-        let lazy = LazyMappedFile::new(&file_path);
-        assert!(!lazy.is_mapped());
-        assert_eq!(lazy.as_str().unwrap().len(), content.len());
-        assert!(lazy.is_mapped());
-        assert_eq!(lazy.len_if_mapped(), Some(content.len()));
-        assert_eq!(lazy.as_str().unwrap().len(), content.len());
-
-        let small_path = temp_dir.path().join("small.txt");
-        std::fs::write(&small_path, "small content").unwrap();
-        let small = LazyMappedFile::new(&small_path);
-        assert_eq!(small.as_str().unwrap(), "small content");
-        assert!(!small.is_mapped());
-        assert_eq!(small.len_if_mapped(), None);
+        let file = Arc::new(LazyMappedFile::new(&file_path));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                let (file, stop) = (Arc::clone(&file), Arc::clone(&stop));
+                std::thread::spawn(move || {
+                    let mut reads = 0usize;
+                    while !stop.load(Ordering::Relaxed) {
+                        if let Ok(text) = file.as_str() {
+                            std::hint::black_box(text.matches("needle").count());
+                        }
+                        reads += 1;
+                    }
+                    reads
+                })
+            })
+            .collect();
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < until {
+            let mut f = std::fs::File::create(&file_path).unwrap(); // truncates
+            f.write_all(&content.as_bytes()[..4096]).unwrap();
+            f.flush().unwrap();
+            f.write_all(&content.as_bytes()[4096..]).unwrap();
+        }
+        stop.store(true, Ordering::Relaxed);
+        for r in readers {
+            assert!(r.join().unwrap() > 0);
+        }
+        assert_eq!(file.as_str().unwrap().len(), content.len());
     }
 
     /// Roadmap 6.3: a path is stored once, shared between the entry and the

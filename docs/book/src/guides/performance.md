@@ -20,9 +20,10 @@ changed are re-read.
 Resident memory after a build is roughly: the trigram posting lists
 (Roaring bitmaps, a few dozen bytes per file per distinct trigram), the
 per-file symbol and reference tables, the dependency graph, and whatever
-file content searches have recently read. Small files (≤ 1 MiB) are read
-into owned buffers per access, so they do not stay resident; larger files
-are memory-mapped and counted in the "mapped" figure the UI shows. The
+file content searches are reading at that moment. Every file is read into
+an owned buffer when a search needs it and freed after, so content does not
+stay resident (large files are not memory-mapped: a file rewritten in place
+while a mapped page was read crashed the server with SIGBUS). The
 CI corpus (tokio + Django, 38.9 MB of text) sits at about 120 MB resident;
 a 60k-file, 545 MB workspace at about 500 MB.
 

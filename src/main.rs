@@ -145,15 +145,7 @@ async fn main() -> Result<()> {
         info!(exclude_patterns = ?config.indexer.exclude_patterns, "Exclude patterns");
     }
 
-    // Check system limits on Linux and warn if too low
-    let limits = SystemLimits::collect();
-    limits.log_limits();
-    if let Some(warning) = limits.check_and_warn() {
-        eprintln!("{}", warning);
-        eprintln!("The server will automatically stop indexing at 85% of the limit.");
-        eprintln!("Press Ctrl+C to abort or wait 3 seconds to continue...");
-        std::thread::sleep(std::time::Duration::from_secs(3));
-    }
+    SystemLimits::collect().log_limits();
 
     // Build the global rayon pool up front with 8 MB stacks. tree-sitter
     // recursion runs on this pool during indexing; if a search (par_iter) got

@@ -2618,30 +2618,23 @@ fn test_update_files_batch_matches_per_file_semantics() {
     assert_eq!(engine.get_stats().num_files, 3);
 }
 
-/// Review 2 (item 9): removing a file releases its memory map instead of
-/// keeping it alive in the tombstoned slot.
+/// A large file (well past what used to be memory-mapped) is searched by
+/// reading it, and is gone from results once removed.
 #[test]
-fn test_removed_file_releases_its_mapping() {
+fn test_large_file_is_searched_and_removed() {
     let temp_dir = TempDir::new().unwrap();
     let big = temp_dir.path().join("big.txt");
-    // Above the owned-read threshold, so the content is memory-mapped.
-    let line = "mapped_marker_token line of text that repeats\n";
+    let line = "large_marker_token line of text that repeats\n";
     let content = line.repeat(2 * 1024 * 1024 / line.len() + 1);
     fs::write(&big, &content).unwrap();
 
     let mut engine = SearchEngine::new();
     engine.index_file(&big).unwrap();
     engine.finalize();
-    // Reading the content maps the file.
-    assert_eq!(engine.search("mapped_marker_token", 1).len(), 1);
-    assert!(
-        engine.file_store.total_mapped_size() >= content.len() as u64,
-        "file should be mapped after a search"
-    );
+    assert_eq!(engine.search("large_marker_token", 1).len(), 1);
 
     assert!(engine.remove_file(&big));
-    assert_eq!(engine.file_store.total_mapped_size(), 0);
-    assert!(engine.search("mapped_marker_token", 1).is_empty());
+    assert!(engine.search("large_marker_token", 1).is_empty());
 }
 
 /// Review 1.4: TypeScript call sites (plain and member calls) are captured

@@ -1900,17 +1900,11 @@ impl SearchEngine {
         self.symbol_cache.shrink_to_fit();
     }
 
-    /// Size on disk of file `id` as indexed (0 when unknown). Small files
-    /// are read rather than memory-mapped, so the mapped size alone said
-    /// "0 bytes" for a typical tree.
+    /// Size on disk of file `id` as indexed (0 when unknown).
     pub fn indexed_size(&self, id: u32) -> u64 {
         match self.indexed_meta.get(id as usize) {
-            Some(&(_, size)) if size > 0 => size,
-            _ => self
-                .file_store
-                .get(id)
-                .and_then(|f| f.len_if_mapped())
-                .unwrap_or(0) as u64,
+            Some(&(_, size)) => size,
+            None => 0,
         }
     }
 
