@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0ab9609a.js";
+            window.path_to_searchindex_js = "searchindex-bf54bfe7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -2508,7 +2508,8 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tr><td><code>src/</code> layouts (<code>tests/</code> importing <code>src/pkg</code>)</td><td>yes: each of those folders’ <code>src/</code> is tried too</td></tr>
 <tr><td>Absolute imports from a file nested any number of folders deep</td><td>yes: every ancestor folder is tried</td></tr>
 <tr><td>A repository whose root folder has an <code>__init__.py</code>, run with that folder on <code>sys.path</code> (<code>import app.models</code>)</td><td>yes: when nothing else resolves the import, the outermost package folder is tried as a root if it is the repository root (<code>.git</code>) or no folder above it holds an indexed file</td></tr>
-<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read, so a package in a sibling folder (<code>lib/mypkg/</code> imported from <code>apps/x/main.py</code>, with <code>lib</code> put on <code>PYTHONPATH</code> by your setup) is not found and the import counts as external</td></tr>
+<tr><td>Other <code>sys.path</code> entries (<code>pyproject.toml</code>, <code>setup.cfg</code>, <code>PYTHONPATH</code>)</td><td><strong>no</strong>: no configuration is read, so a package in a sibling folder (<code>lib/mypkg/</code> imported from <code>apps/x/main.py</code>, with <code>lib</code> put on <code>PYTHONPATH</code> by your setup) is not found and the import counts as external. This includes a monorepo of projects side by side, each with its own <code>src/</code> and installed into one environment (<code>services/billing</code> importing <code>libs/lib_db/src/lib_db</code>): imports within a project resolve, imports of another project do not</td></tr>
+<tr><td>Namespace packages (no <code>__init__.py</code>)</td><td>within one folder, yes; a namespace package split over several folders on <code>sys.path</code> (<code>src/acme/core</code> and <code>plugins/src/acme/x</code>) only where one portion’s folder is an ancestor’s <code>src/</code> of the other, so imports into the other portion, absolute or relative, are mostly missed</td></tr>
 <tr><td><code>.pyi</code> stubs as import targets</td><td><strong>no</strong></td></tr>
 <tr><td>Standard library, installed packages</td><td>no edge, by design</td></tr>
 </tbody>
@@ -2527,7 +2528,7 @@ a file <code>foo.rs</code> that is not the module. Config read: <code>Cargo.toml
 <tr><td><code>import x = require('./x')</code> (TypeScript)</td><td>yes</td></tr>
 <tr><td>Relative specifiers (<code>./</code>, <code>../</code>, <code>.</code>, <code>..</code>)</td><td>yes</td></tr>
 <tr><td><code>@/x</code>, <code>~/x</code></td><td>yes: tsconfig <code>paths</code> when it maps them, else from the nearest folder with a <code>package.json</code> or <code>tsconfig.json</code> (else the repository root), trying <code>src/x</code> then <code>x</code></td></tr>
-<tr><td>Extension probing</td><td>the exact file; <code>.js</code>/<code>.jsx</code> written for a <code>.ts</code>/<code>.tsx</code> file, <code>.mjs</code> for <code>.mts</code>, <code>.cjs</code> for <code>.cts</code>; then <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code> appended; then <code>index</code> with each of those extensions</td></tr>
+<tr><td>Extension probing</td><td>the exact file; <code>.js</code>/<code>.jsx</code> written for a <code>.ts</code>/<code>.tsx</code> file, <code>.mjs</code> for <code>.mts</code>, <code>.cjs</code> for <code>.cts</code>; then <code>.ts .tsx .js .jsx .mjs .cjs .mts .cts .d.ts .json</code> appended; then <code>index</code> with each of those extensions. When both <code>x.js</code> and <code>x.ts</code> exist, <code>./x.js</code> is <code>x.js</code> (as Node and bundlers load it), where TypeScript picks <code>x.ts</code></td></tr>
 <tr><td>Imports of stylesheets, <code>.vue</code>/<code>.svelte</code> components and other assets</td><td>yes, when the file is indexed (a bundler resolves them; TypeScript does not)</td></tr>
 <tr><td>A folder’s own <code>package.json</code> <code>main</code> (<code>import './lib'</code> where <code>lib/package.json</code> names the entry)</td><td><strong>no</strong></td></tr>
 <tr><td><code>package.json</code> <code>imports</code> (<code>#name</code>) and a package importing itself by name</td><td><strong>no</strong></td></tr>
@@ -2552,16 +2553,30 @@ wrongly:</p>
 </thead>
 <tbody>
 <tr><td>Python</td><td><a href="https://github.com/python-grimp/grimp">grimp</a> 3.17 (<code>src/check/oracle/py.py</code>)</td><td>Django 5.2</td><td>3,041 of 3,041 edges, none extra</td></tr>
-<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>src/check/oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>99.6% of edges, 1 extra; 4 of the 7 misses are <code>package.json</code> <code>imports</code> (<code>#name</code>); 221 workspace-package edges the oracle cannot see without an install are listed apart</td></tr>
+<tr><td>Python</td><td>grimp</td><td>a package nested 14 levels deep; a repository whose root folder has <code>__init__.py</code> (<code>scripts/graph-oracle/deep_python_tree.py</code>)</td><td>every edge, none extra</td></tr>
+<tr><td>Python</td><td>grimp, with every project’s <code>src/</code> on <code>sys.path</code></td><td>generated: services and libraries side by side, each its own project with <code>src/</code> (<code>layouts.py monorepo</code>)</td><td>368 of 698 edges, none extra; the 330 missed are imports of another project (other <code>sys.path</code> entries, above)</td></tr>
+<tr><td>Python</td><td>grimp</td><td>generated: a root folder that is a package, three top-level packages importing each other (<code>layouts.py root-init</code>)</td><td>468 of 468 edges, none extra</td></tr>
+<tr><td>Python</td><td>grimp</td><td>generated: a namespace package split over <code>src/</code> and <code>plugins/src/</code> (<code>layouts.py namespace</code>)</td><td>98 of 162 edges, none extra; the 64 missed cross from one portion to the other (namespace packages, above)</td></tr>
+<tr><td>TypeScript, JavaScript</td><td>TypeScript 5.9 <code>ts.resolveModuleName</code> under each file’s tsconfig (<code>src/check/oracle/ts.mjs</code>)</td><td>Vite 6.3.5</td><td>1,613 of 1,620 edges, 1 extra: 4 <code>package.json</code> <code>imports</code> (<code>#name</code>), 2 folders with their own <code>package.json</code> <code>main</code>, and one <code>./x.js</code> where <code>x.ts</code> exists too (the extra is its other side); 221 workspace-package edges the oracle cannot see without an install are listed apart</td></tr>
+<tr><td>TypeScript, JavaScript</td><td>TypeScript</td><td>generated: npm workspaces installed as symlinks, a root <code>tsconfig.base.json</code> with <code>paths</code> that each project <code>extends</code>, barrels, <code>.mts</code>/<code>.cts</code>, <code>import type</code>, <code>import()</code>, <code>require</code> (<code>scripts/graph-oracle/ts_layouts.mjs</code>)</td><td>388 of 390 edges, none extra: one <code>#name</code> import and one <code>exports</code> subpath</td></tr>
 </tbody>
 </table>
 </div>
-<p>CI runs both, and fails if a change misses or adds more edges than that.</p>
+<p>Every edge fcs misses or draws wrongly on these is listed, with its reason
+and count, in <code>benches/graph/known_gaps.toml</code>. CI (“graph oracle”) fails
+when an edge is not on that list (a bug, or a gap to document here) and
+when a listed count changes, so a fix shows up as a gap to lower or
+remove. The generated repositories are written with seed 1.</p>
 <pre><code class="language-sh">python3 src/check/oracle/py.py bench-corpus/django &gt; py.json
 cargo run --release --example graph_oracle -- bench-corpus/django --oracle py.json --lang py
 (cd scripts/graph-oracle &amp;&amp; npm ci)   # pins TypeScript
 (cd scripts/graph-oracle &amp;&amp; node ../../src/check/oracle/ts.mjs ../../bench-corpus/vite) &gt; ts.json
-cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts
+cargo run --release --example graph_oracle -- bench-corpus/vite --oracle ts.json --lang ts \
+    --gaps benches/graph/known_gaps.toml --corpus vite
+python3 scripts/graph-oracle/layouts.py monorepo py-monorepo --seed 1
+(set -a; . py-monorepo/oracle.env; set +a; python3 src/check/oracle/py.py py-monorepo) &gt; py-monorepo.json
+cargo run --release --example graph_oracle -- py-monorepo --oracle py-monorepo.json --lang py \
+    --gaps benches/graph/known_gaps.toml --corpus py-monorepo
 </code></pre>
 <p>To run the same comparison on your own code, use <code>fcs check</code> (see
 <a href="#on-your-own-code-fcs-check">Correctness against ripgrep</a>).
@@ -4976,7 +4991,7 @@ wrote every line and knows the answer.</p>
 <tr><td><code>tests/lock_sim.rs</code></td><td>the engine lock and the watcher’s install steps under minutes of made-up load (back-to-back half-second searches, one 20 s search among quick ones, a busy server during a branch switch): every search answered, no search waits past its hold-back plus one step, backlogs drain at half speed or better, a slow search delays only the writer</td><td>bounds derived from the protocol, on a simulated clock (<code>fast_code_search::sim</code>): the real lock code, the same schedule on every run and OS, four minutes in about a second</td><td><code>cargo test --test lock_sim</code> (<code>-- --ignored --nocapture</code> prints the tuning table)</td></tr>
 <tr><td><code>tests/fault_injection.rs</code></td><td>failed reads (permission, out of file handles, a file gone between listing and reading), a slow disk, panics while reading, parsing or applying changes, lost changes and lost events, a save onto a full disk or a failed rename: each is retried, reported or repaired, searches are not held up, and the saved index stays whole</td><td>expected recovery</td><td><code>cargo test --features failpoints --test fault_injection</code> (fault points are listed in <code>src/faults.rs</code>)</td></tr>
 <tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (<code>--history reload</code>) and filled by the watcher (<code>--history watch</code>)</td><td><code>rg</code></td><td>see <a href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></td></tr>
-<tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
+<tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite, generated deep trees and generated monorepo layouts (projects side by side with their own <code>src/</code>, a root folder that is a package, a split namespace package, npm workspaces with tsconfig <code>paths</code> and <code>extends</code>); every edge missed or wrong must be a known gap listed with its reason and count</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”, gaps in <code>benches/graph/known_gaps.toml</code></td></tr>
 <tr><td><code>examples/ref_oracle.rs</code>, <code>examples/impact_oracle.rs</code></td><td>Python references and diff impact on real repositories</td><td>Jedi</td><td>CI jobs “ref oracle”, “impact oracle”</td></tr>
 <tr><td><code>examples/scoreboard.rs</code></td><td>the server binary over HTTP in seven scenarios (cold build, warm restart, branch switch, ten-minute stream, slow mix, saves under load, event-queue overflow): searches turned away, latency, time until the index matches the disk, memory, CPU, diagnostic captures, crashes, <code>/api/check</code></td><td>targets in <code>benches/scoreboard/targets.toml</code></td><td>nightly and on pull requests that touch locking or watching (workflow “Scale scoreboard”), see <a href="#scale-scoreboard">Scale scoreboard</a></td></tr>
 <tr><td><code>examples/chaos.rs</code></td><td><code>kill -9</code> of the server binary at random moments during a build, a load, a stream of edits, a periodic save, a burst and the shutdown save; after each, a restart must load the saved index (never reject it), leave no temp file, catch up with every change and pass <code>/api/check</code></td><td>the files on disk</td><td>nightly and on pull requests that touch saving or watching (workflow “Scale scoreboard”, job “Kill and restart”), see <a href="#killed-at-any-moment">below</a></td></tr>
@@ -6188,6 +6203,18 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>The import graph is checked on monorepo layouts.</strong> Generated
+repositories shaped like real ones (<code>scripts/graph-oracle/layouts.py</code>,
+<code>ts_layouts.mjs</code>): Python projects side by side each with its own
+<code>src/</code>, a root folder that is a package, a namespace package split over
+two folders, and npm workspaces with tsconfig <code>paths</code> and <code>extends</code>,
+barrels and <code>.mts</code>/<code>.cts</code>. grimp and TypeScript give the answer. Every
+edge fcs misses or draws wrongly, there and on Django and Vite, is now
+a known gap listed with its reason and exact count in
+<code>benches/graph/known_gaps.toml</code>, instead of a count to stay under. The
+Python oracle (<code>fcs check</code> included) now builds one graph across
+<code>ROOT</code> and <code>ROOT/src</code>, so imports from one into the other are compared
+too.</li>
 <li><strong>Kill and restart.</strong> <code>examples/chaos.rs</code> kills the server binary with
 SIGKILL at random moments (during a build, a load from disk, a stream of
 edits, a periodic save, a burst of changes, and the save at shutdown),

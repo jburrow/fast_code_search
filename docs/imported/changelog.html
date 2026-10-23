@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0ab9609a.js";
+            window.path_to_searchindex_js = "../searchindex-bf54bfe7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -343,6 +343,18 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>The import graph is checked on monorepo layouts.</strong> Generated
+repositories shaped like real ones (<code>scripts/graph-oracle/layouts.py</code>,
+<code>ts_layouts.mjs</code>): Python projects side by side each with its own
+<code>src/</code>, a root folder that is a package, a namespace package split over
+two folders, and npm workspaces with tsconfig <code>paths</code> and <code>extends</code>,
+barrels and <code>.mts</code>/<code>.cts</code>. grimp and TypeScript give the answer. Every
+edge fcs misses or draws wrongly, there and on Django and Vite, is now
+a known gap listed with its reason and exact count in
+<code>benches/graph/known_gaps.toml</code>, instead of a count to stay under. The
+Python oracle (<code>fcs check</code> included) now builds one graph across
+<code>ROOT</code> and <code>ROOT/src</code>, so imports from one into the other are compared
+too.</li>
 <li><strong>Kill and restart.</strong> <code>examples/chaos.rs</code> kills the server binary with
 SIGKILL at random moments (during a build, a load from disk, a stream of
 edits, a periodic save, a burst of changes, and the save at shutdown),
