@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-665954fb.js";
+            window.path_to_searchindex_js = "searchindex-9e414cb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ba5bc6a0.js"></script>
+        <script src="toc-e1b44905.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1116,12 +1116,12 @@ capture = true
 </thead>
 <tbody>
 <tr><td><code>slow_search</code></td><td>A search took longer than this, from the request to the reply</td><td><code>slow_search_secs = 5</code></td></tr>
-<tr><td><code>lock_wait</code></td><td>A search waited longer than this for the index lock (a watcher step or a save held it)</td><td><code>lock_wait_secs = 2</code></td></tr>
+<tr><td><code>lock_wait</code></td><td>A search waited longer than this for the index lock (a watcher step or a save held it), not counting the time it held back so a waiting step could get in</td><td><code>lock_wait_secs = 2</code></td></tr>
 <tr><td><code>watcher_stalled</code></td><td>The watcher had changes to apply and made no progress (planned, parsed or installed nothing) for this long</td><td><code>stall_secs = 120</code></td></tr>
 <tr><td><code>indexer_stalled</code></td><td>The index build reported no progress for this long</td><td><code>stall_secs</code></td></tr>
 <tr><td><code>search_stuck</code></td><td>A search has been running for this long</td><td><code>stall_secs</code></td></tr>
 <tr><td><code>lock_held</code></td><td>The index lock was never free for this long</td><td><code>stall_secs</code></td></tr>
-<tr><td><code>backlog</code></td><td>The watcher has had changes to apply for this long without a break: it is falling behind, though still moving</td><td><code>backlog_secs = 300</code></td></tr>
+<tr><td><code>backlog</code></td><td>The watcher has had changes to apply for this long without a break: it is falling behind, though still moving (a backlog it works off within 10 s, as under a steady stream of edits, does not count)</td><td><code>backlog_secs = 300</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -1155,12 +1155,12 @@ what was captured. On a healthy run, nothing should be:</p>
 lock waits are part of it.</p>
 <p>Earlier runs set the other bounds:</p>
 <ul>
-<li>A search waits for an install step at most about a second plus its
-hold-back for a waiting writer: as long as recent searches took, 250 ms
-to 2 s (see <a href="#incremental-updates-1">Incremental updates</a>). So
-with quick searches, 2 s of waiting means a step held the lock longer
-than it is designed to; with searches of a second or more, look at
-their length first.</li>
+<li>A search waits for an install step at most about a second, after
+holding back for a waiting writer for a little longer than recent
+searches took, 250 ms to 2 s (see
+<a href="#incremental-updates-1">Incremental updates</a>). The holding back
+is left out of <code>lock_wait</code>, so 2 s of waiting means a step held the lock
+longer than it is designed to.</li>
 <li>The longest the watcher goes without counting progress while healthy is
 a full-tree rescan after its event queue overflowed: about 40 s walking
 a million files. <code>stall_secs = 120</code> leaves three times that.</li>
@@ -4957,6 +4957,7 @@ wrote every line and knows the answer.</p>
 <tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (<code>--history reload</code>) and filled by the watcher (<code>--history watch</code>)</td><td><code>rg</code></td><td>see <a href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></td></tr>
 <tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
 <tr><td><code>examples/ref_oracle.rs</code>, <code>examples/impact_oracle.rs</code></td><td>Python references and diff impact on real repositories</td><td>Jedi</td><td>CI jobs “ref oracle”, “impact oracle”</td></tr>
+<tr><td><code>examples/scoreboard.rs</code></td><td>the server binary over HTTP in seven scenarios (cold build, warm restart, branch switch, ten-minute stream, slow mix, saves under load, event-queue overflow): searches turned away, latency, time until the index matches the disk, memory, CPU, diagnostic captures, crashes, <code>/api/check</code></td><td>targets in <code>benches/scoreboard/targets.toml</code></td><td>nightly and on pull requests that touch locking or watching (workflow “Scale scoreboard”), see <a href="#scale-scoreboard">Scale scoreboard</a></td></tr>
 <tr><td><code>examples/watch_load.rs</code>, <code>examples/limits_bench.rs</code></td><td>searches answered and latency while a large tree changes; where limits bite</td><td>measured numbers</td><td>by hand, see <a href="#how-this-is-tested">Incremental updates</a></td></tr>
 </tbody>
 </table>
@@ -5041,6 +5042,10 @@ oracle).</li>
 for half-second searches: the watcher drained a backlog at 8% of its
 speed, not the “half speed or better” the docs claimed (lock
 simulation; see <a href="#holding-back-as-long-as-a-search-runs">Incremental updates</a>).</li>
+<li>After every restart from a saved index, every search waited 4 to 5 s
+while the import graph’s parked imports were retried in one lock hold;
+a <code>backlog</code> diagnostic fired under steady edits the watcher kept up with
+(scale scoreboard).</li>
 <li>Earlier probes found a crash when a large file was rewritten during a
 search, “server unavailable” at the end of a build, and lost changes
 after failed reads or a panic; the fault and watch tests cover them.</li>
@@ -5795,6 +5800,154 @@ the number of candidate files.</li>
 judgement.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="scale-scoreboard"><a class="header" href="#scale-scoreboard">Scale scoreboard</a></h1>
+<p>The other benchmarks time the engine. This one runs the real server
+binary, starts and stops it, searches it over HTTP from several threads the
+way people do, and changes the files under it the way branch switches,
+formatters and builds do. Every scenario reports the same numbers, and a
+number over its target fails the run.</p>
+<pre><code class="language-sh">cargo build --release --bins --example scoreboard
+target/release/examples/scoreboard --dir /tmp/fcs-score --files 200000 \
+    --targets benches/scoreboard/targets.toml --markdown score.md --json score.json
+</code></pre>
+<p><code>--scenarios branch-switch,overflow</code> runs some of them, <code>--stream-seconds</code>
+sets the stream’s length (600 by default). The tree is generated under
+<code>--dir</code> (small Python files, 1,000 to a folder; <code>examples/support/load_tree.rs</code>)
+and reused by later runs.</p>
+<p>The report holds numbers only: no paths, queries or file contents. That
+makes a run on a private tree safe to share. The server’s log and any
+diagnostic captures stay in <code>--dir</code>.</p>
+<h2 id="scenarios"><a class="header" href="#scenarios">Scenarios</a></h2>
+<p>Each scenario starts the server on its own: from scratch for <code>cold-build</code>,
+from the saved index for the rest. Searches start at once and go on until
+the end. The changes start once the restart’s own check of the tree has
+finished (see <a href="#known-gaps">Known gaps</a>).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scenario</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cold-build</code></td><td>Start with no saved index; search while it builds.</td></tr>
+<tr><td><code>warm-restart</code></td><td>Start from the saved index; search while it loads and checks the tree.</td></tr>
+<tr><td><code>branch-switch</code></td><td>Rewrite one file in five at once (40,000 at 200,000 files).</td></tr>
+<tr><td><code>stream</code></td><td>Change 200 files a second for ten minutes: rewrites, plus a new file and a removed one every 100 ms.</td></tr>
+<tr><td><code>slow-mix</code></td><td>Eight searchers, plus a regex that reads every file every 3 s, while 50 files a second change for two minutes.</td></tr>
+<tr><td><code>save-under-load</code></td><td>500 files a second for two minutes, with the index saved every 5,000 applied changes.</td></tr>
+<tr><td><code>overflow</code></td><td>Rewrite half the files at once: more events than the watcher’s queue holds (65,536), so it rescans the tree.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The searchers cycle through cheap and expensive queries (<code>task_17_</code>,
+<code>return value</code>, <code>revision</code>, <code>default_\w+\(\)</code>, <code>task_\d+_amber</code>,
+<code>helpers.default_cobalt</code>) with a page of 50, as the web UI asks.</p>
+<h2 id="what-is-reported"><a class="header" href="#what-is-reported">What is reported</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Number</th><th>Meaning</th><th>Target</th></tr>
+</thead>
+<tbody>
+<tr><td><code>turned_away</code></td><td>Searches answered 503 (“index is being updated”)</td><td>0</td></tr>
+<tr><td><code>refused</code>, <code>errors</code></td><td>No connection after the server first answered; any other failure</td><td>0</td></tr>
+<tr><td><code>incomplete</code></td><td>Answered while the index was still being built or checked (the answer says so)</td><td>reported</td></tr>
+<tr><td><code>p50_ms</code>, <code>p99_ms</code>, <code>max_ms</code></td><td>Search time as the client sees it, HTTP included</td><td>per scenario</td></tr>
+<tr><td><code>listen_secs</code>, <code>ready_secs</code></td><td>From start until the server answers anything, and until <code>/api/ready</code></td><td>per scenario</td></tr>
+<tr><td><code>fresh_secs</code></td><td>From the last change until the index matches the disk: nothing pending, and 100 of the changed files checked against the disk with <code>/api/status?paths=</code></td><td>per scenario</td></tr>
+<tr><td><code>not_settled</code></td><td>The index never matched the disk within <code>--settle-seconds</code></td><td>0</td></tr>
+<tr><td><code>max_pending</code></td><td>The largest backlog the server reported (sampled every second; the JSON has the curve)</td><td>reported</td></tr>
+<tr><td><code>rescans</code></td><td>“The watched paths will be rescanned” in the server log</td><td>reported</td></tr>
+<tr><td><code>peak_rss_mb</code>, <code>cpu_secs</code></td><td>The server process’s peak memory and CPU time (Linux)</td><td>memory per scenario</td></tr>
+<tr><td><code>captures</code>, <code>stall_captures</code></td><td><a href="#diagnostic-captures">Diagnostic captures</a> written; the second leaves out <code>slow_search</code>, which an overloaded CPU alone can cause</td><td>stalls 0</td></tr>
+<tr><td><code>crashes</code></td><td>The server exited before it was told to stop</td><td>0</td></tr>
+<tr><td><code>check_problems</code></td><td>What <code>GET /api/check?all=true</code> finds once the index has settled: invariants, every file’s content, the file set against a fresh walk</td><td>0</td></tr>
+</tbody>
+</table>
+</div>
+<p>The zero targets hold at any size. The others are in
+<code>benches/scoreboard/targets.toml</code>, set at about twice the worse of two runs
+(memory: about 30% over), and apply only to runs with the same number of
+files.</p>
+<h2 id="measured"><a class="header" href="#measured">Measured</a></h2>
+<p>200,000 files on a 4 vCPU, 16 GB Linux VM, 2026-10-23. These are the
+second of the two runs behind the targets.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scenario</th><th>Searches</th><th>Incomplete</th><th>p50</th><th>p99</th><th>Max</th><th>Ready</th><th>Fresh after</th><th>Max pending</th><th>Peak RSS</th><th>Stall captures</th></tr>
+</thead>
+<tbody>
+<tr><td>cold-build</td><td>489</td><td>489</td><td>169 ms</td><td>638 ms</td><td>939 ms</td><td>49.9 s</td><td>–</td><td>–</td><td>808 MB</td><td>0</td></tr>
+<tr><td>warm-restart</td><td>70</td><td>63</td><td>59 ms</td><td>761 ms</td><td>828 ms</td><td>2.3 s</td><td>–</td><td>–</td><td>671 MB</td><td>0</td></tr>
+<tr><td>branch-switch</td><td>203</td><td>62</td><td>376 ms</td><td>1.24 s</td><td>1.65 s</td><td>–</td><td>7.1 s</td><td>48,248</td><td>789 MB</td><td>0</td></tr>
+<tr><td>stream</td><td>6,316</td><td>116</td><td>403 ms</td><td>859 ms</td><td>1.29 s</td><td>–</td><td>1.1 s</td><td>1,333</td><td>883 MB</td><td>0</td></tr>
+<tr><td>slow-mix</td><td>2,280</td><td>976</td><td>633 ms</td><td>2.25 s</td><td>5.79 s</td><td>–</td><td>2.7 s</td><td>523</td><td>825 MB</td><td>0</td></tr>
+<tr><td>save-under-load</td><td>1,344</td><td>95</td><td>423 ms</td><td>937 ms</td><td>1.17 s</td><td>–</td><td>4.0 s</td><td>5,198</td><td>1,073 MB</td><td>0</td></tr>
+<tr><td>overflow</td><td>536</td><td>201</td><td>414 ms</td><td>1.27 s</td><td>1.53 s</td><td>–</td><td>32.7 s</td><td>180,708</td><td>1,335 MB</td><td>0</td></tr>
+</tbody>
+</table>
+</div>
+<p>In every scenario: no search turned away, refused or failed, no crash,
+and the check found nothing. The server answered within 0.05 s of starting
+in both start-up scenarios. <code>slow-mix</code> wrote one <code>slow_search</code> capture
+(5.8 s), with nine searches sharing four CPUs. The stream kept 400 to
+1,300 changes pending, a few seconds’ work, for ten minutes.</p>
+<h2 id="what-it-found"><a class="header" href="#what-it-found">What it found</a></h2>
+<ul>
+<li><strong>A 4–5 s stall after every restart.</strong> An index loaded from disk keeps
+its unresolved imports but not the files’ import lists. At the end of
+the restart’s check, each of those imports got one last try, all at once
+and under the write lock: 368,000 imports at 200,000 files, 4 to 5 s
+during which every search waited. They are now tried in the same short
+steps as the rest of the import graph (about 250 ms each), and the
+slowest search after a restart fell from 4.0 s to under 1 s.</li>
+<li><strong>A <code>backlog</code> capture under a steady stream.</strong> The capture fired when
+changes had been pending for 300 s without a break, which a steady
+stream of edits always causes, however well the watcher keeps up. It now
+fires only when the watcher could not have applied what is pending in
+the last 10 s.</li>
+<li><strong><code>lock_wait</code> counted the holding back.</strong> A search holds back for a
+waiting install step by design (up to 2 s, see
+<a href="#holding-back-as-long-as-a-search-runs">Incremental updates</a>),
+and that alone could pass the 2 s threshold. The capture now counts only
+the time a writer kept the search out.</li>
+</ul>
+<h2 id="known-gaps"><a class="header" href="#known-gaps">Known gaps</a></h2>
+<ul>
+<li><strong>After a restart, answers say the index is incomplete for a while.</strong>
+Loading takes 2 to 3 s at 200,000 files. After that the server walks
+the tree to find files that changed while it was down, which took
+between 4 and 30 s here depending on the search load. Until the walk
+ends, every answer carries the <code>indexing</code> note, although only files
+changed since the last run can be missing (<code>incomplete</code> in
+<code>warm-restart</code>).</li>
+<li><strong>Changes during the restart’s check.</strong> When a large change lands while
+the restart’s own check still runs, the check’s steps and the watcher’s
+steps take turns. A search can then wait for one of each: 2.4 s was seen
+once, with 100,000 files rewritten 3 s after a restart. The scenarios
+wait for the check to finish before they change files, so this case is
+not covered by a target yet.</li>
+<li><strong>Lost events under a stream.</strong> One of three ten-minute streams lost
+events once, about 280 s in: the kernel’s inotify queue
+(<code>fs.inotify.max_queued_events</code>, 16,384 by default) overflowed. The
+watcher rescanned the tree and the index matched the disk again within
+about 15 s, with nothing missing. The cause of the sudden burst is not
+known yet. <code>rescans</code> is reported, not a target.</li>
+<li><strong>Only Linux reports memory and CPU.</strong> On other systems those columns
+are empty.</li>
+</ul>
+<h2 id="where-it-runs"><a class="header" href="#where-it-runs">Where it runs</a></h2>
+<ul>
+<li><strong>Nightly on GitHub</strong> (workflow “Scale scoreboard”): 200,000 files with
+the full ten-minute stream, against the targets. The table goes to the
+job summary, and the JSON and server logs are kept as an artifact.</li>
+<li><strong>On pull requests</strong> that touch locking, watching, saving, the web
+server or limits: the same, with a two-minute stream.</li>
+<li><strong>Before a release, on a large machine</strong>: a million files (<code>--files 1000000</code>), or your own tree with a sanitised report. The time and memory
+targets apply only to 200,000 files, so such a run checks the zero
+targets and records its numbers for comparison with the previous release.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
@@ -5802,6 +5955,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Every search waited 4 to 5 s soon after a restart.</strong> An index loaded
+from disk keeps its unresolved imports (<code>import os</code>, packages outside
+the indexed folders) but not each file’s import list. At the end of the
+restart’s check of the tree, each of those imports got one last try, all
+at once under the index lock: 368,000 of them on a tree of 200,000
+files. They are now tried in short steps like the rest of the import
+graph; the slowest search after a restart fell from 4.0 s to under 1 s.</li>
+<li><strong>The <code>backlog</code> diagnostic capture fired under steady edits.</strong> It fired
+when changes had been pending for 300 s without a break, which a steady
+stream of edits always causes. It now fires only when the watcher could
+not have applied what is pending in the last 10 s.</li>
 <li><strong>The watcher could fall far behind while people searched.</strong> While an
 install step waits for the index, new searches hold back so the running
 ones can finish and the step gets in. They held back a fixed 250 ms, so
@@ -5926,6 +6090,15 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>A scale scoreboard.</strong> <code>examples/scoreboard.rs</code> runs the server binary
+over HTTP in seven scenarios (cold build, warm restart, branch switch, a
+ten-minute stream of edits, overloaded searching, saves under load, and
+an event-queue overflow) and reports the same numbers for each: searches
+turned away, latency, time until the index matches the disk, memory,
+CPU, diagnostic captures, crashes and what <code>/api/check</code> finds. Targets
+are in <code>benches/scoreboard/targets.toml</code>; the “Scale scoreboard”
+workflow runs it at 200,000 files nightly and on pull requests that
+touch locking or watching. Book page: Benchmarks &gt; Scale scoreboard.</li>
 <li><strong>The lock protocol on a simulated clock.</strong> <code>fast_code_search::sim</code> runs
 threads in turns on simulated time, and the engine lock and the
 watcher’s install steps read and sleep through it, so
@@ -5984,6 +6157,11 @@ N file changes to apply”; <code>fcs</code> and the MCP tools print it as a not
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong><code>lock_wait</code> captures leave out the holding back.</strong> A search holds back
+while an install step waits (up to 2 s, as long as recent searches
+take), and that alone could pass the 2 s threshold. The capture now
+counts only the time a writer kept the search out, so it still means a
+step or a save held the lock longer than it should.</li>
 <li><code>rdeps:</code> and <code>deps:</code> filters no longer read every indexed path to find
 their file (when it is given as results print it, with or without <code>:N</code>)
 nor copy every unresolved import to count the broken ones. On a

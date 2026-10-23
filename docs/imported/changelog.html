@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-665954fb.js";
+            window.path_to_searchindex_js = "../searchindex-9e414cb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba5bc6a0.js"></script>
+        <script src="../toc-e1b44905.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Every search waited 4 to 5 s soon after a restart.</strong> An index loaded
+from disk keeps its unresolved imports (<code>import os</code>, packages outside
+the indexed folders) but not each file’s import list. At the end of the
+restart’s check of the tree, each of those imports got one last try, all
+at once under the index lock: 368,000 of them on a tree of 200,000
+files. They are now tried in short steps like the rest of the import
+graph; the slowest search after a restart fell from 4.0 s to under 1 s.</li>
+<li><strong>The <code>backlog</code> diagnostic capture fired under steady edits.</strong> It fired
+when changes had been pending for 300 s without a break, which a steady
+stream of edits always causes. It now fires only when the watcher could
+not have applied what is pending in the last 10 s.</li>
 <li><strong>The watcher could fall far behind while people searched.</strong> While an
 install step waits for the index, new searches hold back so the running
 ones can finish and the step gets in. They held back a fixed 250 ms, so
@@ -312,6 +323,15 @@ and on one the watcher filled (<code>--history reload|watch</code>), with regexe
 made up from the corpus (<code>--generate-regex</code>), and
 <code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
 with <code>rg</code>.</li>
+<li><strong>A scale scoreboard.</strong> <code>examples/scoreboard.rs</code> runs the server binary
+over HTTP in seven scenarios (cold build, warm restart, branch switch, a
+ten-minute stream of edits, overloaded searching, saves under load, and
+an event-queue overflow) and reports the same numbers for each: searches
+turned away, latency, time until the index matches the disk, memory,
+CPU, diagnostic captures, crashes and what <code>/api/check</code> finds. Targets
+are in <code>benches/scoreboard/targets.toml</code>; the “Scale scoreboard”
+workflow runs it at 200,000 files nightly and on pull requests that
+touch locking or watching. Book page: Benchmarks &gt; Scale scoreboard.</li>
 <li><strong>The lock protocol on a simulated clock.</strong> <code>fast_code_search::sim</code> runs
 threads in turns on simulated time, and the engine lock and the
 watcher’s install steps read and sleep through it, so
@@ -370,6 +390,11 @@ N file changes to apply”; <code>fcs</code> and the MCP tools print it as a not
 </ul>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong><code>lock_wait</code> captures leave out the holding back.</strong> A search holds back
+while an install step waits (up to 2 s, as long as recent searches
+take), and that alone could pass the 2 s threshold. The capture now
+counts only the time a writer kept the search out, so it still means a
+step or a save held the lock longer than it should.</li>
 <li><code>rdeps:</code> and <code>deps:</code> filters no longer read every indexed path to find
 their file (when it is given as results print it, with or without <code>:N</code>)
 nor copy every unresolved import to count the broken ones. On a
@@ -2120,7 +2145,7 @@ cargo build --release
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../benchmarks/search-limits.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../benchmarks/scoreboard.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -2134,7 +2159,7 @@ cargo build --release
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../benchmarks/search-limits.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../benchmarks/scoreboard.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

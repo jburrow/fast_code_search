@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-665954fb.js";
+            window.path_to_searchindex_js = "../searchindex-9e414cb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba5bc6a0.js"></script>
+        <script src="../toc-e1b44905.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,12 +200,12 @@ capture = true
 </thead>
 <tbody>
 <tr><td><code>slow_search</code></td><td>A search took longer than this, from the request to the reply</td><td><code>slow_search_secs = 5</code></td></tr>
-<tr><td><code>lock_wait</code></td><td>A search waited longer than this for the index lock (a watcher step or a save held it)</td><td><code>lock_wait_secs = 2</code></td></tr>
+<tr><td><code>lock_wait</code></td><td>A search waited longer than this for the index lock (a watcher step or a save held it), not counting the time it held back so a waiting step could get in</td><td><code>lock_wait_secs = 2</code></td></tr>
 <tr><td><code>watcher_stalled</code></td><td>The watcher had changes to apply and made no progress (planned, parsed or installed nothing) for this long</td><td><code>stall_secs = 120</code></td></tr>
 <tr><td><code>indexer_stalled</code></td><td>The index build reported no progress for this long</td><td><code>stall_secs</code></td></tr>
 <tr><td><code>search_stuck</code></td><td>A search has been running for this long</td><td><code>stall_secs</code></td></tr>
 <tr><td><code>lock_held</code></td><td>The index lock was never free for this long</td><td><code>stall_secs</code></td></tr>
-<tr><td><code>backlog</code></td><td>The watcher has had changes to apply for this long without a break: it is falling behind, though still moving</td><td><code>backlog_secs = 300</code></td></tr>
+<tr><td><code>backlog</code></td><td>The watcher has had changes to apply for this long without a break: it is falling behind, though still moving (a backlog it works off within 10 s, as under a steady stream of edits, does not count)</td><td><code>backlog_secs = 300</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -239,12 +239,12 @@ what was captured. On a healthy run, nothing should be:</p>
 lock waits are part of it.</p>
 <p>Earlier runs set the other bounds:</p>
 <ul>
-<li>A search waits for an install step at most about a second plus its
-hold-back for a waiting writer: as long as recent searches took, 250 ms
-to 2 s (see <a href="../how-it-works/incremental.html">Incremental updates</a>). So
-with quick searches, 2 s of waiting means a step held the lock longer
-than it is designed to; with searches of a second or more, look at
-their length first.</li>
+<li>A search waits for an install step at most about a second, after
+holding back for a waiting writer for a little longer than recent
+searches took, 250 ms to 2 s (see
+<a href="../how-it-works/incremental.html">Incremental updates</a>). The holding back
+is left out of <code>lock_wait</code>, so 2 s of waiting means a step held the lock
+longer than it is designed to.</li>
 <li>The longest the watcher goes without counting progress while healthy is
 a full-tree rescan after its event queue overflowed: about 40 s walking
 a million files. <code>stall_secs = 120</code> leaves three times that.</li>

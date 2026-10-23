@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-665954fb.js";
+            window.path_to_searchindex_js = "../searchindex-9e414cb8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba5bc6a0.js"></script>
+        <script src="../toc-e1b44905.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -214,6 +214,7 @@ wrote every line and knows the answer.</p>
 <tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (<code>--history reload</code>) and filled by the watcher (<code>--history watch</code>)</td><td><code>rg</code></td><td>see <a href="../benchmarks/correctness.html">Correctness against ripgrep</a></td></tr>
 <tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
 <tr><td><code>examples/ref_oracle.rs</code>, <code>examples/impact_oracle.rs</code></td><td>Python references and diff impact on real repositories</td><td>Jedi</td><td>CI jobs “ref oracle”, “impact oracle”</td></tr>
+<tr><td><code>examples/scoreboard.rs</code></td><td>the server binary over HTTP in seven scenarios (cold build, warm restart, branch switch, ten-minute stream, slow mix, saves under load, event-queue overflow): searches turned away, latency, time until the index matches the disk, memory, CPU, diagnostic captures, crashes, <code>/api/check</code></td><td>targets in <code>benches/scoreboard/targets.toml</code></td><td>nightly and on pull requests that touch locking or watching (workflow “Scale scoreboard”), see <a href="../benchmarks/scoreboard.html">Scale scoreboard</a></td></tr>
 <tr><td><code>examples/watch_load.rs</code>, <code>examples/limits_bench.rs</code></td><td>searches answered and latency while a large tree changes; where limits bite</td><td>measured numbers</td><td>by hand, see <a href="incremental.html#how-this-is-tested">Incremental updates</a></td></tr>
 </tbody>
 </table>
@@ -298,6 +299,10 @@ oracle).</li>
 for half-second searches: the watcher drained a backlog at 8% of its
 speed, not the “half speed or better” the docs claimed (lock
 simulation; see <a href="incremental.html#holding-back-as-long-as-a-search-runs">Incremental updates</a>).</li>
+<li>After every restart from a saved index, every search waited 4 to 5 s
+while the import graph’s parked imports were retried in one lock hold;
+a <code>backlog</code> diagnostic fired under steady edits the watcher kept up with
+(scale scoreboard).</li>
 <li>Earlier probes found a crash when a large file was rewritten during a
 search, “server unavailable” at the end of a build, and lost changes
 after failed reads or a panic; the fault and watch tests cover them.</li>
