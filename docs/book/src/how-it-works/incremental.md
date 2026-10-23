@@ -23,6 +23,12 @@ When events are known to be lost (the OS reports an overflow, or the
 bounded queue fills up), the watched roots are reconciled with the disk
 instead. Reconciling skips files whose size and modification time match
 what was indexed, so it costs a walk and a stat per file, not a rebuild.
+A file that was read within 3 seconds of being modified is read again
+anyway: on file systems with coarse timestamps (FAT, HFS+, some network
+shares) it could have been rewritten in the same tick with the same size.
+A folder that the ignore files above it ignore (`sub/` in the root
+`.gitignore`) is left out when it is reconciled, as the initial walk
+leaves it out.
 
 **Ignore files.** A change to a `.gitignore`, `.ignore` or `.rgignore`
 (edited, created, deleted, or swapped by a branch switch) reconciles the
@@ -211,6 +217,14 @@ searches continuously while a burst of changes is applied and fails if a
 search is turned away or waits too long; another holds a long search while
 a burst waits to be installed and checks that other searches are answered
 and report the changes still to apply.
+
+`tests/lifecycle_model.rs` drives the same code (the watch loop's
+`apply_burst`, the background indexer's load and reconcile) through random
+sequences of edits, renames, folder moves, ignore-file changes, binary and
+oversized files, lost events, saves, restarts and crashes, and after every
+step compares the index with a naive model of the disk: the file set and
+every word's hits, read page by page. A failure is shrunk to the shortest
+sequence that still fails. See [How fcs is tested](testing.md).
 
 `tests/fault_injection.rs` makes reads fail and the install step panic
 on purpose, through fault points compiled in only with the `failpoints`

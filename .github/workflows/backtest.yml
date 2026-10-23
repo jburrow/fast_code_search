@@ -19,6 +19,7 @@ on:
     paths:
       - "src/**"
       - "examples/rg_backtest.rs"
+      - "tests/search_properties.rs"
       - "benches/rg_backtest.toml"
       - "tests/fixtures/backtest/**"
       - "Cargo.toml"
@@ -74,6 +75,17 @@ jobs:
             --markdown backtest.md --json backtest.json
         env:
           SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
+
+      # Random text (case-folding oddities, multi-byte characters) and
+      # random literal and regex queries through the engine and rg; a fixed
+      # seed on pull requests, as above.
+      - name: Search properties against ripgrep
+        run: cargo test --release --test search_properties
+        env:
+          FCS_REQUIRE_RG: "1"
+          PROPTEST_CASES: "2000"
+          PROPTEST_RNG_SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
+
       - name: Report
         if: always()
         run: test -f backtest.md && cat backtest.md >> "$GITHUB_STEP_SUMMARY" || true

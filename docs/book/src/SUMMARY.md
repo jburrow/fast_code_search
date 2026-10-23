@@ -43,6 +43,7 @@
 - [Incremental updates](how-it-works/incremental.md)
 - [Persistence](how-it-works/persistence.md)
 - [Memory and limits](how-it-works/memory.md)
+- [How fcs is tested](how-it-works/testing.md)
 
 # Benchmarks
 

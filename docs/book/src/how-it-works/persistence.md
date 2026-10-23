@@ -25,7 +25,10 @@ exits, however it exits.
 
 1. Map the file, validate header, lengths, checksum and directory order.
 2. **Stat pass**: one `stat` per persisted file, in parallel. A file whose
-   mtime or size differs is *stale*; a file that is definitely gone
+   mtime or size differs is *stale* (a file that was read within 3 seconds
+   of being modified is saved with no time, so it is always stale: on a
+   file system with coarse timestamps it could have changed in the same
+   tick); a file that is definitely gone
    (`ENOENT`) is *removed*; any other error keeps the entry, so a permission
    problem or an unmounted share cannot wipe a root from the checkpoint.
 3. **Eligibility pass**: every surviving file is checked against the
@@ -35,7 +38,8 @@ exits, however it exits.
    mapping in parallel, restore symbols, references and edges — or
    re-extract them from content if the file was written by an older
    extractor — and rebuild the fast-ranking metadata.
-5. Re-index the stale files, then discover anything new under the roots.
+5. Re-index the stale files that the current configuration and ignore
+   files still allow, then discover anything new under the roots.
 
 Roots are compared in canonical form, so a symlinked temp directory on
 macOS or an 8.3 short name on Windows is the same root as its long

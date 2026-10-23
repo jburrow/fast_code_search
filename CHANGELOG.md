@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Folders ignored by a parent's `.gitignore` stayed out only until
+  something happened in them.** With `sub/` in the root `.gitignore`, the
+  watcher indexed everything in `pkg/sub` when the folder was created,
+  renamed in, had an ignore file written in it, or was rescanned after
+  lost events: a walk never checks whether the folder it starts from is
+  ignored. It now does.
+- **A restart re-indexed changed files that are now ignored.** A file that
+  changed while the server was down was re-read without checking the
+  ignore rules (only the size cap and excludes), so a file a new
+  `.gitignore` rule covered came back if it had also changed. Changed files
+  now go through the same rules as discovery.
+- **A file rewritten within the same second could stay stale.** On file
+  systems with coarse timestamps (FAT, HFS+, some network shares), a file
+  rewritten with the same size in the same tick it was indexed kept its
+  old content in the index across a restart or a rescan after lost events,
+  because its size and time had not changed. A file read within 3 seconds
+  of being modified is now read again by the next rescan or restart, as
+  git does with "racily clean" files.
 - **Short queries missed very small files.** A file shorter than three
   bytes with a name shorter than three letters (`x.py` holding `ab`) has no
   trigram, and queries without a trigram of their own (two characters, a
@@ -67,6 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexing).
 
 ### Added
+- **More ways the tests look for wrong answers.** A model-based test
+  (`tests/lifecycle_model.rs`) drives the index through random sequences of
+  edits, renames, folder moves, ignore-file changes, lost events, saves,
+  restarts and crashes, and after every step compares it with a naive
+  model, page by page; it found the first two fixes above. Property tests
+  (`tests/search_properties.rs`) compare literal and regex searches with
+  ripgrep on random text full of case-folding oddities (`ß`, `ſ`, the
+  Kelvin sign, the sigmas, dotted and dotless i). A generator of seeded
+  Python codebases with an answer key (`tests/python_codebase.rs`) checks
+  the import graph, symbol and reference searches and strict
+  `-deps`/`-rdeps` scopes, after a build and after the watcher rewrites the
+  tree; grimp and Python check the key itself. Book page: How it works >
+  How fcs is tested.
 - **The index checks itself.** `fcs check --live` asks the running server
   whether its index agrees with itself, whether indexed files still match
   the disk, and whether it holds the files a fresh walk finds. It prints

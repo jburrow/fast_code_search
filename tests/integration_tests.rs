@@ -15,6 +15,23 @@ use fast_code_search::{
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tempfile::TempDir;
+
+/// Set every file under `dir` to a modification time a minute ago, so the
+/// files are not racy (read within seconds of a write) and a reload trusts
+/// their size and time, as it would for files nobody just edited.
+fn age_files(dir: &std::path::Path) {
+    let then = std::time::SystemTime::now() - Duration::from_secs(60);
+    for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
+        if entry.file_type().is_file() {
+            std::fs::File::options()
+                .write(true)
+                .open(entry.path())
+                .unwrap()
+                .set_modified(then)
+                .unwrap();
+        }
+    }
+}
 use tokio::net::TcpListener;
 use tonic::transport::Server;
 
@@ -2608,6 +2625,7 @@ async fn test_reload_remaps_trigram_ids_after_stale_file() -> Result<()> {
     };
 
     {
+        age_files(temp.path());
         let mut eng = SearchEngine::new();
         for p in &paths {
             eng.index_file(p)?;
@@ -2904,6 +2922,7 @@ async fn test_unresolved_imports_survive_reload() -> Result<()> {
         ..Default::default()
     };
     {
+        age_files(temp.path());
         let mut eng = SearchEngine::new();
         eng.index_file(&main_rs)?;
         eng.resolve_imports();
@@ -3161,6 +3180,7 @@ async fn test_save_after_remove_keeps_ids_consistent() -> Result<()> {
     };
 
     {
+        age_files(temp.path());
         let mut eng = SearchEngine::new();
         for p in &paths {
             eng.index_file(p)?;
