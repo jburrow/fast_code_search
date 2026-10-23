@@ -94,11 +94,16 @@ after five seconds got "Index is currently being updated".
 
 Writers no longer queue. An install step (and each batch of the initial
 build) takes the write lock in a moment when no search holds it, trying
-every couple of milliseconds. While it waits, a new search holds back for
-up to 250 ms so the running ones can finish and the step can get in, and
-then goes ahead whether or not it did. A search therefore waits for a
-step's short hold (tens of milliseconds), never for other searches. A
-search that arrives during a step waits for it (about a second at most);
+every couple of milliseconds. While it waits, a new search holds back so
+the running ones can finish and the step can get in, and then goes ahead
+whether or not it did. It holds back a little longer than recent
+searches took (one and a half times the 90th percentile of the last 32),
+at least 250 ms and at most 2 s: the running searches need about that
+long to finish, and a search let in sooner keeps the step out too (see
+[Catching up](#catching-up)).
+A search therefore waits for a step's short hold and a typical search's
+length, never for one slow search. A search that arrives during a step
+waits for it (about a second at most);
 one still waiting after five seconds gets a 503 with `Retry-After: 1`
 (gRPC: `UNAVAILABLE`), which `fcs` and the web UI retry on their own.
 
@@ -162,6 +167,55 @@ No search was turned away in any of these runs. The million-file run
 overflowed the watcher's event queue twice, so it reconciled the whole
 tree as well (about 40 s of walking a million files, during which the
 pending count does not move); the rest is installing.
+
+### Holding back as long as a search runs
+
+"Half speed or better" holds only while a step waits less than its one
+second cap, and that needs the running searches to finish without new
+ones taking their place. Until 0.19 a new search held back for a fixed
+250 ms. With searches longer than that it went ahead while the earlier
+ones still ran, the step then waited for it as well, and so on: the step
+waited past its cap, held for only a second, and the drain fell far
+below half speed.
+
+`tests/lock_sim.rs` shows it. It runs the real lock code and step policy
+on a simulated clock (`fast_code_search::sim`), so searches of any
+length and minutes of load run in about a second, the same schedule on
+every run and OS. Three made-up loads, the worst of five seeds each, with
+the one second cap:
+
+| Load (installing alone takes) | Holding back | Drained after | Longest search wait |
+|---|---|---|---|
+| 4 people, 0.4–0.6 s searches back to back, 100,000 files (4.9 s) | none | not in 600 s | 23 ms |
+| | 250 ms | 62.1 s | 1.25 s |
+| | 500 ms | 10.1 s | 0.81 s |
+| | adaptive | 10.5 s | 1.64 s |
+| 1 search of 20 s and quick searches, 10 files | 250 ms | 20.0 s | 0.25 s |
+| | 1 s | 20.1 s | 1.0 s |
+| | adaptive | 20.0 s | 0.25 s |
+| 12 people with quick searches, 2 with 1–4 s ones, 30,000 files (2.4 s) | 250 ms | 11.4 s | 1.14 s |
+| | 500 ms | 8.6 s | 1.47 s |
+| | adaptive | 11.4 s | 1.14 s |
+
+Any fixed value works only for searches shorter than it, and the longer
+the value, the longer quick searches wait behind one slow one (second
+load). So a search holds back for one and a half times the 90th
+percentile of how long the last 32 searches held the index, between
+250 ms and 2 s: on a large tree whose searches take half a second it
+holds back about 0.9 s, while one slow search among quick ones does not
+raise it. The factor is there because a search that holds back for less
+than the running ones take can get in before they end; with exactly the
+90th percentile, the first load drained in up to 22 s. Before any search
+has finished, the hold-back is 250 ms, which is why the first step of the
+first load waits longer (the longest search wait in that row). Holding
+back only for a fixed window after the step starts to wait (instead of
+from each search's arrival) did no better: in the first load the step
+never got in.
+The one second cap stays: with a 2 s cap the busy load drained in 6.6 s
+instead of 11.4 s, but a search then waited up to 2.1 s for a step; with
+500 ms, quick searches waited less but the first load took 11.7 s.
+`cargo test --release --test lock_sim -- --ignored --nocapture` prints the
+full table (four caps and nine hold-back rules).
 
 ## Files that can't be read
 

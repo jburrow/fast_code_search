@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The watcher could fall far behind while people searched.** While an
+  install step waits for the index, new searches hold back so the running
+  ones can finish and the step gets in. They held back a fixed 250 ms, so
+  with searches longer than that a new one got in before the running ones
+  ended and the step kept waiting: in a simulation with four people
+  running half-second searches back to back, a change that takes 5 s to
+  install took up to 62 s. A search now holds back for one and a half
+  times the 90th percentile of recent searches' length (250 ms to 2 s);
+  the same change takes about 10 s, and quick searches still wait only
+  250 ms behind one slow one. The docs claimed "half speed or better"
+  regardless; the book's "Incremental updates" page now has the table.
 - **The watcher could index files the build leaves out, by ignore rules.**
   When a file changed, the watcher decided whether it was ignored
   differently from the walk that builds the index (and from ripgrep): a
@@ -120,6 +131,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made up from the corpus (`--generate-regex`), and
   `tests/discovery_oracle.rs` compares the indexed files and the FILES box
   with `rg`.
+- **The lock protocol on a simulated clock.** `fast_code_search::sim` runs
+  threads in turns on simulated time, and the engine lock and the
+  watcher's install steps read and sleep through it, so
+  `tests/lock_sim.rs` runs the real code under minutes of made-up search
+  load in about a second, the same on every run and OS. It found the
+  watcher fix above, and its tuning table is the evidence for the
+  hold-back and `MAX_HOLD` values.
 - **The index checks itself.** `fcs check --live` asks the running server
   whether its index agrees with itself, whether indexed files still match
   the disk, and whether it holds the files a fresh walk finds. It prints
