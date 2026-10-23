@@ -3970,3 +3970,144 @@ fn test_filters_without_text_say_so() {
         .unwrap();
     assert!(err.contains("no text to find"), "{err}");
 }
+
+/// A Python package tree whose files import each other (and the stdlib,
+/// which stays unresolved), indexed importers first so imports park.
+fn python_import_tree(root: &std::path::Path, files: usize) -> Vec<std::path::PathBuf> {
+    fs::create_dir_all(root.join("pkg/sub")).unwrap();
+    fs::write(root.join("pkg/__init__.py"), "").unwrap();
+    fs::write(root.join("pkg/sub/__init__.py"), "").unwrap();
+    let mut paths = Vec::new();
+    for i in 0..files {
+        let dir = if i % 2 == 0 { "pkg" } else { "pkg/sub" };
+        let p = root.join(format!("{dir}/m{i}.py"));
+        let next = (i + 1) % files;
+        let next_dir = if next % 2 == 0 { "pkg" } else { "pkg.sub" };
+        fs::write(
+            &p,
+            format!("import os\nfrom {next_dir} import m{next}\nfrom .missing{i} import x\n\ndef f{i}():\n    return m{next}\n"),
+        )
+        .unwrap();
+        paths.push(p);
+    }
+    paths
+}
+
+fn edge_list(engine: &SearchEngine) -> Vec<(String, String)> {
+    let mut edges = Vec::new();
+    for id in 0..engine.file_store.len() as u32 {
+        let Some(from) = engine.file_store.get_path(id) else {
+            continue;
+        };
+        for to in engine.get_dependencies(id) {
+            let to = engine.file_store.get_path(to).unwrap();
+            edges.push((
+                from.to_string_lossy().into_owned(),
+                to.to_string_lossy().into_owned(),
+            ));
+        }
+    }
+    edges.sort();
+    edges
+}
+
+/// Settling the graph at the end of a build in small steps (each under its
+/// own write lock, so searches are answered in between) ends with the same
+/// graph and parked imports as settling it in one go.
+#[test]
+fn test_import_settling_in_steps_matches_one_go() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = python_import_tree(temp_dir.path(), 40);
+    let build = || {
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(temp_dir.path());
+        for p in paths.iter().rev() {
+            engine.index_file(p).unwrap();
+            engine.resolve_imports_incremental();
+        }
+        engine
+    };
+
+    let mut whole = build();
+    whole.resolve_imports();
+
+    let mut stepped = build();
+    let mut settling = stepped.begin_settling_imports();
+    let total = settling.remaining();
+    assert!(total >= 40, "every importer is resolved again: {total}");
+    let mut steps = 0;
+    while !stepped.settle_imports_step(&mut settling, 7) {
+        steps += 1;
+        assert_eq!(settling.remaining(), total - 7 * steps);
+    }
+    assert!(steps >= 5);
+
+    assert_eq!(edge_list(&stepped), edge_list(&whole));
+    assert_eq!(edge_list(&whole).len(), 40);
+    assert_eq!(
+        stepped.waiting_imports_count(),
+        whole.waiting_imports_count()
+    );
+    assert_eq!(
+        whole.waiting_imports_count(),
+        80,
+        "os and .missingN stay parked"
+    );
+}
+
+/// A saved index loaded into a side engine and adopted keeps the live
+/// engine's state (building, watching, the watcher's backlog counters)
+/// and answers searches like a direct load.
+#[test]
+fn test_adopt_loaded_index_keeps_live_state() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = python_import_tree(temp_dir.path(), 10);
+    let index_path = temp_dir.path().join("idx.fcsidx");
+    let config = crate::config::IndexerConfig {
+        paths: vec![temp_dir.path().to_string_lossy().into_owned()],
+        ..Default::default()
+    };
+    {
+        let mut engine = SearchEngine::new();
+        engine.add_root_path(temp_dir.path());
+        for p in &paths {
+            engine.index_file(p).unwrap();
+        }
+        engine.resolve_imports();
+        engine.finalize();
+        engine.save_index(&index_path, &config).unwrap();
+    }
+
+    let mut live = SearchEngine::new();
+    live.add_root_path(temp_dir.path());
+    live.building = true;
+    live.watching = true;
+    let backlog = live.watch_backlog.clone();
+    backlog
+        .queued
+        .store(3, std::sync::atomic::Ordering::Release);
+
+    let mut loaded = live.empty_with_settings();
+    loaded
+        .load_index_with_progress(&index_path, &config, |_, _, _, _| {})
+        .unwrap();
+    live.adopt_index(loaded);
+
+    assert!(live.building && live.watching);
+    assert_eq!(live.freshness().pending_changes, 3);
+    backlog
+        .queued
+        .store(0, std::sync::atomic::Ordering::Release);
+    assert_eq!(
+        live.freshness().pending_changes,
+        0,
+        "the counters are still shared"
+    );
+    assert_eq!(live.get_stats().num_files, 10);
+    let hits = live.search("f3", 10);
+    assert!(
+        hits.iter().any(|h| h.file_path.ends_with("m3.py")),
+        "{hits:?}"
+    );
+    assert_eq!(edge_list(&live).len(), 10);
+}

@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
-use tracing::info;
+use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 /// Channel buffer size for file discovery pipeline.
 const CHANNEL_BUFFER: usize = 5000;
@@ -398,14 +398,12 @@ fn try_load_persisted_index(
     let pb_manager = ProgressBarManager::new();
     pb_manager.set_spinner("📂 Loading persisted index...");
 
+    // Load into a side engine with the same settings and swap it in under
+    // one short write lock: the load takes seconds on a large tree, and
+    // holding the engine's write lock for all of it turned searches away.
+    let mut loaded = engine_lock::write(index_engine).empty_with_settings();
     let result = {
-        let mut engine = match index_engine.write() {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to acquire engine lock");
-                return (None, false);
-            }
-        };
+        let engine = &mut loaded;
 
         // Create a callback that updates both WebSocket progress and terminal progress bar
         let progress_ref = index_progress;
@@ -433,10 +431,8 @@ fn try_load_persisted_index(
 
     match result {
         Ok(result) => {
-            let files_loaded = index_engine
-                .read()
-                .map(|e| e.get_stats().num_files)
-                .unwrap_or(0);
+            let files_loaded = loaded.get_stats().num_files;
+            engine_lock::write(index_engine).adopt_index(loaded);
 
             println!(
                 "✅ Loaded {} files from persisted index",
@@ -970,36 +966,62 @@ fn process_batch(
 }
 
 /// Finalize import resolution after all batches are processed.
+///
+/// Resolving every importer again takes seconds on a large tree (6 s at
+/// 300,000 files), so it runs in steps that each hold the write lock for
+/// about [`SETTLE_HOLD`], with searches answered in between; one hold for
+/// all of it turned every search away at the end of each build.
 fn finalize_imports(
     index_engine: &Arc<RwLock<SearchEngine>>,
     index_progress: &SharedIndexingProgress,
     index_progress_tx: &ProgressBroadcaster,
 ) {
-    let mut engine = engine_lock::write(index_engine);
+    let mut settling = {
+        let mut engine = engine_lock::write(index_engine);
+        let pending_count = engine.pending_imports_count();
+        if pending_count > 0 {
+            broadcast_progress(index_progress, index_progress_tx, |p| {
+                p.status = IndexingStatus::ResolvingImports;
+                p.current_path = None;
+                p.message = format!(
+                    "Resolving {} remaining import dependencies...",
+                    pending_count
+                );
+            });
 
-    let pending_count = engine.pending_imports_count();
-
-    if pending_count > 0 {
-        broadcast_progress(index_progress, index_progress_tx, |p| {
-            p.status = IndexingStatus::ResolvingImports;
-            p.current_path = None;
-            p.message = format!(
-                "Resolving {} remaining import dependencies...",
-                pending_count
+            info!(
+                pending_imports = pending_count,
+                "Resolving remaining import dependencies..."
             );
-        });
-
-        info!(
-            pending_imports = pending_count,
-            "Resolving remaining import dependencies..."
-        );
+        }
+        // Always: besides the remaining imports, this resolves every importer
+        // once against the complete file set and settles the graph for watch
+        // updates.
+        engine.begin_settling_imports()
+    };
+    let mut steps = 0usize;
+    loop {
+        let mut engine = engine_lock::write(index_engine);
+        let held = Instant::now();
+        let done = loop {
+            if engine.settle_imports_step(&mut settling, SETTLE_CHUNK) {
+                break true;
+            }
+            if held.elapsed() >= SETTLE_HOLD {
+                break false;
+            }
+        };
+        drop(engine);
+        steps += 1;
+        if done {
+            break;
+        }
+        std::thread::sleep(SETTLE_GAP);
     }
-    // Always: besides the remaining imports, this resolves every importer
-    // once against the complete file set and settles the graph for watch
-    // updates.
-    engine.resolve_imports();
+    debug!(steps, "Import resolution settled");
 
     info!("Finalizing index...");
+    let mut engine = engine_lock::write(index_engine);
     engine.finalize();
 
     let stats = engine.get_stats();
@@ -1008,6 +1030,16 @@ fn finalize_imports(
         "Import resolution completed"
     );
 }
+
+/// Importers resolved at a time while settling the graph at the end of a
+/// build; a step resolves chunks until it has held the lock [`SETTLE_HOLD`].
+const SETTLE_CHUNK: usize = 1024;
+
+/// About the longest one settling step holds the write lock.
+const SETTLE_HOLD: Duration = Duration::from_millis(250);
+
+/// The pause between settling steps, so waiting searches are answered.
+const SETTLE_GAP: Duration = Duration::from_millis(20);
 
 /// Log completion statistics.
 fn log_completion_stats(

@@ -1134,6 +1134,20 @@ impl FileMetadata {
     }
 }
 
+/// Importers still to resolve again at the end of a build; see
+/// [`SearchEngine::begin_settling_imports`].
+#[derive(Debug, Default)]
+pub struct ImportSettling {
+    importers: Vec<u32>,
+}
+
+impl ImportSettling {
+    /// Importers not resolved yet.
+    pub fn remaining(&self) -> usize {
+        self.importers.len()
+    }
+}
+
 pub struct SearchEngine {
     pub file_store: LazyFileStore,
     pub trigram_index: TrigramIndex,
@@ -1255,6 +1269,33 @@ impl SearchEngine {
             watching: false,
             watch_backlog: WatchBacklog::default(),
         }
+    }
+
+    /// An empty engine with this one's settings (roots, symbol, encoding
+    /// and size settings), to load a saved index into without holding this
+    /// engine's lock; see [`Self::adopt_index`].
+    pub fn empty_with_settings(&self) -> Self {
+        let mut fresh = Self::new();
+        fresh.enable_symbols = self.enable_symbols;
+        fresh.transcode_non_utf8 = self.transcode_non_utf8;
+        fresh.max_file_size = self.max_file_size;
+        fresh.show_root_name = self.show_root_name;
+        fresh.root_paths = self.root_paths.clone();
+        fresh.root_labels = self.root_labels.clone();
+        fresh
+    }
+
+    /// Take over the index `loaded` holds (files, postings, symbols, graph,
+    /// freshness times), keeping this engine's live state: whether it is
+    /// building or watching, and the watcher's backlog counters. Loading a
+    /// saved index takes seconds on a large tree; loading it into a side
+    /// engine and adopting it under one short write lock keeps searches
+    /// answered meanwhile (they see the index being built, and say so).
+    pub fn adopt_index(&mut self, mut loaded: SearchEngine) {
+        loaded.building = self.building;
+        loaded.watching = self.watching;
+        loaded.watch_backlog = std::mem::take(&mut self.watch_backlog);
+        *self = loaded;
     }
 
     /// Register an indexed root path so that `make_display_path` can produce
@@ -1496,25 +1537,64 @@ impl SearchEngine {
     /// 1. Parallel path resolution using rayon (CPU-bound, thread-safe)
     /// 2. Sequential graph insertion (requires &mut self)
     pub fn resolve_imports(&mut self) {
-        // Everything queued for this batch, plus one final attempt at every
-        // parked import (the last file may have landed without a matching
-        // stem, e.g. a `.d.ts`). Still-unresolved imports stay parked so they
-        // are persisted and retried after a later incremental add.
+        let mut settling = self.begin_settling_imports();
+        while !self.settle_imports_step(&mut settling, usize::MAX) {}
+    }
+
+    /// Start [`Self::resolve_imports`] so it can run in steps, each under
+    /// its own write lock: on a large tree resolving every importer again
+    /// takes seconds, and one lock hold for all of it turned searches away
+    /// at the end of every build. Searches between the steps see a graph
+    /// part way through being settled, while the index still reports
+    /// itself as building.
+    ///
+    /// The graph counts as settled from here on, so a file the watcher
+    /// adds or removes between steps re-resolves the importers that
+    /// mention it, as it would after the build; the importers still to do
+    /// are resolved against the files indexed when their step runs.
+    pub fn begin_settling_imports(&mut self) -> ImportSettling {
+        // Queued and parked imports of files whose import list is not
+        // known get one final attempt now; every file with a known list is
+        // resolved from scratch in the steps below, so its queued imports
+        // need no attempt here (on a loaded index that is every file, and
+        // resolving them all at once here was one long lock hold). Still
+        // unresolved imports stay parked so they are persisted and retried
+        // after a later incremental add.
+        let specs = &self.import_specs;
+        self.pending_imports
+            .retain(|(id, _, _)| !specs.contains_key(id));
         self.resolve_pending_now();
-        let all: Vec<usize> = (0..self.waiting_imports.len())
-            .filter(|&i| self.waiting_imports[i].is_some())
+        let orphans: Vec<usize> = (0..self.waiting_imports.len())
+            .filter(|&i| {
+                self.waiting_imports[i]
+                    .as_ref()
+                    .is_some_and(|(id, _, _)| !self.import_specs.contains_key(id))
+            })
             .collect();
-        self.retry_waiting(all);
+        self.retry_waiting(orphans);
         self.recently_added_stems.clear();
         // Imports resolved while the build was still adding files may have
         // fallen back to a package whose module was indexed later; resolve
         // every importer once more against the complete file set, so the
         // graph does not depend on the order files were indexed in.
-        let everyone: FxHashSet<u32> = self.import_specs.keys().copied().collect();
+        let mut importers: Vec<u32> = self.import_specs.keys().copied().collect();
+        importers.sort_unstable();
         self.dirty_importers.clear();
-        self.recompute_importers(everyone);
-        self.compact_waiting_imports();
         self.graph_settled = true;
+        ImportSettling { importers }
+    }
+
+    /// Resolve up to `max` more importers of `settling`; true when all are
+    /// done (the waiting list is then compacted).
+    pub fn settle_imports_step(&mut self, settling: &mut ImportSettling, max: usize) -> bool {
+        let take = settling.importers.len().min(max);
+        let step: FxHashSet<u32> = settling.importers.drain(..take).collect();
+        self.recompute_importers(step);
+        if settling.importers.is_empty() {
+            self.compact_waiting_imports();
+            return true;
+        }
+        false
     }
 
     /// Remember `imports` as `id`'s complete import list.
