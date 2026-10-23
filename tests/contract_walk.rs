@@ -576,13 +576,8 @@ fn mcp_hits(text: &str) -> (Vec<Hit>, Option<usize>) {
             continue;
         }
         // path:line:col: text
-        let mut parts = line.splitn(4, ':');
-        if let (Some(path), Some(l), Some(c), Some(_)) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        {
-            if let (Ok(l), Ok(_)) = (l.parse::<usize>(), c.parse::<usize>()) {
-                hits.push((path.to_string(), l));
-            }
+        if let Some(hit) = path_line(line) {
+            hits.push(hit);
         }
     }
     (hits, next)
@@ -652,14 +647,17 @@ fn fcs_mode_args(cmd: &mut Command, q: &Query) {
 
 /// `path:line:col:text` lines.
 fn vimgrep_hits(out: &str) -> Vec<Hit> {
-    out.lines()
-        .filter_map(|l| {
-            let mut p = l.splitn(4, ':');
-            let path = p.next()?;
-            let line = p.next()?.parse().ok()?;
-            Some((path.to_string(), line))
-        })
-        .collect()
+    out.lines().filter_map(path_line).collect()
+}
+
+/// The path and line of a `path:line:col:text` line. The path is what comes
+/// before the first `:line:col:`, so a Windows drive letter (`C:\...`) or a
+/// colon in the text does not cut it short.
+fn path_line(l: &str) -> Option<Hit> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"^(.*?):(\d+):(\d+):").unwrap());
+    let c = re.captures(l)?;
+    Some((c[1].to_string(), c[2].parse().ok()?))
 }
 
 /// `fcs` piped, paged with `--offset` like a script would.
@@ -698,11 +696,14 @@ fn fcs_walk(s: &Servers, q: &Query, page: usize, offline: bool) -> Result<Vec<Hi
 }
 
 /// `path` as results show it: an absolute path under `root` becomes
-/// `<root name>/rest`.
+/// `<root name>/rest`. Compared as text with `/` separators and without
+/// Windows' `\\?\` prefix, which `canonicalize` adds and fcs does not print.
 fn display_path(root: &Path, path: &str) -> String {
-    match Path::new(path).strip_prefix(root) {
-        Ok(rest) => format!("{ROOT}/{}", rest.to_string_lossy().replace('\\', "/")),
-        Err(_) => path.to_string(),
+    let norm = |p: &str| p.replace('\\', "/").trim_start_matches("//?/").to_string();
+    let (root, path) = (norm(&root.to_string_lossy()), norm(path));
+    match path.strip_prefix(&format!("{root}/")) {
+        Some(rest) => format!("{ROOT}/{rest}"),
+        None => path,
     }
 }
 
