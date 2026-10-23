@@ -768,7 +768,7 @@ pub struct PartialIndexedFile {
     /// read*.
     pub mtime: u64,
     /// Read so soon after it was modified that its size and time cannot
-    /// vouch for its content later (see [`RACY_WINDOW`]).
+    /// vouch for its content later (within 3 seconds of the change).
     pub racy: bool,
     /// Size in bytes of the file *as read*.
     pub size: u64,
