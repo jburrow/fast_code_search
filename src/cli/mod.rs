@@ -37,7 +37,7 @@ pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 /// Subcommands `fcs` understands; anything else on the command line is a
 /// search query (see [`normalize_args`]).
 pub const SUBCOMMANDS: &[&str] = &[
-    "search", "refs", "symbols", "impact", "status", "mcp", "check", "help",
+    "search", "refs", "symbols", "impact", "status", "mcp", "check", "diagnose", "help",
 ];
 
 #[derive(Parser, Debug)]
@@ -62,7 +62,8 @@ pub const SUBCOMMANDS: &[&str] = &[
                   vim -q <(fcs --format vimgrep TODO)\n  \
                   fcs status                    is the server up, what does it hold\n  \
                   fcs mcp                       MCP over stdio, for coding agents\n  \
-                  fcs check                     compare fcs with ripgrep and the import resolvers"
+                  fcs check                     compare fcs with ripgrep and the import resolvers\n  \
+                  fcs diagnose                  what the server's diagnostic captures say"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -94,6 +95,18 @@ pub enum Command {
     /// queries against ripgrep, and the import graph against Python's and
     /// TypeScript's own resolvers when they are installed
     Check(CheckArgs),
+    /// Summarize the server's diagnostic captures (written when
+    /// `[diagnostics] capture = true` and the server is slow or stuck)
+    Diagnose(DiagnoseArgs),
+}
+
+/// `fcs diagnose`.
+#[derive(Args, Debug, Clone)]
+pub struct DiagnoseArgs {
+    /// The captures folder (default: the configuration's `[diagnostics]`
+    /// dir, else `diagnostics` next to its index)
+    #[arg(value_name = "DIR")]
+    pub dir: Option<PathBuf>,
 }
 
 /// `fcs check`.
@@ -1078,6 +1091,22 @@ fn check(session: &Session, args: &CheckArgs) -> Result<i32> {
     crate::check::run_check(&indexer, &opts, &mut stdout, &|m| session.note(m))
 }
 
+/// `fcs diagnose`: summarize the captures in a folder. Exit 1 when there
+/// are none.
+fn diagnose(session: &Session, args: &DiagnoseArgs) -> Result<i32> {
+    use crate::diagnostics::capture;
+    let dir = match &args.dir {
+        Some(d) => d.clone(),
+        None => {
+            let config = session.config.clone().unwrap_or_default();
+            capture::capture_dir(&config.diagnostics, config.indexer.index_path.as_deref())
+        }
+    };
+    let (captures, bad) = capture::load_captures(&dir);
+    print!("{}", capture::summarize(&dir, &captures, &bad));
+    Ok(if captures.is_empty() { 1 } else { 0 })
+}
+
 fn run(cli: Cli) -> Result<i32> {
     let session = Session::new(cli.conn, cli.output)?;
     let (args, mode) = match cli.command {
@@ -1090,6 +1119,7 @@ fn run(cli: Cli) -> Result<i32> {
             return Ok(0);
         }
         Command::Check(a) => return check(&session, &a),
+        Command::Diagnose(a) => return diagnose(&session, &a),
         Command::Impact(a) => return impact(&session, &a),
         Command::Search(a) => (a, Mode::Text),
         Command::Refs(a) => (a, Mode::References),

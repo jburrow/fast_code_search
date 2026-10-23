@@ -31,6 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexing).
 
 ### Added
+- **Diagnostic captures.** With `[diagnostics] capture = true` the server
+  notices when it is slow or stuck and writes what it was doing to a JSON
+  file: a search slower than 5 s or kept waiting over 2 s for the index
+  lock, the watcher or index build making no progress for 120 s, a search
+  still running after 120 s, the index lock never free, or a watcher
+  backlog lasting 300 s. A capture holds the trigger, the search's phase
+  timings, the searches running, the index and watcher state, recent
+  watcher bursts, memory and threads, the last log lines and, for a hang,
+  every thread's state and stack (`gdb` or `eu-stack` when installed).
+  Query text, paths and file names are left out unless
+  `include_queries = true`. Captures are rate-limited and capped (50 files,
+  100 MB). `fcs diagnose [DIR]` summarizes them, and `/api/diagnostics`
+  says where they go. Off by default; thresholds are measured
+  (`watch_load --capture-dir`). See the book's "Diagnostic captures" page.
+  Release binaries now keep function names (about 3 MB larger) so thread
+  stacks and panic backtraces are readable.
 - **Diff impact: `fcs impact`, `POST /api/impact`, MCP `diff_impact`.**
   Give it a diff (by default your uncommitted changes) and it lists, for
   each function, class, method, type or constant the diff changes, the files

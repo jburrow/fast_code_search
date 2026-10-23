@@ -3,6 +3,8 @@
 //! Provides health checks, self-tests, and rich diagnostics information
 //! for both keyword and semantic search servers.
 
+pub mod capture;
+
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -271,6 +273,9 @@ pub struct KeywordDiagnosticsResponse {
     /// Running APIs, persistence, and problems found at startup or now
     #[serde(default)]
     pub service: ServiceStatus,
+    /// Diagnostic captures, when `[diagnostics] capture` is on
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captures: Option<capture::CaptureStatus>,
     /// Index statistics
     pub index: KeywordIndexDiagnostics,
     /// Self-test results

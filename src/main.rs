@@ -94,6 +94,13 @@ async fn main() -> Result<()> {
     } else {
         Level::INFO
     };
+    // Diagnostic captures start before logging, so the log lines they keep
+    // go back to startup; how it went is logged below.
+    let diag_capture = diagnostics::capture::Settings::from_config(
+        &config.diagnostics,
+        config.indexer.index_path.as_deref(),
+    )
+    .map(|s| (s.dir.clone(), diagnostics::capture::init(s)));
     let tele = config.telemetry.clone().with_env_overrides();
     telemetry::init_telemetry(
         tele.enabled,
@@ -106,6 +113,21 @@ async fn main() -> Result<()> {
     diagnostics::init_server_start_time();
 
     info!(source = %config_source, "Configuration source");
+    match &diag_capture {
+        Some((dir, Ok(()))) => info!(
+            dir = %dir.display(),
+            "Diagnostic captures on: slow or stuck moments are written here (fcs diagnose to read them)"
+        ),
+        Some((dir, Err(e))) => {
+            let msg = format!(
+                "Diagnostic captures are off: cannot create {}: {e}",
+                dir.display()
+            );
+            tracing::warn!("{msg}");
+            diagnostics::record_problem(msg);
+        }
+        None => {}
+    }
     for w in &config_warnings {
         tracing::warn!("Config: {w}");
         diagnostics::record_problem(format!("Config: {w}"));
@@ -169,6 +191,13 @@ async fn main() -> Result<()> {
             let _ = shutdown_tx.send(true);
         });
     }
+    // Notices a slow or stuck server and writes a capture (off unless
+    // [diagnostics] capture = true).
+    let _watchdog = diagnostics::capture::start_watchdog(diagnostics::capture::Watched {
+        engine: shared_engine.clone(),
+        progress: Some(shared_progress.clone()),
+        shutdown: shutdown.clone(),
+    });
     // Shared by the REST router and the gRPC service so
     // `max_concurrent_searches` bounds the process, not each surface (or
     // each gRPC connection) separately.

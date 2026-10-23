@@ -619,13 +619,22 @@ pub async fn search_handler(
         // Start timing the search
         let start_time = std::time::Instant::now();
 
+        // Times the search for diagnostic captures (inert unless they are on).
+        let mut probe = crate::diagnostics::capture::SearchProbe::start(
+            "rest",
+            request.mode.name(),
+            &request.query,
+        );
+
         // Use try_read to avoid blocking when a write lock is held during indexing.
         // Blocking here would cause threads to pile up and exhaust the thread pool.
         let engine = try_read_engine(&engine)?;
+        probe.locked();
 
         let outcome = engine
             .run(&request, limits)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        probe.searched(&outcome.info, outcome.matches.len());
         let has_more = outcome.has_more(offset);
         let ranking_info = outcome.info;
         let (files, total_files) = match outcome.paths {
@@ -1748,6 +1757,7 @@ pub async fn diagnostics_handler(
             generated_at: diagnostics::get_timestamp(),
             config,
             service,
+            captures: diagnostics::capture::status(),
             index: KeywordIndexDiagnostics {
                 num_files: stats.num_files,
                 total_size_bytes: stats.total_size,

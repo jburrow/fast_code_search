@@ -79,6 +79,7 @@ pub fn init_telemetry(
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
+            .with(crate::diagnostics::capture::LogRingLayer)
             .with(otel_layer)
             .init();
 
@@ -92,6 +93,7 @@ pub fn init_telemetry(
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
+            .with(crate::diagnostics::capture::LogRingLayer)
             .init();
 
         tracing::info!("OpenTelemetry tracing disabled, console-only logging active");

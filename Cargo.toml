@@ -150,7 +150,7 @@ required-features = ["semantic"]
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = true
+strip = "debuginfo" # keep function names: readable thread stacks (diagnostic captures) and panic backtraces
 
 [[bin]]
 name = "fast_code_search_validator"

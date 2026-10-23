@@ -19,6 +19,7 @@ vim -q <(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
 fcs check                        # compare fcs with ripgrep and the import resolvers on your code
+fcs diagnose                     # what the server's diagnostic captures say
 ```
 
 ## Design
@@ -177,6 +178,16 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
 `--queries N`, `--seed N` (repeat a run), `--rg PATH`, `--no-search`,
 `--no-graph`. It needs no server. See the book's
 [correctness page](book/src/benchmarks/correctness.md#on-your-own-code-fcs-check).
+
+## Reading diagnostic captures
+
+`fcs diagnose [DIR]` summarizes the files a server writes when
+`[diagnostics] capture = true` and it is slow or stuck: what set each one
+off, the slowest search's phases, the index and watcher state, and for a
+hang where each thread was. DIR defaults to the configuration's
+`[diagnostics] dir` (a `diagnostics` folder next to `index_path`). It needs
+no server, and exits 1 when there are no captures. See the book's
+[Diagnostic captures](book/src/guides/diagnostic-captures.md).
 
 ## Exit status
 

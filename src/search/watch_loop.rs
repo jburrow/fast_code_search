@@ -99,6 +99,16 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
         // Already cleared, unless planning panicked before it took over the
         // count of the gathered events.
         applying.store(0, Ordering::Release);
+        if let Some(r) = &report {
+            crate::diagnostics::capture::record_burst(
+                changes.len(),
+                r.outcome.indexed,
+                r.outcome.removed,
+                r.steps,
+                r.longest_hold,
+                r.elapsed,
+            );
+        }
         if let Some(report) = report.filter(|r| r.outcome.changed()) {
             let outcome = report.outcome;
             debug!(
@@ -216,6 +226,7 @@ pub fn apply_burst(
 
 /// Take `n` installed changes off the `applying` count.
 fn applied(applying: &AtomicUsize, n: usize) {
+    crate::diagnostics::capture::watcher_progress(n.max(1));
     let _ = applying.fetch_update(Ordering::AcqRel, Ordering::Acquire, |c| {
         Some(c.saturating_sub(n))
     });
