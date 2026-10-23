@@ -12,6 +12,26 @@ named temporary file next to the target, fsynced, and renamed into place.
 Two saves cannot interleave, and a crash at any point leaves the previous
 file intact. Checkpoints during a long build use the same path.
 
+- **A save that is killed** (`kill -9`, a power cut, the out-of-memory
+  killer) leaves its temporary file (`<index_path>` with `.tmp.<pid>.<n>`
+  in place of its extension, as large as the index). The next server to
+  take the index lock removes them before it loads ("Removed temp files
+  left by an index save that did not finish" in the log).
+- **A failed rename** (Windows refuses to replace a file another process
+  has open) is tried once more with the old index moved aside; if that
+  fails too, the old index is put back. The save fails, and the index on
+  disk is the previous one.
+- **A failed save** (disk full) is logged as an error, and with
+  `save_after_updates` the updates it held still count: the next save,
+  after more updates or at shutdown, writes them. The index on disk is
+  older until then, so the next start re-reads the files changed since.
+
+`tests/fault_injection.rs` fails the write and the rename on purpose
+(fault points `save.write` and `save.rename`), and `examples/chaos.rs`
+kills the server binary during saves, builds and shutdowns and checks that
+the next start loads the index and catches up (see
+[How fcs is tested](testing.md#killed-at-any-moment)).
+
 ## One server per index
 
 A server takes an exclusive lock on `<index_path>.lock` before it loads

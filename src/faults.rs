@@ -12,10 +12,20 @@
 //! `cargo test --features failpoints --test fault_injection`.
 //!
 //! Points:
-//! - `parse.read`: reading a file to index it (initial build and watcher).
+//! - `parse.read`: reading a file to index it (initial build and watcher),
+//!   after its size and mtime were read: `NotFound` here is a file that
+//!   vanished in between, [`Action::Delay`] a slow disk.
+//! - `parse.panic`: the same place, panicking (a bug in reading or
+//!   transcoding one file).
+//! - `parse.symbols`: inside symbol extraction (a tree-sitter panic).
 //! - `watch.apply`: installing a parsed watcher burst (panics).
 //! - `watch.lose`: the watch loop drops a change event, as a backend that
 //!   loses events would (the background scrub must find and fix it).
+//! - `watch.overflow`: the watcher drops an event and asks for a rescan,
+//!   as when the OS queue overflows.
+//! - `save.write`: writing the index's temp file (disk full is
+//!   `StorageFull`).
+//! - `save.rename`: each attempt to move the temp file over the index.
 
 use std::path::Path;
 
@@ -24,6 +34,11 @@ use std::path::Path;
 pub enum Action {
     /// Return an I/O error of this kind.
     IoError(std::io::ErrorKind),
+    /// Return the OS error with this code (`EMFILE` is 24 on Linux and
+    /// macOS), for errors that have no [`std::io::ErrorKind`] of their own.
+    OsError(i32),
+    /// Wait this long, then go on as normal (a slow disk).
+    Delay(std::time::Duration),
     /// Panic.
     Panic,
 }
@@ -90,7 +105,8 @@ pub fn clear(name: &str, path_contains: Option<&str>) {
 }
 
 /// An I/O fault point: `Err` when `name` is armed for `path` with an
-/// [`Action::IoError`]; panics when armed with [`Action::Panic`].
+/// [`Action::IoError`] or [`Action::OsError`]; waits for an
+/// [`Action::Delay`]; panics when armed with [`Action::Panic`].
 #[inline]
 pub fn io(name: &str, path: &Path) -> std::io::Result<()> {
     #[cfg(feature = "failpoints")]
@@ -98,6 +114,8 @@ pub fn io(name: &str, path: &Path) -> std::io::Result<()> {
         Some(Action::IoError(kind)) => {
             return Err(std::io::Error::new(kind, format!("injected fault {name}")))
         }
+        Some(Action::OsError(code)) => return Err(std::io::Error::from_raw_os_error(code)),
+        Some(Action::Delay(d)) => std::thread::sleep(d),
         Some(Action::Panic) => panic!("injected fault {name} at {}", path.display()),
         None => {}
     }

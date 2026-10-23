@@ -35,7 +35,8 @@ live ids on load, so ids stay stable across restarts.
 
 - **Atomic.** A save writes a unique temporary file next to the target,
   fsyncs it, and renames it into place; saves are serialized within the
-  process. A crash leaves the previous index intact.
+  process. A crash leaves the previous index intact, and the next start
+  removes the temporary file a killed save left.
 - **Detects drift.** Each file's mtime and size at read time are stored;
   on load a file whose stat differs is re-read.
 - **Pinned.** `tests/fixtures/index-v8.fcsidx` is compared byte for byte

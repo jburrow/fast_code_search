@@ -590,6 +590,18 @@ fn lock_index(
     match IndexLock::acquire(std::path::Path::new(&index_path), &owner) {
         Ok(lock) => {
             tracing::debug!(lock = %lock.path().display(), "Index lock acquired");
+            // Only a server holding the lock saves, so any temp file is a
+            // save that was killed half way.
+            let (files, bytes) = fast_code_search::index::persistence::remove_stale_temp_files(
+                std::path::Path::new(&index_path),
+            );
+            if files > 0 {
+                tracing::info!(
+                    files,
+                    bytes,
+                    "Removed temp files left by an index save that did not finish"
+                );
+            }
             Some(lock)
         }
         Err(e @ LockError::HeldByAnother { .. }) => {

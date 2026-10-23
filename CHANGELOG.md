@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Every save killed half way left a file as large as the index.** A
+  save writes a temp file next to the index and renames it into place; a
+  server killed during the save (`kill -9`, a power cut, the OOM killer)
+  left the temp file, and nothing removed it. The server now removes them
+  when it starts.
+- **A save that failed was forgotten.** With `save_after_updates`, the
+  count of unsaved updates was reset whether the save worked or not, so
+  after a save onto a full disk the shutdown skipped its save and the
+  saved index lacked those updates (the next start re-read the files, so
+  no search was wrong, but it took longer). The count now stays until a
+  save works.
+- **A failed rename could delete the index.** When moving the new index
+  into place failed, the old index was deleted before trying again, so a
+  second failure left no index at all. The old index is now moved aside
+  and put back if the second try fails.
+- **A panic while reading a file left it out of the index without a
+  word.** During the build, a file whose reading or parsing panicked was
+  skipped and not reported. It is now tried again at the end of the
+  build, and reported as unreadable if it keeps failing, like a file that
+  cannot be read.
 - **Every search waited 4 to 5 s soon after a restart.** An index loaded
   from disk keeps its unresolved imports (`import os`, packages outside
   the indexed folders) but not each file's import list. At the end of the
@@ -142,6 +162,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made up from the corpus (`--generate-regex`), and
   `tests/discovery_oracle.rs` compares the indexed files and the FILES box
   with `rg`.
+- **Kill and restart.** `examples/chaos.rs` kills the server binary with
+  SIGKILL at random moments (during a build, a load from disk, a stream of
+  edits, a periodic save, a burst of changes, and the save at shutdown),
+  starts it again and checks that it loads the saved index, leaves no temp
+  file, catches up with every change and passes `/api/check`. The "Scale
+  scoreboard" workflow runs it nightly and on pull requests that touch
+  saving or watching (job "Kill and restart").
+- **More fault points** (`--features failpoints`, `src/faults.rs`): out of
+  file handles, a file gone between listing and reading, a slow disk, a
+  panic while reading or parsing a file, events lost by the OS, a save
+  onto a full disk and a failed rename, each with a test in
+  `tests/fault_injection.rs`.
 - **A scale scoreboard.** `examples/scoreboard.rs` runs the server binary
   over HTTP in seven scenarios (cold build, warm restart, branch switch, a
   ten-minute stream of edits, overloaded searching, saves under load, and
