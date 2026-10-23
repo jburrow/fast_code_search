@@ -22,8 +22,11 @@ wrote every line and knows the answer.
 | `tests/lifecycle_model.rs` | random sequences of edits, renames, folder moves and deletes, ignore files, binary and oversized files, lost events, saves, restarts and crashes; after every step: the file set, every word's hits read page by page (no repeats, each file's hits together), the index's self-checks | a naive model (a map of files, a hand-written ignore matcher, a line-by-line search) | `cargo test --test lifecycle_model` |
 | `tests/search_properties.rs` | literal (`-i`, `-s`, `-w`) and regex searches on random text with case-folding oddities and multi-byte characters | `rg` | `cargo test --test search_properties` (needs `rg`) |
 | `tests/python_codebase.rs` | the import graph, symbol search, reference search and strict `-deps:`/`-rdeps:` scopes on generated Python trees, after a build and after the watcher rewrites the tree | the generator's answer key, itself checked by Python and grimp | `cargo test --test python_codebase` |
+| `tests/contract_walk.rs` | one search walked to its last hit through every surface: REST at several page sizes and random offsets, gRPC, MCP over HTTP and `fcs mcp`, `fcs` (piped, `-l`, offline) and the web page in headless Chromium with LOAD MORE and "Show N more hits" pressed until they are gone; no hit twice or missing, each file's hits together, files by best hit, honest counts | the engine's exhaustive list, itself checked against the files on disk and the generator's reference key | `cargo test --test contract_walk` (the web page needs Playwright, see below) |
+| `tests/rank_snapshot.rs` | the first 20 hits and the total of about a hundred searches; the same corpus at two places on disk must rank the same | `tests/snapshots/rank_order.txt`, changed only on purpose | `cargo test --test rank_snapshot` |
+| `tests/discovery_oracle.rs` | which files are indexed (the build and the watcher's per-file check) on random trees of `.gitignore`, `.ignore`, `.rgignore` and `.git/info/exclude` rules; the FILES box with a regex | `rg --files`, and `rg` over the path list | `cargo test --test discovery_oracle` (needs `rg`) |
 | `tests/fault_injection.rs` | failed reads, panics while applying changes, lost changes: each is retried, reported and repaired | expected recovery | `cargo test --features failpoints --test fault_injection` |
-| `examples/rg_backtest.rs` | fixed and generated queries on tokio, Django and fixtures, with paging and default limits | `rg` | see [Correctness against ripgrep](../benchmarks/correctness.md) |
+| `examples/rg_backtest.rs` | fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (`--history reload`) and filled by the watcher (`--history watch`) | `rg` | see [Correctness against ripgrep](../benchmarks/correctness.md) |
 | `examples/graph_oracle.rs` | the import graph on Django, Vite and generated deep trees | grimp, TypeScript's resolver | CI job "graph oracle" |
 | `examples/ref_oracle.rs`, `examples/impact_oracle.rs` | Python references and diff impact on real repositories | Jedi | CI jobs "ref oracle", "impact oracle" |
 | `examples/watch_load.rs`, `examples/limits_bench.rs` | searches answered and latency while a large tree changes; where limits bite | measured numbers | by hand, see [Incremental updates](incremental.md#how-this-is-tested) |
@@ -55,6 +58,36 @@ exactly the key's edges, line for line. Then the test rewrites the tree as
 another seed's and hands the changes to the watcher in a few bursts: the
 incremental result must match the new key as a fresh build does.
 
+## Rank order
+
+Everything above checks *which* hits a search finds and that a list is
+well formed; none notices when a change quietly reorders the first page,
+the page people read. `tests/rank_snapshot.rs` pins it: the first 20 hits
+of about a hundred searches (words, generated names, regexes, symbols,
+references) are kept in `tests/snapshots/rank_order.txt`. A ranking change
+is meant to move hits, so a difference is not a failure to fix but a
+change to accept on purpose:
+
+```text
+FCS_UPDATE_SNAPSHOTS=1 cargo test --test rank_snapshot
+```
+
+and the snapshot's diff then shows in the pull request what moved.
+
+## The web page
+
+The contract walk's browser leg runs `scripts/e2e/web_walk.cjs` with
+Playwright. Locally:
+
+```text
+npm install --no-save --prefix /tmp/pw playwright@1.56.1
+/tmp/pw/node_modules/.bin/playwright install chromium
+NODE_PATH=/tmp/pw/node_modules FCS_REQUIRE_BROWSER=1 cargo test --release --test contract_walk
+```
+
+Without Playwright the leg prints a note and is skipped; CI's Linux test
+job sets `FCS_REQUIRE_BROWSER`, so there it fails instead.
+
 ## Reproducing a failure
 
 - proptest suites print the shrunk sequence or query that failed, which is
@@ -69,8 +102,9 @@ incremental result must match the new key as a fresh build does.
 On pull requests CI uses fixed seeds, so a pull request is not failed by a
 case it did not cause; pushes to `main` use new seeds each time and keep
 exploring. CI runs the lifecycle model 600 times, the search properties
-2,000 times (job "fcs vs ripgrep") and 40 generated Python trees with grimp
-(job "graph oracle").
+2,000 times and the discovery oracle 1,000 times (job "fcs vs ripgrep",
+which also runs the backtest on a reloaded and a watched index) and 40
+generated Python trees with grimp (job "graph oracle").
 
 ## What these tests found
 
@@ -83,6 +117,12 @@ exploring. CI runs the lifecycle model 600 times, the search properties
 - A file rewritten in the same timestamp tick with the same size could
   stay stale across a restart on coarse file systems (found while writing
   the lifecycle model; now covered by a unit test).
+- The watcher's per-file ignore check disagreed with the build and with
+  ripgrep in three ways: a rule deeper down (`!a/b/` after `/a`) brought
+  files back from an ignored folder; the nearest ignore file won even when
+  a parent's `.ignore` should beat a `.gitignore` next to the file; and
+  rules above a nested repository were dropped inside it (discovery
+  oracle).
 - Earlier probes found a crash when a large file was rewritten during a
   search, "server unavailable" at the end of a build, and lost changes
   after failed reads or a panic; the fault and watch tests cover them.

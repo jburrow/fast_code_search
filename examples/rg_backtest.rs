@@ -14,7 +14,10 @@
 //! `--seed` so a run can be repeated. Each is compared with `rg -F` the
 //! same way; a query that differs is shrunk (characters dropped from either
 //! end while it still differs) and the report gives the smallest form as a
-//! `[[query]]` block to add to the query set.
+//! `[[query]]` block to add to the query set. `--generate-regex N` makes up
+//! N regexes from the corpus the same way (word boundaries, `\d+`, a prefix
+//! and `\w+`, anchors, two names with `.*?` between, alternations, `(?i)`,
+//! escaped punctuation) and compares each with `rg -e`.
 //!
 //!     cargo run --release --example rg_backtest -- bench-corpus/tokio bench-corpus/django \
 //!         tests/fixtures/backtest [--set benches/rg_backtest.toml] [--markdown FILE] \
@@ -62,13 +65,20 @@
 //! every candidate file must be the real count. Everything else in the
 //! backtest runs without limits, which is how the defaults' own gaps (a
 //! file cap, an offset ceiling) went unnoticed.
+//!
+//! With `--history reload` the index is built by the server's indexer,
+//! saved, and loaded again as a restart does (reconciling with the disk);
+//! with `--history watch` the watcher fills an empty index, every file
+//! reported created in a random order and in bursts of random size. A bug
+//! in saving, loading or incremental updates answers less without an
+//! error, so CI runs the whole backtest on each history.
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use fast_code_search::check::search::{
-    count, flatten, generate, line_text, rg_hits, shrink, Hits, RgFlags, TextQuery,
+    count, flatten, generate, generate_regex, line_text, rg_hits, shrink, Hits, RgFlags, TextQuery,
 };
-use fast_code_search::check::Corpus;
+use fast_code_search::check::{Corpus, History};
 use fast_code_search::search::engine::{
     RankMode, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
 };
@@ -122,9 +132,20 @@ struct Args {
     /// against `rg -F` (no paging checks).
     #[arg(long, default_value_t = 0)]
     generate: usize,
-    /// Seed for `--generate`.
+    /// Also make up this many regexes from the corpus and check them
+    /// against `rg -e`.
+    #[arg(long, default_value_t = 0)]
+    generate_regex: usize,
+    /// Seed for `--generate`, `--generate-regex` (and the watcher's order with `--history
+    /// watch`).
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// How the index under test is made: in one go (`build`), by the
+    /// server's indexer then saved and loaded again as a restart does
+    /// (`reload`), or by the watcher, file by file in random bursts
+    /// (`watch`). Each must answer the same.
+    #[arg(long, value_enum, default_value = "build")]
+    history: History,
 }
 
 #[derive(Deserialize, Debug)]
@@ -574,11 +595,22 @@ fn main() -> Result<()> {
         })
         .collect::<Result<_>>()?;
     let started = std::time::Instant::now();
-    let corpus = Corpus::build_default(&roots)?;
+    let corpus = Corpus::build_with(
+        &fast_code_search::config::IndexerConfig {
+            paths: roots
+                .iter()
+                .map(|r| r.to_string_lossy().into_owned())
+                .collect(),
+            ..Default::default()
+        },
+        args.history,
+        args.seed,
+    )?;
     eprintln!(
-        "indexed {} files from {} trees in {:.1} s",
+        "indexed {} files from {} trees ({:?}) in {:.1} s",
         corpus.indexed.len(),
         roots.len(),
+        args.history,
         started.elapsed().as_secs_f64()
     );
     // A broken index answers less without any error; check it first.
@@ -603,6 +635,25 @@ fn main() -> Result<()> {
             })
             .collect();
         eprintln!("generated {} queries (seed {})", made.len(), args.seed);
+        queries.extend(made);
+    }
+    if args.generate_regex > 0 {
+        let made: Vec<Query> = generate_regex(&corpus, args.generate_regex, args.seed)
+            .into_iter()
+            .map(|q| Query {
+                q,
+                mode: "regex".into(),
+                globs: Vec::new(),
+                known: None,
+                why: format!("generated regex (seed {})", args.seed),
+                case: None,
+                word: None,
+                deps: Vec::new(),
+                rdeps: Vec::new(),
+                generated: true,
+            })
+            .collect();
+        eprintln!("generated {} regexes (seed {})", made.len(), args.seed);
         queries.extend(made);
     }
     let mut rows = Vec::new();
@@ -650,7 +701,7 @@ fn main() -> Result<()> {
             None => None,
         };
         let differs = !out.missing.is_empty() || !out.extra.is_empty() || paging.is_some();
-        if differs && q.generated {
+        if differs && q.generated && q.mode != "regex" {
             let t = TextQuery {
                 q: q.q.clone(),
                 case: q.case,

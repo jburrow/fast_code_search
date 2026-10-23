@@ -15,10 +15,11 @@ pub mod search;
 
 use crate::config::IndexerConfig;
 use crate::search::{FileDiscoveryIterator, PartialIndexedFile, PreIndexedFile, SearchEngine};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 /// An in-memory index of some trees, built the way the server builds one.
 pub struct Corpus {
@@ -64,6 +65,88 @@ impl Corpus {
         })
     }
 
+    /// Index `config.paths` the way `history` says, so a check can be run
+    /// on an index that got where it is like a server's does.
+    pub fn build_with(config: &IndexerConfig, history: History, seed: u64) -> Result<Self> {
+        let roots: Vec<PathBuf> = config.paths.iter().map(PathBuf::from).collect();
+        let engine = match history {
+            History::Build => return Self::build(config),
+            History::Reload => {
+                // The server's own pipeline twice: the first run builds and
+                // saves, the second loads the saved index and reconciles it
+                // with the disk, as a restart does.
+                let temp = tempfile::tempdir()?;
+                let config = IndexerConfig {
+                    index_path: Some(temp.path().join("index.fcsidx").to_string_lossy().into()),
+                    watch: false,
+                    ..config.clone()
+                };
+                drop(server_build(&config));
+                anyhow::ensure!(
+                    temp.path().join("index.fcsidx").exists(),
+                    "the first build saved no index"
+                );
+                let engine = server_build(&config);
+                into_engine(engine)
+            }
+            History::Watch => {
+                // An empty index of the roots that the watcher fills: every
+                // file reported created, in a random order and in bursts of
+                // random size, then a few folders reported changed (which
+                // reconciles them).
+                use crate::search::{watch_loop, FileChange};
+                use rand::{seq::SliceRandom, Rng, SeedableRng};
+                let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+                let mut engine = SearchEngine::new();
+                for r in &roots {
+                    engine.add_root_path(r);
+                }
+                let engine = Arc::new(RwLock::new(engine));
+                let discovery = config.discovery_config(config.paths.clone());
+                let mut files: Vec<PathBuf> = FileDiscoveryIterator::new(&discovery).collect();
+                files.shuffle(&mut rng);
+                let mut rest = &files[..];
+                while !rest.is_empty() {
+                    let n = rng.random_range(1..=2000).min(rest.len());
+                    let burst: Vec<FileChange> = rest[..n]
+                        .iter()
+                        .cloned()
+                        .map(FileChange::Modified)
+                        .collect();
+                    watch_loop::apply_burst(&engine, &burst, config)
+                        .context("a watcher burst panicked")?;
+                    rest = &rest[n..];
+                }
+                let mut dirs: Vec<PathBuf> = files
+                    .iter()
+                    .filter_map(|f| f.parent().map(PathBuf::from))
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                dirs.sort();
+                dirs.shuffle(&mut rng);
+                let burst: Vec<FileChange> = dirs
+                    .into_iter()
+                    .take(20)
+                    .map(FileChange::Modified)
+                    .collect();
+                watch_loop::apply_burst(&engine, &burst, config)
+                    .context("a watcher burst panicked")?;
+                into_engine(engine)
+            }
+        };
+        let indexed = roots
+            .iter()
+            .flat_map(|r| engine.file_ids_under(r))
+            .filter_map(|id| engine.get_file_path(id))
+            .collect();
+        Ok(Self {
+            engine,
+            roots,
+            indexed,
+        })
+    }
+
     /// Index `roots` with the default settings.
     pub fn build_default(roots: &[PathBuf]) -> Result<Self> {
         Self::build(&IndexerConfig {
@@ -87,6 +170,47 @@ impl Corpus {
             })
             .and_then(|r| std::fs::read(r.join(rel)).ok())
             .map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+}
+
+/// How the index under test is made ([`Corpus::build_with`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum History {
+    /// Indexed in one go, in-process.
+    Build,
+    /// Built by the server's indexer, saved, then loaded and reconciled
+    /// as a restart does.
+    Reload,
+    /// Filled by the watcher, file by file in random bursts.
+    Watch,
+}
+
+/// Run the server's indexer (as `fcs serve` does at startup) to the end.
+fn server_build(config: &IndexerConfig) -> Arc<RwLock<SearchEngine>> {
+    use crate::search::{
+        create_progress_broadcaster, run_background_indexer, BackgroundIndexerConfig,
+        IndexingProgress,
+    };
+    let engine = Arc::new(RwLock::new(SearchEngine::new()));
+    run_background_indexer(BackgroundIndexerConfig {
+        indexer_config: config.clone(),
+        engine: engine.clone(),
+        progress: Arc::new(RwLock::new(IndexingProgress::default())),
+        progress_tx: create_progress_broadcaster(),
+        shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    });
+    engine
+}
+
+fn into_engine(engine: Arc<RwLock<SearchEngine>>) -> SearchEngine {
+    match Arc::try_unwrap(engine) {
+        Ok(lock) => lock.into_inner().unwrap_or_else(|p| p.into_inner()),
+        Err(shared) => {
+            // Something still holds a handle (a background thread winding
+            // down): take the index out from under it.
+            let mut guard = shared.write().unwrap_or_else(|p| p.into_inner());
+            std::mem::take(&mut *guard)
+        }
     }
 }
 
