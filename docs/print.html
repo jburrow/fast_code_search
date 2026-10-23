@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-b6f6ae17.js";
+            window.path_to_searchindex_js = "searchindex-5362b0cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-19c5e137.js"></script>
+        <script src="toc-73761d1b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -391,6 +391,7 @@ vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
 fcs check                        # compare fcs with ripgrep and the import resolvers on your code
+fcs diagnose                     # what the server's diagnostic captures say
 </code></pre>
 <h2 id="design"><a class="header" href="#design">Design</a></h2>
 <p><strong>Client first.</strong> The server holds the index in memory, watches the tree and
@@ -524,6 +525,14 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
 <code>--queries N</code>, <code>--seed N</code> (repeat a run), <code>--rg PATH</code>, <code>--no-search</code>,
 <code>--no-graph</code>. It needs no server. See the book’s
 <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/correctness.md#on-your-own-code-fcs-check">correctness page</a>.</p>
+<h2 id="reading-diagnostic-captures"><a class="header" href="#reading-diagnostic-captures">Reading diagnostic captures</a></h2>
+<p><code>fcs diagnose [DIR]</code> summarizes the files a server writes when
+<code>[diagnostics] capture = true</code> and it is slow or stuck: what set each one
+off, the slowest search’s phases, the index and watcher state, and for a
+hang where each thread was. DIR defaults to the configuration’s
+<code>[diagnostics] dir</code> (a <code>diagnostics</code> folder next to <code>index_path</code>). It needs
+no server, and exits 1 when there are no captures. See the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/guides/diagnostic-captures.md">Diagnostic captures</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1046,7 +1055,7 @@ serialized, so a crash mid-save leaves the previous file intact.</p>
 <tr><td><code>fcs: cannot reach the search server</code></td><td>Server not running, or listening elsewhere</td><td><code>fcs status</code>; start the server or pass <code>--server URL</code> / set <code>$FCS_SERVER</code>; see <a href="#running-the-server-at-login">Run at startup</a></td></tr>
 <tr><td><code>fcs</code> says it is searching the on-disk index</td><td>Server down, <code>index_path</code> known</td><td>Fine for a quick answer (results may be behind the tree); start the server for live results</td></tr>
 <tr><td>Web UI shows “Index is currently being updated” briefly</td><td>An install step of the file watcher held the write lock for more than five seconds (rare: a step holds it for about a second at most)</td><td>Wait; the UI retries on its own. If constant, a build is running (see the Index page)</td></tr>
-<tr><td>Results bar says “Index updating · N file changes to apply”</td><td>The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was</td><td>Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug, so please capture a thread dump (<code>gdb -p &lt;pid&gt; -batch -ex "thread apply all bt"</code>) and the log</td></tr>
+<tr><td>Results bar says “Index updating · N file changes to apply”</td><td>The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was</td><td>Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug: with <a href="#diagnostic-captures">diagnostic captures</a> on, the server writes what it was doing itself (<code>fcs diagnose</code>); otherwise capture a thread dump (<code>gdb -p &lt;pid&gt; -batch -ex "thread apply all bt"</code>) and the log</td></tr>
 <tr><td>A file you edited is not found</td><td>Watcher off, or the inotify limit was hit</td><td>Set <code>watch = true</code>; on Linux check the log for “Failed to watch” and raise <code>fs.inotify.max_user_watches</code></td></tr>
 <tr><td>Files from an excluded directory still appear</td><td>Rules changed while the server ran</td><td>Restart; reconciliation drops files the current rules exclude</td></tr>
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
@@ -1078,10 +1087,149 @@ and runs self-tests that search for sampled files.</li>
 <code>RUST_LOG=info</code> is the default.</li>
 <li><code>/metrics</code> exposes request counters and a latency histogram for
 Prometheus.</li>
+<li>With <code>[diagnostics] capture = true</code> the server writes a file whenever it
+is slow or stuck, saying what it was doing; <code>fcs diagnose</code> summarizes
+them. See <a href="#diagnostic-captures">Diagnostic captures</a>.</li>
 </ul>
 <p>If none of that explains it, open a
 <a href="https://github.com/jburrow/fast_code_search/issues/new/choose">bug report</a>
-with the version, the query and the log lines around the problem.</p>
+with the version, the query and the log lines around the problem, and any
+diagnostic captures.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="diagnostic-captures"><a class="header" href="#diagnostic-captures">Diagnostic captures</a></h1>
+<p>A server that is slow or stuck for a moment is hard to diagnose after the
+fact: by the time anyone looks, the moment has passed. With captures on,
+the server notices such moments itself and writes what it was doing to a
+JSON file, to read later with <code>fcs diagnose</code> or to attach to a bug report.</p>
+<p>Captures are off by default. Turn them on in the configuration:</p>
+<pre><code class="language-toml">[diagnostics]
+capture = true
+# dir = ""                  # default: a `diagnostics` folder next to index_path
+</code></pre>
+<p>The startup log says where captures go. Nothing leaves the machine.</p>
+<h2 id="what-sets-a-capture-off"><a class="header" href="#what-sets-a-capture-off">What sets a capture off</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Capture</th><th>When</th><th>Default</th></tr>
+</thead>
+<tbody>
+<tr><td><code>slow_search</code></td><td>A search took longer than this, from the request to the reply</td><td><code>slow_search_secs = 5</code></td></tr>
+<tr><td><code>lock_wait</code></td><td>A search waited longer than this for the index lock (a watcher step or a save held it)</td><td><code>lock_wait_secs = 2</code></td></tr>
+<tr><td><code>watcher_stalled</code></td><td>The watcher had changes to apply and made no progress (planned, parsed or installed nothing) for this long</td><td><code>stall_secs = 120</code></td></tr>
+<tr><td><code>indexer_stalled</code></td><td>The index build reported no progress for this long</td><td><code>stall_secs</code></td></tr>
+<tr><td><code>search_stuck</code></td><td>A search has been running for this long</td><td><code>stall_secs</code></td></tr>
+<tr><td><code>lock_held</code></td><td>The index lock was never free for this long</td><td><code>stall_secs</code></td></tr>
+<tr><td><code>backlog</code></td><td>The watcher has had changes to apply for this long without a break: it is falling behind, though still moving</td><td><code>backlog_secs = 300</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The last four are hangs. Their captures also say what every thread is doing
+(see below).</p>
+<p>A watchdog thread looks at the server once a second to notice the hangs
+and the backlog. Searches register while they run, so a capture lists the
+searches running at the time. While captures are off, none of this runs;
+the hooks in the search path cost one atomic load.</p>
+<h3 id="why-these-thresholds"><a class="header" href="#why-these-thresholds">Why these thresholds</a></h3>
+<p>The defaults sit well above what a healthy server under heavy load does,
+so a capture means something is wrong rather than merely busy.
+<code>examples/watch_load.rs --capture-dir DIR</code> runs the real watcher and
+searches with captures on at the defaults. It rewrites files while four
+threads search with a mix of rare, common and regex queries, then reports
+what was captured. On a healthy run, nothing should be:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tree</th><th>Change</th><th>Slowest search</th><th>Index matches disk</th><th>Captures</th></tr>
+</thead>
+<tbody>
+<tr><td>200,000 files</td><td>100,000 rewritten at once</td><td>1.8 s</td><td>1.4 s after the change stopped</td><td>none</td></tr>
+<tr><td>200,000 files</td><td>50,000 rewritten in two halves</td><td>1.6 s</td><td>1.3 s after</td><td>none</td></tr>
+<tr><td>200,000 files</td><td>200 files every 100 ms for 60 s (71,000)</td><td>2.0 s</td><td>9.7 s after</td><td>none</td></tr>
+</tbody>
+</table>
+</div>
+<p>(4 CPUs; 169 to 477 searches per run, none turned away, mean 0.6 to
+0.7 s.) The slowest search was 2.0 s against a 5 s threshold, and the
+lock waits are part of it.</p>
+<p>Earlier runs set the other bounds:</p>
+<ul>
+<li>A search waits for an install step at most about 1.3 s: up to 250 ms
+holding back for a waiting writer, then a step’s hold of at most one
+second (see <a href="#incremental-updates-1">Incremental updates</a>). So
+2 s of waiting means a step held the lock longer than it is designed to.</li>
+<li>The longest the watcher goes without counting progress while healthy is
+a full-tree rescan after its event queue overflowed: about 40 s walking
+a million files. <code>stall_secs = 120</code> leaves three times that.</li>
+<li>On a million-file tree, 200,000 rewritten files took 214 s to apply while
+searches ran. <code>backlog_secs = 300</code> captures a backlog that lasts longer
+than that.</li>
+</ul>
+<h2 id="what-a-capture-holds"><a class="header" href="#what-a-capture-holds">What a capture holds</a></h2>
+<p>Each capture is one file, <code>fcs-diag-&lt;time&gt;-&lt;kind&gt;.json</code>, with:</p>
+<ul>
+<li>the trigger: what happened, what was measured, and the threshold;</li>
+<li>for <code>slow_search</code>, the search: where it came from (REST/MCP or gRPC),
+its mode, and how long it spent waiting for the index lock, searching,
+and building the reply, plus how many candidate files it read and which
+limits it hit;</li>
+<li>the searches running at the time, how long each had been running and
+whether it held the lock;</li>
+<li>the latest sample of the index: file count, whether it is building or
+watching, changes waiting to be applied, the watcher’s progress counter,
+and the build’s progress;</li>
+<li>the last 20 watcher bursts: events, files indexed and removed, install
+steps, the longest lock hold, and how long each took;</li>
+<li>process figures: memory (RSS), thread count, CPUs, uptime;</li>
+<li>the last log lines (<code>log_lines = 300</code>);</li>
+<li>for hangs, every thread’s name and state (running, sleeping, waiting on
+the disk) and, when <code>gdb</code> or <code>eu-stack</code> is installed, every thread’s
+stack. Attaching takes a second or two, during which the server is
+paused; set <code>thread_stacks = false</code> to skip the stacks. Thread states
+and stacks are recorded on Linux only.</li>
+</ul>
+<h3 id="privacy"><a class="header" href="#privacy">Privacy</a></h3>
+<p>Your repository may be a work one, so captures leave out what was searched
+and which files were involved. Query text becomes <code>&lt;redacted&gt;</code> (the length
+is kept), and in log lines and build progress, quoted text other than
+numbers, versions and sizes becomes <code>&lt;text&gt;</code>, anything that looks like a path or a file name becomes <code>&lt;path&gt;</code>,
+and the values of fields such as <code>query=</code> and <code>path=</code> become <code>&lt;redacted&gt;</code>.
+Set <code>include_queries = true</code> to keep them, for example to reproduce a slow
+query yourself. Stacks name fcs’s own functions and source files, never
+your files (<code>gdb</code> is told not to print function arguments). Release
+binaries keep their function names (but no debug information) so that
+stacks are readable.</p>
+<h3 id="how-many"><a class="header" href="#how-many">How many</a></h3>
+<p>Captures of one kind are at least <code>min_interval_secs = 300</code> apart, and a
+hang is captured once until it clears. At most <code>max_files = 50</code> captures
+and <code>max_total_mb = 100</code> megabytes are kept; the oldest are deleted.</p>
+<h2 id="reading-captures"><a class="header" href="#reading-captures">Reading captures</a></h2>
+<pre><code class="language-text">$ fcs diagnose
+3 captures in /home/me/.local/share/fast_code_search/diagnostics, 2026-10-23 09:12:01 to 2026-10-23 11:40:02
+
+  slow_search      2
+  watcher_stalled  1
+
+Slowest search: 7.9 s (regex search via rest): waited 0.0 s for the index, searched 7.6 s, built the reply in 0.3 s
+
+Newest first:
+
+2026-10-23 11:40:02  watcher_stalled  v0.18.1
+  the watcher has 5123 changes to apply and has made no progress for 120 s
+  index: 412000 files, 5123 changes to apply, lock busy
+  last watcher burst: 2048 events, 2048 indexed, 0 removed, 3 steps, longest hold 1.0 s, took 6.1 s
+  threads: 41 (1 running, 0 waiting on the disk)
+    fcs-watch-0: fast_code_search::search::incremental::apply_plan
+  file: …/fcs-diag-20261023T104002.118Z-watcher_stalled.json
+…
+</code></pre>
+<p><code>fcs diagnose DIR</code> reads another folder (one someone sent you, say). It
+exits 1 when there are no captures. The <strong>Index</strong> page’s diagnostics
+(<code>/api/diagnostics</code>) show the folder and how many captures were written
+since the server started.</p>
+<p>For a bug report, attach the capture files: with the defaults they hold
+no query text or file names, but read them first if you set
+<code>include_queries = true</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="upgrading"><a class="header" href="#upgrading">Upgrading</a></h1>
 <p>Replace the two binaries and restart the server. The saved index is
@@ -1840,6 +1988,11 @@ configuration its own <code>index_path</code>.</p>
 <p>At startup and before each save the server checks free space and free
 inodes on the filesystem holding the index (and inodes where indexed
 source lives), and warns when either is low.</p>
+<p><code>[diagnostics] capture = true</code> makes the server write a JSON file whenever
+it is slow (a search over <code>slow_search_secs</code>, a lock wait over
+<code>lock_wait_secs</code>) or stuck (no progress for <code>stall_secs</code>), saying what it
+was doing; <code>fcs diagnose</code> summarizes them. Off by default; see the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/guides/diagnostic-captures.md">Diagnostic captures</a>.</p>
 <p>Changing exclude patterns, extensions, the size cap or a <code>.gitignore</code> takes
 effect on the next start: files that are no longer eligible are dropped
 when the persisted index is reconciled.</p>
@@ -2734,14 +2887,15 @@ Exit status: 0 = matches found, 1 = no matches, 2 = error.
 Usage: fcs [OPTIONS] &lt;COMMAND&gt;
 
 Commands:
-  search   Search file contents (the default; `fcs QUERY` works too)
-  refs     Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
-  symbols  Search symbol definitions (functions, types, classes, ...) only
-  impact   The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
-  status   Show whether the server is reachable and what it has indexed
-  mcp      Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
-  check    Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
-  help     Print this message or the help of the given subcommand(s)
+  search    Search file contents (the default; `fcs QUERY` works too)
+  refs      Find references (call sites, type mentions) of an identifier; `kind:call`, `kind:type`, `kind:value`, `kind:attribute` keep one kind
+  symbols   Search symbol definitions (functions, types, classes, ...) only
+  impact    The files that use each function, class, method or constant a diff changes (default: your uncommitted changes, `git diff HEAD`)
+  status    Show whether the server is reachable and what it has indexed
+  mcp       Serve MCP over stdio by relaying to the server's /mcp endpoint (for agents that launch a command rather than connect to a URL)
+  check     Check fcs against independent tools on your own code: generated queries against ripgrep, and the import graph against Python's and TypeScript's own resolvers when they are installed
+  diagnose  Summarize the server's diagnostic captures (written when `[diagnostics] capture = true` and the server is slow or stuck)
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
       --server &lt;URL&gt;
@@ -2803,6 +2957,7 @@ Examples:
   fcs status                    is the server up, what does it hold
   fcs mcp                       MCP over stdio, for coding agents
   fcs check                     compare fcs with ripgrep and the import resolvers
+  fcs diagnose                  what the server's diagnostic captures say
 </code></pre>
 <h2 id="fcs-search---help"><a class="header" href="#fcs-search---help"><code>fcs search --help</code></a></h2>
 <pre><code class="language-text">Search file contents (the default; `fcs QUERY` works too)
@@ -2842,17 +2997,14 @@ Options:
   -g, --glob &lt;GLOB&gt;
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
+      --exclude &lt;GLOB&gt;
+          Skip files matching this glob (repeatable)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --exclude &lt;GLOB&gt;
-          Skip files matching this glob (repeatable)
-
-      --offline
-          Search the on-disk index directly instead of asking the server
 
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
@@ -2860,22 +3012,25 @@ Options:
           [default: auto]
           [possible values: auto, fast, full]
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
-
       --max-files &lt;N&gt;
           Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --deps &lt;PATH[:N]&gt;
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2885,11 +3040,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --json
-          Shorthand for --format json
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
@@ -2947,17 +3102,14 @@ Options:
   -g, --glob &lt;GLOB&gt;
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
+      --exclude &lt;GLOB&gt;
+          Skip files matching this glob (repeatable)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --exclude &lt;GLOB&gt;
-          Skip files matching this glob (repeatable)
-
-      --offline
-          Search the on-disk index directly instead of asking the server
 
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
@@ -2965,22 +3117,25 @@ Options:
           [default: auto]
           [possible values: auto, fast, full]
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
-
       --max-files &lt;N&gt;
           Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --deps &lt;PATH[:N]&gt;
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -2990,11 +3145,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --json
-          Shorthand for --format json
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
@@ -3052,17 +3207,14 @@ Options:
   -g, --glob &lt;GLOB&gt;
           Only files matching this glob (repeatable; `src/**/*.rs`, `*.py`, `tests`)
 
+      --exclude &lt;GLOB&gt;
+          Skip files matching this glob (repeatable)
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --exclude &lt;GLOB&gt;
-          Skip files matching this glob (repeatable)
-
-      --offline
-          Search the on-disk index directly instead of asking the server
 
       --rank &lt;RANK&gt;
           Ranking: auto and fast read files best first and honour a file limit; full never stops at one
@@ -3070,22 +3222,25 @@ Options:
           [default: auto]
           [possible values: auto, fast, full]
 
-      --no-offline
-          Never fall back to the on-disk index when the server is unreachable
+      --offline
+          Search the on-disk index directly instead of asking the server
 
       --timeout-ms &lt;MS&gt;
           Stop scanning after this many milliseconds and return the best so far
           
           [default: 0]
 
-      --index-path &lt;FILE&gt;
-          Index file for offline searches (default: the config's index_path)
-
       --max-files &lt;N&gt;
           Most candidate files to read, best first (default: the server's search.fast_rank_files, no limit)
 
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
       --deps &lt;PATH[:N]&gt;
           Only search this file and what it imports, N hops deep (1 by default; `*` for any distance). Repeatable; `-PATH` leaves them out
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
 
       --format &lt;FORMAT&gt;
           Output layout (default: grouped on a terminal, vimgrep when piped)
@@ -3095,11 +3250,11 @@ Options:
           - vimgrep: One `path:line:col:text` line per hit (default when piped)
           - json:    The server's JSON response, one object
 
-      --json
-          Shorthand for --format json
-
       --rdeps &lt;PATH[:N]&gt;
           Only search this file and the files that import it (as `--deps`)
+
+      --json
+          Shorthand for --format json
 
   -l, --files-with-matches
           Print every file that matches, once, best first (pages through all hits)
@@ -3321,6 +3476,60 @@ Options:
       --no-graph
           Skip the dependency graph check
 
+      --server &lt;URL&gt;
+          Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
+
+      --config &lt;FILE&gt;
+          Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --offline
+          Search the on-disk index directly instead of asking the server
+
+      --no-offline
+          Never fall back to the on-disk index when the server is unreachable
+
+      --index-path &lt;FILE&gt;
+          Index file for offline searches (default: the config's index_path)
+
+      --format &lt;FORMAT&gt;
+          Output layout (default: grouped on a terminal, vimgrep when piped)
+
+          Possible values:
+          - grouped: File headings with `line:col: text` underneath (default on a terminal)
+          - vimgrep: One `path:line:col:text` line per hit (default when piped)
+          - json:    The server's JSON response, one object
+
+      --json
+          Shorthand for --format json
+
+  -l, --files-with-matches
+          Print every file that matches, once, best first (pages through all hits)
+
+      --absolute
+          Print absolute paths (needs the roots from the configuration)
+
+      --color &lt;COLOR&gt;
+          Colour output: auto (terminal only, honours NO_COLOR), always, never
+          
+          [default: auto]
+          [possible values: auto, always, never]
+
+  -q, --quiet
+          No summary or fallback notes on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+</code></pre>
+<h2 id="fcs-diagnose---help"><a class="header" href="#fcs-diagnose---help"><code>fcs diagnose --help</code></a></h2>
+<pre><code class="language-text">Summarize the server's diagnostic captures (written when `[diagnostics] capture = true` and the server is slow or stuck)
+
+Usage: fcs diagnose [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]
+          The captures folder (default: the configuration's `[diagnostics]` dir, else `diagnostics` next to its index)
+
+Options:
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
@@ -3603,6 +3812,40 @@ otlp_endpoint = "http://localhost:4317"
 # Service name reported to the collector
 # Env override: OTEL_SERVICE_NAME
 service_name = "fast_code_search"
+
+[diagnostics]
+# Self-diagnosis: when the server is slow or stuck, write what it was doing
+# to a JSON file you can look at later with `fcs diagnose`. Nothing leaves
+# the machine. Off by default.
+capture = false
+
+# Where captures go. Empty: a `diagnostics` folder next to index_path.
+dir = ""
+
+# What counts as slow or stuck, in seconds. The defaults sit well above what
+# was measured on a healthy server under heavy load (see the book's
+# "Diagnostic captures" page).
+slow_search_secs = 5.0
+lock_wait_secs = 2.0
+stall_secs = 120.0
+backlog_secs = 300.0
+
+# Seconds before the same kind of capture is written again, and how many
+# captures (and megabytes) are kept; the oldest are deleted.
+min_interval_secs = 300.0
+max_files = 50
+max_total_mb = 100
+
+# Log lines kept in each capture.
+log_lines = 300
+
+# On a hang, record every thread's stack with gdb or eu-stack if installed
+# (pauses the server for a second or two).
+thread_stacks = true
+
+# Keep query text, file paths and quoted text in captures. Off: captures say
+# how long a query was, not what it was.
+include_queries = false
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
@@ -5210,6 +5453,22 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>Diagnostic captures.</strong> With <code>[diagnostics] capture = true</code> the server
+notices when it is slow or stuck and writes what it was doing to a JSON
+file: a search slower than 5 s or kept waiting over 2 s for the index
+lock, the watcher or index build making no progress for 120 s, a search
+still running after 120 s, the index lock never free, or a watcher
+backlog lasting 300 s. A capture holds the trigger, the search’s phase
+timings, the searches running, the index and watcher state, recent
+watcher bursts, memory and threads, the last log lines and, for a hang,
+every thread’s state and stack (<code>gdb</code> or <code>eu-stack</code> when installed).
+Query text, paths and file names are left out unless
+<code>include_queries = true</code>. Captures are rate-limited and capped (50 files,
+100 MB). <code>fcs diagnose [DIR]</code> summarizes them, and <code>/api/diagnostics</code>
+says where they go. Off by default; thresholds are measured
+(<code>watch_load --capture-dir</code>). See the book’s “Diagnostic captures” page.
+Release binaries now keep function names (about 3 MB larger) so thread
+stacks and panic backtraces are readable.</li>
 <li><strong>Diff impact: <code>fcs impact</code>, <code>POST /api/impact</code>, MCP <code>diff_impact</code>.</strong>
 Give it a diff (by default your uncommitted changes) and it lists, for
 each function, class, method, type or constant the diff changes, the files

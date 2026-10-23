@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b6f6ae17.js";
+            window.path_to_searchindex_js = "../searchindex-5362b0cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-19c5e137.js"></script>
+        <script src="../toc-73761d1b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -212,6 +212,22 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>Diagnostic captures.</strong> With <code>[diagnostics] capture = true</code> the server
+notices when it is slow or stuck and writes what it was doing to a JSON
+file: a search slower than 5 s or kept waiting over 2 s for the index
+lock, the watcher or index build making no progress for 120 s, a search
+still running after 120 s, the index lock never free, or a watcher
+backlog lasting 300 s. A capture holds the trigger, the search’s phase
+timings, the searches running, the index and watcher state, recent
+watcher bursts, memory and threads, the last log lines and, for a hang,
+every thread’s state and stack (<code>gdb</code> or <code>eu-stack</code> when installed).
+Query text, paths and file names are left out unless
+<code>include_queries = true</code>. Captures are rate-limited and capped (50 files,
+100 MB). <code>fcs diagnose [DIR]</code> summarizes them, and <code>/api/diagnostics</code>
+says where they go. Off by default; thresholds are measured
+(<code>watch_load --capture-dir</code>). See the book’s “Diagnostic captures” page.
+Release binaries now keep function names (about 3 MB larger) so thread
+stacks and panic backtraces are readable.</li>
 <li><strong>Diff impact: <code>fcs impact</code>, <code>POST /api/impact</code>, MCP <code>diff_impact</code>.</strong>
 Give it a diff (by default your uncommitted changes) and it lists, for
 each function, class, method, type or constant the diff changes, the files

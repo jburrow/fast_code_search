@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b6f6ae17.js";
+            window.path_to_searchindex_js = "../searchindex-5362b0cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-19c5e137.js"></script>
+        <script src="../toc-73761d1b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,7 +191,7 @@
 <tr><td><code>fcs: cannot reach the search server</code></td><td>Server not running, or listening elsewhere</td><td><code>fcs status</code>; start the server or pass <code>--server URL</code> / set <code>$FCS_SERVER</code>; see <a href="../imported/run-at-startup.html">Run at startup</a></td></tr>
 <tr><td><code>fcs</code> says it is searching the on-disk index</td><td>Server down, <code>index_path</code> known</td><td>Fine for a quick answer (results may be behind the tree); start the server for live results</td></tr>
 <tr><td>Web UI shows “Index is currently being updated” briefly</td><td>An install step of the file watcher held the write lock for more than five seconds (rare: a step holds it for about a second at most)</td><td>Wait; the UI retries on its own. If constant, a build is running (see the Index page)</td></tr>
-<tr><td>Results bar says “Index updating · N file changes to apply”</td><td>The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was</td><td>Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug, so please capture a thread dump (<code>gdb -p &lt;pid&gt; -batch -ex "thread apply all bt"</code>) and the log</td></tr>
+<tr><td>Results bar says “Index updating · N file changes to apply”</td><td>The file watcher has seen changes (a branch switch, a formatter run) and not applied them all yet; results come from the index as it was</td><td>Search again shortly; the count drops as the changes are installed. After a branch switch on a very large tree this can take minutes; a count that does not drop for minutes is a bug: with <a href="diagnostic-captures.html">diagnostic captures</a> on, the server writes what it was doing itself (<code>fcs diagnose</code>); otherwise capture a thread dump (<code>gdb -p &lt;pid&gt; -batch -ex "thread apply all bt"</code>) and the log</td></tr>
 <tr><td>A file you edited is not found</td><td>Watcher off, or the inotify limit was hit</td><td>Set <code>watch = true</code>; on Linux check the log for “Failed to watch” and raise <code>fs.inotify.max_user_watches</code></td></tr>
 <tr><td>Files from an excluded directory still appear</td><td>Rules changed while the server ran</td><td>Restart; reconciliation drops files the current rules exclude</td></tr>
 <tr><td>Results stop at “50+ (scan budget reached)”</td><td>Broad query, budget hit</td><td>Narrow with <code>file:</code>, <code>lang:</code> or a longer literal; use Load more / <code>--offset</code> for the next page</td></tr>
@@ -223,10 +223,14 @@ and runs self-tests that search for sampled files.</li>
 <code>RUST_LOG=info</code> is the default.</li>
 <li><code>/metrics</code> exposes request counters and a latency histogram for
 Prometheus.</li>
+<li>With <code>[diagnostics] capture = true</code> the server writes a file whenever it
+is slow or stuck, saying what it was doing; <code>fcs diagnose</code> summarizes
+them. See <a href="diagnostic-captures.html">Diagnostic captures</a>.</li>
 </ul>
 <p>If none of that explains it, open a
 <a href="https://github.com/jburrow/fast_code_search/issues/new/choose">bug report</a>
-with the version, the query and the log lines around the problem.</p>
+with the version, the query and the log lines around the problem, and any
+diagnostic captures.</p>
 
                     </main>
 
@@ -236,7 +240,7 @@ with the version, the query and the log lines around the problem.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../guides/upgrading.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../guides/diagnostic-captures.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -250,7 +254,7 @@ with the version, the query and the log lines around the problem.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../guides/upgrading.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../guides/diagnostic-captures.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

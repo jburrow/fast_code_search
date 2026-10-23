@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b6f6ae17.js";
+            window.path_to_searchindex_js = "../searchindex-5362b0cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-19c5e137.js"></script>
+        <script src="../toc-73761d1b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -556,6 +556,11 @@ configuration its own <code>index_path</code>.</p>
 <p>At startup and before each save the server checks free space and free
 inodes on the filesystem holding the index (and inodes where indexed
 source lives), and warns when either is low.</p>
+<p><code>[diagnostics] capture = true</code> makes the server write a JSON file whenever
+it is slow (a search over <code>slow_search_secs</code>, a lock wait over
+<code>lock_wait_secs</code>) or stuck (no progress for <code>stall_secs</code>), saying what it
+was doing; <code>fcs diagnose</code> summarizes them. Off by default; see the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/guides/diagnostic-captures.md">Diagnostic captures</a>.</p>
 <p>Changing exclude patterns, extensions, the size cap or a <code>.gitignore</code> takes
 effect on the next start: files that are no longer eligible are dropped
 when the persisted index is reconciled.</p>

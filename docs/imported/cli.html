@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-b6f6ae17.js";
+            window.path_to_searchindex_js = "../searchindex-5362b0cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-19c5e137.js"></script>
+        <script src="../toc-73761d1b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,6 +198,7 @@ vim -q &lt;(fcs --format vimgrep TODO)   # results as a quickfix list
 fcs status                       # is the server up, what does it hold, how current is it
 fcs mcp                          # MCP over stdio, for coding agents
 fcs check                        # compare fcs with ripgrep and the import resolvers on your code
+fcs diagnose                     # what the server's diagnostic captures say
 </code></pre>
 <h2 id="design"><a class="header" href="#design">Design</a></h2>
 <p><strong>Client first.</strong> The server holds the index in memory, watches the tree and
@@ -331,6 +332,14 @@ a markdown report and exits 1 when a search differs from ripgrep. Options:
 <code>--queries N</code>, <code>--seed N</code> (repeat a run), <code>--rg PATH</code>, <code>--no-search</code>,
 <code>--no-graph</code>. It needs no server. See the book’s
 <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/correctness.md#on-your-own-code-fcs-check">correctness page</a>.</p>
+<h2 id="reading-diagnostic-captures"><a class="header" href="#reading-diagnostic-captures">Reading diagnostic captures</a></h2>
+<p><code>fcs diagnose [DIR]</code> summarizes the files a server writes when
+<code>[diagnostics] capture = true</code> and it is slow or stuck: what set each one
+off, the slowest search’s phases, the index and watcher state, and for a
+hang where each thread was. DIR defaults to the configuration’s
+<code>[diagnostics] dir</code> (a <code>diagnostics</code> folder next to <code>index_path</code>). It needs
+no server, and exits 1 when there are no captures. See the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/guides/diagnostic-captures.md">Diagnostic captures</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <div class="table-wrapper">
 <table>
