@@ -105,15 +105,37 @@ pub fn plan_changes(
         }
         ops.insert(path.clone(), op);
     };
+    let mut ignore_dirs: Vec<PathBuf> = Vec::new();
     for change in changes {
-        match change {
-            FileChange::Modified(p) => set(p, Op::Modify),
-            FileChange::Deleted(p) => set(p, Op::Delete),
+        let paths: &[&PathBuf] = match change {
+            FileChange::Modified(p) => {
+                set(p, Op::Modify);
+                &[p]
+            }
+            FileChange::Deleted(p) => {
+                set(p, Op::Delete);
+                &[p]
+            }
             FileChange::Renamed { from, to } => {
                 set(from, Op::Delete);
                 set(to, Op::Modify);
+                &[from, to]
             }
-        }
+        };
+        ignore_dirs.extend(
+            paths
+                .iter()
+                .filter(|p| is_ignore_file(p))
+                .filter_map(|p| p.parent().map(Path::to_path_buf)),
+        );
+    }
+    // An ignore file that changed, appeared or went away changes which files
+    // under its directory are indexed: reconcile the directory with the
+    // disk, as a restart would. (Each file used to keep its old state until
+    // it changed itself, so a branch switch that edited `.gitignore` left
+    // newly ignored files searchable and newly allowed ones missing.)
+    for dir in ignore_dirs {
+        set(&dir, Op::Modify);
     }
 
     // Each path is planned on its own (stats, directory walks), in
@@ -270,6 +292,15 @@ fn reconcile_dir(engine: &SearchEngine, dir: &Path, config: &IndexerConfig, plan
             .into_iter()
             .filter(|id| !keep.contains(id)),
     );
+}
+
+/// Is `path` an ignore file whose rules decide what is indexed under its
+/// directory (`.gitignore`, `.ignore`, `.rgignore`)?
+fn is_ignore_file(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some(".gitignore" | ".ignore" | ".rgignore")
+    )
 }
 
 /// `max_file_size = 0` means "the default" everywhere (engine, watcher,
