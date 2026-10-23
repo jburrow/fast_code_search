@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-5362b0cc.js";
+            window.path_to_searchindex_js = "../searchindex-a324b79c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-73761d1b.js"></script>
@@ -188,6 +188,33 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Rewriting a large file while it was searched could crash the server.</strong>
+Files over 1 MB were memory-mapped, and when another program truncated
+and rewrote one while a search read it, the server died with SIGBUS.
+Files are now read into memory when searched, so nothing can change
+under a search. The 3-second “vm.max_map_count is very low” pause at
+startup is gone with the mapping.</li>
+<li><strong>No more “server unavailable” at the end of a large build or while a
+saved index loads.</strong> Resolving the dependency graph at the end of a
+build held the write lock for seconds (about 6 s on 300,000 files), and
+loading a saved index held it for the whole load, so searches were
+turned away. Both now work outside the lock and hold it only for short
+steps or the final swap; a 300,000-file cold build and restart answered
+every search.</li>
+<li><strong>Ignore files behave like ripgrep’s.</strong> <code>.rgignore</code> is honoured, and
+when a <code>.gitignore</code>, <code>.ignore</code> or <code>.rgignore</code> changes (a branch switch,
+say) the watcher re-checks the files under it, so newly ignored files
+leave the index and newly allowed ones join it. Before, each file kept
+its old state until it changed itself.</li>
+<li><strong>A file that can’t be read is retried and reported, not silently
+dropped.</strong> A read that failed (a file locked by an editor or virus
+scanner, permissions changing mid-save) removed the file from the index
+until it next changed, and the initial build left such a file out
+without a word. The watcher now keeps the old entry and retries for
+about half a minute; then the file is left out and every search says
+how many files could not be read. A panic while applying watcher
+changes used to skip the whole batch; the batch is now applied again,
+and a change that fails twice is reported the same way.</li>
 <li><strong>A large change no longer leaves the index “updating” for minutes
 while people search.</strong> Each watcher step got the lock only after the
 running searches finished and then installed just 512 files, so with
@@ -212,6 +239,11 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>Fault-injection tests.</strong> A <code>failpoints</code> cargo feature compiles in
+named fault points (<code>src/faults.rs</code>) that tests arm to make a read fail
+or a step panic; <code>tests/fault_injection.rs</code> uses them to check that the
+build and the watcher retry and report failures. CI runs them on every
+platform.</li>
 <li><strong>Diagnostic captures.</strong> With <code>[diagnostics] capture = true</code> the server
 notices when it is slow or stuck and writes what it was doing to a JSON
 file: a search slower than 5 s or kept waiting over 2 s for the index

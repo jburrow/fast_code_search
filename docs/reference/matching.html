@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-5362b0cc.js";
+            window.path_to_searchindex_js = "../searchindex-a324b79c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-73761d1b.js"></script>
@@ -323,8 +323,19 @@ matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target<
 <code>dist</code>, Python virtual environments) are not indexed, so they are never
 searched, even when git tracks them (ripgrep searches a tracked
 <code>build/</code>). Ignore files apply as in ripgrep: <code>.gitignore</code>, <code>.ignore</code>,
-<code>.git/info/exclude</code> and your global git excludes (<code>core.excludesFile</code>),
-at startup and for files the watcher sees change.</li>
+<code>.rgignore</code>, <code>.git/info/exclude</code> and your global git excludes
+(<code>core.excludesFile</code>), with the same precedence. When the watcher sees a
+<code>.gitignore</code>, <code>.ignore</code> or <code>.rgignore</code> change, appear or go away (a
+branch switch, say), it re-checks every file under that folder, as a
+restart would. Edits to <code>.git/info/exclude</code> or the global excludes file
+are applied at the next start, since nothing under <code>.git</code> is watched.</li>
+<li><strong>Files that can’t be read.</strong> ripgrep prints an error for a file it
+cannot open and searches the rest. fcs tries such a file again for about
+half a minute (it is often locked for a moment by an editor, a build or
+a virus scanner), then leaves it out of the index and says so with every
+search (“1 file could not be read and is left out of the index”); the
+server log names it, and it is indexed again when it next changes and
+can be read.</li>
 </ul>
 <h2 id="known-differences"><a class="header" href="#known-differences">Known differences</a></h2>
 <p>None at the moment. A known difference would be listed here, and marked
