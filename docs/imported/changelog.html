@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-981acdbc.js";
+            window.path_to_searchindex_js = "../searchindex-09bfe366.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ba5bc6a0.js"></script>
@@ -188,6 +188,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>The watcher could index files the build leaves out, by ignore rules.</strong>
+When a file changed, the watcher decided whether it was ignored
+differently from the walk that builds the index (and from ripgrep): a
+rule deeper down (<code>!a/b/</code> after <code>/a</code>) let files back in from a folder
+that is ignored; the nearest ignore file decided, where a parent’s
+<code>.ignore</code> or <code>.rgignore</code> rule should beat a <code>.gitignore</code> next to the
+file; and rules in folders above a nested repository were not applied
+inside it. Such files became searchable after an edit and disappeared
+again at the next restart. The check now follows ripgrep’s rules, and
+both are compared with <code>rg --files</code> on random trees of ignore files.</li>
 <li><strong>Folders ignored by a parent’s <code>.gitignore</code> stayed out only until
 something happened in them.</strong> With <code>sub/</code> in the root <code>.gitignore</code>, the
 watcher indexed everything in <code>pkg/sub</code> when the folder was created,
@@ -279,6 +289,18 @@ the import graph, symbol and reference searches and strict
 <code>-deps</code>/<code>-rdeps</code> scopes, after a build and after the watcher rewrites the
 tree; grimp and Python check the key itself. Book page: How it works &gt;
 How fcs is tested.</li>
+<li><strong>Every surface walked to the last hit, and the first page pinned.</strong>
+<code>tests/contract_walk.rs</code> runs searches with thousands of hits through
+REST, gRPC, MCP (HTTP and <code>fcs mcp</code>), <code>fcs</code> and the web page in headless
+Chromium, pressing LOAD MORE and “Show N more hits” until they are gone,
+and every surface must show the same hits in the same order with honest
+counts. <code>tests/rank_snapshot.rs</code> keeps the first page of about a hundred
+searches in a file, so a change that reorders results shows in its pull
+request. The ripgrep backtest also runs on an index restarted from disk
+and on one the watcher filled (<code>--history reload|watch</code>), with regexes
+made up from the corpus (<code>--generate-regex</code>), and
+<code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
+with <code>rg</code>.</li>
 <li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
 whether its index agrees with itself, whether indexed files still match
 the disk, and whether it holds the files a fresh walk finds. It prints

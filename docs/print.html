@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-981acdbc.js";
+            window.path_to_searchindex_js = "searchindex-09bfe366.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ba5bc6a0.js"></script>
@@ -2408,7 +2408,14 @@ matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target<
 searched, even when git tracks them (ripgrep searches a tracked
 <code>build/</code>). Ignore files apply as in ripgrep: <code>.gitignore</code>, <code>.ignore</code>,
 <code>.rgignore</code>, <code>.git/info/exclude</code> and your global git excludes
-(<code>core.excludesFile</code>), with the same precedence. When the watcher sees a
+(<code>core.excludesFile</code>), with the same precedence: a rule in an <code>.rgignore</code>
+or <code>.ignore</code> anywhere above a file beats a <code>.gitignore</code> rule next to it; a
+folder that is ignored stays ignored whatever a rule deeper down says
+(<code>!a/b/</code> after <code>/a</code> brings nothing back, as in git); and <code>.gitignore</code>
+files apply outside git repositories and above nested ones, as with
+<code>rg --no-require-git</code>. The build and the watcher’s per-file check are
+both compared with <code>rg --files</code> on random trees of ignore files
+(<code>tests/discovery_oracle.rs</code>). When the watcher sees a
 <code>.gitignore</code>, <code>.ignore</code> or <code>.rgignore</code> change, appear or go away (a
 branch switch, say), it re-checks every file under that folder, as a
 restart would. Edits to <code>.git/info/exclude</code> or the global excludes file
@@ -4884,8 +4891,11 @@ wrote every line and knows the answer.</p>
 <tr><td><code>tests/lifecycle_model.rs</code></td><td>random sequences of edits, renames, folder moves and deletes, ignore files, binary and oversized files, lost events, saves, restarts and crashes; after every step: the file set, every word’s hits read page by page (no repeats, each file’s hits together), the index’s self-checks</td><td>a naive model (a map of files, a hand-written ignore matcher, a line-by-line search)</td><td><code>cargo test --test lifecycle_model</code></td></tr>
 <tr><td><code>tests/search_properties.rs</code></td><td>literal (<code>-i</code>, <code>-s</code>, <code>-w</code>) and regex searches on random text with case-folding oddities and multi-byte characters</td><td><code>rg</code></td><td><code>cargo test --test search_properties</code> (needs <code>rg</code>)</td></tr>
 <tr><td><code>tests/python_codebase.rs</code></td><td>the import graph, symbol search, reference search and strict <code>-deps:</code>/<code>-rdeps:</code> scopes on generated Python trees, after a build and after the watcher rewrites the tree</td><td>the generator’s answer key, itself checked by Python and grimp</td><td><code>cargo test --test python_codebase</code></td></tr>
+<tr><td><code>tests/contract_walk.rs</code></td><td>one search walked to its last hit through every surface: REST at several page sizes and random offsets, gRPC, MCP over HTTP and <code>fcs mcp</code>, <code>fcs</code> (piped, <code>-l</code>, offline) and the web page in headless Chromium with LOAD MORE and “Show N more hits” pressed until they are gone; no hit twice or missing, each file’s hits together, files by best hit, honest counts</td><td>the engine’s exhaustive list, itself checked against the files on disk and the generator’s reference key</td><td><code>cargo test --test contract_walk</code> (the web page needs Playwright, see below)</td></tr>
+<tr><td><code>tests/rank_snapshot.rs</code></td><td>the first 20 hits and the total of about a hundred searches; the same corpus at two places on disk must rank the same</td><td><code>tests/snapshots/rank_order.txt</code>, changed only on purpose</td><td><code>cargo test --test rank_snapshot</code></td></tr>
+<tr><td><code>tests/discovery_oracle.rs</code></td><td>which files are indexed (the build and the watcher’s per-file check) on random trees of <code>.gitignore</code>, <code>.ignore</code>, <code>.rgignore</code> and <code>.git/info/exclude</code> rules; the FILES box with a regex</td><td><code>rg --files</code>, and <code>rg</code> over the path list</td><td><code>cargo test --test discovery_oracle</code> (needs <code>rg</code>)</td></tr>
 <tr><td><code>tests/fault_injection.rs</code></td><td>failed reads, panics while applying changes, lost changes: each is retried, reported and repaired</td><td>expected recovery</td><td><code>cargo test --features failpoints --test fault_injection</code></td></tr>
-<tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries on tokio, Django and fixtures, with paging and default limits</td><td><code>rg</code></td><td>see <a href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></td></tr>
+<tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries and regexes on tokio, Django and fixtures, with paging and default limits, on an index built in one go, restarted from disk (<code>--history reload</code>) and filled by the watcher (<code>--history watch</code>)</td><td><code>rg</code></td><td>see <a href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></td></tr>
 <tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
 <tr><td><code>examples/ref_oracle.rs</code>, <code>examples/impact_oracle.rs</code></td><td>Python references and diff impact on real repositories</td><td>Jedi</td><td>CI jobs “ref oracle”, “impact oracle”</td></tr>
 <tr><td><code>examples/watch_load.rs</code>, <code>examples/limits_bench.rs</code></td><td>searches answered and latency while a large tree changes; where limits bite</td><td>measured numbers</td><td>by hand, see <a href="#how-this-is-tested">Incremental updates</a></td></tr>
@@ -4915,6 +4925,26 @@ as it wrote the line.</p>
 exactly the key’s edges, line for line. Then the test rewrites the tree as
 another seed’s and hands the changes to the watcher in a few bursts: the
 incremental result must match the new key as a fresh build does.</p>
+<h2 id="rank-order"><a class="header" href="#rank-order">Rank order</a></h2>
+<p>Everything above checks <em>which</em> hits a search finds and that a list is
+well formed; none notices when a change quietly reorders the first page,
+the page people read. <code>tests/rank_snapshot.rs</code> pins it: the first 20 hits
+of about a hundred searches (words, generated names, regexes, symbols,
+references) are kept in <code>tests/snapshots/rank_order.txt</code>. A ranking change
+is meant to move hits, so a difference is not a failure to fix but a
+change to accept on purpose:</p>
+<pre><code class="language-text">FCS_UPDATE_SNAPSHOTS=1 cargo test --test rank_snapshot
+</code></pre>
+<p>and the snapshot’s diff then shows in the pull request what moved.</p>
+<h2 id="the-web-page"><a class="header" href="#the-web-page">The web page</a></h2>
+<p>The contract walk’s browser leg runs <code>scripts/e2e/web_walk.cjs</code> with
+Playwright. Locally:</p>
+<pre><code class="language-text">npm install --no-save --prefix /tmp/pw playwright@1.56.1
+/tmp/pw/node_modules/.bin/playwright install chromium
+NODE_PATH=/tmp/pw/node_modules FCS_REQUIRE_BROWSER=1 cargo test --release --test contract_walk
+</code></pre>
+<p>Without Playwright the leg prints a note and is skipped; CI’s Linux test
+job sets <code>FCS_REQUIRE_BROWSER</code>, so there it fails instead.</p>
 <h2 id="reproducing-a-failure"><a class="header" href="#reproducing-a-failure">Reproducing a failure</a></h2>
 <ul>
 <li>proptest suites print the shrunk sequence or query that failed, which is
@@ -4928,8 +4958,9 @@ their size) and <code>FCS_PYGEN_KEEP=DIR</code> writes them to <code>DIR</code> 
 <p>On pull requests CI uses fixed seeds, so a pull request is not failed by a
 case it did not cause; pushes to <code>main</code> use new seeds each time and keep
 exploring. CI runs the lifecycle model 600 times, the search properties
-2,000 times (job “fcs vs ripgrep”) and 40 generated Python trees with grimp
-(job “graph oracle”).</p>
+2,000 times and the discovery oracle 1,000 times (job “fcs vs ripgrep”,
+which also runs the backtest on a reloaded and a watched index) and 40
+generated Python trees with grimp (job “graph oracle”).</p>
 <h2 id="what-these-tests-found"><a class="header" href="#what-these-tests-found">What these tests found</a></h2>
 <ul>
 <li>Files with no trigram (two bytes in <code>x.py</code>) were never searched by short
@@ -4941,6 +4972,12 @@ were now ignored (lifecycle model).</li>
 <li>A file rewritten in the same timestamp tick with the same size could
 stay stale across a restart on coarse file systems (found while writing
 the lifecycle model; now covered by a unit test).</li>
+<li>The watcher’s per-file ignore check disagreed with the build and with
+ripgrep in three ways: a rule deeper down (<code>!a/b/</code> after <code>/a</code>) brought
+files back from an ignored folder; the nearest ignore file won even when
+a parent’s <code>.ignore</code> should beat a <code>.gitignore</code> next to the file; and
+rules above a nested repository were dropped inside it (discovery
+oracle).</li>
 <li>Earlier probes found a crash when a large file was rewritten during a
 search, “server unavailable” at the end of a build, and lost changes
 after failed reads or a panic; the fault and watch tests cover them.</li>
@@ -5702,6 +5739,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>The watcher could index files the build leaves out, by ignore rules.</strong>
+When a file changed, the watcher decided whether it was ignored
+differently from the walk that builds the index (and from ripgrep): a
+rule deeper down (<code>!a/b/</code> after <code>/a</code>) let files back in from a folder
+that is ignored; the nearest ignore file decided, where a parent’s
+<code>.ignore</code> or <code>.rgignore</code> rule should beat a <code>.gitignore</code> next to the
+file; and rules in folders above a nested repository were not applied
+inside it. Such files became searchable after an edit and disappeared
+again at the next restart. The check now follows ripgrep’s rules, and
+both are compared with <code>rg --files</code> on random trees of ignore files.</li>
 <li><strong>Folders ignored by a parent’s <code>.gitignore</code> stayed out only until
 something happened in them.</strong> With <code>sub/</code> in the root <code>.gitignore</code>, the
 watcher indexed everything in <code>pkg/sub</code> when the folder was created,
@@ -5793,6 +5840,18 @@ the import graph, symbol and reference searches and strict
 <code>-deps</code>/<code>-rdeps</code> scopes, after a build and after the watcher rewrites the
 tree; grimp and Python check the key itself. Book page: How it works &gt;
 How fcs is tested.</li>
+<li><strong>Every surface walked to the last hit, and the first page pinned.</strong>
+<code>tests/contract_walk.rs</code> runs searches with thousands of hits through
+REST, gRPC, MCP (HTTP and <code>fcs mcp</code>), <code>fcs</code> and the web page in headless
+Chromium, pressing LOAD MORE and “Show N more hits” until they are gone,
+and every surface must show the same hits in the same order with honest
+counts. <code>tests/rank_snapshot.rs</code> keeps the first page of about a hundred
+searches in a file, so a change that reorders results shows in its pull
+request. The ripgrep backtest also runs on an index restarted from disk
+and on one the watcher filled (<code>--history reload|watch</code>), with regexes
+made up from the corpus (<code>--generate-regex</code>), and
+<code>tests/discovery_oracle.rs</code> compares the indexed files and the FILES box
+with <code>rg</code>.</li>
 <li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
 whether its index agrees with itself, whether indexed files still match
 the disk, and whether it holds the files a fresh walk finds. It prints

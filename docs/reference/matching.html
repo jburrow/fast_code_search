@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-981acdbc.js";
+            window.path_to_searchindex_js = "../searchindex-09bfe366.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-ba5bc6a0.js"></script>
@@ -324,7 +324,14 @@ matching <code>exclude_patterns</code> (<code>node_modules</code>, <code>target<
 searched, even when git tracks them (ripgrep searches a tracked
 <code>build/</code>). Ignore files apply as in ripgrep: <code>.gitignore</code>, <code>.ignore</code>,
 <code>.rgignore</code>, <code>.git/info/exclude</code> and your global git excludes
-(<code>core.excludesFile</code>), with the same precedence. When the watcher sees a
+(<code>core.excludesFile</code>), with the same precedence: a rule in an <code>.rgignore</code>
+or <code>.ignore</code> anywhere above a file beats a <code>.gitignore</code> rule next to it; a
+folder that is ignored stays ignored whatever a rule deeper down says
+(<code>!a/b/</code> after <code>/a</code> brings nothing back, as in git); and <code>.gitignore</code>
+files apply outside git repositories and above nested ones, as with
+<code>rg --no-require-git</code>. The build and the watcher’s per-file check are
+both compared with <code>rg --files</code> on random trees of ignore files
+(<code>tests/discovery_oracle.rs</code>). When the watcher sees a
 <code>.gitignore</code>, <code>.ignore</code> or <code>.rgignore</code> change, appear or go away (a
 branch switch, say), it re-checks every file under that folder, as a
 restart would. Edits to <code>.git/info/exclude</code> or the global excludes file
