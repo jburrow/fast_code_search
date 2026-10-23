@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a324b79c.js";
+            window.path_to_searchindex_js = "../searchindex-75ad5271.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-73761d1b.js"></script>
+        <script src="../toc-497c4b73.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Short queries missed very small files.</strong> A file shorter than three
+bytes with a name shorter than three letters (<code>x.py</code> holding <code>ab</code>) has no
+trigram, and queries without a trigram of their own (two characters, a
+regex with no literal) scanned only files some posting list named, so rg
+found the line and fcs did not. The index now keeps the set of all its
+files, after a load and incremental changes too.</li>
+<li><strong><code>indexer.extra_binary_extensions</code> works.</strong> The matching reference
+documented it, but the configuration rejected it as an unknown key. Every
+file walk and eligibility check now takes its settings from one place.</li>
 <li><strong>Rewriting a large file while it was searched could crash the server.</strong>
 Files over 1 MB were memory-mapped, and when another program truncated
 and rewrote one while a search read it, the server died with SIGBUS.
@@ -239,6 +248,17 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
+whether its index agrees with itself, whether indexed files still match
+the disk, and whether it holds the files a fresh walk finds. It prints
+counts only, so the output is safe to share (<code>--show-paths</code> for file
+names); <code>GET /api/check</code> returns the same as JSON. A background scrub
+(<code>[diagnostics] scrub</code>, on by default) reads 3,000 files a minute, about
+0.1% of a core. It logs and re-indexes any file the index has out of
+step, which is a lost change, and checks the index’s own consistency
+hourly; the counts are on the diagnostics page. The watch, fault and
+backtest harnesses now run the same checks after every scenario. Book
+page: Guides &gt; Checking a live index.</li>
 <li><strong>Fault-injection tests.</strong> A <code>failpoints</code> cargo feature compiles in
 named fault points (<code>src/faults.rs</code>) that tests arm to make a read fail
 or a step panic; <code>tests/fault_injection.rs</code> uses them to check that the

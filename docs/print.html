@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a324b79c.js";
+            window.path_to_searchindex_js = "searchindex-75ad5271.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-73761d1b.js"></script>
+        <script src="toc-497c4b73.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1232,6 +1232,95 @@ since the server started.</p>
 no query text or file names, but read them first if you set
 <code>include_queries = true</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="checking-a-live-index"><a class="header" href="#checking-a-live-index">Checking a live index</a></h1>
+<p>A search engine that has lost a change does not fail: it answers less.
+fcs checks its own index in three ways so that kind of loss shows up
+as a number:</p>
+<ul>
+<li><strong>Invariants.</strong> The index agrees with itself. Every posting list names
+only files that exist. Every file is scanned by queries too short for
+trigrams. Path lookups, the folder index and display paths agree.
+Nothing is cached for removed files. The dependency graph’s two
+directions and counts match.</li>
+<li><strong>Content.</strong> For each indexed file, the version that was indexed is
+still what is on disk, and every trigram of it is in the index.</li>
+<li><strong>Discovery.</strong> The indexed files are the ones a fresh walk of the
+disk, with the same settings, would index.</li>
+</ul>
+<h2 id="fcs-check---live"><a class="header" href="#fcs-check---live"><code>fcs check --live</code></a></h2>
+<pre><code class="language-text">$ fcs check --live
+index: 412,880 files
+invariants: ok
+content (2000 files read): ok
+discovery (412,880 files on disk to index): ok
+background scrub: 1,204,113 files checked (2 full passes), 0 out of step; 31 consistency checks, last clean
+no problems found in 9.4 s
+</code></pre>
+<p>This asks the running server (<code>--server</code>, or the configured address) to
+check its index. The output is counts only, so you can paste it anywhere.
+Add <code>--show-paths</code> to list example files for each kind of problem, or
+<code>--json</code> for the full report. Exit status 1 means problems were found.</p>
+<ul>
+<li><code>--content N</code> reads N files spread over the index (default 2,000;
+<code>--all-content</code> reads every file).</li>
+<li><code>--no-discovery</code> skips the walk of the disk.</li>
+</ul>
+<p>A change the watcher has not applied yet looks like a difference for a
+moment. Anything found is checked a second time, once the watcher has
+caught up (or after ten seconds), and only what remains is reported. With
+file watching off, files changed since the last scan show up as
+<code>changed</code>, <code>gone</code>, <code>missing</code> or <code>extra</code> until the server rescans them;
+the output says so.</p>
+<p>What each kind means:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Kind</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>content.changed</code></td><td>The file on disk differs from the indexed version (a lost change if it lasts)</td></tr>
+<tr><td><code>content.gone</code></td><td>Deleted from disk, still in the index</td></tr>
+<tr><td><code>content.missing_trigrams</code></td><td>Unchanged, but some of its text would not find it: a bug, please report it</td></tr>
+<tr><td><code>content.not_indexable</code></td><td>Unchanged, but no longer something fcs indexes (binary, too large)</td></tr>
+<tr><td><code>discovery.missing</code></td><td>On disk and indexable, not in the index</td></tr>
+<tr><td><code>discovery.extra</code></td><td>In the index, but gone or excluded now (an ignore rule, an exclude pattern)</td></tr>
+<tr><td><code>*.unreadable</code></td><td>Can’t be read (reported, not counted as a problem)</td></tr>
+<tr><td><code>invariants.*</code></td><td>The index disagrees with itself: a bug, please report it</td></tr>
+</tbody>
+</table>
+</div>
+<p>The same report is available as JSON from <code>GET /api/check</code>. It accepts
+<code>content</code>, <code>all</code>, <code>discovery</code> and <code>examples</code> parameters, and runs one
+check at a time. The check takes only read locks, so searches keep being
+answered. The longest lock is the invariant pass, about 0.6 s on
+200,000 files; the watcher waits for that, searches do not.</p>
+<h2 id="the-background-scrub"><a class="header" href="#the-background-scrub">The background scrub</a></h2>
+<p>The server also checks itself continuously, a few files at a time
+(<code>[diagnostics] scrub</code>, on by default):</p>
+<ul>
+<li>It reads 3,000 files a minute (<code>scrub_files_per_minute</code>) in a round
+over the index. Measured at about 52,000 files a second on one thread,
+that is roughly 0.1% of a core. A million files take under six hours
+per pass.</li>
+<li>A file that is out of step for over a minute counts as drift: a change
+the watcher lost. So does a file whose trigrams are missing. Drift is
+logged as a warning, counted, and queued for the watcher to index again.</li>
+<li>The invariants are checked every hour (<code>scrub_invariants_minutes</code>).</li>
+</ul>
+<p>The counts are in <code>fcs check --live</code>, on the diagnostics page (Index
+scrub) and in <code>/api/diagnostics</code> under <code>scrub</code>. Any non-zero drift is
+worth reporting: it means a change was lost and would have stayed lost.</p>
+<h2 id="where-the-checks-also-run"><a class="header" href="#where-the-checks-also-run">Where the checks also run</a></h2>
+<ul>
+<li>The watch harness (<code>tests/watch_harness.rs</code>) runs the invariants and
+the content check on every file after every scenario.</li>
+<li>The fault-injection tests (<code>tests/fault_injection.rs</code>) run the
+invariants after each injected failure, and check that the scrub finds
+and fixes a change the watcher never heard about.</li>
+<li>The ripgrep backtest and <code>fcs check</code> check the invariants of the index
+they build before comparing results.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="upgrading"><a class="header" href="#upgrading">Upgrading</a></h1>
 <p>Replace the two binaries and restart the server. The saved index is
 versioned; what happens on the first start after an upgrade depends on the
@@ -1643,6 +1732,7 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…,"problems":N}</code>); <code>problems</code> counts startup and storage problems</td></tr>
 <tr><td><code>GET /api/ready</code></td><td>Readiness: 200 once there is an index to search, 503 otherwise</td></tr>
 <tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests, and <code>service</code>: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status <code>degraded</code>)</td></tr>
+<tr><td><code>GET /api/check</code></td><td>Check the live index against itself and the disk: invariant violations, content and discovery differences, and the background scrub’s findings, as counts with example paths. Parameters <code>content</code> (files to read, default 2000), <code>all</code>, <code>discovery</code> (default true), <code>examples</code> (default 5). One at a time (429 while one runs). See the book’s “Checking a live index”</td></tr>
 <tr><td><code>GET /metrics</code></td><td>Prometheus text format (request counters, latency histogram, index gauges)</td></tr>
 <tr><td><code>WS /ws/progress</code></td><td>Live indexing progress frames</td></tr>
 </tbody>
@@ -3488,11 +3578,28 @@ Options:
       --no-graph
           Skip the dependency graph check
 
+      --live
+          Check the running server's index instead (see --server): does it agree with itself, does indexed content match the disk, and does it hold the files a fresh walk finds. Prints counts only, so the output is safe to share; add --show-paths for example file names
+
+      --content &lt;N&gt;
+          With --live: files whose content to read and check, spread over the index (0 skips it)
+          
+          [default: 2000]
+
+      --all-content
+          With --live: read and check every indexed file (slow on large trees)
+
+      --no-discovery
+          With --live: skip the walk of the disk
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --show-paths
+          With --live: show example file names for each kind of problem
 
       --offline
           Search the on-disk index directly instead of asking the server
@@ -3740,6 +3847,11 @@ respect_gitignore = true
 # Example: ["rs", "py", "js", "ts", "go", "c", "cpp", "h", "java"]
 include_extensions = []
 
+# More extensions never to read, on top of the built-in binary list
+# (images, archives, fonts, office documents, media, compiled objects)
+# Example: ["dat", "parquet"]
+extra_binary_extensions = []
+
 # Patterns to exclude from indexing
 exclude_patterns = [
     "**/node_modules/**",
@@ -3858,6 +3970,14 @@ thread_stacks = true
 # Keep query text, file paths and quoted text in captures. Off: captures say
 # how long a query was, not what it was.
 include_queries = false
+
+# Background scrub: check indexed files against the disk a few at a time,
+# and index again any the index has out of step (a lost change). Counts are
+# in /api/diagnostics and `fcs check --live`. About 0.1% of a core.
+scrub = true
+scrub_files_per_minute = 3000
+# Minutes between checks of the index's own consistency (0: never).
+scrub_invariants_minutes = 60.0
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
@@ -5478,6 +5598,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Short queries missed very small files.</strong> A file shorter than three
+bytes with a name shorter than three letters (<code>x.py</code> holding <code>ab</code>) has no
+trigram, and queries without a trigram of their own (two characters, a
+regex with no literal) scanned only files some posting list named, so rg
+found the line and fcs did not. The index now keeps the set of all its
+files, after a load and incremental changes too.</li>
+<li><strong><code>indexer.extra_binary_extensions</code> works.</strong> The matching reference
+documented it, but the configuration rejected it as an unknown key. Every
+file walk and eligibility check now takes its settings from one place.</li>
 <li><strong>Rewriting a large file while it was searched could crash the server.</strong>
 Files over 1 MB were memory-mapped, and when another program truncated
 and rewrote one while a search read it, the server died with SIGBUS.
@@ -5529,6 +5658,17 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
+whether its index agrees with itself, whether indexed files still match
+the disk, and whether it holds the files a fresh walk finds. It prints
+counts only, so the output is safe to share (<code>--show-paths</code> for file
+names); <code>GET /api/check</code> returns the same as JSON. A background scrub
+(<code>[diagnostics] scrub</code>, on by default) reads 3,000 files a minute, about
+0.1% of a core. It logs and re-indexes any file the index has out of
+step, which is a lost change, and checks the index’s own consistency
+hourly; the counts are on the diagnostics page. The watch, fault and
+backtest harnesses now run the same checks after every scenario. Book
+page: Guides &gt; Checking a live index.</li>
 <li><strong>Fault-injection tests.</strong> A <code>failpoints</code> cargo feature compiles in
 named fault points (<code>src/faults.rs</code>) that tests arm to make a read fail
 or a step panic; <code>tests/fault_injection.rs</code> uses them to check that the

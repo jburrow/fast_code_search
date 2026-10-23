@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a324b79c.js";
+            window.path_to_searchindex_js = "../searchindex-75ad5271.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-73761d1b.js"></script>
+        <script src="../toc-497c4b73.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -210,6 +210,7 @@ when the request timeout is hit.</p>
 <tr><td><code>GET /api/health</code></td><td>Liveness (<code>{"status":"healthy","version":…,"problems":N}</code>); <code>problems</code> counts startup and storage problems</td></tr>
 <tr><td><code>GET /api/ready</code></td><td>Readiness: 200 once there is an index to search, 503 otherwise</td></tr>
 <tr><td><code>GET /api/diagnostics</code></td><td>Index health, extension breakdown, self-tests, and <code>service</code>: web UI and gRPC status, where the index is saved, and the problems (a problem marks the status <code>degraded</code>)</td></tr>
+<tr><td><code>GET /api/check</code></td><td>Check the live index against itself and the disk: invariant violations, content and discovery differences, and the background scrub’s findings, as counts with example paths. Parameters <code>content</code> (files to read, default 2000), <code>all</code>, <code>discovery</code> (default true), <code>examples</code> (default 5). One at a time (429 while one runs). See the book’s “Checking a live index”</td></tr>
 <tr><td><code>GET /metrics</code></td><td>Prometheus text format (request counters, latency histogram, index gauges)</td></tr>
 <tr><td><code>WS /ws/progress</code></td><td>Live indexing progress frames</td></tr>
 </tbody>

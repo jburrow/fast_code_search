@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a324b79c.js";
+            window.path_to_searchindex_js = "../searchindex-75ad5271.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-73761d1b.js"></script>
+        <script src="../toc-497c4b73.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -784,11 +784,28 @@ Options:
       --no-graph
           Skip the dependency graph check
 
+      --live
+          Check the running server's index instead (see --server): does it agree with itself, does indexed content match the disk, and does it hold the files a fresh walk finds. Prints counts only, so the output is safe to share; add --show-paths for example file names
+
+      --content &lt;N&gt;
+          With --live: files whose content to read and check, spread over the index (0 skips it)
+          
+          [default: 2000]
+
+      --all-content
+          With --live: read and check every indexed file (slow on large trees)
+
+      --no-discovery
+          With --live: skip the walk of the disk
+
       --server &lt;URL&gt;
           Server base URL (default: $FCS_SERVER, then the config's web_address, then http://127.0.0.1:8080)
 
       --config &lt;FILE&gt;
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
+
+      --show-paths
+          With --live: show example file names for each kind of problem
 
       --offline
           Search the on-disk index directly instead of asking the server
