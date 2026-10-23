@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-75ad5271.js";
+            window.path_to_searchindex_js = "searchindex-981acdbc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-497c4b73.js"></script>
+        <script src="toc-ba5bc6a0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4552,7 +4552,13 @@ seconds), then applied as one batch.</p>
 <p>When events are known to be lost (the OS reports an overflow, or the
 bounded queue fills up), the watched roots are reconciled with the disk
 instead. Reconciling skips files whose size and modification time match
-what was indexed, so it costs a walk and a stat per file, not a rebuild.</p>
+what was indexed, so it costs a walk and a stat per file, not a rebuild.
+A file that was read within 3 seconds of being modified is read again
+anyway: on file systems with coarse timestamps (FAT, HFS+, some network
+shares) it could have been rewritten in the same tick with the same size.
+A folder that the ignore files above it ignore (<code>sub/</code> in the root
+<code>.gitignore</code>) is left out when it is reconciled, as the initial walk
+leaves it out.</p>
 <p><strong>Ignore files.</strong> A change to a <code>.gitignore</code>, <code>.ignore</code> or <code>.rgignore</code>
 (edited, created, deleted, or swapped by a branch switch) reconciles the
 folder it is in, so files it now ignores leave the index and files it no
@@ -4730,6 +4736,13 @@ searches continuously while a burst of changes is applied and fails if a
 search is turned away or waits too long; another holds a long search while
 a burst waits to be installed and checks that other searches are answered
 and report the changes still to apply.</p>
+<p><code>tests/lifecycle_model.rs</code> drives the same code (the watch loop’s
+<code>apply_burst</code>, the background indexer’s load and reconcile) through random
+sequences of edits, renames, folder moves, ignore-file changes, binary and
+oversized files, lost events, saves, restarts and crashes, and after every
+step compares the index with a naive model of the disk: the file set and
+every word’s hits, read page by page. A failure is shrunk to the shortest
+sequence that still fails. See <a href="#how-fcs-is-tested">How fcs is tested</a>.</p>
 <p><code>tests/fault_injection.rs</code> makes reads fail and the install step panic
 on purpose, through fault points compiled in only with the <code>failpoints</code>
 feature (<code>cargo test --features failpoints --test fault_injection</code>), and
@@ -4770,7 +4783,10 @@ exits, however it exits.</p>
 <ol>
 <li>Map the file, validate header, lengths, checksum and directory order.</li>
 <li><strong>Stat pass</strong>: one <code>stat</code> per persisted file, in parallel. A file whose
-mtime or size differs is <em>stale</em>; a file that is definitely gone
+mtime or size differs is <em>stale</em> (a file that was read within 3 seconds
+of being modified is saved with no time, so it is always stale: on a
+file system with coarse timestamps it could have changed in the same
+tick); a file that is definitely gone
 (<code>ENOENT</code>) is <em>removed</em>; any other error keeps the entry, so a permission
 problem or an unmounted share cannot wipe a root from the checkpoint.</li>
 <li><strong>Eligibility pass</strong>: every surviving file is checked against the
@@ -4780,7 +4796,8 @@ per directory), so a rule change takes effect without a rebuild.</li>
 mapping in parallel, restore symbols, references and edges — or
 re-extract them from content if the file was written by an older
 extractor — and rebuild the fast-ranking metadata.</li>
-<li>Re-index the stale files, then discover anything new under the roots.</li>
+<li>Re-index the stale files that the current configuration and ignore
+files still allow, then discover anything new under the roots.</li>
 </ol>
 <p>Roots are compared in canonical form, so a symlinked temp directory on
 macOS or an 8.3 short name on Windows is the same root as its long
@@ -4841,6 +4858,93 @@ abandoned client cannot pin the machine. The defaults are measured; see
 <a href="#search-limits">Search limits</a>. MCP’s own limits are in
 <code>[mcp]</code> (<code>search_code</code> 50 hits by default, at most 1,000, paged with
 <code>offset</code>).</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-fcs-is-tested"><a class="header" href="#how-fcs-is-tested">How fcs is tested</a></h1>
+<p>fcs makes a few promises that a wrong answer breaks quietly: a search shows
+every match, in rank order, and finds what ripgrep finds; the index follows
+the disk through edits, branch switches, lost events and restarts; searches
+are answered while the index changes; the import graph, symbols and
+references are what <a href="#dependency-graph-support">graph support</a> and
+<a href="#reference-support">reference support</a> say. A missing hit
+looks like an empty result, not an error, so each promise has a test whose
+answer comes from somewhere other than fcs’s own code: ripgrep, a
+language’s own resolver, a deliberately naive model, or a generator that
+wrote every line and knows the answer.</p>
+<h2 id="the-suites"><a class="header" href="#the-suites">The suites</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Suite</th><th>Checks</th><th>Against</th><th>Run</th></tr>
+</thead>
+<tbody>
+<tr><td>Unit tests (<code>src/**</code>)</td><td>each part on its own</td><td>hand-written cases</td><td><code>cargo test --lib</code></td></tr>
+<tr><td><code>tests/integration_tests.rs</code></td><td>the server end to end, saving and loading</td><td>hand-written cases</td><td><code>cargo test</code></td></tr>
+<tr><td><code>tests/frontend_parity.rs</code></td><td>web API, gRPC and <code>fcs</code> give the same hits in the same order</td><td>each other</td><td><code>cargo test</code></td></tr>
+<tr><td><code>tests/watch_harness.rs</code></td><td>the watch loop over scripted and random edits</td><td>a fresh index of the same disk</td><td><code>cargo test</code></td></tr>
+<tr><td><code>tests/lifecycle_model.rs</code></td><td>random sequences of edits, renames, folder moves and deletes, ignore files, binary and oversized files, lost events, saves, restarts and crashes; after every step: the file set, every word’s hits read page by page (no repeats, each file’s hits together), the index’s self-checks</td><td>a naive model (a map of files, a hand-written ignore matcher, a line-by-line search)</td><td><code>cargo test --test lifecycle_model</code></td></tr>
+<tr><td><code>tests/search_properties.rs</code></td><td>literal (<code>-i</code>, <code>-s</code>, <code>-w</code>) and regex searches on random text with case-folding oddities and multi-byte characters</td><td><code>rg</code></td><td><code>cargo test --test search_properties</code> (needs <code>rg</code>)</td></tr>
+<tr><td><code>tests/python_codebase.rs</code></td><td>the import graph, symbol search, reference search and strict <code>-deps:</code>/<code>-rdeps:</code> scopes on generated Python trees, after a build and after the watcher rewrites the tree</td><td>the generator’s answer key, itself checked by Python and grimp</td><td><code>cargo test --test python_codebase</code></td></tr>
+<tr><td><code>tests/fault_injection.rs</code></td><td>failed reads, panics while applying changes, lost changes: each is retried, reported and repaired</td><td>expected recovery</td><td><code>cargo test --features failpoints --test fault_injection</code></td></tr>
+<tr><td><code>examples/rg_backtest.rs</code></td><td>fixed and generated queries on tokio, Django and fixtures, with paging and default limits</td><td><code>rg</code></td><td>see <a href="#correctness-against-ripgrep-1">Correctness against ripgrep</a></td></tr>
+<tr><td><code>examples/graph_oracle.rs</code></td><td>the import graph on Django, Vite and generated deep trees</td><td>grimp, TypeScript’s resolver</td><td>CI job “graph oracle”</td></tr>
+<tr><td><code>examples/ref_oracle.rs</code>, <code>examples/impact_oracle.rs</code></td><td>Python references and diff impact on real repositories</td><td>Jedi</td><td>CI jobs “ref oracle”, “impact oracle”</td></tr>
+<tr><td><code>examples/watch_load.rs</code>, <code>examples/limits_bench.rs</code></td><td>searches answered and latency while a large tree changes; where limits bite</td><td>measured numbers</td><td>by hand, see <a href="#how-this-is-tested">Incremental updates</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>Every test that drives the index also runs its self-checks
+(<code>check_invariants</code>: posting lists name only live files, path lookups and
+the folder index agree, caches hold nothing for removed files, the graph’s
+two directions agree), the same checks <code>fcs check --live</code> and the server’s
+background scrub run (see <a href="#checking-a-live-index">Checking a live index</a>).</p>
+<h2 id="the-generated-python-codebases"><a class="header" href="#the-generated-python-codebases">The generated Python codebases</a></h2>
+<p><code>tests/support/pygen.rs</code> writes packages nested up to four deep, each with
+an <code>__init__.py</code> and modules, from a seed. Modules import each other in
+every form graph support lists (absolute, aliased, several on one line,
+parenthesised lists, one to three dots, imports inside functions and under
+<code>if TYPE_CHECKING:</code>; cycles happen) and use what they import in every
+position reference support lists as found: calls, attribute calls,
+<code>await</code>, instantiation, <code>obj.m()</code>, <code>Cls().m()</code>, <code>Cls.m(x)</code>, <code>super().m()</code>,
+decorators, base classes, annotations (<code>list[C]</code>, <code>C | None</code>, <code>Optional[C]</code>),
+<code>raise</code>/<code>except</code>, and values in lists, dicts, keyword arguments and
+comparisons. Names also appear where they are not references (strings,
+comments, docstrings, string annotations). Every name is unique, so “the
+references of <code>fn_0042</code>” has one right answer, which the generator recorded
+as it wrote the line.</p>
+<p>Before the key is trusted, Python compiles every file and grimp must draw
+exactly the key’s edges, line for line. Then the test rewrites the tree as
+another seed’s and hands the changes to the watcher in a few bursts: the
+incremental result must match the new key as a fresh build does.</p>
+<h2 id="reproducing-a-failure"><a class="header" href="#reproducing-a-failure">Reproducing a failure</a></h2>
+<ul>
+<li>proptest suites print the shrunk sequence or query that failed, which is
+usually enough to write a named test (the lifecycle model keeps the ones
+it found that way). <code>PROPTEST_RNG_SEED=N</code> replays a run and
+<code>PROPTEST_CASES=N</code> runs more: <code>PROPTEST_CASES=3000 cargo test --release --test lifecycle_model</code>.</li>
+<li><code>FCS_PYGEN_SEEDS=1,2,3</code> picks the generated trees (<code>FCS_PYGEN_PACKAGES</code>
+their size) and <code>FCS_PYGEN_KEEP=DIR</code> writes them to <code>DIR</code> to look at.</li>
+<li><code>FCS_WATCH_SEED=N</code> replays a random watch-harness run.</li>
+</ul>
+<p>On pull requests CI uses fixed seeds, so a pull request is not failed by a
+case it did not cause; pushes to <code>main</code> use new seeds each time and keep
+exploring. CI runs the lifecycle model 600 times, the search properties
+2,000 times (job “fcs vs ripgrep”) and 40 generated Python trees with grimp
+(job “graph oracle”).</p>
+<h2 id="what-these-tests-found"><a class="header" href="#what-these-tests-found">What these tests found</a></h2>
+<ul>
+<li>Files with no trigram (two bytes in <code>x.py</code>) were never searched by short
+queries (self-checks).</li>
+<li><code>extra_binary_extensions</code> was documented but rejected (self-checks).</li>
+<li>The watcher indexed folders ignored by a parent’s <code>.gitignore</code> when
+something happened in them, and a restart re-indexed changed files that
+were now ignored (lifecycle model).</li>
+<li>A file rewritten in the same timestamp tick with the same size could
+stay stale across a restart on coarse file systems (found while writing
+the lifecycle model; now covered by a unit test).</li>
+<li>Earlier probes found a crash when a large file was rewritten during a
+search, “server unavailable” at the end of a build, and lost changes
+after failed reads or a panic; the fault and watch tests cover them.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="benchmark-methodology"><a class="header" href="#benchmark-methodology">Benchmark methodology</a></h1>
 <p>Every number this project publishes comes from a run you can open, on a
@@ -5598,6 +5702,24 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Folders ignored by a parent’s <code>.gitignore</code> stayed out only until
+something happened in them.</strong> With <code>sub/</code> in the root <code>.gitignore</code>, the
+watcher indexed everything in <code>pkg/sub</code> when the folder was created,
+renamed in, had an ignore file written in it, or was rescanned after
+lost events: a walk never checks whether the folder it starts from is
+ignored. It now does.</li>
+<li><strong>A restart re-indexed changed files that are now ignored.</strong> A file that
+changed while the server was down was re-read without checking the
+ignore rules (only the size cap and excludes), so a file a new
+<code>.gitignore</code> rule covered came back if it had also changed. Changed files
+now go through the same rules as discovery.</li>
+<li><strong>A file rewritten within the same second could stay stale.</strong> On file
+systems with coarse timestamps (FAT, HFS+, some network shares), a file
+rewritten with the same size in the same tick it was indexed kept its
+old content in the index across a restart or a rescan after lost events,
+because its size and time had not changed. A file read within 3 seconds
+of being modified is now read again by the next rescan or restart, as
+git does with “racily clean” files.</li>
 <li><strong>Short queries missed very small files.</strong> A file shorter than three
 bytes with a name shorter than three letters (<code>x.py</code> holding <code>ab</code>) has no
 trigram, and queries without a trigram of their own (two characters, a
@@ -5658,6 +5780,19 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>More ways the tests look for wrong answers.</strong> A model-based test
+(<code>tests/lifecycle_model.rs</code>) drives the index through random sequences of
+edits, renames, folder moves, ignore-file changes, lost events, saves,
+restarts and crashes, and after every step compares it with a naive
+model, page by page; it found the first two fixes above. Property tests
+(<code>tests/search_properties.rs</code>) compare literal and regex searches with
+ripgrep on random text full of case-folding oddities (<code>ß</code>, <code>ſ</code>, the
+Kelvin sign, the sigmas, dotted and dotless i). A generator of seeded
+Python codebases with an answer key (<code>tests/python_codebase.rs</code>) checks
+the import graph, symbol and reference searches and strict
+<code>-deps</code>/<code>-rdeps</code> scopes, after a build and after the watcher rewrites the
+tree; grimp and Python check the key itself. Book page: How it works &gt;
+How fcs is tested.</li>
 <li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
 whether its index agrees with itself, whether indexed files still match
 the disk, and whether it holds the files a fresh walk finds. It prints

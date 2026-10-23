@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-75ad5271.js";
+            window.path_to_searchindex_js = "../searchindex-981acdbc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-497c4b73.js"></script>
+        <script src="../toc-ba5bc6a0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,24 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>Folders ignored by a parent’s <code>.gitignore</code> stayed out only until
+something happened in them.</strong> With <code>sub/</code> in the root <code>.gitignore</code>, the
+watcher indexed everything in <code>pkg/sub</code> when the folder was created,
+renamed in, had an ignore file written in it, or was rescanned after
+lost events: a walk never checks whether the folder it starts from is
+ignored. It now does.</li>
+<li><strong>A restart re-indexed changed files that are now ignored.</strong> A file that
+changed while the server was down was re-read without checking the
+ignore rules (only the size cap and excludes), so a file a new
+<code>.gitignore</code> rule covered came back if it had also changed. Changed files
+now go through the same rules as discovery.</li>
+<li><strong>A file rewritten within the same second could stay stale.</strong> On file
+systems with coarse timestamps (FAT, HFS+, some network shares), a file
+rewritten with the same size in the same tick it was indexed kept its
+old content in the index across a restart or a rescan after lost events,
+because its size and time had not changed. A file read within 3 seconds
+of being modified is now read again by the next rescan or restart, as
+git does with “racily clean” files.</li>
 <li><strong>Short queries missed very small files.</strong> A file shorter than three
 bytes with a name shorter than three letters (<code>x.py</code> holding <code>ab</code>) has no
 trigram, and queries without a trigram of their own (two characters, a
@@ -248,6 +266,19 @@ indexing).</li>
 </ul>
 <h3 id="added"><a class="header" href="#added">Added</a></h3>
 <ul>
+<li><strong>More ways the tests look for wrong answers.</strong> A model-based test
+(<code>tests/lifecycle_model.rs</code>) drives the index through random sequences of
+edits, renames, folder moves, ignore-file changes, lost events, saves,
+restarts and crashes, and after every step compares it with a naive
+model, page by page; it found the first two fixes above. Property tests
+(<code>tests/search_properties.rs</code>) compare literal and regex searches with
+ripgrep on random text full of case-folding oddities (<code>ß</code>, <code>ſ</code>, the
+Kelvin sign, the sigmas, dotted and dotless i). A generator of seeded
+Python codebases with an answer key (<code>tests/python_codebase.rs</code>) checks
+the import graph, symbol and reference searches and strict
+<code>-deps</code>/<code>-rdeps</code> scopes, after a build and after the watcher rewrites the
+tree; grimp and Python check the key itself. Book page: How it works &gt;
+How fcs is tested.</li>
 <li><strong>The index checks itself.</strong> <code>fcs check --live</code> asks the running server
 whether its index agrees with itself, whether indexed files still match
 the disk, and whether it holds the files a fresh walk finds. It prints

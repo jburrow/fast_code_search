@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-75ad5271.js";
+            window.path_to_searchindex_js = "../searchindex-981acdbc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-497c4b73.js"></script>
+        <script src="../toc-ba5bc6a0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -202,7 +202,10 @@ exits, however it exits.</p>
 <ol>
 <li>Map the file, validate header, lengths, checksum and directory order.</li>
 <li><strong>Stat pass</strong>: one <code>stat</code> per persisted file, in parallel. A file whose
-mtime or size differs is <em>stale</em>; a file that is definitely gone
+mtime or size differs is <em>stale</em> (a file that was read within 3 seconds
+of being modified is saved with no time, so it is always stale: on a
+file system with coarse timestamps it could have changed in the same
+tick); a file that is definitely gone
 (<code>ENOENT</code>) is <em>removed</em>; any other error keeps the entry, so a permission
 problem or an unmounted share cannot wipe a root from the checkpoint.</li>
 <li><strong>Eligibility pass</strong>: every surviving file is checked against the
@@ -212,7 +215,8 @@ per directory), so a rule change takes effect without a rebuild.</li>
 mapping in parallel, restore symbols, references and edges — or
 re-extract them from content if the file was written by an older
 extractor — and rebuild the fast-ranking metadata.</li>
-<li>Re-index the stale files, then discover anything new under the roots.</li>
+<li>Re-index the stale files that the current configuration and ignore
+files still allow, then discover anything new under the roots.</li>
 </ol>
 <p>Roots are compared in canonical form, so a symlinked temp directory on
 macOS or an 8.3 short name on Windows is the same root as its long
