@@ -876,7 +876,7 @@ impl Recorder {
 const SECRET_FIELDS: &[&str] = &["query", "q", "pattern", "path", "file", "dir", "root"];
 
 /// `s` with quoted text, paths and file names, and the values of
-/// [`SECRET_FIELDS`] replaced, so a capture shows what happened without
+/// fields such as `query=` and `path=` replaced, so a capture shows what happened without
 /// what was searched or which files were involved.
 pub fn redact(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
