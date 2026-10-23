@@ -15,6 +15,8 @@ on:
       - "src/**"
       - "examples/graph_oracle.rs"
       - "scripts/graph-oracle/**"
+      - "tests/python_codebase.rs"
+      - "tests/support/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/graph-oracle.yml"
@@ -90,6 +92,20 @@ jobs:
           python src/check/oracle/py.py root-init-py > py-root-init.json
           ./target/release/examples/graph_oracle root-init-py --oracle py-root-init.json --lang py \
             --max-missing 0 --max-extra 0 --markdown graph-py-root-init.md
+
+      # Seeded generated Python trees whose generator knows every edge,
+      # definition and reference (tests/support/pygen.rs). grimp and Python
+      # check the generator's key first; the test then checks the graph,
+      # symbol and reference searches and strict -deps/-rdeps scopes, after
+      # a build and after the watcher rewrites the tree.
+      - name: Python (generated codebases with an answer key)
+        run: |
+          # Fixed seeds on pull requests; new ones on main.
+          first=1
+          if [ "${{ github.event_name }}" != pull_request ]; then first=$(( GITHUB_RUN_ID % 1000000 )); fi
+          FCS_PYGEN_SEEDS=$(seq -s, "$first" $(( first + 39 ))) cargo test --release --test python_codebase
+        env:
+          FCS_REQUIRE_PYTHON_ORACLES: "1"
 
       - name: TypeScript (resolveModuleName on Vite)
         run: |

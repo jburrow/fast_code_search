@@ -68,6 +68,23 @@ jobs:
           fi
           exit "$status"
 
+      # The index lifecycle against a naive model (tests/lifecycle_model.rs)
+      # runs 48 random sequences in the step above; more here, on one OS,
+      # with a fixed seed on pull requests.
+      - name: Run the lifecycle model longer
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          PROPTEST_RNG_SEED: ${{ github.event_name == 'pull_request' && '1' || github.run_id }}
+        run: |
+          set -o pipefail
+          status=0
+          PROPTEST_CASES=600 cargo test --release --test lifecycle_model --no-fail-fast 2>&1 | tee test-model.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash .github/scripts/annotate-test-log.sh test-model.log
+          fi
+          exit "$status"
+
       - name: Run tests (semantic feature)
         shell: bash
         run: |

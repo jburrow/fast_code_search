@@ -5,6 +5,23 @@ use std::fs;
 use std::io::Write;
 use tempfile::TempDir;
 
+/// Set every file under `dir` to a modification time a minute ago, so the
+/// files are not racy (read within seconds of a write) and a reload trusts
+/// their size and time, as it would for files nobody just edited.
+fn age_files(dir: &std::path::Path) {
+    let then = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
+        if entry.file_type().is_file() {
+            fs::File::options()
+                .write(true)
+                .open(entry.path())
+                .unwrap()
+                .set_modified(then)
+                .unwrap();
+        }
+    }
+}
+
 #[test]
 fn test_unicode_ci_find_matches_accented() {
     // Needle already Unicode-lowercased; haystack has uppercase accented form.
@@ -264,6 +281,7 @@ fn test_save_and_load_index() {
     };
 
     // Index and save
+    age_files(temp_dir.path());
     let mut engine = SearchEngine::new();
     engine.index_file(&file_path).unwrap();
     engine.finalize();
@@ -315,6 +333,7 @@ fn test_load_paths_share_one_implementation() {
         ..Default::default()
     };
 
+    age_files(temp_dir.path());
     let mut engine = SearchEngine::new();
     engine.index_file(&keep).unwrap();
     engine.index_file(&gone).unwrap();
@@ -862,6 +881,7 @@ fn test_search_references() {
         "fn other() {\n    crate::widget();\n}\nfn widgets() {}\n",
     )
     .unwrap();
+    age_files(temp_dir.path());
     let mut engine = SearchEngine::new();
     engine.index_file(&a).unwrap();
     engine.index_file(&b).unwrap();
@@ -2069,6 +2089,7 @@ fn test_reload_drops_files_the_current_config_excludes() {
         respect_gitignore: false,
         ..Default::default()
     };
+    age_files(temp_dir.path());
     let mut engine = SearchEngine::new();
     engine.index_file(root.join("keep.rs")).unwrap();
     engine.index_file(root.join("vendor/dep.rs")).unwrap();
@@ -2132,6 +2153,7 @@ fn test_source_base_path_respects_component_boundaries() {
         ],
         ..Default::default()
     };
+    age_files(temp_dir.path());
     let mut engine = SearchEngine::new();
     engine.index_file(proj.join("a.rs")).unwrap();
     engine.index_file(proj2.join("b.rs")).unwrap();
@@ -4072,6 +4094,7 @@ fn test_adopt_loaded_index_keeps_live_state() {
         ..Default::default()
     };
     {
+        age_files(temp_dir.path());
         let mut engine = SearchEngine::new();
         engine.add_root_path(temp_dir.path());
         for p in &paths {
@@ -4149,6 +4172,7 @@ fn test_file_without_trigrams_is_searched_by_short_queries() {
         );
     };
 
+    age_files(dir.path());
     let mut engine = SearchEngine::new();
     let pre: Vec<PreIndexedFile> = ["x.py", "longername.py"]
         .iter()
@@ -4189,6 +4213,7 @@ fn test_check_invariants_clean_then_catches_damage() {
     let dir = TempDir::new().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let paths = python_import_tree(&root, 12);
+    age_files(dir.path());
     let mut engine = SearchEngine::new();
     engine.add_root_path(&root);
     let pre: Vec<PreIndexedFile> = paths
@@ -4272,4 +4297,60 @@ fn test_check_invariants_clean_then_catches_damage() {
     fs::remove_file(&paths[4]).unwrap();
     let gone = engine.find_file_id_exact(&paths[4]).unwrap();
     assert_eq!(engine.check_file(gone), Some(FileCheck::Gone));
+}
+
+/// A file read within a second or two of being modified is "racy": on a
+/// file system with coarse timestamps it can be rewritten in the same tick
+/// with the same size, and its size and time no longer vouch for its
+/// content. A reconcile (events lost) and a restart must read it again.
+#[test]
+fn test_racy_file_is_read_again_by_reconcile_and_restart() {
+    use crate::config::IndexerConfig;
+    use crate::index::persistence::PersistedIndex;
+    use crate::search::FileChange;
+
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().canonicalize().unwrap().join("tree");
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("a.py");
+    fs::write(&file, "alpha_one\n").unwrap();
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    engine.add_root_path(&root);
+    crate::search::apply_change(&mut engine, &FileChange::Modified(file.clone()), &config);
+    let id = engine.find_file_id_exact(&file).unwrap();
+    assert!(
+        engine.is_racy(id),
+        "a file read right after a write is racy"
+    );
+
+    // Saved as unknown, so a restart reads it again.
+    let index_path = temp_dir.path().join("index.bin");
+    engine.save_index(&index_path, &config).unwrap();
+    let persisted = PersistedIndex::load(&index_path).unwrap();
+    assert_eq!(persisted.files[0].mtime, 0);
+
+    // Rewritten in the same timestamp tick with the same size: only the
+    // content tells.
+    let modified = fs::metadata(&file).unwrap().modified().unwrap();
+    fs::write(&file, "bravo_two\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert!(!engine.is_unchanged_on_disk(id, &file));
+    // The content check (scrub, `fcs check`) sees it too.
+    assert_eq!(engine.check_file(id), Some(FileCheck::Changed));
+    crate::search::apply_change(&mut engine, &FileChange::Modified(root.clone()), &config);
+    assert_eq!(
+        engine.search("bravo_two", 10).len(),
+        1,
+        "the reconcile read it again"
+    );
+    assert!(engine.search("alpha_one", 10).is_empty());
 }

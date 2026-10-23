@@ -170,6 +170,28 @@ impl EligibilityProbe {
         self.accepts_with_size(path, known_size)
     }
 
+    /// Is folder `dir` ignored by the ignore files above it (`sub/` in a
+    /// parent's `.gitignore`)? A walk never checks the folder it starts
+    /// from, so the watcher asks this before reconciling a folder: it used
+    /// to index everything in an ignored folder that was created, renamed
+    /// in, or had an ignore file of its own written.
+    pub fn is_dir_ignored(&self, dir: &Path) -> bool {
+        if !self.respect_gitignore {
+            return false;
+        }
+        let Some(parent) = dir.parent() else {
+            return false;
+        };
+        for gi in self.ignore_chain(parent).iter() {
+            match gi.matched_path_or_any_parents(dir, true) {
+                ignore::Match::Ignore(_) => return true,
+                ignore::Match::Whitelist(_) => return false,
+                ignore::Match::None => {}
+            }
+        }
+        false
+    }
+
     /// [`is_gitignored`] using the per-directory matcher cache.
     fn is_gitignored_cached(&self, path: &Path) -> bool {
         let Some(dir) = path.parent() else {

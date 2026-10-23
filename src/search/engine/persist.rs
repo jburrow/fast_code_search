@@ -15,18 +15,34 @@ impl SearchEngine {
     /// (e.g. it was deleted between the staleness check and registration).
     /// Failed registrations are dropped from the map so their trigrams, symbols,
     /// and dependency edges are discarded rather than aliased onto another file.
-    /// Record the (mtime, size) of the content just indexed under `id`.
-    pub(super) fn set_indexed_meta(&mut self, id: u32, mtime: u64, size: u64) {
+    /// Record the (mtime, size) of the content just indexed under `id`,
+    /// and whether it was read too soon after a change to vouch for it.
+    pub(super) fn set_indexed_meta(&mut self, id: u32, mtime: u64, size: u64, racy: bool) {
         let idx = id as usize;
         if self.indexed_meta.len() <= idx {
             self.indexed_meta.resize(idx + 1, (0, 0));
         }
         self.indexed_meta[idx] = (mtime, size);
+        if racy {
+            self.racy_files.insert(id);
+        } else {
+            self.racy_files.remove(id);
+        }
+    }
+
+    /// Was file `id` read so soon after a change that its size and mtime
+    /// cannot vouch for its content?
+    pub fn is_racy(&self, id: u32) -> bool {
+        self.racy_files.contains(id)
     }
 
     /// Does `path` (the file indexed as `id`) still have the size and mtime
-    /// it had when it was indexed?
+    /// it had when it was indexed, and can they vouch for its content? A
+    /// racy file is never "unchanged": it is read again.
     pub fn is_unchanged_on_disk(&self, id: u32, path: &std::path::Path) -> bool {
+        if self.is_racy(id) {
+            return false;
+        }
         let Some(&(mtime, size)) = self.indexed_meta.get(id as usize) else {
             return false;
         };
@@ -50,7 +66,7 @@ impl SearchEngine {
         for (&idx, &id) in valid_file_indices.iter().zip(new_ids.iter()) {
             if id != u32::MAX {
                 let m = &persisted.files[idx];
-                self.set_indexed_meta(id, m.mtime, m.size);
+                self.set_indexed_meta(id, m.mtime, m.size, false);
             }
         }
     }
@@ -373,6 +389,8 @@ impl SearchEngine {
                     .copied()
                     .filter(|&(m, sz)| m != 0 || sz != 0);
                 let mtime = match recorded {
+                    // Saved as unknown, so the next load reads it again.
+                    Some(_) if self.racy_files.contains(id) => 0,
                     Some((m, _)) => m,
                     None => get_mtime(&mapped_file.path).unwrap_or(0),
                 };

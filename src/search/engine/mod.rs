@@ -764,14 +764,34 @@ pub struct PartialIndexedFile {
     /// imports) because a >100 KB line or extreme nesting could crash or
     /// stall the C parsers.
     pub tree_sitter_safe: bool,
-    /// Modification time (seconds since epoch) of the file *as read*.
+    /// Modification time (nanoseconds since the epoch) of the file *as
+    /// read*.
     pub mtime: u64,
+    /// Read so soon after it was modified that its size and time cannot
+    /// vouch for its content later (see [`RACY_WINDOW`]).
+    pub racy: bool,
     /// Size in bytes of the file *as read*.
     pub size: u64,
     /// Full-precision modification time of the file *as read*, used to tell
     /// whether the file changed between the read and the merge (`mtime` is
     /// whole seconds, too coarse for that).
     pub modified: Option<std::time::SystemTime>,
+}
+
+/// A file read this soon after it was modified may be changed again within
+/// the same timestamp tick (a second or two on FAT, HFS+ and some network
+/// shares), and a later stat would then see the same size and time with
+/// different content. Such a file is marked *racy*: a reconcile or restart
+/// reads it again instead of trusting its size and time, as git does with
+/// "racily clean" index entries.
+const RACY_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+
+fn is_racy(modified: std::time::SystemTime) -> bool {
+    match std::time::SystemTime::now().duration_since(modified) {
+        Ok(age) => age < RACY_WINDOW,
+        // Modified "in the future" (clock skew): don't trust it either.
+        Err(_) => true,
+    }
 }
 
 impl PartialIndexedFile {
@@ -835,6 +855,7 @@ impl PartialIndexedFile {
         let size = metadata.len();
         let mtime = crate::index::persistence::mtime_secs_of(&metadata);
         let modified = metadata.modified().ok();
+        let racy = modified.is_none_or(is_racy);
 
         crate::faults::io("parse.read", path)?;
         let raw_bytes = std::fs::read(path)?;
@@ -915,6 +936,7 @@ impl PartialIndexedFile {
                 content,
                 tree_sitter_safe,
                 mtime,
+                racy,
                 size,
                 modified,
             },
@@ -956,8 +978,11 @@ pub struct PreIndexedFile {
     pub imports: Vec<String>,
     /// References (call sites, type mentions) reported by the tags query
     pub references: Vec<SymbolRef>,
-    /// Modification time (seconds since epoch) of the content that was indexed
+    /// Modification time (nanoseconds since the epoch) of the content that
+    /// was indexed
     pub mtime: u64,
+    /// See [`PartialIndexedFile::racy`].
+    pub racy: bool,
     /// Size in bytes of the content that was indexed
     pub size: u64,
     /// Full-precision modification time of the content that was indexed
@@ -1048,6 +1073,7 @@ impl PreIndexedFile {
             imports: imports.into_iter().map(|i| i.path).collect(),
             references,
             mtime: partial.mtime,
+            racy: partial.racy,
             size: partial.size,
             modified: partial.modified,
         }
@@ -1219,9 +1245,12 @@ pub struct SearchEngine {
     /// Interned reference names, indexed by `PackedRef::name`.
     ref_names: Vec<String>,
     ref_name_ids: FxHashMap<String, u32>,
-    /// (mtime secs, size) of each file's content *as indexed*, by file id.
+    /// (mtime, size) of each file's content *as indexed*, by file id.
     /// `(0, 0)` means unknown (fall back to a stat at save time).
     indexed_meta: Vec<(u64, u64)>,
+    /// Files whose (mtime, size) cannot vouch for their content: they were
+    /// read within [`RACY_WINDOW`] of being modified.
+    racy_files: roaring::RoaringBitmap,
     /// Pre-computed file metadata for fast ranking
     file_metadata: Vec<FileMetadata>,
     /// Pending imports to resolve after all files are indexed
@@ -1304,6 +1333,7 @@ impl SearchEngine {
             ref_names: Vec::new(),
             ref_name_ids: FxHashMap::default(),
             indexed_meta: Vec::new(),
+            racy_files: roaring::RoaringBitmap::new(),
             file_metadata: Vec::new(),
             pending_imports: Vec::new(),
             waiting_imports: Vec::new(),
@@ -1551,7 +1581,12 @@ impl SearchEngine {
             } else {
                 Vec::new()
             };
-            self.set_indexed_meta(file_id, pre_indexed.mtime, pre_indexed.size);
+            self.set_indexed_meta(
+                file_id,
+                pre_indexed.mtime,
+                pre_indexed.size,
+                pre_indexed.racy,
+            );
             self.note_added_file(&pre_indexed.path);
 
             // Register file in dependency index under the store's canonical
@@ -2346,7 +2381,7 @@ impl SearchEngine {
         pre: PreIndexedFile,
         dependents: &[u32],
     ) {
-        self.set_indexed_meta(id, pre.mtime, pre.size);
+        self.set_indexed_meta(id, pre.mtime, pre.size, pre.racy);
         self.note_added_file(path);
         if let Some(canonical) = self.file_store.get_path(id).map(Path::to_path_buf) {
             self.dependency_index.register_canonical_file(id, canonical);

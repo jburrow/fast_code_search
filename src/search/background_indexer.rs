@@ -577,22 +577,13 @@ fn spawn_discovery_thread(
     shutdown: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        // Compile exclude patterns into the SAME glob filter that
-        // FileDiscoveryIterator uses, so stale files are subject to identical
-        // exclusion rules. The previous trim-and-substring approach diverged
-        // (e.g. it wrongly excluded `.github/` for a `**/.git/**` pattern).
-        let max_file_size = discovery_config.max_file_size.unwrap_or(u64::MAX);
-        let stale_exclude_filter = crate::search::path_filter::PathFilter::exclude_only(
-            &discovery_config.exclude_patterns,
-        )
-        .unwrap_or_else(|e| {
-            tracing::warn!(
-                "Invalid exclude pattern(s) for stale-file filter: {}; exclusions disabled",
-                e
-            );
-            crate::search::path_filter::PathFilter::default()
-        });
-
+        // Stale files are checked with the same rules discovery applies
+        // (excludes, extensions, size cap, ignore files): a file that changed
+        // since the save and is now ignored must not be indexed again. (This
+        // used to apply only the size cap and excludes, so a file that a new
+        // `.gitignore` rule covered came back after a restart if it had
+        // changed too.)
+        let probe = crate::search::EligibilityProbe::new(&discovery_config);
         // First, send stale files that need re-indexing. Remember what was sent
         // so the full scan below does not queue the same files a second time
         // (they are not in `already_indexed_files`, which only holds files that
@@ -605,23 +596,10 @@ fn spawn_discovery_thread(
             if !stale_path.exists() {
                 continue;
             }
-            // Apply the configured size cap so a previously-indexed file that has
-            // since grown beyond the limit is not blindly re-queued (it would only
-            // be dropped later by process(), wasting a read each run).
-            if let Ok(meta) = std::fs::metadata(&stale_path) {
-                if meta.len() > max_file_size {
-                    tracing::debug!(
-                        path = %stale_path.display(),
-                        "Skipping stale file exceeding max_file_size"
-                    );
-                    continue;
-                }
-            }
-            // Apply exclude_patterns (glob semantics) before queueing for re-indexing
-            if stale_exclude_filter.is_excluded(&stale_path.to_string_lossy()) {
+            if !probe.is_eligible_path(&stale_path, None) {
                 tracing::debug!(
                     path = %stale_path.display(),
-                    "Skipping stale file that matches an exclude pattern"
+                    "Skipping stale file that is no longer eligible"
                 );
                 continue;
             }

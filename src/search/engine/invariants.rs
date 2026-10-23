@@ -220,9 +220,13 @@ impl SearchEngine {
             .unwrap_or((0, 0));
         let on_disk = (crate::index::persistence::mtime_secs_of(&meta), meta.len());
         // (0, 0): what was indexed was not recorded; compare the content.
-        if indexed != (0, 0) && indexed != on_disk {
+        let recorded = indexed != (0, 0);
+        if recorded && indexed != on_disk {
             return Some(FileCheck::Changed);
         }
+        // A racy file was read too soon after a change for an unchanged
+        // time to vouch for its content.
+        let known = recorded && !self.is_racy(id);
         let partial = match PartialIndexedFile::process_checked(
             path,
             self.transcode_non_utf8,
@@ -240,7 +244,7 @@ impl SearchEngine {
             .count();
         Some(if missing == 0 {
             FileCheck::Current
-        } else if indexed == (0, 0) {
+        } else if !known {
             // Unknown indexed version: missing trigrams may just be a
             // change still to apply.
             FileCheck::Changed

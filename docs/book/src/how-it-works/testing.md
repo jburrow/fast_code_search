@@ -1,0 +1,88 @@
+# How fcs is tested
+
+fcs makes a few promises that a wrong answer breaks quietly: a search shows
+every match, in rank order, and finds what ripgrep finds; the index follows
+the disk through edits, branch switches, lost events and restarts; searches
+are answered while the index changes; the import graph, symbols and
+references are what [graph support](../reference/graph-support.md) and
+[reference support](../reference/reference-support.md) say. A missing hit
+looks like an empty result, not an error, so each promise has a test whose
+answer comes from somewhere other than fcs's own code: ripgrep, a
+language's own resolver, a deliberately naive model, or a generator that
+wrote every line and knows the answer.
+
+## The suites
+
+| Suite | Checks | Against | Run |
+|---|---|---|---|
+| Unit tests (`src/**`) | each part on its own | hand-written cases | `cargo test --lib` |
+| `tests/integration_tests.rs` | the server end to end, saving and loading | hand-written cases | `cargo test` |
+| `tests/frontend_parity.rs` | web API, gRPC and `fcs` give the same hits in the same order | each other | `cargo test` |
+| `tests/watch_harness.rs` | the watch loop over scripted and random edits | a fresh index of the same disk | `cargo test` |
+| `tests/lifecycle_model.rs` | random sequences of edits, renames, folder moves and deletes, ignore files, binary and oversized files, lost events, saves, restarts and crashes; after every step: the file set, every word's hits read page by page (no repeats, each file's hits together), the index's self-checks | a naive model (a map of files, a hand-written ignore matcher, a line-by-line search) | `cargo test --test lifecycle_model` |
+| `tests/search_properties.rs` | literal (`-i`, `-s`, `-w`) and regex searches on random text with case-folding oddities and multi-byte characters | `rg` | `cargo test --test search_properties` (needs `rg`) |
+| `tests/python_codebase.rs` | the import graph, symbol search, reference search and strict `-deps:`/`-rdeps:` scopes on generated Python trees, after a build and after the watcher rewrites the tree | the generator's answer key, itself checked by Python and grimp | `cargo test --test python_codebase` |
+| `tests/fault_injection.rs` | failed reads, panics while applying changes, lost changes: each is retried, reported and repaired | expected recovery | `cargo test --features failpoints --test fault_injection` |
+| `examples/rg_backtest.rs` | fixed and generated queries on tokio, Django and fixtures, with paging and default limits | `rg` | see [Correctness against ripgrep](../benchmarks/correctness.md) |
+| `examples/graph_oracle.rs` | the import graph on Django, Vite and generated deep trees | grimp, TypeScript's resolver | CI job "graph oracle" |
+| `examples/ref_oracle.rs`, `examples/impact_oracle.rs` | Python references and diff impact on real repositories | Jedi | CI jobs "ref oracle", "impact oracle" |
+| `examples/watch_load.rs`, `examples/limits_bench.rs` | searches answered and latency while a large tree changes; where limits bite | measured numbers | by hand, see [Incremental updates](incremental.md#how-this-is-tested) |
+
+Every test that drives the index also runs its self-checks
+(`check_invariants`: posting lists name only live files, path lookups and
+the folder index agree, caches hold nothing for removed files, the graph's
+two directions agree), the same checks `fcs check --live` and the server's
+background scrub run (see [Checking a live index](../guides/checking-the-index.md)).
+
+## The generated Python codebases
+
+`tests/support/pygen.rs` writes packages nested up to four deep, each with
+an `__init__.py` and modules, from a seed. Modules import each other in
+every form graph support lists (absolute, aliased, several on one line,
+parenthesised lists, one to three dots, imports inside functions and under
+`if TYPE_CHECKING:`; cycles happen) and use what they import in every
+position reference support lists as found: calls, attribute calls,
+`await`, instantiation, `obj.m()`, `Cls().m()`, `Cls.m(x)`, `super().m()`,
+decorators, base classes, annotations (`list[C]`, `C | None`, `Optional[C]`),
+`raise`/`except`, and values in lists, dicts, keyword arguments and
+comparisons. Names also appear where they are not references (strings,
+comments, docstrings, string annotations). Every name is unique, so "the
+references of `fn_0042`" has one right answer, which the generator recorded
+as it wrote the line.
+
+Before the key is trusted, Python compiles every file and grimp must draw
+exactly the key's edges, line for line. Then the test rewrites the tree as
+another seed's and hands the changes to the watcher in a few bursts: the
+incremental result must match the new key as a fresh build does.
+
+## Reproducing a failure
+
+- proptest suites print the shrunk sequence or query that failed, which is
+  usually enough to write a named test (the lifecycle model keeps the ones
+  it found that way). `PROPTEST_RNG_SEED=N` replays a run and
+  `PROPTEST_CASES=N` runs more: `PROPTEST_CASES=3000 cargo test --release
+  --test lifecycle_model`.
+- `FCS_PYGEN_SEEDS=1,2,3` picks the generated trees (`FCS_PYGEN_PACKAGES`
+  their size) and `FCS_PYGEN_KEEP=DIR` writes them to `DIR` to look at.
+- `FCS_WATCH_SEED=N` replays a random watch-harness run.
+
+On pull requests CI uses fixed seeds, so a pull request is not failed by a
+case it did not cause; pushes to `main` use new seeds each time and keep
+exploring. CI runs the lifecycle model 600 times, the search properties
+2,000 times (job "fcs vs ripgrep") and 40 generated Python trees with grimp
+(job "graph oracle").
+
+## What these tests found
+
+- Files with no trigram (two bytes in `x.py`) were never searched by short
+  queries (self-checks).
+- `extra_binary_extensions` was documented but rejected (self-checks).
+- The watcher indexed folders ignored by a parent's `.gitignore` when
+  something happened in them, and a restart re-indexed changed files that
+  were now ignored (lifecycle model).
+- A file rewritten in the same timestamp tick with the same size could
+  stay stale across a restart on coarse file systems (found while writing
+  the lifecycle model; now covered by a unit test).
+- Earlier probes found a crash when a large file was rewritten during a
+  search, "server unavailable" at the end of a build, and lost changes
+  after failed reads or a panic; the fault and watch tests cover them.

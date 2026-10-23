@@ -280,7 +280,7 @@ fn plan_path(
     plan: &mut ChangePlan,
 ) {
     if is_dir {
-        return reconcile_dir(engine, path, config, plan);
+        return reconcile_dir(engine, path, config, probe, plan);
     }
     if !path.is_file() {
         // Vanished between the event and now; treat as a delete.
@@ -304,7 +304,20 @@ fn plan_path(
 /// created, renamed in, or events for it were lost. Files whose size and
 /// mtime match what was indexed are left alone, so reconciling a large
 /// unchanged tree costs a walk and a stat per file, not a re-index.
-fn reconcile_dir(engine: &SearchEngine, dir: &Path, config: &IndexerConfig, plan: &mut ChangePlan) {
+fn reconcile_dir(
+    engine: &SearchEngine,
+    dir: &Path,
+    config: &IndexerConfig,
+    probe: &EligibilityProbe,
+    plan: &mut ChangePlan,
+) {
+    // A folder ignored by the rules above it holds nothing to index (an
+    // indexed root is always walked, as the initial build does).
+    let is_root = engine.roots_with_labels().any(|(root, _)| root == dir);
+    if !is_root && probe.is_dir_ignored(dir) {
+        plan.remove.extend(engine.file_ids_under(dir));
+        return;
+    }
     let discovery = discovery_config(config, vec![dir.to_string_lossy().to_string()]);
     let mut keep = std::collections::HashSet::new();
     for file in FileDiscoveryIterator::new(&discovery).filter(|f| !config.is_file_excluded(f)) {
