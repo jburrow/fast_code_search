@@ -1,6 +1,12 @@
 {
   "releases": [
     {
+      "version": "0.19.0",
+      "date": "2026-10-24",
+      "summary": "Searches keep running while the watcher applies changes, the index checks itself and survives crashes and full disks, and fcs gains diff impact (`fcs impact`, MCP `diff_impact`) and diagnostic captures. The web UI's Ranking setting is gone: every search is ranked the same way. Upgrading:** no re-...",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.19.0"
+    },
+    {
       "version": "0.18.1",
       "date": "2026-10-16",
       "summary": "Small fixes to piped `fcs` paths and MCP totals. No re-index or config change is needed.",
@@ -41,12 +47,6 @@
       "date": "2026-10-13",
       "summary": "Same changes as 0.15.0, with the version number set correctly. The v0.15.0 tag was pushed before the version bump, so its binaries report 0.14.0 and its release has no changelog notes. Use 0.15.1.",
       "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.15.1"
-    },
-    {
-      "version": "0.14.0",
-      "date": "2026-10-08",
-      "summary": "",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.14.0"
     }
   ]
 }
