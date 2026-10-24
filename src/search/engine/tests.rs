@@ -4446,3 +4446,32 @@ fn test_racy_file_is_read_again_by_reconcile_and_restart() {
     );
     assert!(engine.search("alpha_one", 10).is_empty());
 }
+
+/// Remapping trigram postings drops ids with no new id and translates the
+/// rest, both for an in-order mapping (the usual load and save case) and
+/// for one that reorders ids.
+#[test]
+fn remap_trigram_bitmaps_translates_and_drops_ids() {
+    use crate::index::Trigram;
+    use roaring::RoaringBitmap;
+
+    let abc = Trigram::new(*b"abc");
+    let xyz = Trigram::new(*b"xyz");
+    let mut map: rustc_hash::FxHashMap<Trigram, RoaringBitmap> = Default::default();
+    map.insert(abc, [0u32, 2, 3, 70_000].into_iter().collect());
+    map.insert(xyz, [2u32].into_iter().collect());
+
+    // In order: 2 is stale and dropped, the rest close the gap.
+    let in_order: rustc_hash::FxHashMap<u32, u32> =
+        [(0, 0), (1, 1), (3, 2), (70_000, 3)].into_iter().collect();
+    let out = SearchEngine::remap_trigram_bitmaps_ref(&map, &in_order);
+    assert_eq!(out[&abc].iter().collect::<Vec<_>>(), vec![0, 2, 3]);
+    assert!(!out.contains_key(&xyz), "a list left empty is dropped");
+
+    // Reordered: ids swap places.
+    let reordered: rustc_hash::FxHashMap<u32, u32> =
+        [(0, 3), (2, 2), (3, 0), (70_000, 1)].into_iter().collect();
+    let out = SearchEngine::remap_trigram_bitmaps_ref(&map, &reordered);
+    assert_eq!(out[&abc].iter().collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+    assert_eq!(out[&xyz].iter().collect::<Vec<_>>(), vec![2]);
+}

@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped the steps that store the numbers, so the trend page stopped
   without a warning. The numbers are now stored first and the check fails
   the run after.
+- **Loading an index with one changed file took about 70% longer.**
+  When any saved file had changed or gone, loading rebuilt every trigram
+  posting list one id at a time through a hash lookup. Now that a file
+  saved within seconds of an edit is re-read on load (below), the corpus
+  benchmark hit this on every run, as does a restart soon after an
+  edit. The lists are now rebuilt in one sorted pass from a lookup table,
+  in parallel: on tokio + Django, load after 20 edits went from about
+  560 ms to 365 ms (a clean load is about 310 ms). Saves after deletes
+  use the same code.
 - **Every save killed half way left a file as large as the index.** A
   save writes a temp file next to the index and renames it into place; a
   server killed during the save (`kill -9`, a power cut, the OOM killer)
