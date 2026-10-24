@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-24
+
+Searches keep running while the watcher applies changes, the index checks
+itself and survives crashes and full disks, and fcs gains diff impact
+(`fcs impact`, MCP `diff_impact`) and diagnostic captures. The web UI's
+Ranking setting is gone: every search is ranked the same way.
+
+**Upgrading:** no re-index and no config change is needed. The background
+scrub (`[diagnostics] scrub`) is on by default and reads about 3,000 files
+a minute; set `scrub = false` to turn it off. `fcs --rank` and `rank` in
+the REST and gRPC APIs still work but no longer change the order with
+default settings. Release binaries are about 3 MB larger because they keep
+function names for readable stacks.
+
 ### Changed
 - **The web UI's Ranking setting (Auto, Fast, Full) is gone.** With the
   default settings all three gave the same results; only a server with a
@@ -21,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measurements behind the choice: stopping at the first page is up to 50
   times faster on tokio + Django, but for common words that page holds none
   of the 50 best hits.
+- **`lock_wait` captures leave out the holding back.** A search holds back
+  while an install step waits (up to 2 s, as long as recent searches
+  take), and that alone could pass the 2 s threshold. The capture now
+  counts only the time a writer kept the search out, so it still means a
+  step or a save held the lock longer than it should.
+- `rdeps:` and `deps:` filters no longer read every indexed path to find
+  their file (when it is given as results print it, with or without `:N`)
+  nor copy every unresolved import to count the broken ones. On a
+  348,000-file index the filter's own cost fell from 464 ms to 0.1 ms
+  median (`examples/rdeps_timing.rs`); a partial path or a folder still
+  reads every path.
+- The server accepts request bodies up to 8 MiB (was 64 KiB), for diffs.
 
 ### Fixed
 - **Building the index got about 30% slower over October, mostly for
@@ -316,20 +342,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search responses report file changes the watcher has seen and not
   applied yet (`index.pending_changes`). The web UI shows "Index updating ·
   N file changes to apply"; `fcs` and the MCP tools print it as a note.
-
-### Changed
-- **`lock_wait` captures leave out the holding back.** A search holds back
-  while an install step waits (up to 2 s, as long as recent searches
-  take), and that alone could pass the 2 s threshold. The capture now
-  counts only the time a writer kept the search out, so it still means a
-  step or a save held the lock longer than it should.
-- `rdeps:` and `deps:` filters no longer read every indexed path to find
-  their file (when it is given as results print it, with or without `:N`)
-  nor copy every unresolved import to count the broken ones. On a
-  348,000-file index the filter's own cost fell from 464 ms to 0.1 ms
-  median (`examples/rdeps_timing.rs`); a partial path or a folder still
-  reads every path.
-- The server accepts request bodies up to 8 MiB (was 64 KiB), for diffs.
 
 ## [0.18.1] - 2026-10-16
 
@@ -1950,7 +1962,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/jburrow/fast_code_search/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/jburrow/fast_code_search/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/jburrow/fast_code_search/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jburrow/fast_code_search/compare/v0.16.2...v0.17.0
