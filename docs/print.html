@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fd649c56.js";
+            window.path_to_searchindex_js = "searchindex-4be29c66.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -8696,6 +8696,30 @@ fixed overhead well and large-corpus behaviour poorly (roadmap 6.5).</p>
 <pre><code class="language-bash">cargo bench --bench search_benchmark -- indexing
 </code></pre>
 <p>Use <code>std::hint::black_box</code>, not <code>criterion::black_box</code>.</p>
+<h3 id="same-machine-ab-before-merging"><a class="header" href="#same-machine-ab-before-merging">Same-machine A/B before merging</a></h3>
+<p>Numbers from different machines, or from GitHub runners on different days,
+vary too much to compare. Before merging a change to indexing, search,
+persistence or the watcher, compare it with <code>main</code> on one machine:</p>
+<pre><code class="language-bash">scripts/bench/ab.sh                      # base origin/main, 5 rounds
+scripts/bench/ab.sh --base v0.18.0 --rounds 5
+</code></pre>
+<p>The script builds <code>examples/corpus_bench</code> at the base (in a worktree under
+<code>target/ab/</code>, cached per commit) and at the working tree, fetches tokio 1.45.0
+and Django 5.2 into <code>bench-corpus/</code> if they are missing, runs the two
+alternately and prints a markdown table of medians for the PR’s
+<strong>Performance</strong> section. It exits 1 when a metric’s median is more than
+<code>--threshold</code> percent (default 10) slower and every round of the branch was
+slower than every round of the base. Both conditions matter: run against
+itself on a 4-core VM, main moved single metrics by up to 18% over 5 rounds,
+but never with all rounds on one side. A slowdown can be the right trade; the
+PR and the CHANGELOG entry then say what it buys.</p>
+<p>To find where time goes, profile the same benchmark with callgrind and
+collect every thread (a toggle on the main thread misses rayon’s workers):</p>
+<pre><code class="language-bash">cargo build --release --example corpus_bench
+valgrind --tool=callgrind --callgrind-out-file=cg.out \
+  target/release/examples/corpus_bench bench-corpus/tokio bench-corpus/django --iterations 3
+callgrind_annotate --inclusive=yes cg.out | head -60
+</code></pre>
 <h2 id="release-process"><a class="header" href="#release-process">Release Process</a></h2>
 <p>Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.</p>
 <h3 id="steps-to-release"><a class="header" href="#steps-to-release">Steps to Release</a></h3>
