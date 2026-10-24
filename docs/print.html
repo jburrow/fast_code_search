@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-bf54bfe7.js";
+            window.path_to_searchindex_js = "searchindex-780b17ba.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4460,6 +4460,7 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
         A[defines a symbol ×3]
         B[exact case ×2]
         C[starts the line ×1.5]
+        W[whole word ×1.5]
     end
     subgraph file["the file"]
         direction TB
@@ -4479,10 +4480,14 @@ codebase. All weights live in one file, <code>src/search/ranking.rs</code>.</p>
       × 3.0   if the line defines a symbol
       × 2.0   if the match has the exact case typed
       × 1.5   if the match starts the (trimmed) line
+      × 1.5   if the match is a whole word (text search)
       × 1.5   if the file is under src/ or lib/
       × (1 + 0.5 · log10(files that import this file))
       × max(1 / (1 + ln(1 + length/100)), 0.3)      # long lines damped
 </code></pre>
+<p>A plain search matches like <code>rg -F</code>, so <code>class ModelForm</code> also matches
+<code>class ModelFormOptions:</code>; the whole-word factor puts <code>class ModelForm(</code>
+first, although its line is longer.</p>
 <p>The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
 Files that are imported are the ones people are looking for.
@@ -6048,6 +6053,31 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...HEAD">Unreleased</a></a></h2>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>The count of changes still to apply counted events, not files.</strong> One
+save raises several file-system events, and each was counted, so the
+web page’s “N file changes to apply” (and the same count in <code>fcs</code>, MCP
+and <code>/api/status</code>) overstated the backlog: 372,534 for 250,000 changed
+files in a 500,000-file scale run. Each file now counts once until its
+change is applied.</li>
+<li><strong><code>class ModelForm</code> put <code>class ModelFormOptions:</code> first.</strong> Since plain
+searches match like <code>rg -F</code> (0.15.2), a query is also found inside longer
+names, and the shorter line won. A whole-word match now scores 1.5x, so
+the line that has what was typed comes first; the ranking benchmark is
+back to 20 of 20 at rank 1.</li>
+<li><strong>The benchmark history stopped on 13 Oct 2026.</strong> The ranking check in
+the Benchmarks workflow failed from that release on, and its failure
+skipped the steps that store the numbers, so the trend page stopped
+without a warning. The numbers are now stored first and the check fails
+the run after.</li>
+<li><strong>Loading an index with one changed file took about 70% longer.</strong>
+When any saved file had changed or gone, loading rebuilt every trigram
+posting list one id at a time through a hash lookup. Now that a file
+saved within seconds of an edit is re-read on load (below), the corpus
+benchmark hit this on every run, as does a restart soon after an
+edit. The lists are now rebuilt in one sorted pass from a lookup table,
+in parallel: on tokio + Django, load after 20 edits went from about
+560 ms to 365 ms (a clean load is about 310 ms). Saves after deletes
+use the same code.</li>
 <li><strong>Every save killed half way left a file as large as the index.</strong> A
 save writes a temp file next to the index and renames it into place; a
 server killed during the save (<code>kill -9</code>, a power cut, the OOM killer)
