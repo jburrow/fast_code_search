@@ -436,6 +436,35 @@ cargo bench --bench search_benchmark -- indexing
 
 Use `std::hint::black_box`, not `criterion::black_box`.
 
+### Same-machine A/B before merging
+
+Numbers from different machines, or from GitHub runners on different days,
+vary too much to compare. Before merging a change to indexing, search,
+persistence or the watcher, compare it with `main` on one machine:
+
+```bash
+scripts/bench/ab.sh                      # base origin/main, 3 rounds
+scripts/bench/ab.sh --base v0.18.0 --rounds 5
+```
+
+The script builds `examples/corpus_bench` at the base (in a worktree under
+`target/ab/`, cached per commit) and at the working tree, fetches tokio 1.45.0
+and Django 5.2 into `bench-corpus/` if they are missing, runs the two
+alternately and prints a markdown table of medians for the PR's
+**Performance** section. It exits 1 when a metric is more than `--threshold`
+percent (default 10) slower. A slowdown can be the right trade; the PR and
+the CHANGELOG entry then say what it buys.
+
+To find where time goes, profile the same benchmark with callgrind and
+collect every thread (a toggle on the main thread misses rayon's workers):
+
+```bash
+cargo build --release --example corpus_bench
+valgrind --tool=callgrind --callgrind-out-file=cg.out \
+  target/release/examples/corpus_bench bench-corpus/tokio bench-corpus/django --iterations 3
+callgrind_annotate --inclusive=yes cg.out | head -60
+```
+
 ## Release Process
 
 Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.

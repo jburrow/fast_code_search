@@ -9,6 +9,13 @@
 - [ ] New behaviour has a test, or the PR says why it cannot
 - [ ] CHANGELOG `[Unreleased]` updated for user-visible changes
 
+## Performance
+
+<!-- Required when indexing, search, persistence or the watcher change:
+     paste the table from `scripts/bench/ab.sh` (same machine, base vs this
+     branch). Name any metric that got slower and what it buys; the same
+     goes in the CHANGELOG entry. Otherwise write "Not affected". -->
+
 ## Notes for the reviewer
 
 <!-- Anything non-obvious: trade-offs, follow-ups, things you are unsure about. -->
