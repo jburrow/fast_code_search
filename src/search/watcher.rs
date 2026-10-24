@@ -489,20 +489,36 @@ mod tests {
         }
         std::fs::write(&other, "x").unwrap();
 
-        // Let the events arrive, without taking any off the queue.
+        // Let the events arrive, without taking any off the queue, until
+        // the count has settled.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let mut events = 0;
+        let mut last = usize::MAX;
         while std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(200));
-            if queued.load(Ordering::Acquire) == 2 {
+            std::thread::sleep(Duration::from_millis(300));
+            let now = queued.load(Ordering::Acquire);
+            if now == last && now >= 2 {
                 break;
             }
+            last = now;
         }
-        assert_eq!(queued.load(Ordering::Acquire), 2, "two files changed");
-        while watcher.recv_timeout(Duration::from_millis(500)).is_some() {
+        let pending = queued.load(Ordering::Acquire);
+        let mut events = 0;
+        let mut paths = std::collections::HashSet::new();
+        while let Some(change) = watcher.recv_timeout(Duration::from_millis(500)) {
             events += 1;
+            paths.extend(change.paths().into_iter().cloned());
         }
-        assert!(events > 2, "several events per file, got {events}");
+        // Some backends also name the folder (FSEvents on macOS), so the
+        // paths are counted rather than assumed to be the two files.
+        assert!(paths.contains(&file) && paths.contains(&other), "{paths:?}");
+        assert_eq!(pending, paths.len(), "one per path: {paths:?}");
+        // inotify raises an event per write; FSEvents may coalesce them.
+        if cfg!(target_os = "linux") {
+            assert!(
+                events > paths.len(),
+                "several events per file, got {events}"
+            );
+        }
         assert_eq!(queued.load(Ordering::Acquire), 0, "all received");
     }
 }
