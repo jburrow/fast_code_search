@@ -44,7 +44,7 @@ when the request timeout is hit.
 | `case` | — | `true` / `false` overrides `case:` in the query. Plain text ignores case by default; a regex is case-sensitive by default and `case=false` adds `(?i)`. |
 | `word` | — | `true` for whole-word matching. |
 | `include` / `exclude` | — | Semicolon-separated path globs (`src/**/*.rs;lib/**`). |
-| `rank` | auto | Every mode reads candidate files best first (by a per-file score that needs no reads) until the match budget is spent. `auto` and `fast` also stop at `max_files` when one applies; `full` never does. |
+| `rank` | auto | Deprecated: every search is ranked the same way, reading candidate files best first (by a per-file score that needs no reads) until the match budget is spent. The only difference left is that `full` ignores `max_files`; with the default (no file limit) all three values give the same results. The web UI and MCP no longer offer it. |
 | `max_files` | `search.fast_rank_files` (no limit) | Most candidate files a search reads. Capped by `search.max_fast_rank_files`, reported in `max_files_allowed` when the server sets one. When `candidates_searched` < `total_candidates`, ask again with `max_files=total_candidates` to search the rest. |
 | `context` | 0 | Context lines before and after each hit, 0 to `search.max_context_lines` (10). |
 | `timeout_ms` | 0 | Stop scanning after this long and return the best hits so far (capped at `search.max_timeout_secs`, 30 s; every search also runs under the server's request timeout). |
@@ -258,7 +258,7 @@ to the same endpoint (it finds the server like every `fcs` command:
 
 | Tool | Arguments | What it returns |
 |------|-----------|-----------------|
-| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 50, max 1,000: `mcp.default_limit` / `mcp.max_limit`), `offset` (page on from there), `max_files`, `rank`, `context` (0–5) | `path:line:column: line` per hit, with the match count and, when more exist, the `offset` of the next page; in text and regex mode up to 20 files whose path matches are listed first (`mcp.file_matches`) |
+| `search_code` | `query` (the [query syntax](#query-syntax)), `mode` (`text`, `regex`, `symbols`, `references`), `include` / `exclude` globs, `limit` (default 50, max 1,000: `mcp.default_limit` / `mcp.max_limit`), `offset` (page on from there), `max_files`, `context` (0–5); an old client's `rank` is accepted and ignored | `path:line:column: line` per hit, with the match count and, when more exist, the `offset` of the next page; in text and regex mode up to 20 files whose path matches are listed first (`mcp.file_matches`) |
 | `read_file` | `path`, `start_line`, `end_line` | Numbered lines, 200 by default and at most 1,000 (`mcp.read_file_lines` / `mcp.max_read_file_lines`), with how to continue |
 | `file_dependencies` | `path`, `direction` (`in`, `out`, `both`), `depth` (1–4), `limit` | Files it imports and files importing it, by distance, with the line of each direct import |
 | `change_impact` | `paths` (one or more), `limit` | Every file that transitively imports any of them, nearest first, split into tests and other code |

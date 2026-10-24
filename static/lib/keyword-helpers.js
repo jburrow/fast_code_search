@@ -664,7 +664,7 @@ function searchMetaLabel(data, durationMs, ignoresCase) {
     if (searched < total) {
         return {
             text: `Searched ${num(searched)} of ${num(total)} files · ${time}`,
-            title: 'Fast ranking only opened the most likely files. Search more files opens more of them; Ranking: Full under Filter opens them all.',
+            title: 'The server opens only this many of the most likely files (search.fast_rank_files). Search more files opens more of them, up to the server limit.',
         };
     }
     return {

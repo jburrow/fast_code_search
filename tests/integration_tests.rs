@@ -4270,6 +4270,16 @@ async fn test_mcp_search_code_pages_with_offset() -> Result<()> {
     assert_eq!(props["limit"]["default"], 50, "{props}");
     assert!(props.get("offset").is_some(), "{props}");
     assert!(props.get("max_files").is_some(), "{props}");
+    // Every search is ranked the same way: no ranking choice is offered,
+    // and an old client that still sends one gets an answer.
+    assert!(props.get("rank").is_none(), "{props}");
+    let (err, text) = mcp_tool(
+        &base,
+        "search_code",
+        serde_json::json!({"query": "import", "rank": "fast"}),
+    )
+    .await?;
+    assert!(!err, "{text}");
     Ok(())
 }
 

@@ -14,7 +14,7 @@ the binary.
   counts once you press Enter, pause for two seconds or move on to the
   results.
 - **REGEX**, **SYMBOLS** and **REFERENCES** switch modes; **FILTER** opens
-  page size, ranking mode, context lines and the path filters (**SEARCH ONLY
+  page size, context lines and the path filters (**SEARCH ONLY
   IN** and **SKIP PATHS**: globs separated by `,` or `;`). While a path
   filter is set, FILTER shows a count and the summary line shows each filter
   with an × to remove it. Path filters are remembered between visits.
@@ -33,7 +33,10 @@ the binary.
   "Searched N of M files" and **SEARCH ALL FILES** opens the rest (or as
   many as the server allows).
 - Results are in rank order with each file's hits together (see
-  [Ranking](../how-it-works/ranking.md#result-order)). A file cut at the
+  [Ranking](../how-it-works/ranking.md#result-order)). Every search is
+  ranked; there is no unranked mode. **BEST MATCHES FIRST** in the summary
+  line opens a short explanation of the order and of what happens on a
+  very broad search. A file cut at the
   end of a page says so: its badge reads "3 of 7 hits", and **Show 4 more
   hits in this file** under its code fetches the rest in place. "7+" means
   the file reached the per-file cap and may hold more.

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The web UI's Ranking setting (Auto, Fast, Full) is gone.** With the
+  default settings all three gave the same results; only a server with a
+  file limit (`search.fast_rank_files`) told them apart. Every search is
+  ranked the same way, and **BEST MATCHES FIRST** beside the result count
+  now opens a short explanation of the order: how hits are scored, that a
+  file's hits stay together, that nothing is hidden, and what happens on a
+  very broad search. MCP's `search_code` no longer lists `rank` (an old
+  client's value is accepted and ignored) and says how results are ranked
+  in its description. `fcs --rank` is hidden but still works, as does
+  `rank` in the REST and gRPC APIs. The book's Ranking page has the
+  measurements behind the choice: stopping at the first page is up to 50
+  times faster on tokio + Django, but for common words that page holds none
+  of the 50 best hits.
+
 ### Fixed
 - **Building the index got about 30% slower over October, mostly for
   nothing.** A profile on tokio + Django put 42% of the build's CPU in
