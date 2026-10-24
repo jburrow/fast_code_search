@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Building the index got about 30% slower over October, mostly for
+  nothing.** A profile on tokio + Django put 42% of the build's CPU in
+  Python import resolution and another fifth of Django's in filtering
+  Python references, not in parsing. For every absolute import (most of
+  them the standard library), resolution built and normalized candidate
+  paths under every folder above the importing file; it now asks one
+  folder lookup whether anything is indexed under `root/<first name>`
+  before building any. The reference filter looked each reference up from
+  the root of the syntax tree and climbed with a call that itself walks
+  down from the root; it now walks each file's tree once. Results are
+  unchanged (same 9,784 graph edges and 384,986 references; the new
+  filter keeps exactly what the old one kept for all 492,103 identifiers
+  in Django). Import resolution went from 2.4 s to 0.85 s, the whole
+  build from 8.1 s to 6.7 s on the same machine (0.15.2: 6.1 s; the rest
+  is the extra Python references and case folding). The corpus benchmark
+  now reports the time of each build phase.
 - **The count of changes still to apply counted events, not files.** One
   save raises several file-system events, and each was counted, so the
   web page's "N file changes to apply" (and the same count in `fcs`, MCP

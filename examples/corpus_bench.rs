@@ -230,10 +230,28 @@ fn fmt_dur(d: Duration) -> String {
     }
 }
 
+/// Wall time of each build phase, so a slower build points at its cause.
+#[derive(Default)]
+struct BuildPhases {
+    /// Reading, trigrams and tree-sitter extraction, in parallel.
+    read_and_parse: Duration,
+    /// Merging each batch into the index.
+    merge: Duration,
+    /// Import resolution, per batch and at the end.
+    imports: Duration,
+    finalize: Duration,
+}
+
 /// Build the index the way the background indexer does, synchronously.
-fn build(engine: &mut SearchEngine, files: &[PathBuf], config: &IndexerConfig) -> u64 {
+fn build(
+    engine: &mut SearchEngine,
+    files: &[PathBuf],
+    config: &IndexerConfig,
+    phases: &mut BuildPhases,
+) -> u64 {
     let mut bytes = 0u64;
     for chunk in files.chunks(config.batch_size.max(1)) {
+        let started = Instant::now();
         let pre: Vec<PreIndexedFile> = chunk
             .par_iter()
             .filter_map(|p| {
@@ -246,11 +264,20 @@ fn build(engine: &mut SearchEngine, files: &[PathBuf], config: &IndexerConfig) -
             })
             .collect();
         bytes += pre.iter().map(|p| p.size).sum::<u64>();
+        phases.read_and_parse += started.elapsed();
+        let started = Instant::now();
         engine.index_batch(pre);
+        phases.merge += started.elapsed();
+        let started = Instant::now();
         engine.resolve_imports_incremental();
+        phases.imports += started.elapsed();
     }
+    let started = Instant::now();
     engine.resolve_imports();
+    phases.imports += started.elapsed();
+    let started = Instant::now();
     engine.finalize();
+    phases.finalize += started.elapsed();
     bytes
 }
 
@@ -289,7 +316,8 @@ fn main() -> Result<()> {
     for r in &roots {
         engine.add_root_path(Path::new(r));
     }
-    let (bytes, build_took) = timed(|| build(&mut engine, &files, &config));
+    let mut phases = BuildPhases::default();
+    let (bytes, build_took) = timed(|| build(&mut engine, &files, &config, &mut phases));
     let rss_after = resident_bytes();
     let stats = engine.get_stats();
 
@@ -435,6 +463,14 @@ fn main() -> Result<()> {
         fmt_dur(build_took),
         stats.num_files as f64 / build_took.as_secs_f64().max(1e-9),
         bytes as f64 / (1024.0 * 1024.0) / build_took.as_secs_f64().max(1e-9)
+    );
+    let _ = writeln!(
+        md,
+        "| build phases | read + parse {}, merge {}, imports {}, finalize {} |",
+        fmt_dur(phases.read_and_parse),
+        fmt_dur(phases.merge),
+        fmt_dur(phases.imports),
+        fmt_dur(phases.finalize)
     );
     let _ = writeln!(md, "| trigrams | {} |", stats.num_trigrams);
     let _ = writeln!(md, "| symbol references | {} |", engine.reference_count());

@@ -15,7 +15,7 @@
 
 use super::extractor::SymbolRef;
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
+use tree_sitter::{Node, Point};
 
 /// Scopes whose bindings are local: functions, lambdas and comprehensions.
 fn is_scope(kind: &str) -> bool {
@@ -144,10 +144,11 @@ fn bound_names<'a>(scope: Node<'a>, source: &'a str) -> HashSet<&'a str> {
     bound
 }
 
-/// `node` is (part of) what an assignment, `for` or `with` writes to.
-fn is_assignment_target(node: Node) -> bool {
-    let mut cur = node;
-    while let Some(p) = cur.parent() {
+/// `path[i]` is (part of) what an assignment, `for` or `with` writes to;
+/// `path` holds its ancestors from the root down.
+fn is_assignment_target(path: &[Node], i: usize) -> bool {
+    let mut cur = path[i];
+    for &p in path[..i].iter().rev() {
         match p.kind() {
             "pattern_list" | "tuple_pattern" | "list_pattern" | "tuple" | "list" => cur = p,
             "assignment" | "augmented_assignment" | "for_statement" | "for_in_clause" => {
@@ -161,35 +162,96 @@ fn is_assignment_target(node: Node) -> bool {
     false
 }
 
+/// A function, lambda or comprehension, and the nearest one around it.
+struct Scope<'a> {
+    node: Node<'a>,
+    start: Point,
+    end: Point,
+    parent: Option<usize>,
+}
+
 /// Drop the references that name a local variable of an enclosing
 /// function, lambda or comprehension.
+///
+/// One walk over the tree collects the scopes and the attribute names;
+/// each reference is then placed by position. Looking each reference up
+/// from the root and climbing with `Node::parent` (which itself re-walks
+/// from the root) cost a fifth of Django's whole build.
 pub(crate) fn drop_locals(root: Node, source: &str, refs: &mut Vec<SymbolRef>) {
-    let mut cache: HashMap<usize, HashSet<&str>> = HashMap::new();
-    refs.retain(|r| {
-        let point = tree_sitter::Point::new(r.line as usize, r.column as usize);
-        let Some(node) = root.descendant_for_point_range(point, point) else {
-            return true;
-        };
+    if refs.is_empty() {
+        return;
+    }
+    // Scopes in document order; `obj.name` positions -> keep the reference.
+    let mut scopes: Vec<Scope> = Vec::new();
+    let mut attributes: HashMap<Point, bool> = HashMap::new();
+    let mut path: Vec<Node> = Vec::new();
+    let mut open_scopes: Vec<(usize, usize)> = Vec::new(); // (scope, depth)
+    let mut cursor = root.walk();
+    loop {
+        let node = cursor.node();
+        let depth = path.len();
+        while open_scopes.last().is_some_and(|&(_, d)| d >= depth) {
+            open_scopes.pop();
+        }
+        path.push(node);
+        if is_scope(node.kind()) {
+            scopes.push(Scope {
+                node,
+                start: node.start_position(),
+                end: node.end_position(),
+                parent: open_scopes.last().map(|&(i, _)| i),
+            });
+            open_scopes.push((scopes.len() - 1, depth));
+        }
         // `obj.name` looks `name` up on the object, never in the scope;
         // `obj.name = x` sets it, which is no use of it.
-        if let Some(attr) = node.parent().filter(|p| {
-            p.kind() == "attribute"
-                && p.child_by_field_name("attribute")
-                    .is_some_and(|a| a.id() == node.id())
-        }) {
-            return !is_assignment_target(attr);
+        if node.kind() == "attribute" {
+            if let Some(name) = node.child_by_field_name("attribute") {
+                attributes.insert(
+                    name.start_position(),
+                    !is_assignment_target(&path, path.len() - 1),
+                );
+            }
         }
-        let mut cur = node.parent();
-        while let Some(n) = cur {
-            if is_scope(n.kind()) {
-                let bound = cache
-                    .entry(n.id())
-                    .or_insert_with(|| bound_names(n, source));
-                if bound.contains(r.name.as_str()) {
+        if cursor.goto_first_child() {
+            continue;
+        }
+        path.pop();
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                break;
+            }
+            path.pop();
+        }
+        if path.is_empty() {
+            break;
+        }
+    }
+
+    let mut bound: HashMap<usize, HashSet<&str>> = HashMap::new();
+    refs.retain(|r| {
+        let point = Point::new(r.line as usize, r.column as usize);
+        if let Some(&keep) = attributes.get(&point) {
+            return keep;
+        }
+        // The innermost scope around the point is the last one opened
+        // before it, or one of that scope's enclosing scopes.
+        let opened = scopes.partition_point(|s| s.start <= point);
+        let mut at = opened.checked_sub(1);
+        while let Some(i) = at {
+            let scope = &scopes[i];
+            if scope.start <= point && point < scope.end {
+                let names = bound
+                    .entry(i)
+                    .or_insert_with(|| bound_names(scope.node, source));
+                if names.contains(r.name.as_str()) {
                     return false;
                 }
             }
-            cur = n.parent();
+            at = scope.parent;
         }
         true
     });
