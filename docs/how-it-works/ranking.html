@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4be29c66.js";
+            window.path_to_searchindex_js = "../searchindex-65e49d67.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -268,6 +268,36 @@ default; a request may ask for more with <code>max_files</code>, up to
 candidates and only the best 2,000 above that, and the budget was 512
 matches. On a 372k-file corpus that put 10% of the exhaustive top 50 on
 page 1 for common words; the current defaults put 81% there.)</p>
+<h2 id="why-there-is-no-unranked-mode"><a class="header" href="#why-there-is-no-unranked-mode">Why there is no unranked mode</a></h2>
+<p>Ranking itself is a sort and costs little; the time goes into reading the
+matching files. A mode that stopped as soon as page 1 was full (as
+<code>rg | head</code> does) would skip most of that reading, but it would show the
+first matches found rather than the best. Measured with
+<code>examples/rank_cost.rs</code> on tokio 1.45.0 + Django 5.2 (7,580 files, warm
+cache, 4 vCPU, page of 50):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>Matches</th><th>Ranked page 1</th><th>Stop at 50 matches</th><th>Best 50 on that page</th></tr>
+</thead>
+<tbody>
+<tr><td><code>return</code></td><td>22,385</td><td>20.2 ms</td><td>0.9 ms</td><td>0 of 50</td></tr>
+<tr><td><code>import</code></td><td>14,940</td><td>16.9 ms</td><td>0.7 ms</td><td>0 of 50</td></tr>
+<tr><td><code>def test_</code></td><td>16,521</td><td>15.1 ms</td><td>2.1 ms</td><td>10 of 50</td></tr>
+<tr><td><code>Config</code></td><td>3,199</td><td>7.6 ms</td><td>0.2 ms</td><td>2 of 50</td></tr>
+<tr><td><code>unwrap()</code></td><td>2,522</td><td>3.3 ms</td><td>0.3 ms</td><td>36 of 50</td></tr>
+<tr><td><code>TODO</code></td><td>264</td><td>2.2 ms</td><td>0.9 ms</td><td>44 of 50</td></tr>
+</tbody>
+</table>
+</div>
+<p>The ranked page held the exhaustive top 50 for every query. On a tree ten
+times larger (75,800 files, ten copies of the same two) ranked page 1 took
+17–80 ms and stopping at 50 matches 0.5–9 ms. A few tens of milliseconds is not worth a page that, for
+common words, holds none of the best hits, so every search is ranked. The
+<code>rank</code> parameter of the API, gRPC and <code>fcs --rank</code> is kept for old
+scripts; it only decides whether a file limit applies (see
+<a href="#reading-order">Reading order</a>). Not measured yet: a cold cache or a slow
+disk, where reading costs more.</p>
 <h2 id="symbols-and-references"><a class="header" href="#symbols-and-references">Symbols and references</a></h2>
 <p>Symbol search scores exact name matches above prefix matches above
 substrings, with variables and constants slightly below types and

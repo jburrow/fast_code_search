@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4be29c66.js";
+            window.path_to_searchindex_js = "../searchindex-65e49d67.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -194,7 +194,7 @@ Focusing the box lists recent searches (kept in this browser): one
 counts once you press Enter, pause for two seconds or move on to the
 results.</li>
 <li><strong>REGEX</strong>, <strong>SYMBOLS</strong> and <strong>REFERENCES</strong> switch modes; <strong>FILTER</strong> opens
-page size, ranking mode, context lines and the path filters (<strong>SEARCH ONLY
+page size, context lines and the path filters (<strong>SEARCH ONLY
 IN</strong> and <strong>SKIP PATHS</strong>: globs separated by <code>,</code> or <code>;</code>). While a path
 filter is set, FILTER shows a count and the summary line shows each filter
 with an × to remove it. Path filters are remembered between visits.</li>
@@ -213,7 +213,10 @@ server limits how many (<code>search.fast_rank_files</code>), the summary says
 “Searched N of M files” and <strong>SEARCH ALL FILES</strong> opens the rest (or as
 many as the server allows).</li>
 <li>Results are in rank order with each file’s hits together (see
-<a href="../how-it-works/ranking.html#result-order">Ranking</a>). A file cut at the
+<a href="../how-it-works/ranking.html#result-order">Ranking</a>). Every search is
+ranked; there is no unranked mode. <strong>BEST MATCHES FIRST</strong> in the summary
+line opens a short explanation of the order and of what happens on a
+very broad search. A file cut at the
 end of a page says so: its badge reads “3 of 7 hits”, and <strong>Show 4 more
 hits in this file</strong> under its code fetches the rest in place. “7+” means
 the file reached the per-file cap and may hold more.</li>
