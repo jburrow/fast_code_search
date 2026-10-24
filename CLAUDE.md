@@ -40,9 +40,11 @@ profiler found in an hour.
   Paste its table into the PR's **Performance** section. Numbers from
   different machines, or from GitHub runners on different days, are not
   comparable; only an A/B from one machine in one sitting is.
-- **A slowdown is a decision, not an accident.** If the script reports a
-  metric more than 10% slower, either fix it or name the slowdown and what it
-  buys in the PR and in the CHANGELOG entry.
+- **A slowdown is a decision, not an accident.** If the script marks a
+  metric **slower** (median over 10% and no round overlap with the base),
+  either fix it or name the slowdown and what it buys in the PR and in the
+  CHANGELOG entry. Smaller moves are within this machine's noise: main
+  against itself moved single metrics by up to 18% over 5 rounds.
 - **Profile before calling a cost inherent.** `valgrind --tool=callgrind`
   on `target/release/examples/corpus_bench` (collect everything; rayon
   workers miss a toggle on the main thread), then `callgrind_annotate
