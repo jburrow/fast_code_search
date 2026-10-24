@@ -1279,6 +1279,31 @@ fn test_first_line_does_not_get_definition_boost() {
     );
 }
 
+/// A whole-word match beats the same text at the start of a longer name,
+/// even on a longer line: `class ModelForm` finds `class ModelForm(` before
+/// `class ModelFormOptions:` (benches/ranking_quality.toml).
+#[test]
+fn test_whole_word_match_ranks_above_longer_name() {
+    let score = |line: &str| {
+        calculate_score_inline(
+            line,
+            (0, "class ModelForm".len()),
+            "class ModelForm",
+            "class modelform",
+            true,
+            false,
+            false,
+            1.0,
+        )
+    };
+    let whole = score("class ModelForm(BaseModelForm, metaclass=ModelFormMetaclass):");
+    let prefix = score("class ModelFormOptions:");
+    assert!(
+        whole > prefix,
+        "whole word {whole:.3} vs longer name {prefix:.3}"
+    );
+}
+
 /// Fix #7: Line length penalty should be gentle (logarithmic), not harsh.
 /// A function definition on a ~100-char line should NOT be obliterated by
 /// a short comment. Both should get reasonable scores.
@@ -1287,6 +1312,7 @@ fn test_line_length_penalty_is_gentle() {
     // Short line (20 chars)
     let short_score = calculate_score_inline(
         "fn do_thing() {}   ",
+        (3, 11),
         "do_thing",
         "do_thing",
         false,
@@ -1299,6 +1325,7 @@ fn test_line_length_penalty_is_gentle() {
     let medium_line = "fn do_thing(arg1: String, arg2: i32, arg3: bool) -> Result<()> { todo!() }";
     let medium_score = calculate_score_inline(
         medium_line,
+        (3, 11),
         "do_thing",
         "do_thing",
         false,
@@ -1315,8 +1342,16 @@ fn test_line_length_penalty_is_gentle() {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let long_score =
-        calculate_score_inline(&long_line, "do_thing", "do_thing", false, false, false, 1.0);
+    let long_score = calculate_score_inline(
+        &long_line,
+        (3, 11),
+        "do_thing",
+        "do_thing",
+        false,
+        false,
+        false,
+        1.0,
+    );
 
     // The medium line should retain a decent fraction of the short line's score
     assert!(

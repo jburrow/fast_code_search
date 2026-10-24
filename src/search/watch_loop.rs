@@ -17,6 +17,7 @@ use crate::search::incremental::{
 use crate::search::watcher::{FileChange, FileWatcher, WatcherConfig};
 use crate::search::SearchEngine;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
@@ -88,14 +89,23 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
         .flatten()
         .map(|at| at.saturating_duration_since(Instant::now()))
         .fold(Duration::from_secs(1), Duration::min);
+        // The files this burst names, so each counts once as pending
+        // however many events name it.
+        let mut seen = HashSet::new();
         let mut changes = match watcher.recv_timeout(wait) {
-            Some(first) => gather_burst(&watcher, first, cfg.batch_window, &applying),
+            Some(first) => gather_burst(&watcher, first, cfg.batch_window, &applying, &mut seen),
             None => Vec::new(),
         };
         // Events were lost: reconcile the watched roots with the disk.
-        let rescan = watcher.take_rescan();
-        applying.fetch_add(rescan.len(), Ordering::AcqRel);
-        changes.extend(rescan.into_iter().map(FileChange::Modified));
+        let rescan: Vec<FileChange> = watcher
+            .take_rescan()
+            .into_iter()
+            .map(FileChange::Modified)
+            .collect();
+        for change in &rescan {
+            applying.fetch_add(count_new(&mut seen, change), Ordering::AcqRel);
+        }
+        changes.extend(rescan);
         // Files the scrub found out of step with the disk.
         let requeued: Vec<PathBuf> = read_engine(&cfg.engine, |e| {
             std::mem::take(
@@ -107,8 +117,10 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
             )
         })
         .unwrap_or_default();
-        applying.fetch_add(requeued.len(), Ordering::AcqRel);
-        changes.extend(requeued.into_iter().map(FileChange::Modified));
+        for change in requeued.into_iter().map(FileChange::Modified) {
+            applying.fetch_add(count_new(&mut seen, &change), Ordering::AcqRel);
+            changes.push(change);
+        }
         // Files that could not be read last time (already counted as
         // pending while they wait).
         let now = Instant::now();
@@ -169,7 +181,7 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
                 "File watcher failed applying a burst of changes; trying it again in {} s",
                 PANIC_RETRY.as_secs()
             );
-            applying.fetch_add(changes.len(), Ordering::AcqRel);
+            applying.fetch_add(distinct_paths(&changes), Ordering::AcqRel);
             after_panic = Some((changes.clone(), Instant::now() + PANIC_RETRY));
         }
         if let Some(r) = &report {
@@ -226,7 +238,7 @@ fn retry_after_panic(cfg: &WatchLoopConfig, read_failures: &ReadFailures, burst:
         }
         // apply_burst clears the count; the rest of the burst is still to do.
         if let Some(applying) = &applying {
-            applying.store(burst.len() - i - 1, Ordering::Release);
+            applying.store(distinct_paths(&burst[i + 1..]), Ordering::Release);
         }
     }
 }
@@ -534,8 +546,9 @@ fn gather_burst(
     first: FileChange,
     quiet: Duration,
     applying: &AtomicUsize,
+    seen: &mut HashSet<PathBuf>,
 ) -> Vec<FileChange> {
-    applying.fetch_add(1, Ordering::AcqRel);
+    applying.fetch_add(count_new(seen, &first), Ordering::AcqRel);
     let mut changes = vec![first];
     let deadline = Instant::now() + MAX_BURST;
     loop {
@@ -545,12 +558,27 @@ fn gather_burst(
         }
         match watcher.recv_timeout(quiet.min(remaining)) {
             Some(c) => {
-                applying.fetch_add(1, Ordering::AcqRel);
+                applying.fetch_add(count_new(seen, &c), Ordering::AcqRel);
                 changes.push(c);
             }
             None => return changes,
         }
     }
+}
+
+/// Add `change`'s paths to `seen`; how many were not there yet.
+fn count_new(seen: &mut HashSet<PathBuf>, change: &FileChange) -> usize {
+    change
+        .paths()
+        .into_iter()
+        .filter(|p| seen.insert((*p).clone()))
+        .count()
+}
+
+/// How many files `changes` name, each counted once.
+fn distinct_paths(changes: &[FileChange]) -> usize {
+    let mut seen = HashSet::new();
+    changes.iter().map(|c| count_new(&mut seen, c)).sum()
 }
 
 /// Run `f` under the engine write lock, recovering a poisoned lock and

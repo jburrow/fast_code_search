@@ -1075,6 +1075,7 @@ impl SearchEngine {
             // Calculate score - symbols always get the symbol definition boost
             let base_score = calculate_score_inline(
                 line,
+                (match_start, match_end),
                 original_query,
                 query_lower,
                 true,
@@ -1464,6 +1465,7 @@ impl SearchEngine {
             let is_symbol_def = maps.is_definition_line(line_num, line);
             let score = calculate_score_inline(
                 line,
+                (match_start, match_end),
                 original_query,
                 query_lower,
                 is_symbol_def,

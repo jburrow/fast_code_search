@@ -78,8 +78,13 @@ jobs:
           cat corpus_summary.md >> "$GITHUB_STEP_SUMMARY"
 
       # Does the first result answer the query? Precision over labelled
-      # queries; a ranking change that hurts this fails the run.
+      # queries; a ranking change that hurts this fails the run, but only at
+      # the end (see the last step), so the numbers are still stored: from
+      # 13 to 24 Oct 2026 a failure here skipped the trend steps on every
+      # push and the chart stopped without anyone noticing.
       - name: Ranking quality (precision@1 / @5)
+        id: ranking
+        continue-on-error: true
         run: |
           cargo run --release --example ranking_quality -- \
             bench-corpus/tokio bench-corpus/django \
@@ -183,6 +188,12 @@ jobs:
           comment-on-alert: true
           alert-threshold: '200%'
           fail-on-alert: false
+
+      - name: Fail if ranking quality is below the bar
+        if: steps.ranking.outcome == 'failure'
+        run: |
+          echo "::error::Ranking quality is below the bar; see the step 'Ranking quality (precision@1 / @5)'"
+          exit 1
 
   # Nightly: a large corpus (the Rust compiler tree, hundreds of MB and
   # tens of thousands of files) with file count, throughput and resident

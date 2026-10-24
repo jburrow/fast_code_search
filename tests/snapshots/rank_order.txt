@@ -95,6 +95,7 @@ snap/fixtures/src/main.rs:1
 snap/fixtures/src/main.rs:7
 snap/fixtures/src/main.rs:6
 snap/fixtures/src/search/engine.rs:3
+snap/fixtures/tests/test_engine.rs:2
 snap/py/gen/p10/p11/__init__.py:10
 snap/py/gen/p10/p11/__init__.py:13
 snap/py/gen/p10/p11/__init__.py:15
@@ -109,7 +110,6 @@ snap/py/gen/p1/p4/m0.py:37
 snap/py/gen/p1/p4/m0.py:8
 snap/py/gen/p1/p4/m0.py:33
 snap/py/gen/p1/p4/m0.py:39
-snap/py/gen/p1/p4/m0.py:38
 
 ## Text "class": 54
 snap/py/gen/p1/p4/m0.py:11
@@ -187,6 +187,7 @@ snap/py/gen/p10/p11/p15/m2.py:7
 
 ## Text "the": 45
 snap/fixtures/quotes.py:4
+snap/fixtures/case_fold.txt:1
 snap/py/gen/p12/m1.py:29
 snap/py/gen/p1/m2.py:19
 snap/py/gen/p1/p4/p7/__init__.py:21
@@ -205,7 +206,6 @@ snap/py/gen/p1/p4/p9/__init__.py:35
 snap/py/gen/p1/p4/p9/m2.py:17
 snap/py/gen/p1/p4/p9/m2.py:25
 snap/py/gen/p1/p4/p9/m2.py:35
-snap/py/gen/p10/m1.py:37
 
 ## Text "new": 3
 snap/fixtures/mined/newline.txt:0
@@ -213,9 +213,9 @@ snap/fixtures/crlf.txt:5
 snap/fixtures/no_newline.txt:1
 
 ## Text "test": 11
+snap/fixtures/mined/literal_ops.txt:1
 snap/fixtures/mined/bom.txt:1
 snap/fixtures/mined/bom.txt:2
-snap/fixtures/mined/literal_ops.txt:1
 snap/fixtures/tests/test_engine.rs:1
 snap/fixtures/phrases.txt:12
 snap/fixtures/phrases.txt:11
@@ -290,49 +290,49 @@ snap/fixtures/phrases.txt:6
 snap/fixtures/phrases.txt:3
 snap/fixtures/phrases.txt:4
 snap/fixtures/phrases.txt:2
-snap/fixtures/mined/words.txt:5
-snap/fixtures/mined/words.txt:6
 snap/fixtures/operators.sh:1
 snap/fixtures/docs/guide.md:3
+snap/fixtures/mined/words.txt:5
+snap/fixtures/mined/words.txt:6
 
 ## Text "TODO": 1
 snap/fixtures/regex_cases.c:12
 
 ## Text "foo": 19
 snap/fixtures/words.txt:1
-snap/fixtures/words.txt:2
-snap/fixtures/words.txt:5
 snap/fixtures/words.txt:6
 snap/fixtures/words.txt:8
-snap/fixtures/words.txt:11
-snap/fixtures/words.txt:4
 snap/fixtures/words.txt:7
-snap/fixtures/words.txt:3
+snap/fixtures/words.txt:2
+snap/fixtures/words.txt:5
+snap/fixtures/words.txt:11
 snap/fixtures/words.txt:9
 snap/fixtures/words.txt:10
-snap/fixtures/mined/anchors.txt:3
-snap/fixtures/mined/anchors.txt:4
+snap/fixtures/words.txt:4
+snap/fixtures/words.txt:3
+snap/fixtures/mined/literal_ops.txt:2
+snap/fixtures/mined/newline.txt:3
 snap/fixtures/mined/newline.txt:1
 snap/fixtures/mined/newline.txt:2
-snap/fixtures/mined/newline.txt:3
-snap/fixtures/mined/literal_ops.txt:2
+snap/fixtures/mined/anchors.txt:3
+snap/fixtures/mined/anchors.txt:4
 snap/fixtures/mined/includes.c:1
 snap/fixtures/mined/includes.c:2
 
 ## Text "bar": 13
 snap/fixtures/mined/optional.txt:4
 snap/fixtures/words.txt:3
-snap/fixtures/words.txt:2
-snap/fixtures/words.txt:5
 snap/fixtures/words.txt:6
 snap/fixtures/words.txt:8
+snap/fixtures/words.txt:2
+snap/fixtures/words.txt:5
+snap/fixtures/mined/literal_ops.txt:2
+snap/fixtures/mined/includes.c:1
+snap/fixtures/mined/includes.c:2
 snap/fixtures/mined/anchors.txt:4
 snap/fixtures/mined/anchors.txt:3
 snap/fixtures/mined/newline.txt:1
 snap/fixtures/mined/newline.txt:2
-snap/fixtures/mined/literal_ops.txt:2
-snap/fixtures/mined/includes.c:1
-snap/fixtures/mined/includes.c:2
 
 ## Text "match": 0
 
@@ -356,18 +356,18 @@ snap/fixtures/long_line.js:0
 snap/fixtures/mined/lines_f1.txt:0
 snap/fixtures/mined/lines_f2.txt:0
 snap/fixtures/mined/newline.txt:0
+snap/fixtures/crlf.txt:1
+snap/fixtures/crlf.txt:5
 snap/fixtures/mined/classes.txt:2
 snap/fixtures/mined/classes.txt:3
 snap/fixtures/mined/classes.txt:4
 snap/fixtures/mined/classes.txt:5
 snap/fixtures/mined/classes.txt:6
-snap/fixtures/crlf.txt:1
-snap/fixtures/crlf.txt:5
 snap/fixtures/mined/anchors.txt:2
-snap/fixtures/no_newline.txt:1
 snap/fixtures/README.md:8
 snap/fixtures/README.md:3
 snap/fixtures/README.md:4
+snap/fixtures/no_newline.txt:1
 
 ## Text "word": 7
 snap/fixtures/mined/words.txt:0
@@ -375,8 +375,8 @@ snap/fixtures/words.txt:0
 snap/fixtures/words_unicode.txt:0
 snap/fixtures/unicode.txt:5
 snap/fixtures/operators.sh:5
-snap/fixtures/phrases.txt:1
 snap/fixtures/README.md:5
+snap/fixtures/phrases.txt:1
 
 ## Text "case": 5
 snap/fixtures/case_fold.txt:0
@@ -593,21 +593,21 @@ snap/py/gen/p10/m1.py:44
 snap/py/gen/p10/m1.py:22
 snap/py/gen/p10/m1.py:13
 snap/py/gen/p10/m1.py:7
-snap/py/gen/p10/m1.py:8
 snap/py/gen/p10/m1.py:23
 snap/py/gen/p10/m1.py:38
 snap/py/gen/p10/m1.py:40
-snap/py/gen/p10/m1.py:14
 snap/py/gen/p10/m1.py:24
-snap/py/gen/p10/m1.py:1
 snap/py/gen/p10/m1.py:17
 snap/py/gen/p10/m1.py:16
 snap/py/gen/p10/m1.py:25
-snap/py/gen/p1/p4/p7/__init__.py:13
-snap/py/gen/p1/p4/p7/__init__.py:15
-snap/py/gen/p1/p4/p7/__init__.py:8
-snap/py/gen/p1/p4/p7/__init__.py:1
-snap/py/gen/p1/p4/p7/__init__.py:23
+snap/py/gen/p10/m1.py:8
+snap/py/gen/p10/m1.py:14
+snap/py/gen/p10/m1.py:1
+snap/py/gen/p1/p4/p6/m0.py:25
+snap/py/gen/p1/p4/p6/m0.py:9
+snap/py/gen/p1/p4/p6/m0.py:28
+snap/py/gen/p1/p4/p6/m0.py:8
+snap/py/gen/p1/p4/p6/m0.py:30
 
 ## Text "gen": 235
 snap/py/gen/p10/m1.py:29
@@ -621,15 +621,15 @@ snap/py/gen/p10/m1.py:38
 snap/py/gen/p10/m1.py:40
 snap/py/gen/p10/m1.py:14
 snap/py/gen/p10/m1.py:24
-snap/py/gen/p10/m1.py:1
 snap/py/gen/p10/m1.py:17
 snap/py/gen/p10/m1.py:16
 snap/py/gen/p10/m1.py:25
+snap/py/gen/p10/m1.py:1
 snap/py/gen/p1/p4/p7/__init__.py:13
 snap/py/gen/p1/p4/p7/__init__.py:15
 snap/py/gen/p1/p4/p7/__init__.py:8
-snap/py/gen/p1/p4/p7/__init__.py:1
 snap/py/gen/p1/p4/p7/__init__.py:23
+snap/py/gen/p1/p4/p7/__init__.py:7
 
 ## Text "Optional": 69
 snap/py/gen/p1/p4/p6/m2.py:28

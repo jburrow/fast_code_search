@@ -11,6 +11,7 @@ flowchart LR
         A[defines a symbol ×3]
         B[exact case ×2]
         C[starts the line ×1.5]
+        W[whole word ×1.5]
     end
     subgraph file["the file"]
         direction TB
@@ -33,10 +34,15 @@ score = base
       × 3.0   if the line defines a symbol
       × 2.0   if the match has the exact case typed
       × 1.5   if the match starts the (trimmed) line
+      × 1.5   if the match is a whole word (text search)
       × 1.5   if the file is under src/ or lib/
       × (1 + 0.5 · log10(files that import this file))
       × max(1 / (1 + ln(1 + length/100)), 0.3)      # long lines damped
 ```
+
+A plain search matches like `rg -F`, so `class ModelForm` also matches
+`class ModelFormOptions:`; the whole-word factor puts `class ModelForm(`
+first, although its line is longer.
 
 The dependency factor is the import graph at work: a module that twenty
 files import scores 1.65× a module nothing imports, for the same line.
