@@ -33,6 +33,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# A new push to a pull request cancels that PR's older runs; runs on main
+# always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backtest:
     name: fcs vs ripgrep
