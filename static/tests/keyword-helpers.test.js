@@ -455,7 +455,7 @@ test('searchMetaLabel: normally just the time, file count in the tooltip', () =>
 test('searchMetaLabel: fast ranking that skipped files says so', () => {
     const fast = H.searchMetaLabel({ rank_mode: 'fast', total_candidates: 12000, candidates_searched: 2000 }, 80);
     assert.equal(fast.text, 'Searched 2,000 of 12,000 files · 80 ms');
-    assert.match(fast.title, /Full/);
+    assert.match(fast.title, /Search more files/);
 });
 
 test('indexFreshnessLabel: silent while watching or before the first sync', () => {

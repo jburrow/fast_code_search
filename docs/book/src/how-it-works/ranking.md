@@ -103,6 +103,33 @@ candidates and only the best 2,000 above that, and the budget was 512
 matches. On a 372k-file corpus that put 10% of the exhaustive top 50 on
 page 1 for common words; the current defaults put 81% there.)
 
+## Why there is no unranked mode
+
+Ranking itself is a sort and costs little; the time goes into reading the
+matching files. A mode that stopped as soon as page 1 was full (as
+`rg | head` does) would skip most of that reading, but it would show the
+first matches found rather than the best. Measured with
+`examples/rank_cost.rs` on tokio 1.45.0 + Django 5.2 (7,580 files, warm
+cache, 4 vCPU, page of 50):
+
+| Query | Matches | Ranked page 1 | Stop at 50 matches | Best 50 on that page |
+|-------|---------|---------------|--------------------|----------------------|
+| `return` | 22,385 | 20.2 ms | 0.9 ms | 0 of 50 |
+| `import` | 14,940 | 16.9 ms | 0.7 ms | 0 of 50 |
+| `def test_` | 16,521 | 15.1 ms | 2.1 ms | 10 of 50 |
+| `Config` | 3,199 | 7.6 ms | 0.2 ms | 2 of 50 |
+| `unwrap()` | 2,522 | 3.3 ms | 0.3 ms | 36 of 50 |
+| `TODO` | 264 | 2.2 ms | 0.9 ms | 44 of 50 |
+
+The ranked page held the exhaustive top 50 for every query. On a tree ten
+times larger (75,800 files, ten copies of the same two) ranked page 1 took
+17–80 ms and stopping at 50 matches 0.5–9 ms. A few tens of milliseconds is not worth a page that, for
+common words, holds none of the best hits, so every search is ranked. The
+`rank` parameter of the API, gRPC and `fcs --rank` is kept for old
+scripts; it only decides whether a file limit applies (see
+[Reading order](#reading-order)). Not measured yet: a cold cache or a slow
+disk, where reading costs more.
+
 ## Symbols and references
 
 Symbol search scores exact name matches above prefix matches above

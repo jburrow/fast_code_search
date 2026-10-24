@@ -250,8 +250,9 @@ fn tool_definitions(m: &crate::config::McpConfig) -> Value {
              kind, -kind:attribute drops one, and each hit says its kind). Text ignores case and regex does not, unless case_sensitive is \
              set. Returns path:line:column with the matching line; in text and regex mode, \
              files whose path matches the query (e.g. a pasted path) are listed first. \
-             Hits come in rank order; when more exist the result says the offset to pass \
-             for the next page."
+             Every search is ranked: best matches first (definitions, exact case, whole words, \
+             src/lib files and files many others import score higher), each file's hits together. \
+             When more exist the result says the offset to pass for the next page."
                 .to_string(),
             json!({
                 "type": "object",
@@ -263,7 +264,6 @@ fn tool_definitions(m: &crate::config::McpConfig) -> Value {
                     "limit": {"type": "integer", "minimum": 1, "maximum": m.max_limit, "default": m.default_limit, "description": "Hits to return."},
                     "offset": {"type": "integer", "minimum": 0, "default": 0, "description": "Skip this many hits, to page through a long result (the result says the next offset)."},
                     "max_files": {"type": "integer", "minimum": 0, "description": "Most candidate files to read, best first (0 or unset = the server's default). Raise it when a result says the file limit stopped the search."},
-                    "rank": {"type": "string", "enum": ["auto", "fast", "full"], "default": "auto", "description": "full never stops at the file limit; auto and fast honour it."},
                     "context": {"type": "integer", "minimum": 0, "maximum": m.max_context_lines, "default": 0, "description": "Lines of context around each match."},
                     "case_sensitive": {"type": "boolean", "description": "Match case exactly (true) or ignore it (false). Default: text ignores case, regex matches it."},
                     "deps": {"type": "string", "description": "Only search these files and what they import: semicolon-separated PATH[:N] (N import hops, default 1; * for any distance). A leading - leaves those files out."},
@@ -450,7 +450,10 @@ struct SearchArgs {
     offset: usize,
     #[serde(default)]
     max_files: Option<usize>,
+    /// No longer in the schema: every search is ranked the same way.
+    /// Still accepted so older clients that send it keep working.
     #[serde(default)]
+    #[allow(dead_code)]
     rank: String,
     #[serde(default)]
     context: usize,
@@ -485,7 +488,6 @@ async fn search_code(state: &WebState, a: SearchArgs) -> ToolResult {
         "q": a.query,
         "max": page,
         "offset": a.offset,
-        "rank": a.rank,
         "include": a.include,
         "exclude": a.exclude,
         "regex": regex,

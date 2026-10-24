@@ -17,7 +17,6 @@ const regexModeCheckbox = document.getElementById('regex-mode');
 const symbolsModeCheckbox = document.getElementById('symbols-mode');
 const referencesModeCheckbox = document.getElementById('references-mode');
 const caseModeCheckbox = document.getElementById('case-mode');
-const rankModeSelect = document.getElementById('rank-mode');
 const contextLinesSelect = document.getElementById('context-lines');
 const resultsContainer = document.getElementById('results');
 const fileMatchesSection = document.getElementById('file-matches');
@@ -60,7 +59,6 @@ function saveSettingsToStorage() {
     try {
         const settings = {
             max: maxResultsSelect?.value || '50',
-            rank: rankModeSelect?.value || 'auto',
             context: contextLinesSelect?.value || DEFAULT_CONTEXT,
             // Only a context the reader picked is restored, so a changed
             // default reaches browsers that saved the old one automatically.
@@ -86,7 +84,6 @@ function loadSettingsFromStorage() {
         if (!raw) return;
         const s = JSON.parse(raw);
         if (s.max != null) applyMaxResults(s.max);
-        if (s.rank != null) setSelectValue(rankModeSelect, s.rank);
         if (s.context != null && s.contextChosen) {
             setSelectValue(contextLinesSelect, s.context);
             _contextChosen = true;
@@ -181,8 +178,8 @@ function syncFilterIndicators() {
     const toggle = document.getElementById('filter-toggle-btn');
     if (toggle) {
         toggle.title = fields.length
-            ? `Filter and ranking options (${fields.length} path filter${fields.length === 1 ? '' : 's'} on)`
-            : 'Show filter and ranking options';
+            ? `Filter options (${fields.length} path filter${fields.length === 1 ? '' : 's'} on)`
+            : 'Show filter options';
     }
     const clear = document.getElementById('clear-filters-btn');
     if (clear) clear.hidden = fields.length === 0;
@@ -309,7 +306,6 @@ function applyUrlState(params, opts = {}) {
     text(depsFilterInput, 'deps');
     if (params.has('max')) applyMaxResults(params.get('max'));
     else if (absentIsDefault) setSelectValue(maxResultsSelect, '50');
-    select(rankModeSelect, 'rank', 'auto');
     select(contextLinesSelect, 'context', DEFAULT_CONTEXT);
     mode(regexModeCheckbox, 'regex');
     mode(symbolsModeCheckbox, 'symbols');
@@ -321,7 +317,7 @@ function applyUrlState(params, opts = {}) {
     // so the applied filters are discoverable.
     const hasAdvanced = params.has('include') || params.has('exclude') ||
         params.has('rdeps') || params.has('deps') ||
-        params.has('rank') || params.has('max') || params.has('context');
+        params.has('max') || params.has('context');
     if (hasAdvanced) {
         const filterPanel = document.getElementById('filter-panel');
         if (filterPanel) filterPanel.classList.add('open');
@@ -358,9 +354,6 @@ function currentUrlParams() {
     if (symbolsModeCheckbox?.checked) params.set('symbols', 'true');
     if (referencesModeCheckbox?.checked) params.set('references', 'true');
     if (caseModeCheckbox?.checked) params.set('case', 'true');
-
-    const rank = rankModeSelect?.value || 'auto';
-    if (rank !== 'auto') params.set('rank', rank);
 
     const context = currentContextLines();
     if (context !== Number(DEFAULT_CONTEXT)) params.set('context', String(context));
@@ -408,7 +401,7 @@ const searchReadiness = new SearchReadinessManager({
     searchInputId: 'query',
     resultsContainerId: 'results',
     searchSectionId: 'search-section',
-    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'case-mode', 'regex-mode', 'symbols-mode', 'references-mode', 'rank-mode', 'context-lines'],
+    additionalInputIds: ['include-filter', 'exclude-filter', 'max-results', 'case-mode', 'regex-mode', 'symbols-mode', 'references-mode', 'context-lines'],
     onReadyChange: (isReady, status) => {
         if (isReady && queryInput.value.trim()) {
             // If user typed while waiting, trigger search now
@@ -1087,7 +1080,6 @@ function buildSearchParams(s) {
     if (s.isReferences) params.set('references', 'true');
     else if (s.symbolsOnly) params.set('symbols', 'true');
     else if (s.isRegex) params.set('regex', 'true');
-    if (s.rankMode !== 'auto') params.set('rank', s.rankMode);
     if (s.contextLines > 0) params.set('context', String(s.contextLines));
     // MATCH CASE means the same in every mode. Off, plain text needs nothing
     // (it ignores case unless the query says case:yes) but a regex, which
@@ -1183,7 +1175,6 @@ async function performSearch(opts = {}) {
         isReferences: referencesModeCheckbox?.checked || false,
         matchCase: caseModeCheckbox?.checked || false,
         maxFiles: opts.maxFiles || null,
-        rankMode: rankModeSelect?.value || 'auto',
         contextLines: currentContextLines(),
         results: [],
         last: null,
@@ -1363,6 +1354,20 @@ function toggleRegexHelp(open) {
 }
 
 document.getElementById('regex-help-btn')?.addEventListener('click', () => toggleRegexHelp());
+
+/** Show (`open` true), hide (false) or toggle (undefined) how results are ordered. */
+function toggleRankingHelp(open) {
+    const panel = document.getElementById('ranking-help');
+    const btn = document.getElementById('ranking-help-btn');
+    if (!panel) return;
+    const show = open === undefined ? !panel.classList.contains('open') : open;
+    panel.classList.toggle('open', show);
+    if (btn) btn.setAttribute('aria-expanded', String(show));
+    if (show) panel.scrollIntoView({ block: 'nearest' });
+}
+
+document.getElementById('ranking-help-btn')?.addEventListener('click', () => toggleRankingHelp());
+document.getElementById('ranking-help-close')?.addEventListener('click', () => toggleRankingHelp(false));
 document.getElementById('regex-help-close')?.addEventListener('click', () => toggleRegexHelp(false));
 document.querySelectorAll('#regex-help [data-example]').forEach(btn => {
     btn.addEventListener('click', () => applySuggestion({ query: btn.dataset.example, regex: true }));
@@ -2969,7 +2974,6 @@ modeCheckboxes().forEach(cb => {
         optionChanged();
     });
 });
-if (rankModeSelect) rankModeSelect.addEventListener('change', optionChanged);
 if (contextLinesSelect) contextLinesSelect.addEventListener('change', () => { _contextChosen = true; optionChanged(); });
 
 document.getElementById('active-filters')?.addEventListener('click', (e) => {

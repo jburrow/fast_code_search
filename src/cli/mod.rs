@@ -273,9 +273,9 @@ pub struct SearchArgs {
     /// Skip files matching this glob (repeatable)
     #[arg(long = "exclude", value_name = "GLOB")]
     pub excludes: Vec<String>,
-    /// Ranking: auto and fast read files best first and honour a file
-    /// limit; full never stops at one
-    #[arg(long, value_enum, default_value_t = Rank::Auto)]
+    /// Deprecated and hidden: every search is ranked the same way. `full`
+    /// still ignores a file limit (`--max-files`, search.fast_rank_files).
+    #[arg(long, value_enum, default_value_t = Rank::Auto, hide = true)]
     pub rank: Rank,
     /// Stop scanning after this many milliseconds and return the best so far
     #[arg(long, default_value_t = 0, value_name = "MS")]

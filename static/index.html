@@ -401,17 +401,19 @@
         .copy-path-btn.copy-ok { color: var(--info) !important; }
         .copy-path-btn.copy-failed { color: var(--danger) !important; }
         /* Regex cheat-sheet and search suggestions */
-        #regex-help { display: none; background: var(--surface); border: 1px solid var(--line-strong); padding: 1rem; font-family: var(--font-label); font-size: 0.78rem; color: var(--text); }
-        #regex-help.open { display: block; }
+        #regex-help, #ranking-help { display: none; background: var(--surface); border: 1px solid var(--line-strong); padding: 1rem; font-family: var(--font-label); font-size: 0.78rem; color: var(--text); }
+        #regex-help.open, #ranking-help.open { display: block; }
         .regex-help-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
         .regex-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem 2rem; }
         .regex-help-title { font-weight: 700; margin-bottom: 0.4rem; }
         .regex-help-examples, .regex-help-rules { list-style: none; padding: 0; margin: 0 0 0.5rem; display: grid; gap: 0.35rem; }
         .regex-help-examples button { background: var(--surface-2); border: 1px solid var(--line-strong); padding: 0.1rem 0.4rem; margin-right: 0.4rem; cursor: pointer; }
         .regex-help-examples button:hover { background: var(--hover); }
-        #regex-help code, .search-suggestions code, .regex-error code { background: var(--surface-2); padding: 0 0.2rem; }
-        #regex-help a { text-decoration: underline; }
+        #regex-help code, #ranking-help code, .search-suggestions code, .regex-error code { background: var(--surface-2); padding: 0 0.2rem; }
+        #regex-help a, #ranking-help a { text-decoration: underline; }
         .regex-help-link { background: none; border: none; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; color: inherit; }
+        .ranking-help-link { background: none; border: none; padding: 0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+        .ranking-help-link:hover { color: var(--text); }
         .search-suggestions { margin-top: 1rem; display: grid; gap: 0.6rem; justify-items: center; }
         .suggestion-hint { color: var(--text-3); }
         .suggestion-list { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
@@ -438,7 +440,7 @@
         .active-filter button { background: none; border: none; cursor: pointer; padding: 0 0.25rem; font: inherit; font-weight: 700; }
         .active-filter button:hover { background: var(--hover); }
         /* Corners follow the theme */
-        .ctx-tooltip, .deps-popover, .file-modal-dialog, .code-menu, #regex-help, .suggestion-btn,
+        .ctx-tooltip, .deps-popover, .file-modal-dialog, .code-menu, #regex-help, #ranking-help, .suggestion-btn,
         .load-more-btn, .file-more-btn, .file-modal-explore, .file-modal-close, .active-filter,
         .regex-help-examples button, .truncated-badge, .regex-error pre { border-radius: var(--radius); }
         /* Filter panel */
@@ -639,7 +641,7 @@
                     </label>
                     <!-- The one FILTER toggle. Its count shows how many path filters
                          are set, so a filter left on is never invisible. -->
-                    <button type="button" id="filter-toggle-btn" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold" title="Show filter and ranking options" aria-expanded="false" aria-controls="filter-panel">
+                    <button type="button" id="filter-toggle-btn" class="filter-toggle flex items-center gap-1.5 px-3 py-2 cursor-pointer bg-surface-container-low hover:bg-hover transition-colors text-xs font-label label-case font-bold" title="Show filter options" aria-expanded="false" aria-controls="filter-panel">
                         <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-tune"/></svg>
                         <span>Filter</span>
                         <span id="filter-count" class="filter-count" hidden></span>
@@ -690,12 +692,28 @@
                 <div class="flex gap-4 items-center flex-wrap" aria-live="polite" aria-atomic="true">
                     <span id="results-count" class="font-label label-case text-xs font-bold bg-black text-on-ink px-2 py-0.5"></span>
                     <span id="search-meta" class="font-label text-xs text-outline"></span>
+                    <button type="button" id="ranking-help-btn" class="ranking-help-link font-label text-xs text-outline" aria-expanded="false" aria-controls="ranking-help" title="How results are ordered">Best matches first</button>
                     <button type="button" id="more-files-btn" class="font-label label-case text-xs font-bold underline hover:text-black" style="display: none;"></button>
                     <span id="index-freshness" class="font-label text-xs text-outline" style="display: none;"></span>
                     <span id="search-scope" class="font-label text-xs text-outline" style="display: none;"></span>
                 </div>
                 <!-- Which path filters these results went through (keyword.js) -->
                 <div id="active-filters" class="active-filters" hidden></div>
+            </div>
+
+            <!-- How results are ordered (toggled by BEST MATCHES FIRST; keyword.js) -->
+            <div id="ranking-help" role="region" aria-label="How results are ordered">
+                <div class="regex-help-head">
+                    <strong class="label-case">How results are ordered</strong>
+                    <button type="button" id="ranking-help-close" class="regex-help-link">Close</button>
+                </div>
+                <ul class="regex-help-rules">
+                    <li><strong>Every search is ranked.</strong> Each hit is scored by its line (defines a symbol, exact case, whole word, starts the line), its file (under <code>src/</code> or <code>lib/</code>; test and example files a little lower) and how many files import that file.</li>
+                    <li><strong>A file's hits stay together.</strong> Files come in the order of their best hit, and all of a file's hits, best first, come before the next file.</li>
+                    <li><strong>Nothing is hidden.</strong> Load more goes on through every match in the same order, and the count says how many there are.</li>
+                    <li><strong>Very broad searches.</strong> The most likely files are read first. If a search finds more matches than the server collects for ranking (the match budget), it stops there, the count says so, and the results are the best of those it found. Narrow the query or add a path filter to rank them all.</li>
+                </ul>
+                <p><a href="https://jburrow.github.io/fast_code_search/docs/how-it-works/ranking.html">How ranking works</a></p>
             </div>
 
             <!-- Filter panel (hidden by default) -->
@@ -710,14 +728,6 @@
                             <option value="250">250</option>
                             <option value="500">500</option>
                             <option value="1000">1000</option>
-                        </select>
-                    </label>
-                    <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">
-                        Ranking
-                        <select id="rank-mode" class="bg-white border border-black px-2 py-1.5 font-label text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-focus">
-                            <option value="auto" selected>Auto</option>
-                            <option value="fast">Fast</option>
-                            <option value="full">Full</option>
                         </select>
                     </label>
                     <label class="flex flex-col gap-1 text-xs font-label label-case text-outline">

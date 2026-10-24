@@ -139,12 +139,6 @@ Options:
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
 
-      --rank <RANK>
-          Ranking: auto and fast read files best first and honour a file limit; full never stops at one
-          
-          [default: auto]
-          [possible values: auto, fast, full]
-
       --offline
           Search the on-disk index directly instead of asking the server
 
@@ -247,12 +241,6 @@ Options:
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
 
-      --rank <RANK>
-          Ranking: auto and fast read files best first and honour a file limit; full never stops at one
-          
-          [default: auto]
-          [possible values: auto, fast, full]
-
       --offline
           Search the on-disk index directly instead of asking the server
 
@@ -354,12 +342,6 @@ Options:
 
       --config <FILE>
           Configuration file (default: $FCS_CONFIG, ./fast_code_search.toml, ~/.config/fast_code_search/config.toml)
-
-      --rank <RANK>
-          Ranking: auto and fast read files best first and honour a file limit; full never stops at one
-          
-          [default: auto]
-          [possible values: auto, fast, full]
 
       --offline
           Search the on-disk index directly instead of asking the server
