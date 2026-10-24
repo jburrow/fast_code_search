@@ -17,6 +17,7 @@ This document defines how instruction content is organized across repository doc
 | Contributor workflow, quality gates, release process | `docs/DEVELOPMENT.md` | Operational source for maintainers |
 | Contribution policy and PR checklist | `CONTRIBUTING.md` | Process and review expectations |
 | Agent-oriented repo map and coding conventions | `.github/copilot-instructions.md` | Keep aligned with canonical docs |
+| Hard rules for agents (search behaviour, performance, main health) | `CLAUDE.md` | Short; rules only, pointers for everything else |
 | User-visible change log policy and history | `CHANGELOG.md` | Required for user-facing changes |
 
 ## File Roles and Scope
@@ -48,6 +49,14 @@ This document defines how instruction content is organized across repository doc
   - Platform-specific setup details (Linux/macOS/Windows)
   - Performance and debugging references
 - Should be the canonical command reference used by other docs.
+
+### `CLAUDE.md`
+
+- Should include:
+  - Rules that past mistakes taught (every match in rank order, match ripgrep, benchmark A/B before merging hot-path changes, don't merge on a red main)
+  - Pointers to the canonical docs
+- Should not include:
+  - Code maps, command references or anything `.github/copilot-instructions.md` or `docs/DEVELOPMENT.md` already own
 
 ### `.github/copilot-instructions.md`
 

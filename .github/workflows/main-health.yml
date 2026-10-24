@@ -1,0 +1,68 @@
+name: main health
+
+# Opens an issue when a workflow fails on main (or on a release tag), and
+# closes it when that workflow next succeeds. From 13 to 24 October 2026 the
+# Benchmarks workflow failed on every push and nobody noticed; a red run on
+# main should be as loud as a red check on a PR. Pull request runs are
+# ignored: their checks already show on the PR.
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Benchmarks
+      - ripgrep backtest
+      - graph oracle
+      - impact oracle
+      - reference oracle
+      - Scale scoreboard
+      - GitHub Pages
+      - Release
+      - Container image
+    types: [completed]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: main-health-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.event != 'pull_request' &&
+      (github.event.workflow_run.head_branch == github.event.repository.default_branch ||
+       startsWith(github.event.workflow_run.head_branch, 'v')) &&
+      contains(fromJSON('["success","failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TRIGGER: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+          title="main is red: $WORKFLOW"
+          gh label create main-red --color B60205 \
+            --description "A workflow is failing on main" 2>/dev/null || true
+          open=$(gh issue list --label main-red --state open --limit 100 \
+            --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+          line="\`$WORKFLOW\` $CONCLUSION on \`$BRANCH\` at ${SHA:0:7} ($TRIGGER): $RUN_URL"
+          if [ "$CONCLUSION" = success ]; then
+            if [ -n "$open" ]; then
+              gh issue close "$open" --comment "Green again: $line"
+            fi
+          elif [ -n "$open" ]; then
+            gh issue comment "$open" --body "Still red: $line"
+          else
+            gh issue create --title "$title" --label main-red --body "$line
+
+          Fix it or explain it before merging more work (see CLAUDE.md, \"Keeping main healthy\"). This issue closes itself when \`$WORKFLOW\` next succeeds."
+          fi
