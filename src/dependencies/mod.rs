@@ -35,6 +35,11 @@ pub struct DependencyIndex {
     /// missing here holds no indexed file of its own (it is outside the
     /// index, or only holds folders).
     files_per_dir: FxHashMap<PathBuf, u32>,
+    /// Directory -> how many indexed files sit anywhere below it. Python's
+    /// import search asks "is there anything under `root/a`?" for every
+    /// ancestor of every importing file; one lookup here answers it, where
+    /// probing each candidate path cost 40% of a build.
+    files_below: FxHashMap<PathBuf, u32>,
     /// Rust crate directory (the one holding `Cargo.toml`) -> the name the
     /// crate's own binaries and tests `use` it by, or `None` when the
     /// manifest names no package. Read once per crate.
@@ -324,6 +329,14 @@ impl DependencyIndex {
         }
         if let Some(dir) = stored_path.parent() {
             *self.files_per_dir.entry(dir.to_path_buf()).or_default() += 1;
+            for above in dir.ancestors() {
+                match self.files_below.get_mut(above) {
+                    Some(n) => *n += 1,
+                    None => {
+                        self.files_below.insert(above.to_path_buf(), 1);
+                    }
+                }
+            }
         }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
@@ -340,6 +353,14 @@ impl DependencyIndex {
                 *n -= 1;
                 if *n == 0 {
                     self.files_per_dir.remove(dir);
+                }
+            }
+            for above in dir.ancestors() {
+                if let Some(n) = self.files_below.get_mut(above) {
+                    *n -= 1;
+                    if *n == 0 {
+                        self.files_below.remove(above);
+                    }
                 }
             }
         }
@@ -448,6 +469,18 @@ impl DependencyIndex {
     fn indexed(&self, candidate: &Path) -> Option<PathBuf> {
         if self.path_to_id.contains_key(candidate) {
             return Some(candidate.to_path_buf());
+        }
+        // Only `.` / `..` can make a candidate differ from its key; most
+        // probes have neither and miss, and normalizing those allocated a
+        // second path for nothing.
+        let needs_normalizing = candidate.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        });
+        if !needs_normalizing {
+            return None;
         }
         let normalized = normalize_lexically(candidate);
         if normalized != candidate && self.path_to_id.contains_key(&normalized) {
@@ -677,7 +710,7 @@ impl DependencyIndex {
             // must stay the standard library, not `django/http/`. And
             // only the outermost: `import json` inside `repo/app/fields/`
             // must not find `repo/app/fields/json.py`.
-            let repo_root = self.js_repo_root(dir);
+            let mut repo_root: Option<Option<PathBuf>> = None;
             let nothing_above = |b: &Path| {
                 b.ancestors()
                     .skip(1)
@@ -685,8 +718,11 @@ impl DependencyIndex {
             };
             for b in dir.ancestors() {
                 let top = is_package(b) && b.parent().is_none_or(|parent| !is_package(parent));
-                let project_root = repo_root.as_deref() == Some(b) || nothing_above(b);
-                if top && project_root {
+                if !top {
+                    continue;
+                }
+                let repo_root = repo_root.get_or_insert_with(|| self.js_repo_root(dir));
+                if repo_root.as_deref() == Some(b) || nothing_above(b) {
                     if let Some(p) = try_root(b, &mut best) {
                         return Some(p);
                     }
@@ -702,6 +738,17 @@ impl DependencyIndex {
     fn python_candidates(&self, base: &Path, segments: &[&str]) -> Option<(usize, PathBuf)> {
         if segments.is_empty() {
             return self.indexed(&base.join("__init__.py")).map(|p| (0, p));
+        }
+        // Every candidate is `base/a.py` or a file under `base/a/`. For most
+        // roots tried (every ancestor of the importer, for every import of
+        // the standard library) neither exists, and one lookup says so.
+        let first = base.join(segments[0]);
+        if !self.files_below.contains_key(&first)
+            && self
+                .indexed(&base.join(format!("{}.py", segments[0])))
+                .is_none()
+        {
+            return None;
         }
         for k in (1..=segments.len()).rev() {
             let mut dir = base.to_path_buf();
@@ -1124,6 +1171,7 @@ impl DependencyIndex {
         self.filename_to_paths.clear();
         self.id_to_path.clear();
         self.files_per_dir.clear();
+        self.files_below.clear();
         self.rust_crate_names
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -1454,6 +1502,33 @@ mod tests {
         assert_eq!(r("top.m"), id_of(&temp, &idx, "top/m.py"));
         assert_eq!(r("top.a.b"), id_of(&temp, &idx, "top/a/b/__init__.py"));
         assert_eq!(r("os.path"), None);
+    }
+
+    /// Python's search skips a root with nothing under `root/<first name>`;
+    /// that answer must follow files as they come and go, and re-registering
+    /// a file under another path must not leave its old folder looking full.
+    #[test]
+    fn test_resolve_python_follows_added_and_removed_files() {
+        let (temp, mut idx) = setup(&[("app/main.py", ""), ("lib/pkg/mod.py", "")]);
+        let main = temp.path().join("app/main.py");
+        let lib = id_of(&temp, &idx, "lib/pkg/mod.py").unwrap();
+        let r = |idx: &DependencyIndex, imp: &str| {
+            idx.resolve_import_path(&main, imp)
+                .and_then(|p| idx.get_file_id(&p))
+        };
+        assert_eq!(r(&idx, "lib.pkg.mod"), Some(lib));
+
+        idx.remove_file(lib);
+        assert_eq!(r(&idx, "lib.pkg.mod"), None);
+        assert!(idx.files_below.keys().all(|d| !d.ends_with("lib")));
+
+        let moved = temp.path().join("other/pkg/mod.py");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, "").unwrap();
+        idx.register_file(lib, &temp.path().join("lib/pkg/mod.py"));
+        idx.register_file(lib, &moved);
+        assert_eq!(r(&idx, "lib.pkg.mod"), None);
+        assert_eq!(r(&idx, "other.pkg.mod"), Some(lib));
     }
 
     /// A repository whose root folder has an `__init__.py`, run with that

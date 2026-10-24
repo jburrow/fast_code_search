@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Building the index got about 30% slower over October, mostly for
+  nothing.** A profile on tokio + Django put 42% of the build's CPU in
+  Python import resolution and another fifth of Django's in filtering
+  Python references, not in parsing. For every absolute import (most of
+  them the standard library), resolution built and normalized candidate
+  paths under every folder above the importing file; it now asks one
+  folder lookup whether anything is indexed under `root/<first name>`
+  before building any. The reference filter looked each reference up from
+  the root of the syntax tree and climbed with a call that itself walks
+  down from the root; it now walks each file's tree once. Results are
+  unchanged (same 9,784 graph edges and 384,986 references; the new
+  filter keeps exactly what the old one kept for all 492,103 identifiers
+  in Django). Import resolution went from 2.4 s to 0.85 s, the whole
+  build from 8.1 s to 6.7 s on the same machine (0.15.2: 6.1 s; the rest
+  is the extra Python references and case folding). The corpus benchmark
+  now reports the time of each build phase.
+- **A search for a common word spent a third of its time sorting hits it
+  never returned.** Every hit (22,000 for `return` on tokio + Django) was
+  sorted, then sorted again by file, to return one page; and each
+  candidate file's src/test path signals were worked out again on every
+  search. Now each file's best hit places the file, only the files the
+  page reaches have their hits sorted, and the signals come from the
+  file's precomputed metadata. Results are identical (53,810 results
+  compared across 14 queries, both ranking modes and pages down to
+  offset 20,000); `return` went from 51 to 39 ms, a filtered search from
+  28 to 21 ms, a regex with no literal from 76 to 61 ms.
 - **The count of changes still to apply counted events, not files.** One
   save raises several file-system events, and each was counted, so the
   web page's "N file changes to apply" (and the same count in `fcs`, MCP

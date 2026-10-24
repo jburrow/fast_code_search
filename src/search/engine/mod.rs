@@ -1123,6 +1123,8 @@ pub struct FileMetadata {
     pub symbol_count: u16,
     /// Whether file is in src/ or lib/ directory
     pub is_src_lib: bool,
+    /// Whether the file is under a test, example, mock or fixture folder.
+    pub is_test_path: bool,
     /// Pre-computed base score for ranking
     pub base_score: f32,
     /// Lowercase filename stem for efficient query matching (avoids per-query allocation)
@@ -1199,6 +1201,7 @@ impl FileMetadata {
         FileMetadata {
             symbol_count: symbol_count.min(u16::MAX as usize) as u16,
             is_src_lib,
+            is_test_path: is_test,
             base_score,
             lowercase_stem,
             display_path,

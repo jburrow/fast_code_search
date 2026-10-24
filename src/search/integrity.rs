@@ -510,6 +510,10 @@ pub fn run_scrub(
     let mut cursor = 0usize;
     let mut budget = 0f64;
     let mut suspects: std::collections::HashMap<u32, (Instant, FileCheck)> = Default::default();
+    // Files queued for the watcher, and when. Until the watcher has had
+    // time to index one again it still looks out of step, and finding it
+    // again then would count the same difference twice.
+    let mut requeued: std::collections::HashMap<u32, Instant> = Default::default();
     let mut last_invariants = Instant::now();
     while !shutdown.load(Ordering::Acquire) {
         std::thread::sleep(tick);
@@ -561,19 +565,31 @@ pub fn run_scrub(
         for id in &due {
             suspects.remove(id);
         }
+        requeued.retain(|_, at| at.elapsed() < REQUEUE_GRACE);
         stats
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .files_checked += (batch.len() + due.len()) as u64;
         for (id, path, check) in check_files(&engine, &due) {
-            if watching && check != FileCheck::Unreadable {
-                record_drift(&engine, &stats, id, &path, check);
+            if watching
+                && check != FileCheck::Unreadable
+                && !requeued.contains_key(&id)
+                && record_drift(&engine, &stats, id, &path, check)
+            {
+                requeued.insert(id, Instant::now());
             }
         }
         for (id, path, check) in check_files(&engine, &batch) {
+            if requeued.contains_key(&id) {
+                continue;
+            }
             match check {
                 // A search would skip this file: fix it now.
-                FileCheck::MissingTrigrams(_) => record_drift(&engine, &stats, id, &path, check),
+                FileCheck::MissingTrigrams(_) => {
+                    if record_drift(&engine, &stats, id, &path, check) {
+                        requeued.insert(id, Instant::now());
+                    }
+                }
                 // Retried and reported by the read-failure handling.
                 FileCheck::Unreadable => {}
                 // Without a watcher, changes since the last scan are
@@ -587,20 +603,25 @@ pub fn run_scrub(
     }
 }
 
+/// How long a file the scrub queued for the watcher is left alone before
+/// it is checked again.
+const REQUEUE_GRACE: Duration = Duration::from_secs(10);
+
 /// Count a lasting difference, log it and queue the file for the watcher.
+/// Returns whether it was counted.
 fn record_drift(
     engine: &Arc<RwLock<SearchEngine>>,
     stats: &Arc<std::sync::Mutex<ScrubStats>>,
     id: u32,
     path: &str,
     check: FileCheck,
-) {
+) -> bool {
     let Some(kind) = file_check_kind(check) else {
-        return;
+        return false;
     };
     let e = read(engine);
     let Some(p) = e.file_store.get_path(id) else {
-        return;
+        return false;
     };
     let mut requeue = e
         .watch_backlog
@@ -610,7 +631,7 @@ fn record_drift(
     // Found again before the watcher took it off the queue (it looks up to
     // a second later): the same difference, already counted and queued.
     if requeue.iter().any(|q| q == p) {
-        return;
+        return false;
     }
     tracing::warn!(
         file = path,
@@ -621,6 +642,7 @@ fn record_drift(
     *s.drift.entry(kind.to_string()).or_default() += 1;
     requeue.push(p.to_path_buf());
     s.requeued += 1;
+    true
 }
 
 #[cfg(test)]

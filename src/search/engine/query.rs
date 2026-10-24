@@ -498,30 +498,55 @@ impl SearchEngine {
                 .then_with(|| a.line_number.cmp(&b.line_number))
                 .then_with(|| a.file_id.cmp(&b.file_id))
         };
-        matches.sort_unstable_by(by_score);
-
         // Each file's place is where its best hit ranks; its other hits
-        // follow it, still in score order. Also counts each file's hits.
-        let mut file_rank: FxHashMap<u32, usize> = FxHashMap::default();
-        let mut seen: FxHashMap<u32, u32> = FxHashMap::default();
+        // follow it, still in score order. Only the page is returned, so
+        // only the files it reaches have their hits sorted: sorting every
+        // hit (tens of thousands for a common word) to return 50 was a
+        // third of such a search.
+        let mut by_file: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
         for (i, m) in matches.iter().enumerate() {
-            file_rank.entry(m.file_id).or_insert(i);
-            *seen.entry(m.file_id).or_insert(0) += 1;
+            by_file.entry(m.file_id).or_default().push(i);
         }
-        let mut order: Vec<usize> = (0..matches.len()).collect();
-        order.sort_unstable_by_key(|&i| (file_rank[&matches[i].file_id], i));
-
-        let start = limits.offset.min(order.len());
-        let end = start.saturating_add(limits.max_results).min(order.len());
-        let page: Vec<SearchMatch> = order[start..end]
-            .iter()
-            .map(|&i| {
-                let mut m = matches[i].clone();
-                m.file_hits = seen.get(&m.file_id).copied().unwrap_or(1);
-                m.file_hits_capped = capped_files.contains(&m.file_id);
-                m
+        let mut files: Vec<(usize, Vec<usize>)> = by_file
+            .into_values()
+            .map(|hits| {
+                let best = hits
+                    .iter()
+                    .copied()
+                    .min_by(|&a, &b| by_score(&matches[a], &matches[b]))
+                    .expect("a file in the map has a hit");
+                (best, hits)
             })
             .collect();
+        files.sort_unstable_by(|a, b| by_score(&matches[a.0], &matches[b.0]));
+
+        let start = limits.offset;
+        let end = start.saturating_add(limits.max_results);
+        let mut page: Vec<SearchMatch> = Vec::with_capacity(limits.max_results.min(matches.len()));
+        let mut pos = 0usize;
+        for (_, mut hits) in files {
+            if pos >= end {
+                break;
+            }
+            let file_hits = hits.len();
+            if pos + file_hits <= start {
+                pos += file_hits;
+                continue;
+            }
+            hits.sort_unstable_by(|&a, &b| by_score(&matches[a], &matches[b]));
+            for i in hits {
+                if pos >= end {
+                    break;
+                }
+                if pos >= start {
+                    let mut m = matches[i].clone();
+                    m.file_hits = file_hits as u32;
+                    m.file_hits_capped = capped_files.contains(&m.file_id);
+                    page.push(m);
+                }
+                pos += 1;
+            }
+        }
         *matches = page;
     }
 
@@ -636,6 +661,16 @@ impl SearchEngine {
     }
 
     /// Display path for a file id: precomputed when available.
+    /// `ranking::path_signals` of the file, from its metadata when that
+    /// has been computed: working them out means a path prefix walk per
+    /// candidate file per search.
+    pub(super) fn path_signals_for(&self, doc_id: u32, path: &Path) -> (bool, bool) {
+        match self.file_metadata.get(doc_id as usize) {
+            Some(meta) if !meta.display_path.is_empty() => (meta.is_src_lib, meta.is_test_path),
+            _ => crate::search::ranking::path_signals(&self.root_relative_path(path)),
+        }
+    }
+
     pub(super) fn display_path_for(&self, doc_id: u32, path: &Path) -> String {
         match self.file_metadata.get(doc_id as usize) {
             Some(meta) if !meta.display_path.is_empty() => {
@@ -1006,8 +1041,7 @@ impl SearchEngine {
         // Pre-compute dependency boost
         let dependency_boost = RankingWeights::DEFAULT.dependency_boost(dependency_count);
 
-        let (is_src_lib, is_test_path) =
-            crate::search::ranking::path_signals(&self.root_relative_path(&file.path));
+        let (is_src_lib, is_test_path) = self.path_signals_for(doc_id, &file.path);
         let display_path = self.make_display_path(&file.path);
 
         // Collect lines into a vector for indexed access
@@ -1200,8 +1234,7 @@ impl SearchEngine {
                     return false;
                 }
                 let path_ref = display_path.get_or_insert_with(|| {
-                    (is_src_lib, is_test_path) =
-                        crate::search::ranking::path_signals(&self.root_relative_path(&file.path));
+                    (is_src_lib, is_test_path) = self.path_signals_for(doc_id, &file.path);
                     self.make_display_path(&file.path)
                 });
                 let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));
@@ -1456,8 +1489,7 @@ impl SearchEngine {
             let (line_num, line, match_start, match_end) =
                 (hit.line_num, hit.line, hit.start, hit.end);
             let path_ref = display_path.get_or_insert_with(|| {
-                (is_src_lib, is_test_path) =
-                    crate::search::ranking::path_signals(&self.root_relative_path(&file.path));
+                (is_src_lib, is_test_path) = self.path_signals_for(doc_id, &file.path);
                 self.display_path_for(doc_id, &file.path)
             });
             let maps = symbol_maps.get_or_insert_with(|| SymbolLineMaps::build(symbols));

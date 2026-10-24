@@ -291,14 +291,23 @@ impl Chaos<'_> {
 
     /// Temp files of index saves in the work directory.
     fn temp_files(&self) -> usize {
+        self.temp_files_not_of(None)
+    }
+
+    /// Temp files of index saves (`index.bin.tmp.<pid>.<n>`) not written
+    /// by process `pid`: after a restart, the new server may be part way
+    /// through a save of its own, and only an earlier server's file is one
+    /// that was left behind.
+    fn temp_files_not_of(&self, pid: Option<u32>) -> usize {
+        let own = pid.map(|p| format!("index.bin.tmp.{p}."));
         std::fs::read_dir(&self.work)
             .into_iter()
             .flatten()
             .flatten()
             .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("index.bin.tmp.")
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.starts_with("index.bin.tmp.")
+                    && own.as_deref().is_none_or(|own| !name.starts_with(own))
             })
             .count()
     }
@@ -427,7 +436,7 @@ impl Chaos<'_> {
         let s = self.start(false)?;
         let ready = s.wait_ready(Duration::from_secs(self.args.settle_seconds));
         r.ready_secs = s.started.elapsed().as_secs_f64();
-        r.temp_files_after_start = self.temp_files();
+        r.temp_files_after_start = self.temp_files_not_of(Some(s.pid));
         let log = std::fs::read_to_string(self.work.join("server.log")).unwrap_or_default();
         r.load = if log.contains("Failed to load persisted index") {
             "rejected"
