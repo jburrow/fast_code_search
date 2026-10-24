@@ -598,22 +598,29 @@ fn record_drift(
     let Some(kind) = file_check_kind(check) else {
         return;
     };
+    let e = read(engine);
+    let Some(p) = e.file_store.get_path(id) else {
+        return;
+    };
+    let mut requeue = e
+        .watch_backlog
+        .requeue
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    // Found again before the watcher took it off the queue (it looks up to
+    // a second later): the same difference, already counted and queued.
+    if requeue.iter().any(|q| q == p) {
+        return;
+    }
     tracing::warn!(
         file = path,
         kind,
         "Index scrub: the index is out of step with this file; indexing it again"
     );
-    let e = read(engine);
     let mut s = stats.lock().unwrap_or_else(|p| p.into_inner());
     *s.drift.entry(kind.to_string()).or_default() += 1;
-    if let Some(p) = e.file_store.get_path(id) {
-        e.watch_backlog
-            .requeue
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(p.to_path_buf());
-        s.requeued += 1;
-    }
+    requeue.push(p.to_path_buf());
+    s.requeued += 1;
 }
 
 #[cfg(test)]

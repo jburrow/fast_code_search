@@ -67,6 +67,9 @@ pub struct RankingWeights {
     pub symbol_impl_kind: f64,
     /// A definition line that is `pub` / `export` / `public`.
     pub public_definition: f64,
+    /// Text search: the match is a whole word (`class ModelForm` in
+    /// `class ModelForm(` rather than in `class ModelFormOptions:`).
+    pub whole_word: f64,
 }
 
 impl RankingWeights {
@@ -85,6 +88,7 @@ impl RankingWeights {
         test_path: 0.6,
         symbol_impl_kind: 0.8,
         public_definition: 1.6,
+        whole_word: 1.5,
     };
 
     /// `1 + log10(dependents) * dependency_log10`; 1.0 for files nobody imports.

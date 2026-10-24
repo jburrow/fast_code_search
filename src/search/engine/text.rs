@@ -653,8 +653,10 @@ pub(super) fn strip_item_modifiers(mut s: &str) -> &str {
 /// `original_query` is the un-lowered query for exact case-sensitive match boosting.
 /// `query_lower` is the lowercased query for start-of-line checks.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn calculate_score_inline(
     line: &str,
+    (match_start, match_end): (usize, usize),
     original_query: &str,
     query_lower: &str,
     is_symbol_def: bool,
@@ -707,6 +709,12 @@ pub(super) fn calculate_score_inline(
         && head.as_bytes()[..query_lower.len()].eq_ignore_ascii_case(query_lower.as_bytes())
     {
         score *= w.line_start;
+    }
+
+    // What was typed, not the start of a longer name: `class ModelForm`
+    // finds `class ModelForm(` before `class ModelFormOptions:`.
+    if match_end > match_start && is_whole_word(line, match_start, match_end) {
+        score *= w.whole_word;
     }
 
     // Apply pre-computed dependency boost

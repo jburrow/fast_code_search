@@ -35,7 +35,7 @@ the code would:
 |--------|--------|
 | The line **defines** the symbol (tree-sitter, 12 languages) | 3× |
 | The file is **imported by** other files (resolved import graph) | `1 + 0.5·log10(dependents)` |
-| Exact case, match at the start of the line, file under `src/` or `lib/` | 2× / 1.5× / 1.5× |
+| Exact case, match at the start of the line, whole word, file under `src/` or `lib/` | 2× / 1.5× / 1.5× / 1.5× |
 | Test and example paths | demoted |
 
 Matching follows ripgrep (`rg -F -i`), checked against it on every change, so

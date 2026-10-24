@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The count of changes still to apply counted events, not files.** One
+  save raises several file-system events, and each was counted, so the
+  web page's "N file changes to apply" (and the same count in `fcs`, MCP
+  and `/api/status`) overstated the backlog: 372,534 for 250,000 changed
+  files in a 500,000-file scale run. Each file now counts once until its
+  change is applied.
+- **`class ModelForm` put `class ModelFormOptions:` first.** Since plain
+  searches match like `rg -F` (0.15.2), a query is also found inside longer
+  names, and the shorter line won. A whole-word match now scores 1.5x, so
+  the line that has what was typed comes first; the ranking benchmark is
+  back to 20 of 20 at rank 1.
+- **The benchmark history stopped on 13 Oct 2026.** The ranking check in
+  the Benchmarks workflow failed from that release on, and its failure
+  skipped the steps that store the numbers, so the trend page stopped
+  without a warning. The numbers are now stored first and the check fails
+  the run after.
+- **Loading an index with one changed file took about 70% longer.**
+  When any saved file had changed or gone, loading rebuilt every trigram
+  posting list one id at a time through a hash lookup. Now that a file
+  saved within seconds of an edit is re-read on load (below), the corpus
+  benchmark hit this on every run, as does a restart soon after an
+  edit. The lists are now rebuilt in one sorted pass from a lookup table,
+  in parallel: on tokio + Django, load after 20 edits went from about
+  560 ms to 365 ms (a clean load is about 310 ms). Saves after deletes
+  use the same code.
 - **Every save killed half way left a file as large as the index.** A
   save writes a temp file next to the index and renames it into place; a
   server killed during the save (`kill -9`, a power cut, the OOM killer)

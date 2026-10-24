@@ -118,20 +118,42 @@ impl SearchEngine {
         map: &rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap>,
         orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
     ) -> rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> {
-        let mut out: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> =
-            rustc_hash::FxHashMap::default();
-        for (trigram, bitmap) in map {
-            let mut remapped = roaring::RoaringBitmap::new();
-            for old_id in bitmap.iter() {
-                if let Some(&new_id) = orig_to_new.get(&old_id) {
-                    remapped.insert(new_id);
-                }
-            }
-            if !remapped.is_empty() {
-                out.insert(*trigram, remapped);
-            }
+        use rayon::prelude::*;
+
+        // A dense table instead of a hash lookup per posting, and, when the
+        // mapping keeps ids in order (it does unless registration deduped
+        // paths), each list is rebuilt in one sorted pass rather than by
+        // inserting ids one at a time. One stale file on load takes this
+        // path for every posting list, so it is worth keeping cheap.
+        let len = orig_to_new.keys().max().map_or(0, |&m| m as usize + 1);
+        let mut dense = vec![u32::MAX; len];
+        for (&o, &n) in orig_to_new {
+            dense[o as usize] = n;
         }
-        out
+        let mut last = None;
+        let in_order = dense.iter().filter(|&&n| n != u32::MAX).all(|&n| {
+            let ok = last.is_none_or(|l| n > l);
+            last = Some(n);
+            ok
+        });
+        let dense = &dense;
+        map.par_iter()
+            .filter_map(|(trigram, bitmap)| {
+                let ids = bitmap.iter().filter_map(|old_id| {
+                    dense
+                        .get(old_id as usize)
+                        .copied()
+                        .filter(|&n| n != u32::MAX)
+                });
+                let remapped = if in_order {
+                    roaring::RoaringBitmap::from_sorted_iter(ids)
+                        .expect("an in-order id mapping keeps postings sorted")
+                } else {
+                    ids.collect()
+                };
+                (!remapped.is_empty()).then_some((*trigram, remapped))
+            })
+            .collect()
     }
 
     /// Restore symbol caches and dependency graph directly from persisted data,

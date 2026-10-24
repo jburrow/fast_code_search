@@ -16,10 +16,11 @@
 use crate::search::path_filter::PathFilter;
 use anyhow::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -32,6 +33,16 @@ pub enum FileChange {
     Deleted(PathBuf),
     /// A file was renamed from old path to new path
     Renamed { from: PathBuf, to: PathBuf },
+}
+
+impl FileChange {
+    /// The paths this change names: one, or two for a rename.
+    pub fn paths(&self) -> Vec<&PathBuf> {
+        match self {
+            Self::Modified(p) | Self::Deleted(p) => vec![p],
+            Self::Renamed { from, to } => vec![from, to],
+        }
+    }
 }
 
 /// Configuration for the file watcher
@@ -73,8 +84,21 @@ pub struct FileWatcher {
     roots: Vec<PathBuf>,
     /// Set when events were lost and the roots need reconciling.
     rescan: Arc<AtomicBool>,
-    /// Events queued and not received yet; see [`Self::queued_counter`].
+    /// Files with an event queued and not received yet; see
+    /// [`Self::queued_counter`].
     queued: Arc<AtomicUsize>,
+    /// How many queued events name each of those files.
+    in_queue: Arc<Mutex<QueuedPaths>>,
+}
+
+/// The paths named by queued events, with how many events name each.
+/// Editors and build tools raise several events per file (a write, a
+/// truncate, a rename into place), so the queue can hold far more events
+/// than files; searches report the files.
+type QueuedPaths = HashMap<PathBuf, u32>;
+
+fn lock_queue(in_queue: &Mutex<QueuedPaths>) -> std::sync::MutexGuard<'_, QueuedPaths> {
+    in_queue.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 /// Bound on queued change events. The consumer applies batches under the
@@ -148,6 +172,8 @@ impl FileWatcher {
         let handler_rescan = Arc::clone(&rescan);
         let queued = Arc::new(AtomicUsize::new(0));
         let handler_queued = Arc::clone(&queued);
+        let in_queue = Arc::new(Mutex::new(QueuedPaths::new()));
+        let handler_in_queue = Arc::clone(&in_queue);
         let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
             match result {
                 Ok(event) => {
@@ -167,13 +193,21 @@ impl FileWatcher {
                         handler_rescan.store(true, Ordering::Release);
                     }
                     for change in hints_for(&event, &handler_exclude) {
-                        // Counted before it is sent, so the receiver never
-                        // takes it off the count before it is on it.
-                        handler_queued.fetch_add(1, Ordering::AcqRel);
+                        let paths: Vec<PathBuf> = change.paths().into_iter().cloned().collect();
+                        // Sent and counted under the lock, so the receiver
+                        // never takes it off the count before it is on it.
+                        let mut in_queue = lock_queue(&handler_in_queue);
                         let sent = tx.try_send(change);
-                        if sent.is_err() {
-                            handler_queued.fetch_sub(1, Ordering::AcqRel);
+                        if sent.is_ok() {
+                            for path in paths {
+                                let events = in_queue.entry(path).or_insert(0);
+                                if *events == 0 {
+                                    handler_queued.fetch_add(1, Ordering::AcqRel);
+                                }
+                                *events += 1;
+                            }
                         }
+                        drop(in_queue);
                         match sent {
                             Ok(()) => {}
                             Err(mpsc::TrySendError::Full(_)) => {
@@ -270,6 +304,7 @@ impl FileWatcher {
             roots,
             rescan,
             queued,
+            in_queue,
         })
     }
 
@@ -294,17 +329,27 @@ impl FileWatcher {
         }
     }
 
-    /// The count of events queued and not received yet, kept current by
-    /// the watcher thread and the receive methods, so a search can report
-    /// changes nobody has applied yet.
+    /// The count of files with an event queued and not received yet (not
+    /// of events: one save can raise several), kept current by the watcher
+    /// thread and the receive methods, so a search can report changes
+    /// nobody has applied yet.
     pub fn queued_counter(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.queued)
     }
 
     /// One event taken off the queue.
     fn received(&self, change: Option<FileChange>) -> Option<FileChange> {
-        if change.is_some() {
-            self.queued.fetch_sub(1, Ordering::AcqRel);
+        if let Some(change) = &change {
+            let mut in_queue = lock_queue(&self.in_queue);
+            for path in change.paths() {
+                if let Some(events) = in_queue.get_mut(path) {
+                    *events -= 1;
+                    if *events == 0 {
+                        in_queue.remove(path);
+                        self.queued.fetch_sub(1, Ordering::AcqRel);
+                    }
+                }
+            }
         }
         change
     }
@@ -423,5 +468,57 @@ mod tests {
         let config = WatcherConfig::default();
         assert!(config.paths.is_empty());
         assert!(!config.exclude_patterns.is_empty());
+    }
+
+    /// One file saved many times is one change still to apply, not one per
+    /// event (the scoreboard saw 372,534 pending for 250,000 changed files).
+    #[test]
+    fn queued_count_is_files_not_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let watcher = FileWatcher::new(WatcherConfig {
+            paths: vec![root.clone()],
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+        let queued = watcher.queued_counter();
+        let file = root.join("a.txt");
+        let other = root.join("b.txt");
+        for i in 0..20 {
+            std::fs::write(&file, format!("version {i}")).unwrap();
+        }
+        std::fs::write(&other, "x").unwrap();
+
+        // Let the events arrive, without taking any off the queue, until
+        // the count has settled.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut last = usize::MAX;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(300));
+            let now = queued.load(Ordering::Acquire);
+            if now == last && now >= 2 {
+                break;
+            }
+            last = now;
+        }
+        let pending = queued.load(Ordering::Acquire);
+        let mut events = 0;
+        let mut paths = std::collections::HashSet::new();
+        while let Some(change) = watcher.recv_timeout(Duration::from_millis(500)) {
+            events += 1;
+            paths.extend(change.paths().into_iter().cloned());
+        }
+        // Some backends also name the folder (FSEvents on macOS), so the
+        // paths are counted rather than assumed to be the two files.
+        assert!(paths.contains(&file) && paths.contains(&other), "{paths:?}");
+        assert_eq!(pending, paths.len(), "one per path: {paths:?}");
+        // inotify raises an event per write; FSEvents may coalesce them.
+        if cfg!(target_os = "linux") {
+            assert!(
+                events > paths.len(),
+                "several events per file, got {events}"
+            );
+        }
+        assert_eq!(queued.load(Ordering::Acquire), 0, "all received");
     }
 }
