@@ -119,6 +119,18 @@ impl PersistedTrigramIndex {
         &self.dir
     }
 
+    /// The serialized posting list of `trigram`, read in place from the
+    /// mapped file (a binary search of the directory), or `None` when the
+    /// index has no such trigram.
+    pub fn posting_bytes(&self, trigram: Trigram) -> Option<&[u8]> {
+        let key = trigram.as_bytes();
+        let i = self
+            .dir
+            .binary_search_by_key(&key, |e| e.trigram.as_bytes())
+            .ok()?;
+        Some(self.bitmap_bytes(&self.dir[i]))
+    }
+
     fn bitmap_bytes(&self, e: &DirEntry) -> &[u8] {
         let region = self
             .region
@@ -900,6 +912,37 @@ mod tests {
             .expect("Trigram not found");
         assert!(bitmap.contains(0));
         assert!(bitmap.contains(1));
+    }
+
+    #[test]
+    fn test_posting_bytes_reads_each_list_in_place() {
+        let temp_dir = TempDir::new().unwrap();
+        let index_path = temp_dir.path().join("index.bin");
+        let mut trigram_to_docs: FxHashMap<Trigram, RoaringBitmap> = FxHashMap::default();
+        for (i, t) in [*b"abc", *b"zzz", *b"hel", *b"aaa"].into_iter().enumerate() {
+            trigram_to_docs.insert(Trigram::new(t), (0..=i as u32 * 3).collect());
+        }
+        let persisted = PersistedIndex::new(
+            "fp".to_string(),
+            vec!["/test".to_string()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        persisted.save(&index_path, &trigram_to_docs).unwrap();
+        let loaded = PersistedIndex::load(&index_path).unwrap();
+        for (t, want) in &trigram_to_docs {
+            let raw = loaded.trigram_index.posting_bytes(*t).expect("listed");
+            assert_eq!(&RoaringBitmap::deserialize_from(raw).unwrap(), want);
+        }
+        assert!(loaded
+            .trigram_index
+            .posting_bytes(Trigram::new(*b"abd"))
+            .is_none());
     }
 
     fn sample_index() -> (PersistedIndex, FxHashMap<Trigram, RoaringBitmap>) {

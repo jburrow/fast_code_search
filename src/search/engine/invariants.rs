@@ -117,9 +117,9 @@ impl SearchEngine {
         // Postings: a removed file named by a posting list is a candidate
         // that can't be read; a live file missing from the all-documents
         // set is never scanned by a query without trigrams.
-        for (trigram, docs) in self.trigram_index.get_trigram_map() {
+        for (trigram, docs) in self.trigram_index.postings() {
             if !docs.is_subset(&live) {
-                let dead = docs - &live;
+                let dead = &*docs - &live;
                 report.push(
                     "posting_to_removed_file",
                     format!(
@@ -236,11 +236,10 @@ impl SearchEngine {
             Ok(None) => return Some(FileCheck::NotIndexable),
             Err(_) => return Some(FileCheck::Unreadable),
         };
-        let postings = self.trigram_index.get_trigram_map();
         let missing = partial
             .trigrams
             .iter()
-            .filter(|t| !postings.get(t).is_some_and(|docs| docs.contains(id)))
+            .filter(|t| !self.trigram_index.contains(t, id))
             .count();
         Some(if missing == 0 {
             FileCheck::Current
