@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-45e09982.js";
+            window.path_to_searchindex_js = "../searchindex-80bd5166.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -217,7 +217,9 @@ calls and type mentions, TypeScript call sites) under a timeout and a
 panic guard. Definitions become symbols; call sites and type mentions
 become references; import statements are collected.</li>
 <li><strong>Merge, under the write lock.</strong> Files are registered, postings
-inserted, symbols and references stored, imports resolved against the
+inserted (in parallel: the posting lists are split into 64 shards by
+trigram, and each shard takes its share of the whole batch on its own
+thread), symbols and references stored, imports resolved against the
 files known so far; unresolved imports are parked and retried when a
 file with a matching name appears. Batches are small so a search only
 ever waits for one merge.</li>

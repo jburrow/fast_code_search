@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-45e09982.js";
+            window.path_to_searchindex_js = "searchindex-80bd5166.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4081,7 +4081,9 @@ calls and type mentions, TypeScript call sites) under a timeout and a
 panic guard. Definitions become symbols; call sites and type mentions
 become references; import statements are collected.</li>
 <li><strong>Merge, under the write lock.</strong> Files are registered, postings
-inserted, symbols and references stored, imports resolved against the
+inserted (in parallel: the posting lists are split into 64 shards by
+trigram, and each shard takes its share of the whole batch on its own
+thread), symbols and references stored, imports resolved against the
 files known so far; unresolved imports are parked and retried when a
 file with a matching name appears. Batches are small so a search only
 ever waits for one merge.</li>
@@ -6250,6 +6252,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Builds and large watcher batches up to twice as fast.</strong>
+Merging a batch into the index ran on one thread and was half of a
+build’s time; posting-list inserts were four fifths of that. The posting
+lists are now split into 64 shards by trigram and each batch is merged
+shard by shard in parallel. On 4 cores the 302,000-file real corpus
+(Linux, LLVM, Rust, Kubernetes) builds in 211 s instead of 471 s, tokio +
+Django in 5.6 s instead of 8.1 s, with the same index and the same
+memory. Searches measured 0 to 13% slower in same-machine runs, on a
+just-built and on a reloaded index alike (tokio + Django; up to 19% for
+one query on the large corpus, from 3 rounds). In one 5-round run the
+common-word search was slower in every round (+11%); in a second, no
+query was, and a regex that never touches the changed code moved as much
+as any. So most of it is noise or code layout, but a small real cost is
+not ruled out.
+<code>corpus_bench --loaded-queries</code> now also times the queries on the
+reloaded index.</li>
 <li><strong>Less memory after a build or a load (Linux).</strong> A build frees far more
 than the index it keeps (file contents, per-batch trigram sets, merge
 buffers), and the allocator held on to those pages, so resident memory
@@ -9009,7 +9027,7 @@ PR and the CHANGELOG entry then say what it buys.</p>
 <p><code>--corpus real</code> adds a pinned corpus the size of a large monorepo: Linux
 v6.11, LLVM 19.1.0, Rust 1.82.0 and Kubernetes v1.31.0, about 302,000
 files and 3 GB (about 4 GB of disk once cloned). Costs that grow with the
-tree, such as the single-threaded merge, a load or memory, show there and
+tree, such as the batch merge, a load or memory, show there and
 not in tokio + Django. A build takes about 7 minutes, so a round takes about
 17 minutes on 4 cores. Use it for changes to indexing, persistence or memory,
 and say in the PR how many rounds the table had.</p>
