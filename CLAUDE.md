@@ -45,6 +45,10 @@ profiler found in an hour.
   either fix it or name the slowdown and what it buys in the PR and in the
   CHANGELOG entry. Smaller moves are within this machine's noise: main
   against itself moved single metrics by up to 18% over 5 rounds.
+- **The instruction-count gate on `main`** (`scripts/bench/icount.sh`)
+  fails on 3% more instructions than the last passing push, and stays red
+  until fixed. When the PR's slowdown is the decision above, put
+  `Accept-instructions: <operation>, ...` in the squash commit message.
 - **Profile before calling a cost inherent.** `valgrind --tool=callgrind`
   on `target/release/examples/corpus_bench` (collect everything; rayon
   workers miss a toggle on the main thread), then `callgrind_annotate

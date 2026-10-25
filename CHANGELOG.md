@@ -45,6 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   way, a just-built index holds more than the same index after a restart
   (tokio + Django: 78 MB against 44 MB of heap), because posting lists
   built by inserts keep spare capacity.
+- **An instruction-count gate on every push to `main`.** The Benchmarks
+  workflow now counts, under callgrind, the instructions each operation
+  takes on tokio + Django (build, every query, an incremental update,
+  save, load) and fails when one takes more than 3% more than at the last
+  passing push (`scripts/bench/icount.sh`, `corpus_bench --icount`).
+  Counts barely move between runners, unlike wall time, so added work
+  shows the day it lands. Counts are published only from a passing run,
+  so the run stays red until the work is removed, or accepted with an
+  `Accept-instructions:` line in the commit message. The Criterion suites
+  no longer run in CI (they still run with `cargo bench`); the job takes
+  about 7 minutes longer.
 
 ### Fixed
 - **`fcs check --live --all-content` was cut off on a large index.** The

@@ -15,6 +15,13 @@
 //!     [--label NAME] [--iterations N] [--bencher] [--markdown FILE]
 //! ```
 //!
+//! `--icount` runs each operation between two marker calls that
+//! `scripts/bench/icount.sh` has callgrind zero and dump its counters on,
+//! so each operation's instruction count can be compared across commits
+//! and machines (the Benchmarks workflow's gate on pushes to `main`). Build,
+//! save and load are counted once, each query five times and each
+//! incremental update on its own; the script reports the median per name.
+//!
 //! `--bencher` prints one `test <name> ... bench: <ns> ns/iter (+/- <spread>)`
 //! line per metric on stdout so the output can feed the same trend tracking
 //! as `cargo bench`; the human-readable table goes to stderr and, with
@@ -71,6 +78,45 @@ struct Args {
     /// out differently in memory.
     #[arg(long)]
     loaded_queries: bool,
+    /// Run each operation once between instruction-count markers (see
+    /// `scripts/bench/icount.sh`) and print `icount <name>` per operation
+    /// on stdout, in order. Times are still reported, but under callgrind
+    /// they mean nothing.
+    #[arg(long)]
+    icount: bool,
+}
+
+/// Counted runs per query under `--icount`.
+const ICOUNT_REPEATS: usize = 5;
+
+/// Set by `--icount`.
+static ICOUNT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where callgrind zeroes its counters (`--zero-before`). Never inlined,
+/// so the symbol exists to be matched.
+#[inline(never)]
+fn icount_start() {
+    std::hint::black_box(());
+}
+
+/// Where callgrind dumps its counters (`--dump-before`): the dump holds
+/// every thread's instructions since [`icount_start`]. The name goes to
+/// stdout after the dump, so dump N is the Nth name printed.
+#[inline(never)]
+fn icount_end(name: &str) {
+    std::hint::black_box(name);
+    println!("icount {name}");
+}
+
+/// [`timed`], between instruction-count markers under `--icount`.
+fn counted<T>(name: &str, f: impl FnOnce() -> T) -> (T, Duration) {
+    if !ICOUNT.load(std::sync::atomic::Ordering::Relaxed) {
+        return timed(f);
+    }
+    icount_start();
+    let out = timed(f);
+    icount_end(name);
+    out
 }
 
 /// The machine a result was produced on. Every published number carries
@@ -195,6 +241,22 @@ fn measure<T>(
     detail: impl Fn(&T) -> String,
     mut f: impl FnMut() -> T,
 ) -> Metric {
+    if ICOUNT.load(std::sync::atomic::Ordering::Relaxed) {
+        // Several counted runs: icount.sh takes their median, which is
+        // steadier than one run (symbol/prefix moved by 7.7% between
+        // single runs of one commit, 4.2% between medians; 2026-10-25).
+        let mut last = None;
+        for _ in 0..ICOUNT_REPEATS {
+            last = Some(counted(name, &mut f));
+        }
+        let (out, took) = last.expect("ICOUNT_REPEATS > 0");
+        return Metric {
+            name: name.to_string(),
+            detail: detail(&out),
+            p50: took,
+            p95: took,
+        };
+    }
     let mut last = f();
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations.max(1) {
@@ -379,6 +441,7 @@ fn query_metrics(engine: &SearchEngine, n: usize, page: usize, prefix: &str) -> 
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    ICOUNT.store(args.icount, std::sync::atomic::Ordering::Relaxed);
     let roots: Vec<String> = args
         .paths
         .iter()
@@ -413,7 +476,9 @@ fn main() -> Result<()> {
         engine.add_root_path(Path::new(r));
     }
     let mut phases = BuildPhases::default();
-    let (bytes, build_took) = timed(|| build(&mut engine, &files, &config, &mut phases));
+    let (bytes, build_took) = counted("index_build", || {
+        build(&mut engine, &files, &config, &mut phases)
+    });
     let rss_after = resident_bytes();
     let stats = engine.get_stats();
     let memory = engine.memory_breakdown();
@@ -446,7 +511,11 @@ fn main() -> Result<()> {
             continue;
         }
         let change = FileChange::Modified((*p).clone());
-        let (_, took) = timed(|| apply_change(&mut engine, &change, &config));
+        // Under --icount each update is counted on its own and icount.sh
+        // takes the median: one file's update, as the timing reports.
+        let (_, took) = counted("incremental/modify_file", || {
+            apply_change(&mut engine, &change, &config)
+        });
         incremental.push(took);
         let _ = std::fs::write(p, &original);
         apply_change(&mut engine, &change, &config);
@@ -462,12 +531,12 @@ fn main() -> Result<()> {
     // Persistence.
     let tmp = tempfile::tempdir()?;
     let index_path = tmp.path().join("index.bin");
-    let (_, save_took) = timed(|| engine.save_index(&index_path, &config));
+    let (_, save_took) = counted("index_save", || engine.save_index(&index_path, &config));
     let index_bytes = std::fs::metadata(&index_path).map(|m| m.len()).unwrap_or(0);
     if let Some(keep) = &args.keep_index {
         std::fs::copy(&index_path, keep).with_context(|| format!("writing {}", keep.display()))?;
     }
-    let (loaded, load_took) = timed(|| {
+    let (loaded, load_took) = counted("index_load", || {
         let mut fresh = SearchEngine::new();
         let _ = fresh.load_index_with_reconciliation(&index_path, &config);
         fresh
@@ -606,7 +675,7 @@ fn main() -> Result<()> {
         eprintln!("json result written to {}", path.display());
     }
 
-    if args.bencher {
+    if args.bencher && !args.icount {
         let line = |name: &str, value: Duration, spread: Duration| {
             println!(
                 "test corpus_bench/{}/{} ... bench: {} ns/iter (+/- {})",

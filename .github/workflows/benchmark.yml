@@ -56,25 +56,40 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # rust-cache restores target/ but prunes files it does not recognise,
-      # which can leave Criterion baseline directories without their
-      # sample.json; Criterion then logs errors into the bencher output and
-      # the trend action finds nothing to parse. Start from no baselines.
-      - name: Reset Criterion state
-        run: rm -rf target/criterion
-
-      - name: Run search benchmarks
-        run: cargo bench --bench search_benchmark -- --output-format bencher --noplot | tee bench_output.txt
-
-      - name: Run persistence benchmarks
-        run: cargo bench --bench persistence_benchmark -- --output-format bencher --noplot | tee -a bench_output.txt
+      # Instructions per operation (build, each query, the incremental
+      # update, save, load) under callgrind, compared with the counts the
+      # last passing push to main published. Unlike wall time these
+      # barely move between runners or days, so a change that adds work
+      # fails here the day it lands (scripts/bench/icount.sh). Like ranking
+      # quality, a failure only fails the run at the end, so the numbers
+      # are still published.
+      - name: Install valgrind
+        run: sudo apt-get install -y valgrind
+      - name: Instruction counts
+        id: icount
+        continue-on-error: true
+        run: |
+          git fetch --depth 1 origin gh-pages
+          git show FETCH_HEAD:dev/bench/results/icount.json > icount_base.json 2>/dev/null \
+            || { rm -f icount_base.json; echo "no published counts yet; this run sets the base"; }
+          # An increase made on purpose is named in the commit message
+          # ("Accept-instructions: index_build, text/common", or "all").
+          accept=$(git log -1 --format=%B | sed -n 's/^Accept-instructions:[[:space:]]*//p' | tr '\n' ' ')
+          scripts/bench/icount.sh bench-corpus/tokio bench-corpus/django \
+            --json icount.json --compare icount_base.json --accept "$accept" \
+            --markdown icount.md
+      - name: Instruction counts summary
+        if: always()
+        run: |
+          echo "### Instruction counts (callgrind)" >> "$GITHUB_STEP_SUMMARY"
+          cat icount.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "not produced" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run real-corpus benchmark (tokio + django)
         run: |
           cargo run --release --example corpus_bench -- \
             bench-corpus/tokio bench-corpus/django \
             --label tokio+django --iterations 30 --bencher \
-            --markdown corpus_summary.md --json corpus_result.json | tee -a bench_output.txt
+            --markdown corpus_summary.md --json corpus_result.json | tee bench_output.txt
           cat corpus_summary.md >> "$GITHUB_STEP_SUMMARY"
 
       # Does the first result answer the query? Precision over labelled
@@ -139,6 +154,10 @@ jobs:
           stamp = out["generated_at"][:10] + "-" + out["commit"][:7]
           json.dump(out, open(f"bench-results/{stamp}.json", "w"), indent=1)
           PY
+          # The next push compares its counts with these.
+          if [ -f icount.json ] && [ "${{ steps.icount.outcome }}" = success ]; then
+            cp icount.json bench-results/icount.json
+          fi
           ls -la bench-results
 
       - name: Run validator (functional performance test)
@@ -157,6 +176,8 @@ jobs:
             ranking_quality.json
             compare.md
             compare.json
+            icount.json
+            icount.md
 
       - name: Keep only bencher lines for trend tracking
         run: |
@@ -188,6 +209,12 @@ jobs:
           comment-on-alert: true
           alert-threshold: '200%'
           fail-on-alert: false
+
+      - name: Fail if an operation takes more instructions
+        if: steps.icount.outcome == 'failure'
+        run: |
+          echo "::error::Instruction counts failed: an operation takes more than its threshold over the last passing push, or the count did not run; see the step 'Instruction counts'"
+          exit 1
 
       - name: Fail if ranking quality is below the bar
         if: steps.ranking.outcome == 'failure'

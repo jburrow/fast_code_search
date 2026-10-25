@@ -156,7 +156,7 @@
     },
     {
       id: 'search', title: 'Synthetic search suite (Criterion)',
-      blurb: 'Criterion micro-benchmarks over generated Rust files (50 lines each; 100 files unless the series says otherwise). The corpus is tiny and artificial, so absolute values mean little; the point is that each measures one code path in isolation with statistical rigour, so a regression in that path stands out. The line is Criterion\'s estimate for one call.',
+      blurb: 'Recorded until October 2026: CI now counts instructions per operation on the real corpus instead (see the methodology page), and these suites run only with cargo bench. Criterion micro-benchmarks over generated Rust files (50 lines each; 100 files unless the series says otherwise). The corpus is tiny and artificial, so absolute values mean little; the point is that each measures one code path in isolation with statistical rigour, so a regression in that path stands out. The line is Criterion\'s estimate for one call.',
       charts: [
         { re: /^text_search\/common_query\/(\d+)$/, title: 'Text search, common word, by corpus size', unit: 'time', series: n => n + ' files',
           desc: 'The word "result" appears in every generated file. Time grows with the number of files because every one is a candidate, scored and ranked.' },
@@ -184,7 +184,7 @@
     },
     {
       id: 'persist', title: 'Persistence (Criterion)',
-      blurb: 'Saving an index to disk and loading it back, over generated corpora of 100, 500 and 1,000 files. These decide how fast a server restarts.',
+      blurb: 'Recorded until October 2026: CI now counts instructions per operation on the real corpus instead (see the methodology page), and these suites run only with cargo bench. Saving an index to disk and loading it back, over generated corpora of 100, 500 and 1,000 files. These decide how fast a server restarts.',
       charts: [
         { re: /^index_save\/(\d+)$/, title: 'Index save', unit: 'time', series: n => n + ' files',
           desc: 'Serialise the whole index (trigram sets, symbols, references, file table) to one file. Should scale linearly with corpus size.' },
