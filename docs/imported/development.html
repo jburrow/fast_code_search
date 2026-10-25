@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-22c7f963.js";
+            window.path_to_searchindex_js = "../searchindex-2318171e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -561,6 +561,7 @@ vary too much to compare. Before merging a change to indexing, search,
 persistence or the watcher, compare it with <code>main</code> on one machine:</p>
 <pre><code class="language-bash">scripts/bench/ab.sh                      # base origin/main, 5 rounds
 scripts/bench/ab.sh --base v0.18.0 --rounds 5
+scripts/bench/ab.sh --corpus small,real --rounds 3   # also the 302k-file corpus
 </code></pre>
 <p>The script builds <code>examples/corpus_bench</code> at the base (in a worktree under
 <code>target/ab/</code>, cached per commit) and at the working tree, fetches tokio 1.45.0
@@ -572,6 +573,13 @@ slower than every round of the base. Both conditions matter: run against
 itself on a 4-core VM, main moved single metrics by up to 18% over 5 rounds,
 but never with all rounds on one side. A slowdown can be the right trade; the
 PR and the CHANGELOG entry then say what it buys.</p>
+<p><code>--corpus real</code> adds a pinned corpus the size of a large monorepo: Linux
+v6.11, LLVM 19.1.0, Rust 1.82.0 and Kubernetes v1.31.0, about 302,000
+files and 3 GB (about 4 GB of disk once cloned). Costs that grow with the
+tree, such as the single-threaded merge, a load or memory, show there and
+not in tokio + Django. A build takes about 7 minutes, so a round takes about
+17 minutes on 4 cores. Use it for changes to indexing, persistence or memory,
+and say in the PR how many rounds the table had.</p>
 <p>To find where time goes, profile the same benchmark with callgrind and
 collect every thread (a toggle on the main thread misses rayon’s workers):</p>
 <pre><code class="language-bash">cargo build --release --example corpus_bench
