@@ -1,18 +1,18 @@
 {
  "schema": 1,
- "generated_at": "2026-10-25T19:34:21Z",
- "commit": "4677088f8589fda55f8e86d7b749a6f57afbc339",
- "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40225231113",
+ "generated_at": "2026-10-25T21:41:35Z",
+ "commit": "c635718b708fb3f0647f166a32ad1451cd2e55e5",
+ "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40235234406",
  "corpus": {
   "build": {
-   "build_ns": 5439098153,
-   "discovery_ns": 137705723,
-   "files_per_second": 1152.3969275205686,
+   "build_ns": 4909222879,
+   "discovery_ns": 137839519,
+   "files_per_second": 1276.7804914322369,
    "index_bytes": 24649476,
-   "load_ns": 307701122,
-   "rss_after_bytes": 109797376,
-   "rss_before_bytes": 8769536,
-   "save_ns": 193399695
+   "load_ns": 278497233,
+   "rss_after_bytes": 104497152,
+   "rss_before_bytes": 8679424,
+   "save_ns": 197586510
   },
   "corpus": {
    "bytes": 41382284,
@@ -32,18 +32,18 @@
    "ci": true,
    "cpu_model": "AMD EPYC 7763 64-Core Processor",
    "fast_code_search": "0.19.0",
-   "git_sha": "4677088f85",
+   "git_sha": "c635718b70",
    "logical_cpus": 4,
    "mem_total_bytes": 16766414848,
    "os": "Ubuntu 24.04.5 LTS",
-   "runner": "GitHub Actions 1000010823",
+   "runner": "GitHub Actions 1000010880",
    "rustc": "1.89",
-   "timestamp_utc": "2026-10-25T19:30:14Z"
+   "timestamp_utc": "2026-10-25T21:37:33Z"
   },
   "memory": {
    "parts": [
     {
-     "bytes": 26058676,
+     "bytes": 26060724,
      "name": "postings",
      "what": "trigram posting lists"
     },
@@ -88,86 +88,86 @@
      "what": "dependency edges and counts"
     }
    ],
-   "total_bytes": 49899477
+   "total_bytes": 49901525
   },
   "queries": [
    {
     "detail": "50 results",
     "name": "text/common",
-    "p50_ns": 23607554,
-    "p95_ns": 24641888
+    "p50_ns": 23229595,
+    "p95_ns": 24869443
    },
    {
     "detail": "50 results",
     "name": "text/identifier",
-    "p50_ns": 7351601,
-    "p95_ns": 7953840
+    "p50_ns": 7108851,
+    "p95_ns": 7452907
    },
    {
     "detail": "0 results",
     "name": "text/no_match",
-    "p50_ns": 561,
-    "p95_ns": 662
+    "p50_ns": 571,
+    "p95_ns": 671
    },
    {
     "detail": "50 results",
     "name": "text/short",
-    "p50_ns": 29226493,
-    "p95_ns": 30593218
+    "p50_ns": 27579218,
+    "p95_ns": 29059245
    },
    {
     "detail": "50 results",
     "name": "text/full_rank",
-    "p50_ns": 25014338,
-    "p95_ns": 31031496
+    "p50_ns": 22774700,
+    "p95_ns": 23638303
    },
    {
     "detail": "50 results",
     "name": "text/filtered",
-    "p50_ns": 10457845,
-    "p95_ns": 11570759
+    "p50_ns": 10088601,
+    "p95_ns": 10552805
    },
    {
     "detail": "50 results",
     "name": "regex/literal",
-    "p50_ns": 24606911,
-    "p95_ns": 25295790
+    "p50_ns": 23602808,
+    "p95_ns": 24658810
    },
    {
     "detail": "50 results",
     "name": "regex/case_insensitive",
-    "p50_ns": 2996952,
-    "p95_ns": 3194923
+    "p50_ns": 2974142,
+    "p95_ns": 3105959
    },
    {
     "detail": "50 results (budget)",
     "name": "regex/no_literal",
-    "p50_ns": 37809277,
-    "p95_ns": 39300403
+    "p50_ns": 35107900,
+    "p95_ns": 36633694
    },
    {
     "detail": "50 results",
     "name": "symbol/exact",
-    "p50_ns": 6637818,
-    "p95_ns": 7549947
+    "p50_ns": 6469312,
+    "p95_ns": 6768974
    },
    {
     "detail": "50 results",
     "name": "symbol/prefix",
-    "p50_ns": 4160815,
-    "p95_ns": 4673576
+    "p50_ns": 4169445,
+    "p95_ns": 4597498
    },
    {
     "detail": "50 results",
     "name": "symbol/references",
-    "p50_ns": 2198446,
-    "p95_ns": 2441797
+    "p50_ns": 2196612,
+    "p95_ns": 2349599
    },
    {
     "detail": "20 files",
     "name": "incremental/modify_file",
-    "p50_ns": 6538690,
-    "p95_ns": 56097483
+    "p50_ns": 5770480,
+    "p95_ns": 47643257
    }
   ],
   "schema": 1
@@ -525,64 +525,64 @@
     "label": "common word",
     "query": "return",
     "kind": "literal",
-    "ripgrep_ms": 70.5559,
-    "ugrep_ms": 91.845,
-    "fcs_client_ms": 30.7109,
-    "fcs_engine_ms": 32.515018
+    "ripgrep_ms": 70.6082,
+    "ugrep_ms": 89.2791,
+    "fcs_client_ms": 30.665,
+    "fcs_engine_ms": 30.0799
    },
    {
     "label": "identifier",
     "query": "Config",
     "kind": "literal",
-    "ripgrep_ms": 61.7322,
-    "ugrep_ms": 89.145,
-    "fcs_client_ms": 14.009,
-    "fcs_engine_ms": 10.680261999999999
+    "ripgrep_ms": 61.0679,
+    "ugrep_ms": 87.082,
+    "fcs_client_ms": 13.3892,
+    "fcs_engine_ms": 10.158501000000001
    },
    {
     "label": "rare identifier",
     "query": "xq9zv_nothing_here",
     "kind": "literal",
-    "ripgrep_ms": 56.5591,
-    "ugrep_ms": 93.28,
-    "fcs_client_ms": 5.63818,
-    "fcs_engine_ms": 0.023053999999999998
+    "ripgrep_ms": 56.864,
+    "ugrep_ms": 94.2971,
+    "fcs_client_ms": 5.5061,
+    "fcs_engine_ms": 0.022673000000000002
    },
    {
     "label": "two words",
     "query": "fn main",
     "kind": "literal",
-    "ripgrep_ms": 74.4238,
-    "ugrep_ms": 88.3301,
-    "fcs_client_ms": 8.26807,
-    "fcs_engine_ms": 2.6974210000000003
+    "ripgrep_ms": 72.916,
+    "ugrep_ms": 87.592,
+    "fcs_client_ms": 7.57007,
+    "fcs_engine_ms": 2.7272030000000003
    },
    {
     "label": "regex with literal",
     "query": "fn\\s+\\w+\\(",
     "kind": "regex",
-    "ripgrep_ms": 65.9929,
-    "ugrep_ms": 117.918,
-    "fcs_client_ms": 31.8899,
-    "fcs_engine_ms": 31.294928
+    "ripgrep_ms": 65.8601,
+    "ugrep_ms": 114.792,
+    "fcs_client_ms": 30.9231,
+    "fcs_engine_ms": 30.591829
    },
    {
     "label": "regex, no literal",
     "query": "[a-z]+_[a-z]+_[a-z]+\\(",
     "kind": "regex",
-    "ripgrep_ms": 83.1299,
-    "ugrep_ms": 132.13,
-    "fcs_client_ms": 45.01,
-    "fcs_engine_ms": 43.711709
+    "ripgrep_ms": 82.178,
+    "ugrep_ms": 131.709,
+    "fcs_client_ms": 44.1472,
+    "fcs_engine_ms": 43.461707000000004
    },
    {
     "label": "case-insensitive",
     "query": "(?i)unwrap\\(",
     "kind": "regex",
-    "ripgrep_ms": 58.3818,
-    "ugrep_ms": 88.9241,
-    "fcs_client_ms": 8.97803,
-    "fcs_engine_ms": 4.560576
+    "ripgrep_ms": 59.4099,
+    "ugrep_ms": 90.761,
+    "fcs_client_ms": 8.5271,
+    "fcs_engine_ms": 4.631983
    }
   ]
  }
