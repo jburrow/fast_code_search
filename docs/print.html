@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-80bd5166.js";
+            window.path_to_searchindex_js = "searchindex-a4e2f49a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5274,14 +5274,15 @@ after failed reads or a panic; the fault and watch tests cover them.</li>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="benchmark-methodology"><a class="header" href="#benchmark-methodology">Benchmark methodology</a></h1>
 <p>Every number this project publishes comes from a run you can open, on a
-machine whose specification is recorded with the result. Three tiers:</p>
+machine whose specification is recorded with the result. Four tiers:</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Tier</th><th>Corpus</th><th>What it measures</th><th>Where it runs</th></tr>
 </thead>
 <tbody>
-<tr><td>Synthetic (Criterion)</td><td>generated Rust-like source, 50 lines per file, 50–1,000 files</td><td>the query path in isolation: text, regex, filters, paging; index build; save and load</td><td>every push to <code>main</code></td></tr>
+<tr><td>Instruction counts</td><td>tokio + Django (below), under callgrind</td><td>instructions per operation: build, each query, incremental update, save, load; fails on 3% more than the last passing push</td><td>every push to <code>main</code></td></tr>
+<tr><td>Synthetic (Criterion)</td><td>generated Rust-like source, 50 lines per file, 50–1,000 files</td><td>the query path in isolation: text, regex, filters, paging; index build; save and load</td><td>locally (<code>cargo bench</code>); in CI until October 2026</td></tr>
 <tr><td>Real corpus</td><td><a href="https://github.com/tokio-rs/tokio/tree/tokio-1.45.0">tokio 1.45.0</a> + <a href="https://github.com/django/django/tree/5.2">Django 5.2</a>: 6,237 files, 38.9 MB</td><td>full build, resident memory, save and load, p50/p95 per query kind, incremental update</td><td>every push to <code>main</code></td></tr>
 <tr><td>Large corpus</td><td><a href="https://github.com/rust-lang/rust/tree/1.89.0">rust-lang/rust 1.89.0</a></td><td>file count, throughput, memory at scale</td><td>nightly</td></tr>
 </tbody>
@@ -5289,9 +5290,37 @@ machine whose specification is recorded with the result. Three tiers:</p>
 </div>
 <p>Runs live in the
 <a href="https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml">Benchmarks workflow</a>;
-the synthetic tier is charted per commit at
+the real-corpus tier is charted per commit at
 <a href="https://jburrow.github.io/fast_code_search/dev/bench/">dev/bench</a> by
-github-action-benchmark, which fails the run on a regression beyond 2×.</p>
+github-action-benchmark.</p>
+<h2 id="instruction-counts"><a class="header" href="#instruction-counts">Instruction counts</a></h2>
+<p>Wall time on a shared runner moves by tens of percent between days, so a
+5% slowdown hides in it. An instruction count barely moves: the same
+binary on the same tree executes the same instructions on any x86 runner.
+<code>scripts/bench/icount.sh</code> runs <code>corpus_bench --icount</code> under callgrind,
+which counts every thread’s instructions between two marker calls around
+each operation, and compares the counts with the last ones a passing push
+published (<code>dev/bench/results/icount.json</code> on the site). An operation over
+3% more fails the run, and main-health opens a <code>main-red</code> issue.</p>
+<p>Counts are published only from a passing run, so a failure stays red until
+the added work is removed or accepted. Accepting is a decision, named in
+the squash commit message of the change that adds it:</p>
+<pre><code class="language-text">Accept-instructions: index_build, text/common
+</code></pre>
+<p>(<code>all</code> accepts every operation.) The workflow passes those names to
+<code>icount.sh --accept</code>, the run passes, and its counts become the new base.</p>
+<p>What counts do not see: cache misses, memory bandwidth, I/O, lock waits and
+how well work spreads over cores. A change that makes code faster by doing
+the same work in parallel (B2 did) shows no gain here, and one that makes it
+slower by contention shows no loss. The same-machine A/B (<code>scripts/bench/ab.sh</code>)
+stays the measure a PR quotes; counts catch added work between A/Bs.
+Counts are taken with one rayon thread, which counts the same work
+without the cost of spreading it, and each query is counted five times
+(median). Run-to-run noise on one commit, measured on 2026-10-25 over eight
+runs: 0.5% or less for every operation except symbol/exact and
+symbol/prefix, which moved by up to 4.2% for a reason not yet found; those
+two fail only at 10%. A run takes about 17 minutes on 4 cores, about 7 more
+than the Criterion suites it replaced.</p>
 <h2 id="how-queries-are-timed"><a class="header" href="#how-queries-are-timed">How queries are timed</a></h2>
 <ul>
 <li>The index is built once; queries run against it warm, 50 results per
@@ -5312,6 +5341,7 @@ CI numbers is that they are comparable commit to commit. Local runs are
 labelled as such wherever they appear.</p>
 <h2 id="reproduce"><a class="header" href="#reproduce">Reproduce</a></h2>
 <pre><code class="language-bash">cargo run --release --example corpus_bench -- path/to/repo [more paths] --label mine
+scripts/bench/icount.sh                     # instruction counts (needs valgrind, ~16 min)
 cargo bench                                 # synthetic tier
 cargo bench --bench search_benchmark        # search only
 </code></pre>
@@ -5322,7 +5352,8 @@ bencher lines for tracking (<code>--bencher</code>).</p>
 <code>main</code>. Each chart is a cost, so lower is better; the vertical axis is time
 per operation in the unit that fits the chart (or bytes for memory). The
 shaded band is that run’s spread: median to 95th percentile for the
-real-corpus rows, Criterion’s reported deviation for the synthetic rows. A
+real-corpus rows (Criterion’s reported deviation for the synthetic rows
+recorded before October 2026). A
 step on every chart at the same commit is a change of runner, not of code.
 Each chart carries a sentence saying what it measures and what would move
 it.</p>
@@ -6290,6 +6321,17 @@ change that grows memory now shows which structure grew. Measured this
 way, a just-built index holds more than the same index after a restart
 (tokio + Django: 78 MB against 44 MB of heap), because posting lists
 built by inserts keep spare capacity.</li>
+<li><strong>An instruction-count gate on every push to <code>main</code>.</strong> The Benchmarks
+workflow now counts, under callgrind, the instructions each operation
+takes on tokio + Django (build, every query, an incremental update,
+save, load) and fails when one takes more than 3% more than at the last
+passing push (<code>scripts/bench/icount.sh</code>, <code>corpus_bench --icount</code>).
+Counts barely move between runners, unlike wall time, so added work
+shows the day it lands. Counts are published only from a passing run,
+so the run stays red until the work is removed, or accepted with an
+<code>Accept-instructions:</code> line in the commit message. The Criterion suites
+no longer run in CI (they still run with <code>cargo bench</code>); the job takes
+about 7 minutes longer.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
@@ -9000,9 +9042,14 @@ ms_print massif.out.&lt;pid&gt;
 </code></pre>
 <h3 id="benchmarking"><a class="header" href="#benchmarking">Benchmarking</a></h3>
 <p>Criterion benchmarks live in <code>benches/</code> (<code>search_benchmark.rs</code>,
-<code>persistence_benchmark.rs</code>) and run in CI on every push to <code>main</code>, with trends
-published to GitHub Pages. They use a small synthetic corpus, so they measure
-fixed overhead well and large-corpus behaviour poorly (roadmap 6.5).</p>
+<code>persistence_benchmark.rs</code>) for local use. They use a small synthetic corpus,
+so they measure fixed overhead well and large-corpus behaviour poorly
+(roadmap 6.5). CI no longer runs them: on every push to <code>main</code> the Benchmarks
+workflow counts instructions per operation instead (<code>scripts/bench/icount.sh</code>,
+needs valgrind) and fails on 3% more than the last passing push. If a change
+adds instructions on purpose, say so in the squash commit message with a line
+<code>Accept-instructions: &lt;operation&gt;, ...</code> (or <code>all</code>); see the book’s
+benchmark methodology page.</p>
 <pre><code class="language-bash">cargo bench --bench search_benchmark -- indexing
 </code></pre>
 <p>Use <code>std::hint::black_box</code>, not <code>criterion::black_box</code>.</p>

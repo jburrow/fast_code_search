@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-80bd5166.js";
+            window.path_to_searchindex_js = "../searchindex-a4e2f49a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -226,6 +226,17 @@ change that grows memory now shows which structure grew. Measured this
 way, a just-built index holds more than the same index after a restart
 (tokio + Django: 78 MB against 44 MB of heap), because posting lists
 built by inserts keep spare capacity.</li>
+<li><strong>An instruction-count gate on every push to <code>main</code>.</strong> The Benchmarks
+workflow now counts, under callgrind, the instructions each operation
+takes on tokio + Django (build, every query, an incremental update,
+save, load) and fails when one takes more than 3% more than at the last
+passing push (<code>scripts/bench/icount.sh</code>, <code>corpus_bench --icount</code>).
+Counts barely move between runners, unlike wall time, so added work
+shows the day it lands. Counts are published only from a passing run,
+so the run stays red until the work is removed, or accepted with an
+<code>Accept-instructions:</code> line in the commit message. The Criterion suites
+no longer run in CI (they still run with <code>cargo bench</code>); the job takes
+about 7 minutes longer.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>

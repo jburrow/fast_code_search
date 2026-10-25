@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-80bd5166.js";
+            window.path_to_searchindex_js = "../searchindex-a4e2f49a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -549,9 +549,14 @@ ms_print massif.out.&lt;pid&gt;
 </code></pre>
 <h3 id="benchmarking"><a class="header" href="#benchmarking">Benchmarking</a></h3>
 <p>Criterion benchmarks live in <code>benches/</code> (<code>search_benchmark.rs</code>,
-<code>persistence_benchmark.rs</code>) and run in CI on every push to <code>main</code>, with trends
-published to GitHub Pages. They use a small synthetic corpus, so they measure
-fixed overhead well and large-corpus behaviour poorly (roadmap 6.5).</p>
+<code>persistence_benchmark.rs</code>) for local use. They use a small synthetic corpus,
+so they measure fixed overhead well and large-corpus behaviour poorly
+(roadmap 6.5). CI no longer runs them: on every push to <code>main</code> the Benchmarks
+workflow counts instructions per operation instead (<code>scripts/bench/icount.sh</code>,
+needs valgrind) and fails on 3% more than the last passing push. If a change
+adds instructions on purpose, say so in the squash commit message with a line
+<code>Accept-instructions: &lt;operation&gt;, ...</code> (or <code>all</code>); see the book’s
+benchmark methodology page.</p>
 <pre><code class="language-bash">cargo bench --bench search_benchmark -- indexing
 </code></pre>
 <p>Use <code>std::hint::black_box</code>, not <code>criterion::black_box</code>.</p>
