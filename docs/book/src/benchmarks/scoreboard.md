@@ -14,8 +14,15 @@ target/release/examples/scoreboard --dir /tmp/fcs-score --files 200000 \
 
 `--scenarios branch-switch,overflow` runs some of them, `--stream-seconds`
 sets the stream's length (600 by default). The tree is generated under
-`--dir` (small Python files, 1,000 to a folder; `examples/support/load_tree.rs`)
-and reused by later runs.
+`--dir`, 1,000 files to a folder, and reused by later runs
+(`examples/support/load_tree.rs`). It is shaped like the
+real corpus of `scripts/bench/ab.sh --corpus real` (Linux, LLVM, Rust,
+Kubernetes; 304,688 files): sizes spread like real files, with a median of 2 KB and a few over
+1 MB; 55% of the files in languages fcs extracts symbols from (C, C++,
+Rust, Go, Python) and the rest IR, assembly, YAML and text; and contents
+tuned so that indexing costs, per megabyte, about what the real corpus
+costs. Until 2026-10-25 it was small Python files that all looked alike,
+which indexed several times faster than real code and hid the costs below.
 
 The report holds numbers only: no paths, queries or file contents. That
 makes a run on a private tree safe to share. The server's log and any
@@ -62,32 +69,55 @@ The searchers cycle through cheap and expensive queries (`task_17_`,
 | `check_problems` | What `GET /api/check?all=true` finds once the index has settled: invariants, every file's content, the file set against a fresh walk | 0 |
 
 The zero targets hold at any size. The others are in
-`benches/scoreboard/targets.toml`, set at about twice the worse of two runs
-(memory: about 30% over), and apply only to runs with the same number of
-files.
+`benches/scoreboard/targets.toml`, set at 1.3 times the worse of two runs
+(memory: 1.15 times), and apply only to runs with the same number of
+files. They are today's numbers, not goals: they are tightened as the
+indexing-throughput fixes land.
 
 ## Measured
 
-200,000 files on a 4 vCPU, 16 GB Linux VM, 2026-10-23. These are the
-second of the two runs behind the targets.
+200,000 files of the realistic tree on a 4 vCPU, 16 GB Linux VM,
+2026-10-25 (commit d943516). These are the second of the two runs behind
+the targets.
 
 | Scenario | Searches | Incomplete | p50 | p99 | Max | Ready | Fresh after | Max pending | Peak RSS | Stall captures |
 |---|---|---|---|---|---|---|---|---|---|---|
-| cold-build | 489 | 489 | 169 ms | 638 ms | 939 ms | 49.9 s | – | – | 808 MB | 0 |
-| warm-restart | 70 | 63 | 59 ms | 761 ms | 828 ms | 2.3 s | – | – | 671 MB | 0 |
-| branch-switch | 203 | 62 | 376 ms | 1.24 s | 1.65 s | – | 7.1 s | 48,248 | 789 MB | 0 |
-| stream | 6,316 | 116 | 403 ms | 859 ms | 1.29 s | – | 1.1 s | 1,333 | 883 MB | 0 |
-| slow-mix | 2,280 | 976 | 633 ms | 2.25 s | 5.79 s | – | 2.7 s | 523 | 825 MB | 0 |
-| save-under-load | 1,344 | 95 | 423 ms | 937 ms | 1.17 s | – | 4.0 s | 5,198 | 1,073 MB | 0 |
-| overflow | 536 | 201 | 414 ms | 1.27 s | 1.53 s | – | 32.7 s | 180,708 | 1,335 MB | 0 |
+| cold-build | 1,835 | 1,835 | 1.09 s | 2.48 s | 4.17 s | 618 s | – | – | 1,177 MB | 0 |
+| warm-restart | 86 | 79 | 1 ms | 1.78 s | 2.16 s | 4.6 s | – | – | 1,267 MB | 0 |
+| branch-switch | 436 | 76 | 1.82 s | 4.46 s | 4.60 s | – | 169 s | 40,000 | 1,268 MB | 0 |
+| stream | 1,349 | 109 | 1.96 s | 4.43 s | 4.87 s | – | 30.7 s | 9,764 | 1,556 MB | 0 |
+| slow-mix | 628 | 253 | 2.48 s | 8.68 s | 13.2 s | – | 14.5 s | 1,615 | 1,454 MB | 0 |
+| save-under-load | 655 | 120 | 1.93 s | 4.38 s | 5.44 s | – | 163 s | 43,175 | 2,037 MB | 0 |
+| overflow | 1,080 | 126 | 2.14 s | 4.65 s | 6.54 s | – | 496 s | 132,684 | 2,582 MB | 1 |
 
 In every scenario: no search turned away, refused or failed, no crash,
-and the check found nothing. The server answered within 0.05 s of starting
-in both start-up scenarios. `slow-mix` wrote one `slow_search` capture
-(5.8 s), with nine searches sharing four CPUs. The stream kept 400 to
-1,300 changes pending, a few seconds' work, for ten minutes.
+and the check found nothing. The server answered within 0.1 s of starting
+in both start-up scenarios. Searches slower than 5 s wrote `slow_search`
+captures in four scenarios, with up to nine searches sharing four CPUs.
+`overflow` wrote a `backlog` capture in both runs, which fails the zero
+`stall_captures` target (see below).
+
+On the earlier tree of small Python files (2026-10-23) the same machine
+built the index in 50 s, caught up with a branch switch in 7 s and kept
+search p50 under 0.7 s. Nothing got slower in between: the realistic
+tree holds 1.75 GB where the old one held about 40 MB (200-byte files),
+and its files cost what real files cost to parse.
 
 ## What it found
+
+- **Indexing throughput is the bottleneck.** With realistic files the
+  watcher applies about 200 to 300 files a second on four CPUs. A 40,000
+  file branch switch takes about 2.5 minutes to catch up, and rewriting
+  half the tree takes over 8 minutes, long enough for the `backlog`
+  capture to fire (changes pending for 300 s without draining). That
+  failure is a bug report, not a target to loosen. The plan's next items
+  are aimed at it: the batch merge runs on one thread (most of a build's
+  time on the real corpus), and every removed file costs a pass over
+  every posting list.
+- **`fcs check --live` was cut off at 30 s.** On a 200,000 file index
+  the full check takes longer than the server's request timeout, so it
+  answered 504 and the scoreboard counted check problems in four
+  scenarios. `/api/check` is no longer cut off at the request timeout.
 
 - **A 4–5 s stall after every restart.** An index loaded from disk keeps
   its unresolved imports but not the files' import lists. At the end of
@@ -108,6 +138,9 @@ in both start-up scenarios. `slow-mix` wrote one `slow_search` capture
   the time a writer kept the search out.
 
 ## Known gaps
+
+- **The overflow scenario fails its zero target** (one `backlog`
+  capture) until indexing throughput improves; see above.
 
 - **After a restart, answers say the index is incomplete for a while.**
   Loading takes 2 to 3 s at 200,000 files. After that the server walks
@@ -137,7 +170,9 @@ in both start-up scenarios. `slow-mix` wrote one `slow_search` capture
   the full ten-minute stream, against the targets. The table goes to the
   job summary, and the JSON and server logs are kept as an artifact.
 - **On pull requests** that touch locking, watching, saving, the web
-  server or limits: the same, with a two-minute stream.
+  server or limits: 50,000 files with a two-minute stream. The zero
+  targets apply; the time and memory targets are only for 200,000 files.
+  A 200,000 file run takes about an hour on the realistic tree.
 - **Before a release, on a large machine**: a million files (`--files
   1000000`), or your own tree with a sanitised report. The time and memory
   targets apply only to 200,000 files, so such a run checks the zero
