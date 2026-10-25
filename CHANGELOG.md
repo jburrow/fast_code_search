@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Less memory after a build or a load (Linux).** A build frees far more
+  than the index it keeps (file contents, per-batch trigram sets, merge
+  buffers), and the allocator held on to those pages, so resident memory
+  stayed high until a restart. The server now hands them back to the
+  system once a build or a load is done: tokio + Django went from 135 MB
+  to 107 MB resident, the Linux kernel tree from 793 MB to 709 MB, in 8 and
+  36 ms, outside the write lock. glibc only; macOS, Windows and the musl
+  build are unchanged.
+
 ### Added
 - **Where the memory goes.** `/api/diagnostics` now reports the index's
   estimated heap per structure (`index.memory`: posting lists, the file

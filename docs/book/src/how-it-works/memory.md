@@ -66,13 +66,27 @@ keep spare capacity (a list in one container costs 168 bytes instead of 42),
 and the estimates cannot see that spare capacity, which is why they cover
 only 64% there. A restart gives the memory back.
 
-Resident memory is higher again. It also holds memory the build freed but
-the allocator has not returned to the system, plus fragmentation. On tokio +
-Django, 26 MB of the 128 MB resident after a build went back to the system
-when the heap was trimmed. `corpus_bench` shows everything outside the
-estimates as "not estimated".
+Resident memory is higher again. A build allocates and frees far more
+than the index it leaves behind (file contents, per-batch trigram sets,
+merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
+the server hands them back to the system once a build or a load is done
+(`malloc_trim`), outside the write lock:
 
-**Known limitation:** the breakdown leaves out the allocator, thread stacks,
+| Corpus | Resident before | After | Took |
+|---|---|---|---|
+| tokio + Django | 135 MB | 107 MB | 8 ms |
+| Linux kernel | 793 MB | 709 MB | 36 ms |
+
+What is left above the live heap is fragmentation: freed memory that
+shares pages with live data. Compacting the posting lists after a build
+(reallocating each at its exact size) was tried. It did not lower resident
+memory and made finalize about 200 ms slower on tokio + Django, so it is
+not done. `corpus_bench` shows everything outside the estimates as "not
+estimated".
+
+**Known limitation:** on macOS, Windows and musl builds the freed memory
+is not handed back, so resident memory after a build stays higher there
+than after a restart. The breakdown leaves out the allocator, thread stacks,
 mapped content, the regex cache and spare capacity inside posting lists, so
 it reads low, most of all just after a build. Use it to see which part grew
 between two runs, not as an exact total.

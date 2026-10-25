@@ -433,6 +433,7 @@ fn try_load_persisted_index(
         Ok(result) => {
             let files_loaded = loaded.get_stats().num_files;
             engine_lock::write(index_engine).adopt_index(loaded);
+            crate::heap_size::return_freed_memory();
 
             println!(
                 "✅ Loaded {} files from persisted index",
@@ -1088,6 +1089,8 @@ fn finalize_imports(
     engine.finalize();
 
     let stats = engine.get_stats();
+    drop(engine);
+    crate::heap_size::return_freed_memory();
     info!(
         dependency_edges = stats.dependency_edges,
         "Import resolution completed"

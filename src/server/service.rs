@@ -379,6 +379,7 @@ impl CodeSearch for CodeSearchService {
                 }
                 engine.get_stats()
             };
+            crate::heap_size::return_freed_memory();
             Ok::<_, Status>((files_indexed, total_size, stats))
         })
         .await
