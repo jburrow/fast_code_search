@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **Benchmark numbers now match what fcs does.** The README, the book's
+  benchmark pages and the project site showed numbers from 8 September
+  (before v0.17.0), with a common word at about 1 ms. They now show the
+  v0.19.0 run: a common word over tokio + Django is 24.6 ms at p50, an
+  identifier 7.8 ms, and a query with no match 0.6 µs.
+- **The v0.17.0 slowdown, named.** v0.17.0 raised the match budget from
+  512 to 32,768, so a search ranks many more matches before it returns
+  page one. On a ~6,300-file repository that made common-word text
+  searches about 10 times slower (about 5 ms to about 55 ms on the same
+  machine) and regexes with no literal about 30 times slower (about 3 ms to
+  about 100 ms). It buys ranking quality: page one now holds 81% of the
+  exhaustive top 50 instead of 10%. Queries with few matches and index
+  builds did not change. See the book's Search limits page.
+- The release run-book in `docs/DEVELOPMENT.md` now matches how releases
+  are cut, and the instruction files say which docs repeat which numbers so
+  they are updated together.
+
 ## [0.19.0] - 2026-10-24
 
 Searches keep running while the watcher applies changes, the index checks

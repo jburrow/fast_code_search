@@ -8,6 +8,8 @@
 - [ ] `cargo test` (and `--features semantic` if the semantic engine is touched)
 - [ ] New behaviour has a test, or the PR says why it cannot
 - [ ] CHANGELOG `[Unreleased]` updated for user-visible changes
+- [ ] Every doc that states a changed number or behaviour updated
+      (see "Docs that repeat numbers" in `docs/DEVELOPMENT.md`), or "None"
 
 ## Performance
 
