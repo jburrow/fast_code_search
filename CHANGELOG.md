@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Where the memory goes.** `/api/diagnostics` now reports the index's
+  estimated heap per structure (`index.memory`: posting lists, the file
+  table, symbols, references, the dependency graph, imports), largest
+  first, next to the process's resident memory (`index.resident_bytes`,
+  Linux). `corpus_bench` prints the same breakdown as a table, with a
+  "not estimated" row for the allocator's share, and reports each part as
+  a benchmark metric. The scale scoreboard records it per scenario. A
+  change that grows memory now shows which structure grew. Measured this
+  way, a just-built index holds more than the same index after a restart
+  (tokio + Django: 78 MB against 44 MB of heap), because posting lists
+  built by inserts keep spare capacity.
+
 ### Fixed
 - **Folders that could not be read went missing without a word.** When
   the build, a restart's check or a rescan could not list a folder

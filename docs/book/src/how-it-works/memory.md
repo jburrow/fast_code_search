@@ -15,6 +15,68 @@ Small files are read into owned buffers per access and dropped
 afterwards, so search traffic does not accumulate memory. The CI corpus
 (6,237 files, 38.9 MB) sits at about 120 MB resident after a build.
 
+## Where it goes
+
+`/api/diagnostics` reports the index's estimated heap per structure under
+`index.memory`, largest first, next to the process's resident memory
+(`index.resident_bytes`, Linux only). `corpus_bench` prints the same
+breakdown after a build, and the [scale scoreboard](../benchmarks/scoreboard.md)
+records it per scenario.
+
+| Part | What it holds |
+|---|---|
+| `postings` | trigram posting lists (Roaring bitmaps) and their table |
+| `references` | symbol references and their interned names |
+| `symbols` | symbol definitions |
+| `imports` | imports as written, and those still waiting for a file to resolve to |
+| `graph_paths` | path tables the import resolver looks paths up in |
+| `graph_edges` | dependency edges and dependent counts |
+| `file_table` | indexed paths and the path lookup |
+| `file_metadata` | ranking metadata and display paths |
+| `dir_index` | files by folder, for the watcher |
+
+The figures are estimates from lengths and capacities, not allocator
+measurements (`src/heap_size.rs`). `tests/heap_estimates.rs` keeps them
+honest: it counts every allocation and fails if the estimates for a loaded
+index fall outside 75% to 105% of the heap it really holds (they are 89%).
+Checked the same way on public code:
+
+| Corpus | Index | Live heap | Estimated |
+|---|---|---|---|
+| tokio + Django (6,300 files) | just built | 78.3 MB | 50.3 MB (64%) |
+| tokio + Django | loaded from disk | 44.0 MB | 40.2 MB (91%) |
+| Linux kernel (85,500 files, 1.23 GB) | just built | 593.8 MB | 551.6 MB (93%) |
+| Linux kernel | loaded from disk | 458.1 MB | 448.8 MB (98%) |
+
+The Linux kernel, loaded from disk:
+
+| Part | Estimated |
+|---|---|
+| symbols | 207.3 MB |
+| postings | 172.3 MB |
+| graph_paths | 37.5 MB |
+| file_metadata | 14.0 MB |
+| file_table | 12.7 MB |
+| references | 3.2 MB |
+| everything else | 1.8 MB |
+
+**A just-built index holds more than the same index loaded.** On tokio +
+Django it is 78 MB against 44 MB. Posting lists built one insert at a time
+keep spare capacity (a list in one container costs 168 bytes instead of 42),
+and the estimates cannot see that spare capacity, which is why they cover
+only 64% there. A restart gives the memory back.
+
+Resident memory is higher again. It also holds memory the build freed but
+the allocator has not returned to the system, plus fragmentation. On tokio +
+Django, 26 MB of the 128 MB resident after a build went back to the system
+when the heap was trimmed. `corpus_bench` shows everything outside the
+estimates as "not estimated".
+
+**Known limitation:** the breakdown leaves out the allocator, thread stacks,
+mapped content, the regex cache and spare capacity inside posting lists, so
+it reads low, most of all just after a build. Use it to see which part grew
+between two runs, not as an exact total.
+
 ## Limits that protect the server
 
 | Limit | Value | Where |

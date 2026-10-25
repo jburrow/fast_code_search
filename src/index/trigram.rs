@@ -119,6 +119,15 @@ pub struct TrigramIndex {
 }
 
 impl TrigramIndex {
+    /// Estimated heap bytes of the posting lists, the table included. See
+    /// [`crate::heap_size`].
+    pub fn heap_bytes(&self) -> u64 {
+        use crate::heap_size as h;
+        h::map(&self.trigram_to_docs)
+            + self.trigram_to_docs.values().map(h::bitmap).sum::<u64>()
+            + h::bitmap(&self.all_docs)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

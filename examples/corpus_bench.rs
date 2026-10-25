@@ -320,6 +320,7 @@ fn main() -> Result<()> {
     let (bytes, build_took) = timed(|| build(&mut engine, &files, &config, &mut phases));
     let rss_after = resident_bytes();
     let stats = engine.get_stats();
+    let memory = engine.memory_breakdown();
 
     let mut metrics: Vec<Metric> = Vec::new();
     let n = args.iterations;
@@ -489,6 +490,34 @@ fn main() -> Result<()> {
     );
     let _ = writeln!(md, "| index load (reconciling) | {} |", fmt_dur(load_took));
     let _ = writeln!(md);
+    let _ = writeln!(
+        md,
+        "| Memory (estimated heap) | Bytes | Share of resident |"
+    );
+    let _ = writeln!(md, "|---|---|---|");
+    let resident = rss_after.saturating_sub(rss_before).max(1);
+    for part in memory
+        .parts
+        .iter()
+        .map(|p| (p.name.as_str(), p.bytes))
+        .chain([
+            ("total estimated", memory.total_bytes),
+            // Allocator overhead, memory freed by the build but not returned
+            // to the system, and what the estimates miss: spare capacity in
+            // freshly built posting lists most of all (see the book's
+            // how-it-works/memory.md).
+            ("not estimated", resident.saturating_sub(memory.total_bytes)),
+        ])
+    {
+        let _ = writeln!(
+            md,
+            "| {} | {} | {:.0}% |",
+            part.0,
+            fmt_bytes(part.1),
+            100.0 * part.1 as f64 / resident as f64
+        );
+    }
+    let _ = writeln!(md);
     let _ = writeln!(md, "| Query | p50 | p95 | Detail |");
     let _ = writeln!(md, "|---|---|---|---|");
     for m in &metrics {
@@ -541,6 +570,7 @@ fn main() -> Result<()> {
                 "load_ns": load_took.as_nanos() as u64,
             },
             "queries": queries,
+            "memory": memory,
             "iterations": args.iterations,
         });
         std::fs::write(path, serde_json::to_string_pretty(&result)?)
@@ -569,6 +599,12 @@ fn main() -> Result<()> {
             "test corpus_bench/{}/rss_after_build_bytes ... bench: {} ns/iter (+/- 0)",
             args.label, rss_after
         );
+        for p in &memory.parts {
+            println!(
+                "test corpus_bench/{}/memory_{}_bytes ... bench: {} ns/iter (+/- 0)",
+                args.label, p.name, p.bytes
+            );
+        }
     }
     Ok(())
 }

@@ -304,6 +304,25 @@ pub struct KeywordIndexDiagnostics {
     pub files_by_extension: Vec<ExtensionBreakdown>,
     /// Sample of indexed file paths (for verification)
     pub sample_files: Vec<String>,
+    /// Estimated heap bytes per structure, largest first
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<crate::search::MemoryBreakdown>,
+    /// The server process's resident memory (Linux only), to compare with
+    /// the breakdown's total: the gap is allocator overhead, thread stacks
+    /// and everything outside the index
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resident_bytes: Option<u64>,
+}
+
+/// This process's resident memory, from `/proc/self/status` (Linux only).
+pub fn resident_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        (parts.next() == Some("VmRSS:"))
+            .then(|| parts.next()?.parse::<u64>().ok().map(|kb| kb * 1024))
+            .flatten()
+    })
 }
 
 /// Summary of test results

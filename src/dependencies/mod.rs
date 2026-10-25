@@ -263,6 +263,32 @@ fn strip_jsonc(text: &str) -> String {
 }
 
 impl DependencyIndex {
+    /// Estimated heap bytes: (edges and counts, path tables). See
+    /// [`crate::heap_size`].
+    pub fn heap_bytes(&self) -> (u64, u64) {
+        use crate::heap_size as h;
+        let edges = h::map(&self.imports)
+            + self.imports.values().map(h::set).sum::<u64>()
+            + h::map(&self.imported_by)
+            + self.imported_by.values().map(h::set).sum::<u64>()
+            + h::map(&self.import_counts);
+        let paths = h::map(&self.path_to_id)
+            + self.path_to_id.keys().map(h::path_buf).sum::<u64>()
+            + h::map(&self.filename_to_paths)
+            + self
+                .filename_to_paths
+                .iter()
+                .map(|(k, v)| h::string(k) + h::vec(v) + v.iter().map(h::path_buf).sum::<u64>())
+                .sum::<u64>()
+            + h::map(&self.id_to_path)
+            + self.id_to_path.values().map(h::path_buf).sum::<u64>()
+            + h::map(&self.files_per_dir)
+            + self.files_per_dir.keys().map(h::path_buf).sum::<u64>()
+            + h::map(&self.files_below)
+            + self.files_below.keys().map(h::path_buf).sum::<u64>();
+        (edges, paths)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

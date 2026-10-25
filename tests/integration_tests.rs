@@ -1513,6 +1513,12 @@ async fn test_http_diagnostics_endpoint() -> Result<()> {
         body["index"].is_object(),
         "Expected index diagnostics object"
     );
+    let memory: fast_code_search::search::MemoryBreakdown =
+        serde_json::from_value(body["index"]["memory"].clone())?;
+    assert!(
+        memory.bytes("postings") > 0,
+        "Expected a memory breakdown with posting lists: {memory:?}"
+    );
 
     Ok(())
 }

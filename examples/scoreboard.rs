@@ -142,6 +142,10 @@ struct Score {
     peak_rss_mb: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cpu_secs: Option<f64>,
+    /// The index's estimated heap by structure at the end (MB, largest
+    /// first), so a memory change shows which part grew.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    memory_mb: Vec<(String, f64)>,
     captures: u64,
     /// Captures other than `slow_search`: a stall, a long lock wait or
     /// hold, a backlog. A slow search alone can be the machine's CPUs
@@ -372,6 +376,13 @@ impl Run<'_> {
                 1
             }
         };
+        if let Some(m) = server.memory() {
+            score.memory_mb = m
+                .parts
+                .iter()
+                .map(|p| (p.name.clone(), p.bytes as f64 / 1e6))
+                .collect();
+        }
         let resources = sampler.stop();
         score.peak_rss_mb = resources.peak_rss_mb;
         score.cpu_secs = resources.cpu_secs;

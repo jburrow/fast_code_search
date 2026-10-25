@@ -133,6 +133,25 @@ pub struct LazyFileStore {
 }
 
 impl LazyFileStore {
+    /// Estimated heap bytes: (the file table with its paths, the directory
+    /// index). Each path is shared by the table and the path map and is
+    /// counted once. See [`crate::heap_size`].
+    pub fn heap_bytes(&self) -> (u64, u64) {
+        use crate::heap_size as h;
+        let files = h::vec(&self.files)
+            + self.files.iter().map(|f| h::arc_path(&f.path)).sum::<u64>()
+            + h::map(&self.path_to_id)
+            + h::set(&self.tombstoned);
+        let dirs = h::map(&self.dirs.nodes)
+            + self
+                .dirs
+                .nodes
+                .iter()
+                .map(|(k, n)| h::arc_path(k) + h::vec(&n.files) + h::vec(&n.subdirs))
+                .sum::<u64>();
+        (files, dirs)
+    }
+
     pub fn new() -> Self {
         Self {
             files: Vec::new(),

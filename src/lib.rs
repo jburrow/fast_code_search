@@ -4,6 +4,7 @@ pub mod config;
 pub mod dependencies;
 pub mod diagnostics;
 pub mod faults;
+pub mod heap_size;
 pub mod impact;
 pub mod index;
 pub mod index_lock;
