@@ -728,7 +728,13 @@ fn unreadable_folder_is_reported_until_it_can_be_read() {
     rig.build();
     rig.start_watching();
     let f = rig.engine.read().unwrap().freshness();
-    assert_eq!((f.unreadable_folders, f.unwatched_folders), (1, 1));
+    // Only Linux watches folder by folder; elsewhere one recursive watch
+    // covers the tree, and the OS decides what it can see under it.
+    let per_folder_watches = usize::from(cfg!(target_os = "linux"));
+    assert_eq!(
+        (f.unreadable_folders, f.unwatched_folders),
+        (1, per_folder_watches)
+    );
     assert!(
         rig.note().contains("1 folder could not be read"),
         "{}",
