@@ -53,6 +53,8 @@ What each kind means:
 | `discovery.missing` | On disk and indexable, not in the index |
 | `discovery.extra` | In the index, but gone or excluded now (an ignore rule, an exclude pattern) |
 | `*.unreadable` | Can't be read (reported, not counted as a problem) |
+| `folders: N could not be read` | Folders the last scan could not list, so their files are not indexed (reported, not counted as a problem; `--show-paths` names them) |
+| `folders: N could not be watched` | Folders the file watcher could not watch (reported, not counted) |
 | `invariants.*` | The index disagrees with itself: a bug, please report it |
 
 The same report is available as JSON from `GET /api/check`. It accepts

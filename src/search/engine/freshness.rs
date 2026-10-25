@@ -32,6 +32,16 @@ pub struct IndexFreshness {
     /// [`ReadFailures`]); the server log names them.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unreadable_files: usize,
+    /// Folders the last scan could not read (permission denied, an I/O
+    /// error): whatever is in them is missing from the index, as ripgrep
+    /// skips a folder it cannot list. See [`FolderProblems`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unreadable_folders: usize,
+    /// Folders the file watcher could not watch (the OS watch limit, a
+    /// folder it could not list): changes in them reach the index only at
+    /// the next rescan or restart.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unwatched_folders: usize,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -56,6 +66,74 @@ pub struct WatchBacklog {
     pub requeue: Arc<std::sync::Mutex<Vec<PathBuf>>>,
     /// What the background scrub has checked and found so far.
     pub scrub: Arc<std::sync::Mutex<crate::search::integrity::ScrubStats>>,
+    /// Folders a scan (the build, a restart's check, a rescan) could not read.
+    pub unreadable_folders: Arc<FolderProblems>,
+    /// Folders the file watcher could not watch (shared with
+    /// [`crate::search::FileWatcher`]).
+    pub unwatched_folders: Arc<FolderProblems>,
+}
+
+/// Folders that could not be read or watched, by path, with the error.
+///
+/// A folder that cannot be listed used to be skipped with a debug-level log
+/// line, so its files were missing from every search with nothing to say
+/// so. Now each one is recorded here and counted in [`IndexFreshness`],
+/// which every search response, `fcs`, MCP and the web UI report. A walk
+/// forgets what it recorded under its own starting folders before it
+/// starts, so a folder that has become readable stops being counted at the
+/// next scan of it.
+#[derive(Debug, Default)]
+pub struct FolderProblems {
+    folders: std::sync::Mutex<std::collections::BTreeMap<PathBuf, String>>,
+}
+
+impl FolderProblems {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::BTreeMap<PathBuf, String>> {
+        self.folders.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Record that `path` could not be read. True if it was not recorded
+    /// already (so the caller logs it once, not on every scan).
+    pub fn record(&self, path: &Path, error: impl Into<String>) -> bool {
+        self.lock()
+            .insert(path.to_path_buf(), error.into())
+            .is_none()
+    }
+
+    /// Forget everything recorded at or under `dir` (it is about to be
+    /// scanned again).
+    pub fn forget_under(&self, dir: &Path) {
+        let mut folders = self.lock();
+        if !folders.is_empty() {
+            folders.retain(|p, _| !p.starts_with(dir));
+        }
+    }
+
+    /// Forget folders that no longer exist.
+    pub fn forget_missing(&self) {
+        let mut folders = self.lock();
+        if !folders.is_empty() {
+            folders.retain(|p, _| p.symlink_metadata().is_ok());
+        }
+    }
+
+    /// How many folders are recorded.
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    /// Is nothing recorded?
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The recorded folders and their errors, in path order.
+    pub fn list(&self) -> Vec<(PathBuf, String)> {
+        self.lock()
+            .iter()
+            .map(|(p, e)| (p.clone(), e.clone()))
+            .collect()
+    }
 }
 
 impl WatchBacklog {
@@ -273,10 +351,40 @@ impl IndexFreshness {
                 if self.unreadable_files == 1 { "is" } else { "are" }
             )
             });
-        match (note, unreadable) {
-            (Some(a), Some(b)) => Some(format!("{a} {b}")),
-            (a, b) => a.or(b),
-        }
+        let unreadable_dirs = (self.unreadable_folders > 0).then(|| {
+            format!(
+                "{} could not be read, so the files in {} are missing from the index (the \
+                 server log names {}).",
+                folders(self.unreadable_folders),
+                if self.unreadable_folders == 1 {
+                    "it"
+                } else {
+                    "them"
+                },
+                if self.unreadable_folders == 1 {
+                    "it"
+                } else {
+                    "them"
+                },
+            )
+        });
+        let unwatched = (self.unwatched_folders > 0).then(|| {
+            format!(
+                "{} could not be watched, so changes in {} reach the index only at the next \
+                 rescan or restart (the server log says why).",
+                folders(self.unwatched_folders),
+                if self.unwatched_folders == 1 {
+                    "it"
+                } else {
+                    "them"
+                },
+            )
+        });
+        let parts: Vec<String> = [note, unreadable, unreadable_dirs, unwatched]
+            .into_iter()
+            .flatten()
+            .collect();
+        (!parts.is_empty()).then(|| parts.join(" "))
     }
 
     /// One line for status output: watching state plus the last sync.
@@ -306,8 +414,18 @@ impl IndexFreshness {
         } else {
             String::new()
         };
+        let unreadable_folders = if self.unreadable_folders > 0 {
+            format!(", {} could not be read", folders(self.unreadable_folders))
+        } else {
+            String::new()
+        };
+        let unwatched = if self.unwatched_folders > 0 {
+            format!(", {} not watched", folders(self.unwatched_folders))
+        } else {
+            String::new()
+        };
         format!(
-            "index {synced}, file watching {}{updated}{pending}{unreadable}",
+            "index {synced}, file watching {}{updated}{pending}{unreadable}{unreadable_folders}{unwatched}",
             if self.watching { "on" } else { "off" }
         )
     }
@@ -316,6 +434,11 @@ impl IndexFreshness {
 /// "1 file change", "2000 file changes".
 fn changes(n: usize) -> String {
     format!("{n} file change{}", if n == 1 { "" } else { "s" })
+}
+
+/// "1 folder", "3 folders".
+fn folders(n: usize) -> String {
+    format!("{n} folder{}", if n == 1 { "" } else { "s" })
 }
 
 /// "1 file", "3 files".
@@ -372,6 +495,12 @@ impl SearchEngine {
                 0
             },
             unreadable_files: self.watch_backlog.read_failures.given_up(),
+            unreadable_folders: self.watch_backlog.unreadable_folders.len(),
+            unwatched_folders: if self.watching {
+                self.watch_backlog.unwatched_folders.len()
+            } else {
+                0
+            },
         }
     }
 
@@ -470,6 +599,7 @@ mod tests {
             updated_at_ms: None,
             pending_changes: 0,
             unreadable_files: 0,
+            ..Default::default()
         };
         assert_eq!(f.note(1_000_000), None);
     }
@@ -482,6 +612,7 @@ mod tests {
             updated_at_ms: None,
             pending_changes: 2_500,
             unreadable_files: 0,
+            ..Default::default()
         };
         let note = f.note(1_000_000).unwrap();
         assert!(note.contains("2500 file changes"), "{note}");
@@ -509,6 +640,7 @@ mod tests {
             updated_at_ms: None,
             pending_changes: 0,
             unreadable_files: 0,
+            ..Default::default()
         };
         let note = f.note(at + 6 * 60_000).unwrap();
         assert!(note.contains("6 min ago"), "{note}");
@@ -628,5 +760,60 @@ mod tests {
             not_watching.note(0).as_deref(),
             Some("4 files could not be read and are left out of the index (the server log names them).")
         );
+    }
+
+    #[test]
+    fn note_reports_folders_that_could_not_be_read_or_watched() {
+        let f = IndexFreshness {
+            watching: true,
+            unreadable_folders: 1,
+            unwatched_folders: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            f.note(0).as_deref(),
+            Some(
+                "1 folder could not be read, so the files in it are missing from the index \
+                 (the server log names it). 3 folders could not be watched, so changes in \
+                 them reach the index only at the next rescan or restart (the server log \
+                 says why)."
+            )
+        );
+        assert!(f
+            .summary(0)
+            .ends_with(", 1 folder could not be read, 3 folders not watched"));
+    }
+
+    #[test]
+    fn folder_problems_are_forgotten_when_their_folder_is_scanned_again() {
+        let p = FolderProblems::default();
+        assert!(p.record(Path::new("/r/a/locked"), "permission denied"));
+        assert!(!p.record(Path::new("/r/a/locked"), "permission denied"));
+        assert!(p.record(Path::new("/r/b"), "permission denied"));
+        assert_eq!(p.len(), 2);
+        p.forget_under(Path::new("/r/a"));
+        assert_eq!(
+            p.list(),
+            vec![(PathBuf::from("/r/b"), "permission denied".into())]
+        );
+        p.forget_missing();
+        assert!(p.is_empty(), "/r/b does not exist");
+    }
+
+    #[test]
+    fn freshness_counts_unwatched_folders_only_while_watching() {
+        let mut engine = SearchEngine::new();
+        engine
+            .watch_backlog
+            .unreadable_folders
+            .record(Path::new("/x"), "e");
+        engine
+            .watch_backlog
+            .unwatched_folders
+            .record(Path::new("/y"), "e");
+        let f = engine.freshness();
+        assert_eq!((f.unreadable_folders, f.unwatched_folders), (1, 0));
+        engine.watching = true;
+        assert_eq!(engine.freshness().unwatched_folders, 1);
     }
 }

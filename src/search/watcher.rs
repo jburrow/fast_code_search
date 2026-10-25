@@ -14,6 +14,7 @@
 //! reconciles the watched roots instead.
 
 use crate::search::path_filter::PathFilter;
+use crate::search::FolderProblems;
 use anyhow::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 /// File change event types for incremental indexing
@@ -89,6 +90,8 @@ pub struct FileWatcher {
     queued: Arc<AtomicUsize>,
     /// How many queued events name each of those files.
     in_queue: Arc<Mutex<QueuedPaths>>,
+    /// Folders that could not be watched; see [`Self::unwatched_folders`].
+    unwatched: Arc<FolderProblems>,
 }
 
 /// The paths named by queued events, with how many events name each.
@@ -116,12 +119,16 @@ fn dir_is_excluded(filter: &PathFilter, dir: &Path) -> bool {
 }
 
 /// Add a non-recursive watch to every non-excluded directory under `root`
-/// (`root` itself included). Returns `(watched, failed)`.
+/// (`root` itself included). Returns `(watched, failed)`. A folder that can't
+/// be listed or watched is recorded in `unwatched` (what was recorded under
+/// `root` before is forgotten first), so searches report it.
 fn watch_tree(
     watcher: &mut RecommendedWatcher,
     root: &Path,
     filter: &PathFilter,
+    unwatched: &FolderProblems,
 ) -> (usize, usize) {
+    unwatched.forget_under(root);
     let mut watched = 0usize;
     let mut failed = 0usize;
     let walker = walkdir::WalkDir::new(root)
@@ -130,7 +137,23 @@ fn watch_tree(
         .filter_entry(|e| {
             e.depth() == 0 || !e.file_type().is_dir() || !dir_is_excluded(filter, e.path())
         });
-    for entry in walker.flatten() {
+    for entry in walker {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                // A folder that can't be listed: neither it nor anything
+                // under it gets a watch (this used to be dropped silently).
+                if e.io_error().is_some() {
+                    let path = e.path().unwrap_or(root);
+                    if failed == 0 {
+                        warn!(path = %path.display(), error = %e, "Failed to watch directory");
+                    }
+                    unwatched.record(path, e.to_string());
+                    failed += 1;
+                }
+                continue;
+            }
+        };
         if !entry.file_type().is_dir() {
             continue;
         }
@@ -140,12 +163,19 @@ fn watch_tree(
                 if failed == 0 {
                     warn!(path = %entry.path().display(), error = %e, "Failed to watch directory");
                 }
+                unwatched.record(entry.path(), e.to_string());
                 failed += 1;
             }
         }
     }
     (watched, failed)
 }
+
+/// The shortest time between two rescans asked for by watcher errors. An
+/// error from the OS watcher (its event stream failed to read) may have
+/// lost events, so the roots are reconciled; a rescan of a million files
+/// takes about 40 s, so an error that repeats must not keep one running.
+const ERROR_RESCAN_GAP: Duration = Duration::from_secs(300);
 
 impl FileWatcher {
     /// Create and start a new file watcher
@@ -174,6 +204,8 @@ impl FileWatcher {
         let handler_queued = Arc::clone(&queued);
         let in_queue = Arc::new(Mutex::new(QueuedPaths::new()));
         let handler_in_queue = Arc::clone(&in_queue);
+        let unwatched = Arc::new(FolderProblems::default());
+        let mut last_error_rescan: Option<Instant> = None;
         let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
             match result {
                 Ok(event) => {
@@ -226,7 +258,20 @@ impl FileWatcher {
                     }
                 }
                 Err(error) => {
-                    error!("File watcher error: {:?}", error);
+                    // The OS watcher could not deliver events: some may be
+                    // lost, so reconcile the roots (this used to only log),
+                    // at most once per `ERROR_RESCAN_GAP`.
+                    let due = last_error_rescan.is_none_or(|t| t.elapsed() >= ERROR_RESCAN_GAP);
+                    if due {
+                        last_error_rescan = Some(Instant::now());
+                        error!(
+                            "File watcher error: {:?}; the watched paths will be rescanned",
+                            error
+                        );
+                        handler_rescan.store(true, Ordering::Release);
+                    } else {
+                        error!("File watcher error: {:?}", error);
+                    }
                 }
             }
         })?;
@@ -239,7 +284,7 @@ impl FileWatcher {
         for path in &config.paths {
             if path.exists() {
                 if per_directory {
-                    let (ok, failed) = watch_tree(&mut watcher, path, &exclude_filter);
+                    let (ok, failed) = watch_tree(&mut watcher, path, &exclude_filter, &unwatched);
                     if ok > 0 {
                         info!(
                             path = %path.display(),
@@ -267,6 +312,7 @@ impl FileWatcher {
                             error = %e,
                             "Failed to watch path (skipping)"
                         );
+                        unwatched.record(path, e.to_string());
                         watch_errors += 1;
                     }
                 }
@@ -305,7 +351,15 @@ impl FileWatcher {
             rescan,
             queued,
             in_queue,
+            unwatched,
         })
+    }
+
+    /// Folders that could not be watched (the OS watch limit, a folder that
+    /// can't be listed): changes in them are not seen until a rescan. The
+    /// watch loop shares it with the engine, which reports the count.
+    pub fn unwatched_folders(&self) -> Arc<FolderProblems> {
+        Arc::clone(&self.unwatched)
     }
 
     /// Make sure `dir` (a directory that was just created or moved into a
@@ -315,7 +369,12 @@ impl FileWatcher {
         if !self.per_directory || !dir.is_dir() || dir_is_excluded(&self.exclude_filter, dir) {
             return;
         }
-        let (watched, failed) = watch_tree(&mut self.watcher, dir, &self.exclude_filter);
+        let (watched, failed) = watch_tree(
+            &mut self.watcher,
+            dir,
+            &self.exclude_filter,
+            &self.unwatched,
+        );
         debug!(path = %dir.display(), watched, failed, "Added watches for new directory");
     }
 
@@ -323,6 +382,7 @@ impl FileWatcher {
     /// reconciled with the disk); otherwise empty.
     pub fn take_rescan(&self) -> Vec<PathBuf> {
         if self.rescan.swap(false, Ordering::AcqRel) {
+            self.unwatched.forget_missing();
             self.roots.clone()
         } else {
             Vec::new()
@@ -520,5 +580,41 @@ mod tests {
             );
         }
         assert_eq!(queued.load(Ordering::Acquire), 0, "all received");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod unwatched_folder_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A folder the watcher cannot list gets no watch; it is now counted
+    /// (it used to be dropped by `walker.flatten()` without a word).
+    #[test]
+    fn a_folder_that_cannot_be_listed_is_counted_as_unwatched() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let locked = root.join("locked");
+        std::fs::create_dir_all(locked.join("inner")).unwrap();
+        std::fs::create_dir_all(root.join("ok")).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!("skipped: permissions are not enforced for this user");
+            return;
+        }
+        let watcher = FileWatcher::new(WatcherConfig {
+            paths: vec![root.clone()],
+            exclude_patterns: vec![],
+        });
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let watcher = watcher.unwrap();
+        let unwatched: Vec<PathBuf> = watcher
+            .unwatched_folders()
+            .list()
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(unwatched, vec![locked]);
     }
 }

@@ -18,8 +18,8 @@ pub use background_indexer::{
     BackgroundIndexerConfig,
 };
 pub use engine::{
-    create_progress_broadcaster, unix_now_ms, BudgetRule, FileCheck, GraphScope, ImpactOptions,
-    ImpactReport, IndexFreshness, IndexingProgress, IndexingStatus, InvariantReport,
+    create_progress_broadcaster, unix_now_ms, BudgetRule, FileCheck, FolderProblems, GraphScope,
+    ImpactOptions, ImpactReport, IndexFreshness, IndexingProgress, IndexingStatus, InvariantReport,
     LoadIndexResult, LoadingPhase, PartialIndexedFile, PathFreshness, PathMatch, PathQuery,
     PathSearch, PreIndexedFile, ProgressBroadcaster, QueryRun, RankMode, ReadFailures,
     SearchEngine, SearchLimit, SearchLimits, SearchMatch, SearchRankingInfo, SearchSettings,
