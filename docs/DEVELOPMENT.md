@@ -462,7 +462,7 @@ PR and the CHANGELOG entry then say what it buys.
 `--corpus real` adds a pinned corpus the size of a large monorepo: Linux
 v6.11, LLVM 19.1.0, Rust 1.82.0 and Kubernetes v1.31.0, about 302,000
 files and 3 GB (about 4 GB of disk once cloned). Costs that grow with the
-tree, such as the single-threaded merge, a load or memory, show there and
+tree, such as the batch merge, a load or memory, show there and
 not in tokio + Django. A build takes about 7 minutes, so a round takes about
 17 minutes on 4 cores. Use it for changes to indexing, persistence or memory,
 and say in the PR how many rounds the table had.

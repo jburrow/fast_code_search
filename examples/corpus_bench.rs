@@ -66,6 +66,11 @@ struct Args {
     /// index, such as `examples/posting_decode.rs`).
     #[arg(long)]
     keep_index: Option<PathBuf>,
+    /// Also time the queries on the index as loaded from disk (metrics
+    /// named `loaded/...`): a just-built index and a loaded one are laid
+    /// out differently in memory.
+    #[arg(long)]
+    loaded_queries: bool,
 }
 
 /// The machine a result was produced on. Every published number carries
@@ -161,7 +166,7 @@ fn chrono_like_now() -> String {
 
 /// One reported metric.
 struct Metric {
-    name: &'static str,
+    name: String,
     /// Human-readable detail (result count, bytes, ...).
     detail: String,
     p50: Duration,
@@ -185,7 +190,7 @@ fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
 /// Run `f` once untimed, then `iterations` times timed; returns the metric
 /// and the last result.
 fn measure<T>(
-    name: &'static str,
+    name: &str,
     iterations: usize,
     detail: impl Fn(&T) -> String,
     mut f: impl FnMut() -> T,
@@ -199,7 +204,7 @@ fn measure<T>(
     }
     samples.sort();
     Metric {
-        name,
+        name: name.to_string(),
         detail: detail(&last),
         p50: percentile(&samples, 0.5),
         p95: percentile(&samples, 0.95),
@@ -288,6 +293,90 @@ fn build(
     bytes
 }
 
+/// The query set, timed on `engine`; metric names start with `prefix`.
+fn query_metrics(engine: &SearchEngine, n: usize, page: usize, prefix: &str) -> Vec<Metric> {
+    let mut out = Vec::new();
+    // Text searches: a very common token, a moderately common one, a token
+    // that appears nowhere (index-only), and a two-character query (the
+    // all-documents path).
+    for (name, q) in [
+        ("text/common", "return"),
+        ("text/identifier", "Config"),
+        ("text/no_match", "xq9zv_nothing_here"),
+        ("text/short", "fn"),
+    ] {
+        out.push(measure(
+            &format!("{prefix}{name}"),
+            n,
+            |r: &Vec<_>| format!("{} results", r.len()),
+            || engine.search(q, page),
+        ));
+    }
+    out.push(measure(
+        &format!("{prefix}text/full_rank"),
+        n,
+        |r: &(Vec<_>, _)| format!("{} results", r.0.len()),
+        || engine.search_ranked("return", page, RankMode::Full),
+    ));
+    out.push(measure(
+        &format!("{prefix}text/filtered"),
+        n,
+        |r: &Result<Vec<_>>| format!("{} results", r.as_ref().map(|v| v.len()).unwrap_or(0)),
+        || engine.search_with_filter("return", "**/*.rs;**/*.py", "**/tests/**", page),
+    ));
+
+    // Regex: accelerated by a literal, case-insensitive literal, and one
+    // with no usable literal (bounded full scan).
+    for (name, re) in [
+        ("regex/literal", r"fn\s+\w+\("),
+        ("regex/case_insensitive", r"(?i)unwrap\("),
+        ("regex/no_literal", r"[a-z]+_[a-z]+_[a-z]+\("),
+    ] {
+        out.push(measure(
+            &format!("{prefix}{name}"),
+            n,
+            |r: &Result<(Vec<_>, SearchRankingInfo)>| {
+                r.as_ref()
+                    .map(|(v, info)| {
+                        format!(
+                            "{} results{}",
+                            v.len(),
+                            if info.truncated_by_budget {
+                                " (budget)"
+                            } else {
+                                ""
+                            }
+                        )
+                    })
+                    .unwrap_or_else(|e| format!("error: {e}"))
+            },
+            || engine.search_regex_with_limits(re, "", "", SearchLimits::new(page), RankMode::Auto),
+        ));
+    }
+
+    // Symbols.
+    for (name, q) in [("symbol/exact", "Error"), ("symbol/prefix", "Req")] {
+        out.push(measure(
+            &format!("{prefix}{name}"),
+            n,
+            |r: &Result<Vec<_>>| format!("{} results", r.as_ref().map(|v| v.len()).unwrap_or(0)),
+            || engine.search_symbols(q, "", "", page),
+        ));
+    }
+
+    // Symbol references of a very common identifier (method call sites).
+    out.push(measure(
+        &format!("{prefix}symbol/references"),
+        n,
+        |r: &Result<(Vec<_>, SearchRankingInfo)>| {
+            format!("{} results", r.as_ref().map(|(v, _)| v.len()).unwrap_or(0))
+        },
+        || engine.search_references("unwrap", "", "", SearchLimits::new(page)),
+    ));
+
+    out
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let roots: Vec<String> = args
@@ -333,83 +422,7 @@ fn main() -> Result<()> {
     let n = args.iterations;
     let page = 50;
 
-    // Text searches: a very common token, a moderately common one, a token
-    // that appears nowhere (index-only), and a two-character query (the
-    // all-documents path).
-    for (name, q) in [
-        ("text/common", "return"),
-        ("text/identifier", "Config"),
-        ("text/no_match", "xq9zv_nothing_here"),
-        ("text/short", "fn"),
-    ] {
-        metrics.push(measure(
-            name,
-            n,
-            |r: &Vec<_>| format!("{} results", r.len()),
-            || engine.search(q, page),
-        ));
-    }
-    metrics.push(measure(
-        "text/full_rank",
-        n,
-        |r: &(Vec<_>, _)| format!("{} results", r.0.len()),
-        || engine.search_ranked("return", page, RankMode::Full),
-    ));
-    metrics.push(measure(
-        "text/filtered",
-        n,
-        |r: &Result<Vec<_>>| format!("{} results", r.as_ref().map(|v| v.len()).unwrap_or(0)),
-        || engine.search_with_filter("return", "**/*.rs;**/*.py", "**/tests/**", page),
-    ));
-
-    // Regex: accelerated by a literal, case-insensitive literal, and one
-    // with no usable literal (bounded full scan).
-    for (name, re) in [
-        ("regex/literal", r"fn\s+\w+\("),
-        ("regex/case_insensitive", r"(?i)unwrap\("),
-        ("regex/no_literal", r"[a-z]+_[a-z]+_[a-z]+\("),
-    ] {
-        metrics.push(measure(
-            name,
-            n,
-            |r: &Result<(Vec<_>, SearchRankingInfo)>| {
-                r.as_ref()
-                    .map(|(v, info)| {
-                        format!(
-                            "{} results{}",
-                            v.len(),
-                            if info.truncated_by_budget {
-                                " (budget)"
-                            } else {
-                                ""
-                            }
-                        )
-                    })
-                    .unwrap_or_else(|e| format!("error: {e}"))
-            },
-            || engine.search_regex_with_limits(re, "", "", SearchLimits::new(page), RankMode::Auto),
-        ));
-    }
-
-    // Symbols.
-    for (name, q) in [("symbol/exact", "Error"), ("symbol/prefix", "Req")] {
-        metrics.push(measure(
-            name,
-            n,
-            |r: &Result<Vec<_>>| format!("{} results", r.as_ref().map(|v| v.len()).unwrap_or(0)),
-            || engine.search_symbols(q, "", "", page),
-        ));
-    }
-
-    // Symbol references of a very common identifier (method call sites).
-    metrics.push(measure(
-        "symbol/references",
-        n,
-        |r: &Result<(Vec<_>, SearchRankingInfo)>| {
-            format!("{} results", r.as_ref().map(|(v, _)| v.len()).unwrap_or(0))
-        },
-        || engine.search_references("unwrap", "", "", SearchLimits::new(page)),
-    ));
+    metrics.extend(query_metrics(&engine, n, page, ""));
 
     // Incremental update: rewrite a spread of small files and apply each
     // change as the watcher would; restore afterwards.
@@ -440,7 +453,7 @@ fn main() -> Result<()> {
     }
     incremental.sort();
     metrics.push(Metric {
-        name: "incremental/modify_file",
+        name: "incremental/modify_file".to_string(),
         detail: format!("{} files", incremental.len()),
         p50: percentile(&incremental, 0.5),
         p95: percentile(&incremental, 0.95),
@@ -454,10 +467,15 @@ fn main() -> Result<()> {
     if let Some(keep) = &args.keep_index {
         std::fs::copy(&index_path, keep).with_context(|| format!("writing {}", keep.display()))?;
     }
-    let (_, load_took) = timed(|| {
+    let (loaded, load_took) = timed(|| {
         let mut fresh = SearchEngine::new();
-        fresh.load_index_with_reconciliation(&index_path, &config)
+        let _ = fresh.load_index_with_reconciliation(&index_path, &config);
+        fresh
     });
+    if args.loaded_queries {
+        metrics.extend(query_metrics(&loaded, n, page, "loaded/"));
+    }
+    drop(loaded);
 
     // Report.
     let mut md = String::new();
@@ -602,7 +620,7 @@ fn main() -> Result<()> {
         line("index_save", save_took, Duration::ZERO);
         line("index_load", load_took, Duration::ZERO);
         for m in &metrics {
-            line(m.name, m.p50, m.p95.saturating_sub(m.p50));
+            line(&m.name, m.p50, m.p95.saturating_sub(m.p50));
         }
         // Memory as a pseudo-metric so the trend chart tracks it (bytes, not ns).
         println!(

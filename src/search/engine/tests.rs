@@ -4351,8 +4351,7 @@ fn test_check_invariants_clean_then_catches_damage() {
     let trigram = Trigram::new(*b"def");
     engine
         .trigram_index
-        .trigram_map_mut()
-        .get_mut(&trigram)
+        .posting_mut(&trigram)
         .unwrap()
         .remove(id);
     assert_eq!(engine.check_file(id), Some(FileCheck::MissingTrigrams(1)));
@@ -4360,8 +4359,7 @@ fn test_check_invariants_clean_then_catches_damage() {
     // A removed file left in a posting list.
     engine
         .trigram_index
-        .trigram_map_mut()
-        .get_mut(&trigram)
+        .posting_mut(&trigram)
         .unwrap()
         .insert(removed);
     let report = engine.check_invariants();

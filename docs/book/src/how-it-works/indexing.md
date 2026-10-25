@@ -37,7 +37,9 @@ flowchart TB
    panic guard. Definitions become symbols; call sites and type mentions
    become references; import statements are collected.
 4. **Merge, under the write lock.** Files are registered, postings
-   inserted, symbols and references stored, imports resolved against the
+   inserted (in parallel: the posting lists are split into 64 shards by
+   trigram, and each shard takes its share of the whole batch on its own
+   thread), symbols and references stored, imports resolved against the
    files known so far; unresolved imports are parked and retried when a
    file with a matching name appears. Batches are small so a search only
    ever waits for one merge.
