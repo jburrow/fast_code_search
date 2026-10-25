@@ -331,7 +331,11 @@ impl PersistedIndex {
     /// exclusive lock), flushes and fsyncs it, then renames over the target,
     /// so a reader holding a shared lock never observes a truncated file and
     /// a crash mid-write leaves the previous index intact.
-    pub fn save(&self, path: &Path, trigrams: &FxHashMap<Trigram, RoaringBitmap>) -> Result<()> {
+    pub fn save<'a>(
+        &self,
+        path: &Path,
+        trigrams: impl IntoIterator<Item = (&'a Trigram, &'a RoaringBitmap)>,
+    ) -> Result<()> {
         // Saves are serialized process-wide. The watcher's shutdown save, the
         // indexer's final save and periodic checkpoints can all fire at once;
         // letting them race meant two writers sharing a temp file, and the
@@ -362,11 +366,11 @@ impl PersistedIndex {
         result
     }
 
-    fn write_then_rename(
+    fn write_then_rename<'a>(
         &self,
         path: &Path,
         tmp_path: &Path,
-        trigrams: &FxHashMap<Trigram, RoaringBitmap>,
+        trigrams: impl IntoIterator<Item = (&'a Trigram, &'a RoaringBitmap)>,
     ) -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -384,7 +388,7 @@ impl PersistedIndex {
             })?;
 
             // Directory: sorted, with each bitmap's offset in the region.
-            let mut entries: Vec<(&Trigram, &RoaringBitmap)> = trigrams.iter().collect();
+            let mut entries: Vec<(&Trigram, &RoaringBitmap)> = trigrams.into_iter().collect();
             entries.sort_by_key(|(t, _)| t.as_bytes());
             let mut dir = Vec::with_capacity(entries.len());
             let mut offset = 0u64;
@@ -645,6 +649,12 @@ impl PersistedIndex {
     /// Deserialize the posting lists straight out of the mapped bitmap
     /// region (in parallel) into a live map.
     pub fn restore_trigram_index(&self) -> Result<FxHashMap<Trigram, RoaringBitmap>> {
+        Ok(self.restore_posting_lists()?.into_iter().collect())
+    }
+
+    /// [`Self::restore_trigram_index`] as a list, in directory order, so a
+    /// caller that distributes the lists itself does not hash them twice.
+    pub fn restore_posting_lists(&self) -> Result<Vec<(Trigram, RoaringBitmap)>> {
         use rayon::prelude::*;
         let ti = &self.trigram_index;
         let results: Result<Vec<_>> = ti
@@ -656,7 +666,7 @@ impl PersistedIndex {
                 Ok((e.trigram, bitmap))
             })
             .collect();
-        Ok(results?.into_iter().collect())
+        results
     }
 }
 

@@ -1571,6 +1571,11 @@ impl SearchEngine {
     fn merge_batch(&mut self, batch: Vec<PreIndexedFile>) -> usize {
         let mut count = 0;
         self.generation += 1;
+        // Trigrams are merged after the loop, all files at once and in
+        // parallel ([`TrigramIndex::add_documents`]). A path given twice
+        // keeps its last version, as merging one by one did.
+        let mut trigrams: Vec<(u32, FxHashSet<Trigram>)> = Vec::with_capacity(batch.len());
+        let mut slot: FxHashMap<u32, usize> = FxHashMap::default();
 
         for pre_indexed in batch {
             // Add file to store - this also memory-maps it
@@ -1611,9 +1616,15 @@ impl SearchEngine {
                     .add_imports_batch(dependents.iter().map(|&from| (from, file_id)).collect());
             }
 
-            // Add trigrams to index (using pre-computed trigrams)
-            self.trigram_index
-                .add_document_trigrams(file_id, pre_indexed.trigrams);
+            match slot.entry(file_id) {
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    trigrams[*e.get()].1 = pre_indexed.trigrams;
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(trigrams.len());
+                    trigrams.push((file_id, pre_indexed.trigrams));
+                }
+            }
 
             // Store symbols
             while self.symbol_cache.len() <= file_id as usize {
@@ -1631,6 +1642,7 @@ impl SearchEngine {
 
             count += 1;
         }
+        self.trigram_index.add_documents(&trigrams);
 
         count
     }

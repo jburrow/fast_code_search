@@ -104,12 +104,27 @@ fn unique_trigrams_folded(bytes: &[u8], ascii_fold: bool) -> FxHashSet<Trigram> 
     })
 }
 
+/// Posting lists are split across this many maps by trigram, so a batch is
+/// merged by one thread per shard ([`TrigramIndex::add_documents`]). The
+/// merge used to run on one thread and was half of a build's time on the
+/// real corpus (229 of 430 s at 302,000 files on 4 cores), four fifths of it
+/// in posting-list inserts. 64 gives every core several shards to balance
+/// over, and the shards stay large (about 5,500 lists each on that corpus).
+const SHARDS: usize = 64;
+
+/// Which shard holds `trigram`: the top bits of a multiplicative hash, so
+/// shards are even however skewed the trigrams are.
+#[inline]
+fn shard_of(trigram: &Trigram) -> usize {
+    let [a, b, c] = trigram.0;
+    (u32::from_le_bytes([a, b, c, 0]).wrapping_mul(0x9E37_79B9) >> 26) as usize
+}
+
 /// Inverted index mapping trigrams to document IDs using roaring bitmaps
-#[derive(Default)]
 pub struct TrigramIndex {
-    // Map from trigram to set of document IDs containing that trigram
-    // FxHashMap is faster than std HashMap for small keys like Trigram
-    trigram_to_docs: FxHashMap<Trigram, RoaringBitmap>,
+    // Trigram -> documents containing it, split by `shard_of`. FxHashMap is
+    // faster than std HashMap for small keys like Trigram.
+    shards: Vec<FxHashMap<Trigram, RoaringBitmap>>,
     // Every document added and not removed, whether or not it has any
     // trigram: the candidates for a query with no trigram of its own (a
     // short query, a regex with no literal). It used to be the union of the
@@ -118,13 +133,25 @@ pub struct TrigramIndex {
     all_docs: RoaringBitmap,
 }
 
+impl Default for TrigramIndex {
+    fn default() -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
+            all_docs: RoaringBitmap::new(),
+        }
+    }
+}
+
 impl TrigramIndex {
-    /// Estimated heap bytes of the posting lists, the table included. See
+    /// Estimated heap bytes of the posting lists, the tables included. See
     /// [`crate::heap_size`].
     pub fn heap_bytes(&self) -> u64 {
         use crate::heap_size as h;
-        h::map(&self.trigram_to_docs)
-            + self.trigram_to_docs.values().map(h::bitmap).sum::<u64>()
+        self.shards
+            .iter()
+            .map(|m| h::map(m) + m.values().map(h::bitmap).sum::<u64>())
+            .sum::<u64>()
+            + h::vec(&self.shards)
             + h::bitmap(&self.all_docs)
     }
 
@@ -132,31 +159,67 @@ impl TrigramIndex {
         Self::default()
     }
 
+    fn list_mut(&mut self, trigram: Trigram) -> &mut RoaringBitmap {
+        self.shards[shard_of(&trigram)].entry(trigram).or_default()
+    }
+
     /// Add a document to the index
     pub fn add_document(&mut self, doc_id: u32, content: &str) {
         // Use extract_unique_trigrams for efficiency - avoids Vec allocation + HashSet conversion
-        let unique_trigrams = extract_unique_trigrams(content);
-
-        for trigram in unique_trigrams {
-            self.trigram_to_docs
-                .entry(trigram)
-                .or_default()
-                .insert(doc_id);
+        for trigram in extract_unique_trigrams(content) {
+            self.list_mut(trigram).insert(doc_id);
         }
-
         self.all_docs.insert(doc_id);
     }
 
     /// Add a document using pre-computed trigrams (for parallel indexing)
     pub fn add_document_trigrams(&mut self, doc_id: u32, trigrams: FxHashSet<Trigram>) {
         for trigram in trigrams {
-            self.trigram_to_docs
-                .entry(trigram)
-                .or_default()
-                .insert(doc_id);
+            self.list_mut(trigram).insert(doc_id);
         }
-
         self.all_docs.insert(doc_id);
+    }
+
+    /// Add many documents at once, in parallel: each document's trigrams
+    /// are sorted into shards (in parallel over the documents), then each
+    /// shard takes its share of every document (in parallel over the
+    /// shards). The result is the same as [`Self::add_document_trigrams`]
+    /// for each document in turn. Each id must appear once.
+    pub fn add_documents(&mut self, docs: &[(u32, FxHashSet<Trigram>)]) {
+        use rayon::prelude::*;
+        if docs.is_empty() {
+            return;
+        }
+        // A few chunks per thread, so a chunk of large files doesn't hold
+        // up the rest. Chunks keep documents in order, so each list gets
+        // its ids in the order given (ascending for new files: the fast
+        // append path of a roaring insert).
+        let chunk = docs.len().div_ceil(rayon::current_num_threads() * 4).max(1);
+        let buckets: Vec<Vec<Vec<(Trigram, u32)>>> = docs
+            .par_chunks(chunk)
+            .map(|chunk| {
+                let mut buckets: Vec<Vec<(Trigram, u32)>> = vec![Vec::new(); SHARDS];
+                for (id, trigrams) in chunk {
+                    for t in trigrams {
+                        buckets[shard_of(t)].push((*t, *id));
+                    }
+                }
+                buckets
+            })
+            .collect();
+        self.shards
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(shard, map)| {
+                for chunk in &buckets {
+                    for &(t, id) in &chunk[shard] {
+                        map.entry(t).or_default().insert(id);
+                    }
+                }
+            });
+        for (id, _) in docs {
+            self.all_docs.insert(*id);
+        }
     }
 
     /// Remove a document from the index (for incremental updates / deletions).
@@ -169,9 +232,11 @@ impl TrigramIndex {
     /// on a 134k-trigram index).
     pub fn remove_document(&mut self, doc_id: u32) {
         use rayon::prelude::*;
-        self.trigram_to_docs.par_iter_mut().for_each(|(_, docs)| {
-            if docs.contains(doc_id) {
-                docs.remove(doc_id);
+        self.shards.par_iter_mut().for_each(|map| {
+            for docs in map.values_mut() {
+                if docs.contains(doc_id) {
+                    docs.remove(doc_id);
+                }
             }
         });
         self.all_docs.remove(doc_id);
@@ -195,9 +260,11 @@ impl TrigramIndex {
             }
             return;
         }
-        self.trigram_to_docs.par_iter_mut().for_each(|(_, docs)| {
-            if docs.intersection_len(doomed) > 0 {
-                *docs -= doomed;
+        self.shards.par_iter_mut().for_each(|map| {
+            for docs in map.values_mut() {
+                if docs.intersection_len(doomed) > 0 {
+                    *docs -= doomed;
+                }
             }
         });
         self.all_docs -= doomed;
@@ -206,13 +273,16 @@ impl TrigramIndex {
     /// Release over-allocated bucket memory from incremental inserts.
     /// Complements `finalize()` — safe to call at any time between batches.
     pub fn shrink_to_fit(&mut self) {
-        self.trigram_to_docs.shrink_to_fit();
+        for map in &mut self.shards {
+            map.shrink_to_fit();
+        }
     }
 
     /// Finalize the index after bulk loading. Call this after indexing is complete
     /// to pre-compute the all_documents bitmap for faster regex fallback queries.
     /// Also shrinks the internal HashMap to release over-allocated bucket memory.
     pub fn finalize(&mut self) {
+        use rayon::prelude::*;
         self.all_docs.optimize();
         // Run-length encode dense posting lists: ubiquitous trigrams (spaces,
         // "the", newline+indent) cover nearly every document and shrink from
@@ -220,16 +290,19 @@ impl TrigramIndex {
         // in memory. Cheap; a no-op for lists that are already optimal.
         // Posting lists emptied by removals are dropped here rather than on
         // every removal.
-        self.trigram_to_docs.retain(|_, docs| {
-            if docs.is_empty() {
-                return false;
-            }
-            docs.optimize();
-            true
+        self.shards.par_iter_mut().for_each(|map| {
+            map.retain(|_, docs| {
+                if docs.is_empty() {
+                    return false;
+                }
+                docs.optimize();
+                true
+            });
+            // Release over-allocated hash-map bucket slots accumulated during
+            // incremental inserts. FxHashMap doubles capacity on rehash; after
+            // bulk load the table may be ~50% empty.
+            map.shrink_to_fit();
         });
-        // Release over-allocated hash-map bucket slots accumulated during incremental inserts.
-        // FxHashMap doubles capacity on rehash; after bulk load the table may be ~50% empty.
-        self.trigram_to_docs.shrink_to_fit();
     }
 
     /// Search for documents containing all trigrams from the query
@@ -243,7 +316,7 @@ impl TrigramIndex {
         // Find all matching bitmaps and check for missing trigrams
         let mut bitmaps: Vec<&RoaringBitmap> = Vec::with_capacity(unique_trigrams.len());
         for trigram in &unique_trigrams {
-            if let Some(docs) = self.trigram_to_docs.get(trigram) {
+            if let Some(docs) = self.shards[shard_of(trigram)].get(trigram) {
                 bitmaps.push(docs);
             } else {
                 // If any trigram is not in the index, no documents match
@@ -269,7 +342,7 @@ impl TrigramIndex {
 
     /// Get total number of trigrams in the index
     pub fn num_trigrams(&self) -> usize {
-        self.trigram_to_docs.len()
+        self.shards.iter().map(|m| m.len()).sum()
     }
 
     /// All document IDs in the index, with or without trigrams.
@@ -287,41 +360,70 @@ impl TrigramIndex {
     /// on the way (`Cow::Owned`) once posting lists can live in the saved
     /// file instead of on the heap; callers must not assume a borrow.
     pub fn postings(&self) -> impl Iterator<Item = (Trigram, std::borrow::Cow<'_, RoaringBitmap>)> {
-        self.trigram_to_docs
-            .iter()
+        self.lists()
             .map(|(t, docs)| (*t, std::borrow::Cow::Borrowed(docs)))
     }
 
     /// Whether `trigram`'s posting list names `doc_id`.
     pub fn contains(&self, trigram: &Trigram, doc_id: u32) -> bool {
-        self.trigram_to_docs
+        self.shards[shard_of(trigram)]
             .get(trigram)
             .is_some_and(|docs| docs.contains(doc_id))
     }
 
-    /// Get a reference to the internal trigram-to-docs map for persistence
-    pub fn get_trigram_map(&self) -> &FxHashMap<Trigram, RoaringBitmap> {
-        &self.trigram_to_docs
+    /// The posting lists as they are held, for saving.
+    pub fn lists(&self) -> impl Iterator<Item = (&Trigram, &RoaringBitmap)> {
+        self.shards.iter().flat_map(|m| m.iter())
     }
 
-    /// The posting lists, to corrupt on purpose in tests of the self-check.
+    /// [`Self::lists`], in parallel.
+    pub fn par_lists(
+        &self,
+    ) -> impl rayon::iter::ParallelIterator<Item = (&Trigram, &RoaringBitmap)> {
+        use rayon::prelude::*;
+        self.shards.par_iter().flat_map(|m| m.par_iter())
+    }
+
+    /// One posting list, for tests.
     #[cfg(test)]
-    pub(crate) fn trigram_map_mut(&mut self) -> &mut FxHashMap<Trigram, RoaringBitmap> {
-        &mut self.trigram_to_docs
+    pub(crate) fn posting(&self, trigram: &Trigram) -> Option<&RoaringBitmap> {
+        self.shards[shard_of(trigram)].get(trigram)
     }
 
-    /// Restore the index from a persisted trigram map
+    /// One posting list, to corrupt on purpose in tests of the self-check.
+    #[cfg(test)]
+    pub(crate) fn posting_mut(&mut self, trigram: &Trigram) -> Option<&mut RoaringBitmap> {
+        self.shards[shard_of(trigram)].get_mut(trigram)
+    }
+
+    /// Restore the index from persisted posting lists.
     /// The documents are taken from the posting lists; call
     /// [`Self::set_documents`] when some may have no trigram.
-    pub fn from_trigram_map(trigram_to_docs: FxHashMap<Trigram, RoaringBitmap>) -> Self {
-        let mut all_docs = RoaringBitmap::new();
-        for docs in trigram_to_docs.values() {
-            all_docs |= docs;
+    pub fn from_trigram_map(lists: impl IntoIterator<Item = (Trigram, RoaringBitmap)>) -> Self {
+        use rayon::prelude::*;
+        // Sort into shards by moving (no hashing), then build every shard's
+        // table and the union of all lists in parallel: on load this runs
+        // over every posting list.
+        let mut buckets: Vec<Vec<(Trigram, RoaringBitmap)>> =
+            (0..SHARDS).map(|_| Vec::new()).collect();
+        for (trigram, docs) in lists {
+            buckets[shard_of(&trigram)].push((trigram, docs));
         }
-        Self {
-            trigram_to_docs,
-            all_docs,
-        }
+        let shards: Vec<FxHashMap<Trigram, RoaringBitmap>> = buckets
+            .into_par_iter()
+            .map(|bucket| bucket.into_iter().collect())
+            .collect();
+        let all_docs = shards
+            .par_iter()
+            .map(|map| {
+                let mut all = RoaringBitmap::new();
+                for docs in map.values() {
+                    all |= docs;
+                }
+                all
+            })
+            .reduce(RoaringBitmap::new, |a, b| a | b);
+        Self { shards, all_docs }
     }
 }
 
@@ -382,12 +484,13 @@ mod tests {
         // "wor" only appeared in removed docs -> pruned; "hel" survives with doc 1.
         // The emptied list is pruned by finalize, not by the removal itself.
         assert!(idx
-            .get_trigram_map()
-            .get(&Trigram::new(*b"wor"))
+            .posting(&Trigram::new(*b"wor"))
             .is_some_and(|d| d.is_empty()));
         idx.finalize();
-        assert!(idx.get_trigram_map().get(&Trigram::new(*b"wor")).is_none());
-        let hel: Vec<u32> = idx.get_trigram_map()[&Trigram::new(*b"hel")]
+        assert!(idx.posting(&Trigram::new(*b"wor")).is_none());
+        let hel: Vec<u32> = idx
+            .posting(&Trigram::new(*b"hel"))
+            .unwrap()
             .iter()
             .collect();
         assert_eq!(hel, vec![1]);
@@ -400,6 +503,39 @@ mod tests {
             idx.all_documents().iter().collect::<Vec<_>>(),
             vec![1, 3, 4]
         );
+    }
+
+    /// The parallel batch merge gives the same posting lists as adding
+    /// documents one at a time, ids out of order included (a re-indexed
+    /// file keeps its older id).
+    #[test]
+    fn test_add_documents_matches_one_at_a_time() {
+        let texts: Vec<String> = (0..500)
+            .map(|i| {
+                format!(
+                    "fn task_{i}() {{ return value_{} + {i}; }} // {}",
+                    i % 7,
+                    i * 31
+                )
+            })
+            .collect();
+        let ids: Vec<u32> = (0..500u32)
+            .map(|i| if i % 50 == 0 { i / 50 } else { i + 1000 })
+            .collect();
+        let mut one = TrigramIndex::new();
+        let mut docs = Vec::new();
+        for (id, text) in ids.iter().zip(&texts) {
+            one.add_document_trigrams(*id, extract_unique_trigrams(text));
+            docs.push((*id, extract_unique_trigrams(text)));
+        }
+        let mut batch = TrigramIndex::new();
+        batch.add_documents(&docs[..250]);
+        batch.add_documents(&docs[250..]);
+        assert_eq!(one.num_trigrams(), batch.num_trigrams());
+        for (t, docs) in one.lists() {
+            assert_eq!(batch.posting(t), Some(docs), "{t:?}");
+        }
+        assert_eq!(one.all_documents(), batch.all_documents());
     }
 
     #[test]

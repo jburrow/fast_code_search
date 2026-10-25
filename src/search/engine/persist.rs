@@ -94,30 +94,44 @@ impl SearchEngine {
     /// file. Original ids with no entry in `orig_to_new` (stale/removed/failed)
     /// are dropped, and trigrams whose postings become empty are pruned.
     pub(super) fn remap_trigram_bitmaps(
-        map: rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap>,
+        lists: Vec<(Trigram, roaring::RoaringBitmap)>,
         orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
         persisted_files_len: usize,
-    ) -> rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> {
+    ) -> Vec<(Trigram, roaring::RoaringBitmap)> {
         // Fast path: identity mapping (clean reload — nothing stale/removed and no
         // dedupe, so every original id maps to itself and none are missing).
         // Avoids rebuilding every posting list. This is O(files), not O(postings).
         let is_identity =
             orig_to_new.len() == persisted_files_len && orig_to_new.iter().all(|(&o, &n)| o == n);
         if is_identity {
-            return map;
+            return lists;
         }
 
-        Self::remap_trigram_bitmaps_ref(&map, orig_to_new)
+        use rayon::prelude::*;
+        Self::remap_lists(lists.par_iter().map(|(t, docs)| (t, docs)), orig_to_new)
     }
 
-    /// Borrowing form of [`Self::remap_trigram_bitmaps`]: always builds a new
-    /// map with every doc id translated through `orig_to_new`, dropping ids
-    /// with no mapping and trigrams whose postings become empty. Used both on
-    /// load (persisted position -> live id) and on save (live id -> position).
+    /// [`Self::remap_lists`] over a map, for tests.
+    #[cfg(test)]
     pub(super) fn remap_trigram_bitmaps_ref(
         map: &rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap>,
         orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
     ) -> rustc_hash::FxHashMap<Trigram, roaring::RoaringBitmap> {
+        use rayon::prelude::*;
+        Self::remap_lists(map.par_iter(), orig_to_new)
+    }
+
+    /// Every posting list with each doc id translated through
+    /// `orig_to_new`, dropping ids with no mapping and lists left empty.
+    /// Used both on load (persisted position -> live id) and on save (live
+    /// id -> position).
+    pub(super) fn remap_lists<'a, C>(
+        lists: impl rayon::iter::ParallelIterator<Item = (&'a Trigram, &'a roaring::RoaringBitmap)>,
+        orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
+    ) -> C
+    where
+        C: rayon::iter::FromParallelIterator<(Trigram, roaring::RoaringBitmap)>,
+    {
         use rayon::prelude::*;
 
         // A dense table instead of a hash lookup per posting, and, when the
@@ -137,7 +151,7 @@ impl SearchEngine {
             ok
         });
         let dense = &dense;
-        map.par_iter()
+        lists
             .filter_map(|(trigram, bitmap)| {
                 let ids = bitmap.iter().filter_map(|old_id| {
                     dense
@@ -478,14 +492,10 @@ impl SearchEngine {
         // Trigram bitmaps: borrow as-is when ids are already dense (no
         // tombstones), otherwise build a remapped copy keyed by position.
         let is_identity = live_ids.len() as u32 == total_ids;
-        let remapped_trigrams;
-        let trigram_map: &FxHashMap<Trigram, roaring::RoaringBitmap> = if is_identity {
-            self.trigram_index.get_trigram_map()
-        } else {
-            remapped_trigrams =
-                Self::remap_trigram_bitmaps_ref(self.trigram_index.get_trigram_map(), &id_to_pos);
-            &remapped_trigrams
-        };
+        let remapped_trigrams =
+            (!is_identity).then(|| -> Vec<(Trigram, roaring::RoaringBitmap)> {
+                Self::remap_lists(self.trigram_index.par_lists(), &id_to_pos)
+            });
 
         // Imports still waiting for their target, keyed by position, so a
         // checkpoint restore can still gain the edge when the target lands.
@@ -506,7 +516,10 @@ impl SearchEngine {
             self.reference_names().to_vec(),
             references,
         )?;
-        persisted.save(path, trigram_map)?;
+        match &remapped_trigrams {
+            Some(remapped) => persisted.save(path, remapped.iter().map(|(t, docs)| (t, docs)))?,
+            None => persisted.save(path, self.trigram_index.lists())?,
+        }
 
         tracing::info!(
             path = %path.display(),
@@ -737,9 +750,8 @@ impl SearchEngine {
                 None,
                 "Restoring search index...",
             );
-            let trigram_map = persisted.restore_trigram_index()?;
-            let remapped =
-                Self::remap_trigram_bitmaps(trigram_map, &orig_to_new, persisted.files.len());
+            let lists = persisted.restore_posting_lists()?;
+            let remapped = Self::remap_trigram_bitmaps(lists, &orig_to_new, persisted.files.len());
             self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
             // The saved files are compacted: every id is a live file,
             // including any too short to have a trigram.

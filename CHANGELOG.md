@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Builds and large watcher batches up to twice as fast.**
+  Merging a batch into the index ran on one thread and was half of a
+  build's time; posting-list inserts were four fifths of that. The posting
+  lists are now split into 64 shards by trigram and each batch is merged
+  shard by shard in parallel. On 4 cores the 302,000-file real corpus
+  (Linux, LLVM, Rust, Kubernetes) builds in 211 s instead of 471 s, tokio +
+  Django in 5.6 s instead of 8.1 s, with the same index and the same
+  memory. The cost: searches on an index that was just built, not yet
+  reloaded, are about 5 to 11% slower (tokio + Django; up to 19% for one
+  query on the large corpus), because the posting lists are now allocated
+  across the allocator's per-thread arenas. With a single arena the
+  difference disappears.
 - **Less memory after a build or a load (Linux).** A build frees far more
   than the index it keeps (file contents, per-batch trigram sets, merge
   buffers), and the allocator held on to those pages, so resident memory

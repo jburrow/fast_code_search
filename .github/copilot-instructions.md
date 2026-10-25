@@ -65,7 +65,7 @@ File::open(path).with_context(|| format!("Failed to open: {}", path.display()))?
 Use `anyhow::Result` with context for all error propagation.
 
 ### Threading Model
-- **Indexing**: Single-threaded, I/O bound (memory-mapping)
+- **Indexing**: Parallel (rayon): files are read and parsed in parallel, and each batch's posting lists are merged by shard in parallel (`TrigramIndex::add_documents`)
 - **Search**: Parallel via rayon (CPU bound)
 - **Servers**: Tokio async runtime for gRPC/HTTP
 
