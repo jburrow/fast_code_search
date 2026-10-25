@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-8c4bd22b.js";
+            window.path_to_searchindex_js = "../searchindex-22c7f963.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -265,12 +265,31 @@ Django it is 78 MB against 44 MB. Posting lists built one insert at a time
 keep spare capacity (a list in one container costs 168 bytes instead of 42),
 and the estimates cannot see that spare capacity, which is why they cover
 only 64% there. A restart gives the memory back.</p>
-<p>Resident memory is higher again. It also holds memory the build freed but
-the allocator has not returned to the system, plus fragmentation. On tokio +
-Django, 26 MB of the 128 MB resident after a build went back to the system
-when the heap was trimmed. <code>corpus_bench</code> shows everything outside the
-estimates as “not estimated”.</p>
-<p><strong>Known limitation:</strong> the breakdown leaves out the allocator, thread stacks,
+<p>Resident memory is higher again. A build allocates and frees far more
+than the index it leaves behind (file contents, per-batch trigram sets,
+merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
+the server hands them back to the system once a build or a load is done
+(<code>malloc_trim</code>), outside the write lock:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Corpus</th><th>Resident before</th><th>After</th><th>Took</th></tr>
+</thead>
+<tbody>
+<tr><td>tokio + Django</td><td>135 MB</td><td>107 MB</td><td>8 ms</td></tr>
+<tr><td>Linux kernel</td><td>793 MB</td><td>709 MB</td><td>36 ms</td></tr>
+</tbody>
+</table>
+</div>
+<p>What is left above the live heap is fragmentation: freed memory that
+shares pages with live data. Compacting the posting lists after a build
+(reallocating each at its exact size) was tried. It did not lower resident
+memory and made finalize about 200 ms slower on tokio + Django, so it is
+not done. <code>corpus_bench</code> shows everything outside the estimates as “not
+estimated”.</p>
+<p><strong>Known limitation:</strong> on macOS, Windows and musl builds the freed memory
+is not handed back, so resident memory after a build stays higher there
+than after a restart. The breakdown leaves out the allocator, thread stacks,
 mapped content, the regex cache and spare capacity inside posting lists, so
 it reads low, most of all just after a build. Use it to see which part grew
 between two runs, not as an exact total.</p>
