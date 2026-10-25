@@ -816,6 +816,22 @@ pub fn batch_check_files(
 mod tests {
     use super::*;
 
+    /// The book's file-format page names the version and magic this code
+    /// writes (it said v7 for a release after v8 shipped).
+    #[test]
+    fn test_format_page_names_current_version() {
+        let page = include_str!("../../docs/book/src/reference/index-format.md");
+        let magic = std::str::from_utf8(INDEX_MAGIC).unwrap();
+        assert!(
+            page.contains(&format!(
+                "format **v{}**, magic\n`{magic}`",
+                PersistedIndex::CURRENT_VERSION
+            )),
+            "docs/book/src/reference/index-format.md must say format **v{}**, magic `{magic}`",
+            PersistedIndex::CURRENT_VERSION
+        );
+    }
+
     /// Roadmap 6.1: files written by earlier formats (older magic) are
     /// rejected up front with a clear message, never decoded.
     #[test]

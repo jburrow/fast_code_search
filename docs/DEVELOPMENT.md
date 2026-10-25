@@ -489,7 +489,7 @@ every place in the same PR, and say in the PR which you updated:
 
 | Fact | Where it appears |
 |---|---|
-| Benchmark numbers (build, memory, query p50/p95, Criterion) | `README.md` (Benchmarks), `docs/book/src/benchmarks/latest.md` (Last hand-checked run), `docs/book/src/benchmarks/comparison.md` (Results), `docs/site/index.html` (bench-stats) |
+| Benchmark numbers (build, memory, query p50/p95, scan-tool comparison) | Rendered, not typed: `scripts/docs/bench-tables.py` fills the `<!-- bench:... -->` blocks in `README.md`, `docs/book/src/benchmarks/latest.md`, `docs/book/src/benchmarks/comparison.md` and `docs/site/index.html` from `docs/bench/published.json`; the Lint job fails when a block is stale. Prose outside the blocks must not repeat a measured number |
 | Number of backtest queries | `README.md`, `docs/book/src/benchmarks/methodology.md` (count `[[query]]` in `benches/rg_backtest.toml`) |
 | Search limits and defaults | `docs/book/src/benchmarks/search-limits.md`, `docs/book/src/reference/config-template.md`, the server's `--init` template |
 | Divergences from grep, ripgrep and git grep | `docs/book/src/reference/matching.md` |
@@ -514,10 +514,13 @@ immutable, so a mistake means a new patch version, not an edit.
 - The published benchmark numbers are current. The README, the book's
   [latest results](book/src/benchmarks/latest.md) and
   [comparison](book/src/benchmarks/comparison.md) pages and the project site
-  (`docs/site/index.html`) repeat numbers from one named Benchmarks run. If
-  that run predates a change that moved them (any metric the A/B marked
-  slower or faster), refresh all four from the latest run on `main` in the
-  release PR. See [Docs that repeat numbers](#docs-that-repeat-numbers).
+  (`docs/site/index.html`) repeat numbers from one named Benchmarks run,
+  pinned in `docs/bench/published.json`. If that run predates a change that
+  moved them (any metric the A/B marked slower or faster), pin the latest
+  run on `main` in the release PR:
+  `scripts/docs/bench-tables.py --from-pages <commit>` copies that commit's
+  published results and re-renders all four. See
+  [Docs that repeat numbers](#docs-that-repeat-numbers).
 
 ### Steps to Release
 

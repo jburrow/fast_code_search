@@ -154,6 +154,9 @@ jobs:
           git diff --exit-code docs/book/src/reference || {
             echo "::error::docs/book/src/reference is stale: run scripts/docs/generate-reference.sh and commit"; exit 1; }
 
+      - name: Benchmark numbers in the docs match the pinned run
+        run: python3 scripts/docs/bench-tables.py --check
+
       - name: Run clippy (all targets and features)
         run: cargo clippy --all-targets --all-features -- -D warnings
 

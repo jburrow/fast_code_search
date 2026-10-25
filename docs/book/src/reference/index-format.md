@@ -1,6 +1,6 @@
 # Index file format
 
-The persisted index (`index_path`) is a single file, format **v7**, magic
+The persisted index (`index_path`) is a single file, format **v8**, magic
 `FCSIDX05`. Everything is little-endian.
 
 ```text
