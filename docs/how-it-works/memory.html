@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-c79c610c.js";
+            window.path_to_searchindex_js = "../searchindex-8c4bd22b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -201,6 +201,79 @@
 <p>Small files are read into owned buffers per access and dropped
 afterwards, so search traffic does not accumulate memory. The CI corpus
 (6,237 files, 38.9 MB) sits at about 120 MB resident after a build.</p>
+<h2 id="where-it-goes"><a class="header" href="#where-it-goes">Where it goes</a></h2>
+<p><code>/api/diagnostics</code> reports the index’s estimated heap per structure under
+<code>index.memory</code>, largest first, next to the process’s resident memory
+(<code>index.resident_bytes</code>, Linux only). <code>corpus_bench</code> prints the same
+breakdown after a build, and the <a href="../benchmarks/scoreboard.html">scale scoreboard</a>
+records it per scenario.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Part</th><th>What it holds</th></tr>
+</thead>
+<tbody>
+<tr><td><code>postings</code></td><td>trigram posting lists (Roaring bitmaps) and their table</td></tr>
+<tr><td><code>references</code></td><td>symbol references and their interned names</td></tr>
+<tr><td><code>symbols</code></td><td>symbol definitions</td></tr>
+<tr><td><code>imports</code></td><td>imports as written, and those still waiting for a file to resolve to</td></tr>
+<tr><td><code>graph_paths</code></td><td>path tables the import resolver looks paths up in</td></tr>
+<tr><td><code>graph_edges</code></td><td>dependency edges and dependent counts</td></tr>
+<tr><td><code>file_table</code></td><td>indexed paths and the path lookup</td></tr>
+<tr><td><code>file_metadata</code></td><td>ranking metadata and display paths</td></tr>
+<tr><td><code>dir_index</code></td><td>files by folder, for the watcher</td></tr>
+</tbody>
+</table>
+</div>
+<p>The figures are estimates from lengths and capacities, not allocator
+measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
+honest: it counts every allocation and fails if the estimates for a loaded
+index fall outside 75% to 105% of the heap it really holds (they are 89%).
+Checked the same way on public code:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th></tr>
+</thead>
+<tbody>
+<tr><td>tokio + Django (6,300 files)</td><td>just built</td><td>78.3 MB</td><td>50.3 MB (64%)</td></tr>
+<tr><td>tokio + Django</td><td>loaded from disk</td><td>44.0 MB</td><td>40.2 MB (91%)</td></tr>
+<tr><td>Linux kernel (85,500 files, 1.23 GB)</td><td>just built</td><td>593.8 MB</td><td>551.6 MB (93%)</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>458.1 MB</td><td>448.8 MB (98%)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Linux kernel, loaded from disk:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Part</th><th>Estimated</th></tr>
+</thead>
+<tbody>
+<tr><td>symbols</td><td>207.3 MB</td></tr>
+<tr><td>postings</td><td>172.3 MB</td></tr>
+<tr><td>graph_paths</td><td>37.5 MB</td></tr>
+<tr><td>file_metadata</td><td>14.0 MB</td></tr>
+<tr><td>file_table</td><td>12.7 MB</td></tr>
+<tr><td>references</td><td>3.2 MB</td></tr>
+<tr><td>everything else</td><td>1.8 MB</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>A just-built index holds more than the same index loaded.</strong> On tokio +
+Django it is 78 MB against 44 MB. Posting lists built one insert at a time
+keep spare capacity (a list in one container costs 168 bytes instead of 42),
+and the estimates cannot see that spare capacity, which is why they cover
+only 64% there. A restart gives the memory back.</p>
+<p>Resident memory is higher again. It also holds memory the build freed but
+the allocator has not returned to the system, plus fragmentation. On tokio +
+Django, 26 MB of the 128 MB resident after a build went back to the system
+when the heap was trimmed. <code>corpus_bench</code> shows everything outside the
+estimates as “not estimated”.</p>
+<p><strong>Known limitation:</strong> the breakdown leaves out the allocator, thread stacks,
+mapped content, the regex cache and spare capacity inside posting lists, so
+it reads low, most of all just after a build. Use it to see which part grew
+between two runs, not as an exact total.</p>
 <h2 id="limits-that-protect-the-server"><a class="header" href="#limits-that-protect-the-server">Limits that protect the server</a></h2>
 <div class="table-wrapper">
 <table>

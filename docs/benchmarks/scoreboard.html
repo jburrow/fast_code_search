@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-c79c610c.js";
+            window.path_to_searchindex_js = "../searchindex-8c4bd22b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -239,6 +239,7 @@ finished (see <a href="#known-gaps">Known gaps</a>).</p>
 <tr><td><code>max_pending</code></td><td>The largest backlog the server reported (sampled every second; the JSON has the curve)</td><td>reported</td></tr>
 <tr><td><code>rescans</code></td><td>“The watched paths will be rescanned” in the server log</td><td>reported</td></tr>
 <tr><td><code>peak_rss_mb</code>, <code>cpu_secs</code></td><td>The server process’s peak memory and CPU time (Linux)</td><td>memory per scenario</td></tr>
+<tr><td><code>memory_mb</code></td><td>The index’s <a href="../how-it-works/memory.html#where-it-goes">estimated heap by structure</a> at the end of the scenario, largest first, so a memory change names the part that grew</td><td>reported</td></tr>
 <tr><td><code>captures</code>, <code>stall_captures</code></td><td><a href="../guides/diagnostic-captures.html">Diagnostic captures</a> written; the second leaves out <code>slow_search</code>, which an overloaded CPU alone can cause</td><td>stalls 0</td></tr>
 <tr><td><code>crashes</code></td><td>The server exited before it was told to stop</td><td>0</td></tr>
 <tr><td><code>check_problems</code></td><td>What <code>GET /api/check?all=true</code> finds once the index has settled: invariants, every file’s content, the file set against a fresh walk</td><td>0</td></tr>
