@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4d74412e.js";
+            window.path_to_searchindex_js = "../searchindex-c79c610c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -234,6 +234,8 @@ the output says so.</p>
 <tr><td><code>discovery.missing</code></td><td>On disk and indexable, not in the index</td></tr>
 <tr><td><code>discovery.extra</code></td><td>In the index, but gone or excluded now (an ignore rule, an exclude pattern)</td></tr>
 <tr><td><code>*.unreadable</code></td><td>Can’t be read (reported, not counted as a problem)</td></tr>
+<tr><td><code>folders: N could not be read</code></td><td>Folders the last scan could not list, so their files are not indexed (reported, not counted as a problem; <code>--show-paths</code> names them)</td></tr>
+<tr><td><code>folders: N could not be watched</code></td><td>Folders the file watcher could not watch (reported, not counted)</td></tr>
 <tr><td><code>invariants.*</code></td><td>The index disagrees with itself: a bug, please report it</td></tr>
 </tbody>
 </table>

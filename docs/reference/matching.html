@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4d74412e.js";
+            window.path_to_searchindex_js = "../searchindex-c79c610c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -343,6 +343,12 @@ a virus scanner), then leaves it out of the index and says so with every
 search (“1 file could not be read and is left out of the index”); the
 server log names it, and it is indexed again when it next changes and
 can be read.</li>
+<li><strong>Folders that can’t be read.</strong> ripgrep prints an error for a folder it
+cannot list and searches the rest; fcs does the same, and also counts
+the folder with every search (“1 folder could not be read, so the files
+in it are missing from the index”). The server log names it. The count
+clears at the next scan that can read it: a restart, a rescan after lost
+events, or the folder being renamed or created again.</li>
 </ul>
 <h2 id="known-differences"><a class="header" href="#known-differences">Known differences</a></h2>
 <p>None at the moment. A known difference would be listed here, and marked
