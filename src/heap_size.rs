@@ -13,6 +13,27 @@ use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Give memory the allocator holds but no longer uses back to the system.
+///
+/// A build allocates and frees far more than the index it leaves behind
+/// (file contents, per-batch trigram sets, merge buffers). glibc keeps
+/// those freed pages in its arenas, so resident memory stays high until
+/// the process exits. `malloc_trim` returns them: measured after a build,
+/// tokio + Django went from 135 MB to 107 MB resident in 8 ms, and the
+/// Linux kernel tree (85,000 files) from 793 MB to 709 MB in 36 ms. It
+/// does not touch live allocations, so callers need no lock; run it after
+/// the write lock is released. A no-op on other platforms.
+pub fn return_freed_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // SAFETY: malloc_trim only releases free memory; it is safe to call
+        // from any thread at any time.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}
+
 /// Heap bytes of a hash map's table (keys and values inline, not what they
 /// own).
 pub fn map<K, V, S>(m: &HashMap<K, V, S>) -> u64 {

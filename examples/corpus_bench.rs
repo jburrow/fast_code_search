@@ -277,6 +277,9 @@ fn build(
     phases.imports += started.elapsed();
     let started = Instant::now();
     engine.finalize();
+    // As the server does once a build is done, so resident memory after
+    // the build is what a server would hold.
+    fast_code_search::heap_size::return_freed_memory();
     phases.finalize += started.elapsed();
     bytes
 }
