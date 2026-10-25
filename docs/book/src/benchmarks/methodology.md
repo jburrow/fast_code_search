@@ -1,19 +1,55 @@
 # Benchmark methodology
 
 Every number this project publishes comes from a run you can open, on a
-machine whose specification is recorded with the result. Three tiers:
+machine whose specification is recorded with the result. Four tiers:
 
 | Tier | Corpus | What it measures | Where it runs |
 |---|---|---|---|
-| Synthetic (Criterion) | generated Rust-like source, 50 lines per file, 50–1,000 files | the query path in isolation: text, regex, filters, paging; index build; save and load | every push to `main` |
+| Instruction counts | tokio + Django (below), under callgrind | instructions per operation: build, each query, incremental update, save, load; fails on 3% more than the last passing push | every push to `main` |
+| Synthetic (Criterion) | generated Rust-like source, 50 lines per file, 50–1,000 files | the query path in isolation: text, regex, filters, paging; index build; save and load | locally (`cargo bench`); in CI until October 2026 |
 | Real corpus | [tokio 1.45.0](https://github.com/tokio-rs/tokio/tree/tokio-1.45.0) + [Django 5.2](https://github.com/django/django/tree/5.2): 6,237 files, 38.9 MB | full build, resident memory, save and load, p50/p95 per query kind, incremental update | every push to `main` |
 | Large corpus | [rust-lang/rust 1.89.0](https://github.com/rust-lang/rust/tree/1.89.0) | file count, throughput, memory at scale | nightly |
 
 Runs live in the
 [Benchmarks workflow](https://github.com/jburrow/fast_code_search/actions/workflows/benchmark.yml);
-the synthetic tier is charted per commit at
+the real-corpus tier is charted per commit at
 [dev/bench](https://jburrow.github.io/fast_code_search/dev/bench/) by
-github-action-benchmark, which fails the run on a regression beyond 2×.
+github-action-benchmark.
+
+## Instruction counts
+
+Wall time on a shared runner moves by tens of percent between days, so a
+5% slowdown hides in it. An instruction count barely moves: the same
+binary on the same tree executes the same instructions on any x86 runner.
+`scripts/bench/icount.sh` runs `corpus_bench --icount` under callgrind,
+which counts every thread's instructions between two marker calls around
+each operation, and compares the counts with the last ones a passing push
+published (`dev/bench/results/icount.json` on the site). An operation over
+3% more fails the run, and main-health opens a `main-red` issue.
+
+Counts are published only from a passing run, so a failure stays red until
+the added work is removed or accepted. Accepting is a decision, named in
+the squash commit message of the change that adds it:
+
+```text
+Accept-instructions: index_build, text/common
+```
+
+(`all` accepts every operation.) The workflow passes those names to
+`icount.sh --accept`, the run passes, and its counts become the new base.
+
+What counts do not see: cache misses, memory bandwidth, I/O, lock waits and
+how well work spreads over cores. A change that makes code faster by doing
+the same work in parallel (B2 did) shows no gain here, and one that makes it
+slower by contention shows no loss. The same-machine A/B (`scripts/bench/ab.sh`)
+stays the measure a PR quotes; counts catch added work between A/Bs.
+Counts are taken with one rayon thread, which counts the same work
+without the cost of spreading it, and each query is counted five times
+(median). Run-to-run noise on one commit, measured on 2026-10-25 over eight
+runs: 0.5% or less for every operation except symbol/exact and
+symbol/prefix, which moved by up to 4.2% for a reason not yet found; those
+two fail only at 10%. A run takes about 17 minutes on 4 cores, about 7 more
+than the Criterion suites it replaced.
 
 ## How queries are timed
 
@@ -39,6 +75,7 @@ labelled as such wherever they appear.
 
 ```bash
 cargo run --release --example corpus_bench -- path/to/repo [more paths] --label mine
+scripts/bench/icount.sh                     # instruction counts (needs valgrind, ~16 min)
 cargo bench                                 # synthetic tier
 cargo bench --bench search_benchmark        # search only
 ```
@@ -52,7 +89,8 @@ The [trend page](../../dev/bench/) charts every measurement per commit to
 `main`. Each chart is a cost, so lower is better; the vertical axis is time
 per operation in the unit that fits the chart (or bytes for memory). The
 shaded band is that run's spread: median to 95th percentile for the
-real-corpus rows, Criterion's reported deviation for the synthetic rows. A
+real-corpus rows (Criterion's reported deviation for the synthetic rows
+recorded before October 2026). A
 step on every chart at the same commit is a change of runner, not of code.
 Each chart carries a sentence saying what it measures and what would move
 it.

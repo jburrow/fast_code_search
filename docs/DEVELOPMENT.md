@@ -426,9 +426,14 @@ ms_print massif.out.<pid>
 ### Benchmarking
 
 Criterion benchmarks live in `benches/` (`search_benchmark.rs`,
-`persistence_benchmark.rs`) and run in CI on every push to `main`, with trends
-published to GitHub Pages. They use a small synthetic corpus, so they measure
-fixed overhead well and large-corpus behaviour poorly (roadmap 6.5).
+`persistence_benchmark.rs`) for local use. They use a small synthetic corpus,
+so they measure fixed overhead well and large-corpus behaviour poorly
+(roadmap 6.5). CI no longer runs them: on every push to `main` the Benchmarks
+workflow counts instructions per operation instead (`scripts/bench/icount.sh`,
+needs valgrind) and fails on 3% more than the last passing push. If a change
+adds instructions on purpose, say so in the squash commit message with a line
+`Accept-instructions: <operation>, ...` (or `all`); see the book's
+benchmark methodology page.
 
 ```bash
 cargo bench --bench search_benchmark -- indexing

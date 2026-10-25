@@ -238,7 +238,7 @@
 <section class="section section-alt" id="benchmarks">
   <div class="container">
     <h2 class="section-title">Performance Benchmarks</h2>
-    <p class="section-subtitle">Criterion benchmarks tracked over time — historical trend data powered by <a href="https://github.com/benchmark-action/github-action-benchmark" target="_blank" rel="noopener">github-action-benchmark</a></p>
+    <p class="section-subtitle">Real-corpus benchmarks on every push to main, with an instruction-count gate — trend data powered by <a href="https://github.com/benchmark-action/github-action-benchmark" target="_blank" rel="noopener">github-action-benchmark</a></p>
 
     <div class="bench-stats">
       <div class="bench-stat">
@@ -263,12 +263,12 @@
 
     <div class="bench-suites">
       <div class="bench-suite-card">
-        <h4>search_benchmark</h4>
-        <p>Text search, regex search, filtered search across synthetic and real corpora. Measures throughput and latency percentiles.</p>
+        <h4>Real corpus</h4>
+        <p>tokio + Django indexed from scratch: build, memory, save and load, p50 and p95 for every query kind, incremental update.</p>
       </div>
       <div class="bench-suite-card">
-        <h4>persistence_benchmark</h4>
-        <p>Save/load index, trigram deserialization, file staleness checks. Validates startup time at scale.</p>
+        <h4>Instruction counts</h4>
+        <p>The same operations under callgrind. A push that adds more than 3% instructions to any of them fails the run.</p>
       </div>
       <div class="bench-suite-card">
         <h4>Validator (functional)</h4>
