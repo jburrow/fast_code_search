@@ -283,6 +283,22 @@ impl TrigramIndex {
         self.all_docs = docs;
     }
 
+    /// Every posting list, in no particular order. A list may be decoded
+    /// on the way (`Cow::Owned`) once posting lists can live in the saved
+    /// file instead of on the heap; callers must not assume a borrow.
+    pub fn postings(&self) -> impl Iterator<Item = (Trigram, std::borrow::Cow<'_, RoaringBitmap>)> {
+        self.trigram_to_docs
+            .iter()
+            .map(|(t, docs)| (*t, std::borrow::Cow::Borrowed(docs)))
+    }
+
+    /// Whether `trigram`'s posting list names `doc_id`.
+    pub fn contains(&self, trigram: &Trigram, doc_id: u32) -> bool {
+        self.trigram_to_docs
+            .get(trigram)
+            .is_some_and(|docs| docs.contains(doc_id))
+    }
+
     /// Get a reference to the internal trigram-to-docs map for persistence
     pub fn get_trigram_map(&self) -> &FxHashMap<Trigram, RoaringBitmap> {
         &self.trigram_to_docs

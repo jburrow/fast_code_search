@@ -62,6 +62,10 @@ struct Args {
     /// ran on) to this JSON file.
     #[arg(long)]
     json: Option<PathBuf>,
+    /// Save the built index here as well (for tools that read a saved
+    /// index, such as `examples/posting_decode.rs`).
+    #[arg(long)]
+    keep_index: Option<PathBuf>,
 }
 
 /// The machine a result was produced on. Every published number carries
@@ -447,6 +451,9 @@ fn main() -> Result<()> {
     let index_path = tmp.path().join("index.bin");
     let (_, save_took) = timed(|| engine.save_index(&index_path, &config));
     let index_bytes = std::fs::metadata(&index_path).map(|m| m.len()).unwrap_or(0);
+    if let Some(keep) = &args.keep_index {
+        std::fs::copy(&index_path, keep).with_context(|| format!("writing {}", keep.display()))?;
+    }
     let (_, load_took) = timed(|| {
         let mut fresh = SearchEngine::new();
         fresh.load_index_with_reconciliation(&index_path, &config)
