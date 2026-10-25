@@ -114,7 +114,7 @@
       <div class="feature-card">
         <div class="feature-icon">🚀</div>
         <h4>Milliseconds, from memory</h4>
-        <p>The index stays hot in RAM, so a query never waits on disk: about 1 ms at the median over tokio + Django in CI, and microseconds when nothing matches.</p>
+        <p>The index stays hot in RAM, so a query never waits on disk: a few milliseconds for an identifier over tokio + Django in CI, tens of milliseconds for a common word that has thousands of matches to rank, and microseconds when nothing matches.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">📦</div>
@@ -242,23 +242,23 @@
 
     <div class="bench-stats">
       <div class="bench-stat">
-        <div class="bench-stat-value">0.95 ms</div>
-        <div class="bench-stat-label">p50 text search, tokio + Django (6,237 files)</div>
+        <div class="bench-stat-value">7.8 ms</div>
+        <div class="bench-stat-label">p50 identifier search, ranked, tokio + Django (6,268 files)</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">1,460 files/s</div>
+        <div class="bench-stat-value">1,132 files/s</div>
         <div class="bench-stat-label">Index build, symbols included</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">118 MB</div>
-        <div class="bench-stat-label">Resident for 38.9 MB of source</div>
+        <div class="bench-stat-value">137 MB</div>
+        <div class="bench-stat-label">Resident for 41.4 MB of source</div>
       </div>
       <div class="bench-stat">
         <div class="bench-stat-value">12</div>
         <div class="bench-stat-label">Languages with symbol ranking</div>
       </div>
     </div>
-    <p class="section-subtitle">From <a href="https://github.com/jburrow/fast_code_search/actions/runs/34254363545">benchmark run 34254363545</a> (commit f46e7bf, GitHub-hosted ubuntu-latest); the <a href="https://github.com/jburrow/fast_code_search/blob/main/README.md#benchmarks">README</a> carries the full table.</p>
+    <p class="section-subtitle">From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">benchmark run 40113519420</a> (commit 140425f, v0.19.0, GitHub-hosted ubuntu-latest). A common word takes 24.6 ms because fcs ranks up to 32,768 matches before returning page one; the <a href="https://github.com/jburrow/fast_code_search/blob/main/README.md#benchmarks">README</a> carries the full table.</p>
     </div>
 
     <div class="bench-suites">

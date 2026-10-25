@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-ae576244.js";
+            window.path_to_searchindex_js = "../searchindex-4d74412e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -213,47 +213,35 @@ its build has finished. Build time is not in the table; it is on the
 NTFS drive the same ripgrep query took about one second instead of
 forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
-<h2 id="results-on-a-laptop"><a class="header" href="#results-on-a-laptop">Results on a laptop</a></h2>
-<p>11th Gen Intel Core i5-1135G7, 8 logical CPUs, ext4 on NVMe, ripgrep
-15.0.0. ugrep was not installed on this machine; the CI run has it.</p>
-<p><strong>tokio 1.45.0 + Django 5.2</strong> — 6,240 files.</p>
+<h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
+on commit <code>140425f</code> (v0.19.0, 2026-10-24): GitHub-hosted <code>ubuntu-latest</code>,
+AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
+<p><strong>tokio 1.45.0 + Django 5.2</strong>, 7,601 files.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
+<tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>40.1 ms</td><td>10.4 ms</td><td>0.90 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>33.0 ms</td><td>11.7 ms</td><td>1.03 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>30.4 ms</td><td>7.5 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>31.7 ms</td><td>10.5 ms</td><td>1.51 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>37.5 ms</td><td>10.1 ms</td><td>1.17 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>45.5 ms</td><td>9.6 ms</td><td>1.11 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>31.2 ms</td><td>9.3 ms</td><td>0.76 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>69.6 ms</td><td>87.1 ms</td><td>31.2 ms</td><td>30.17 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>59.9 ms</td><td>84.2 ms</td><td>13.4 ms</td><td>10.23 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>56.0 ms</td><td>84.1 ms</td><td>5.2 ms</td><td>0.02 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>56.7 ms</td><td>87.6 ms</td><td>7.8 ms</td><td>2.78 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>64.7 ms</td><td>115.9 ms</td><td>30.7 ms</td><td>30.36 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>80.7 ms</td><td>130.3 ms</td><td>43.6 ms</td><td>43.55 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>58.1 ms</td><td>87.7 ms</td><td>9.4 ms</td><td>4.76 ms</td></tr>
 </tbody>
 </table>
 </div>
-<p><strong>54 crates from the cargo registry</strong> — 11,451 files, 268 MB on disk.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
-</thead>
-<tbody>
-<tr><td>common word <code>return</code></td><td>58.6 ms</td><td>16.5 ms</td><td>1.08 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>49.0 ms</td><td>9.3 ms</td><td>1.14 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>39.1 ms</td><td>7.3 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>42.0 ms</td><td>13.3 ms</td><td>3.66 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>138.9 ms</td><td>13.3 ms</td><td>1.40 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>92.7 ms</td><td>14.5 ms</td><td>2.63 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>47.2 ms</td><td>9.9 ms</td><td>0.96 ms</td></tr>
-</tbody>
-</table>
-</div>
+<p>The <a href="latest.html">latest results</a> page shows the newest run. Hand-run laptop
+tables from before v0.17.0 used to sit here, with the engine near 1 ms on
+every row. They were removed because v0.17.0 deliberately made queries with
+many matches slower (see below), so they no longer describe fcs.</p>
 <h2 id="reading-the-numbers"><a class="header" href="#reading-the-numbers">Reading the numbers</a></h2>
 <ul>
-<li><strong>ripgrep is fast.</strong> Thirty-odd milliseconds for a full scan of six
-thousand files is remarkable, and for a one-off search from a shell it
+<li><strong>ripgrep is fast.</strong> Sixty-odd milliseconds on a 4-vCPU runner for a
+full scan of seven thousand files is remarkable, and for a one-off search from a shell it
 is the right tool. Nothing here argues otherwise.</li>
 <li><strong>ugrep is in the CI run.</strong> On the GitHub runner (4 vCPUs) the first
 two runs put ugrep at 6 ms against ripgrep’s 60 ms on every query that
@@ -262,20 +250,25 @@ had a match, and at 84 ms on the one that had none. That was ugrep’s
 <a href="latest.html">latest results</a> page shows the corrected run. It is a good
 reminder of why the script and the raw JSON are published with the
 numbers.</li>
-<li><strong>The engine’s time does not grow with the tree.</strong> Between the two
-trees ripgrep’s cost doubles to quadruples on the regex rows because it
-reads more bytes and prints more lines; the engine stays near a
-millisecond because the trigram index narrows every query to the few
-files that can match before any text is read, and it prints fifty. On a
-tree ten times larger the scan takes ten times longer and the index
-does not.</li>
+<li><strong>The engine’s time follows the matches, not the tree.</strong> The trigram
+index narrows every query to the files that can match before any text
+is read, so a rare identifier costs microseconds however large the tree
+is. A word that matches thousands of lines costs tens of milliseconds,
+because fcs reads and ranks up to 32,768 matches (the match budget)
+before it returns the best fifty. Before v0.17.0 the budget was 512 and
+those rows took about a millisecond, but page one held only 10% of the
+exhaustive top 50 instead of 81%; see
+<a href="search-limits.html">search limits</a>. A scan tool’s time grows with every
+byte in the tree; the engine’s stops growing at the budget.</li>
 <li><strong>A query per keystroke changes the arithmetic.</strong> An editor or web UI
 that searches as you type issues ten queries for a ten-letter
-identifier. Forty milliseconds each is a visible stutter; one
-millisecond each is not. This, and not the single-query gap, is why the
+identifier. As the identifier gets longer it matches fewer lines, so
+later keystrokes cost a few milliseconds or less, while a scan pays the
+full read every time. This, and not the single-query gap, is why the
 project is a server.</li>
-<li><strong>The <code>fcs</code> client column is mostly process start.</strong> Seven of its eight
-milliseconds are the OS starting a process and one HTTP request. A
+<li><strong>The <code>fcs</code> client column is mostly process start.</strong> About five
+milliseconds of each row are the OS starting a process and one HTTP
+request. A
 client that keeps a connection, such as the web UI or an editor
 extension, sees the engine column.</li>
 <li><strong>Scan tools do not rank.</strong> Both tools return matching lines; only one

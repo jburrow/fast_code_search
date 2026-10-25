@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-ae576244.js";
+            window.path_to_searchindex_js = "../searchindex-4d74412e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -256,6 +256,29 @@ once, that is about 480 MB.</p>
 <p><strong>Defaults:</strong> <code>min_match_budget = 32768</code>, <code>match_budget_multiplier = 8</code>
 (which only matters for pages ending past 4,096), <code>max_match_budget = 100000</code>. The rest of the huge-query gap is the per-file cap (below) and
 files with thousands of hits each.</p>
+<p><strong>What it costs on a small repository.</strong> The sweep above was measured on a
+large corpus. On tokio 1.45.0 + Django 5.2 (about 6,300 files), the same
+machine ran <code>examples/corpus_bench</code> at v0.16.2 (budget 512) and v0.17.0
+(budget 32,768):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>v0.16.2 p50</th><th>v0.17.0 p50</th></tr>
+</thead>
+<tbody>
+<tr><td>text, common word</td><td>4.7 to 5.5 ms</td><td>54 to 60 ms</td></tr>
+<tr><td>text, two characters</td><td>4.1 to 4.5 ms</td><td>45 to 47 ms</td></tr>
+<tr><td>regex, no literal</td><td>3.0 to 3.6 ms</td><td>100 to 108 ms</td></tr>
+</tbody>
+</table>
+</div>
+<p>That is about ten times slower for common words and thirty times for a
+regex with no literal, and index builds did not change. It buys the
+quality above: page 1 holds the best hits instead of the first ones found.
+It was not named in the 0.17.0 changelog; the
+<a href="../imported/changelog.html">changelog</a> now records it. Queries with few
+matches (identifiers, rare words) did not change. Whether the budget can
+be made cheaper when a repository has few files is an open question.</p>
 <h2 id="reading-order"><a class="header" href="#reading-order">Reading order</a></h2>
 <p>Before 0.17, <code>rank=full</code>, which was auto’s choice below 5,000 candidates,
 read files in the order they were discovered on disk. At the same budget

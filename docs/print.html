@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-ae576244.js";
+            window.path_to_searchindex_js = "searchindex-4d74412e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5234,7 +5234,7 @@ cargo run --release --example ranking_quality -- … --explain 'struct Runtime' 
 </code></pre>
 <h2 id="correctness-against-ripgrep"><a class="header" href="#correctness-against-ripgrep">Correctness against ripgrep</a></h2>
 <p>Fast and well ranked is worthless if a match is missing. A backtest runs
-124 searches through fcs and through ripgrep on the same trees and fails on
+143 searches through fcs and through ripgrep on the same trees and fails on
 any line one finds and the other does not; see <a href="#correctness-against-ripgrep-1">Correctness against
 ripgrep</a> for how it works and how to extend it.</p>
 <h2 id="comparison-with-scan-tools"><a class="header" href="#comparison-with-scan-tools">Comparison with scan tools</a></h2>
@@ -5281,25 +5281,31 @@ large the tree is, and ranks. Results are on the
 })();
 </script>
 <h2 id="last-hand-checked-run"><a class="header" href="#last-hand-checked-run">Last hand-checked run</a></h2>
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/34254363545">run 34254363545</a>
-on commit <code>f46e7bf</code> (2026-09-08), GitHub-hosted <code>ubuntu-latest</code>. The
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
+on commit <code>140425f</code> (v0.19.0, 2026-10-24), GitHub-hosted <code>ubuntu-latest</code>
+(AMD EPYC 7763, 4 vCPU, Ubuntu 24.04). The
 <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
-same table; the per-commit trend is at
+same numbers; the per-commit trend is at
 <a href="https://jburrow.github.io/fast_code_search/dev/bench/">dev/bench</a>.</p>
+<p>Text and regex queries that match often take tens of milliseconds because
+fcs ranks up to 32,768 matches before it returns page one. Before v0.17.0 it
+ranked 512, and the same queries took about 1 ms but page one held only 10%
+of the exhaustive top 50 (81% now). <a href="#search-limits">Search limits</a> has the
+measurements and the cost on small repositories.</p>
 <h2 id="real-corpus-tokio-1450--django-52"><a class="header" href="#real-corpus-tokio-1450--django-52">Real corpus: tokio 1.45.0 + Django 5.2</a></h2>
-<p>6,237 files, 38.9 MB of text, 134k distinct trigrams, 242k symbol
-references, 5.9k dependency edges.</p>
+<p>6,268 files, 41.4 MB of text, 136k distinct trigrams, 385k symbol
+references, 9.8k dependency edges.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Build</th><th>Value</th></tr>
 </thead>
 <tbody>
-<tr><td>Discovery</td><td>130 ms</td></tr>
-<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.26 s — 1,464 files/s, 9.1 MB/s</td></tr>
-<tr><td>Resident memory after build</td><td>118 MB (process before build: 8 MB)</td></tr>
-<tr><td>Index save</td><td>201 ms (21.5 MB on disk)</td></tr>
-<tr><td>Index load, reconciling</td><td>255 ms</td></tr>
+<tr><td>Discovery</td><td>135 ms</td></tr>
+<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>5.54 s, 1,132 files/s, 7.5 MB/s</td></tr>
+<tr><td>Resident memory after build</td><td>137 MB (process before build: 9 MB)</td></tr>
+<tr><td>Index save</td><td>188 ms (24.6 MB on disk)</td></tr>
+<tr><td>Index load, reconciling</td><td>306 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5309,22 +5315,23 @@ references, 5.9k dependency edges.</p>
 <tr><th>Query</th><th>p50</th><th>p95</th></tr>
 </thead>
 <tbody>
-<tr><td>text, common word</td><td>0.95 ms</td><td>1.03 ms</td></tr>
-<tr><td>text, identifier</td><td>1.52 ms</td><td>1.64 ms</td></tr>
-<tr><td>text, no match</td><td>1 µs</td><td>1 µs</td></tr>
-<tr><td>text, short (two characters)</td><td>1.40 ms</td><td>1.46 ms</td></tr>
-<tr><td>text, full ranking</td><td>0.94 ms</td><td>1.04 ms</td></tr>
-<tr><td>text, path-filtered</td><td>1.02 ms</td><td>1.08 ms</td></tr>
-<tr><td>regex with literal</td><td>1.37 ms</td><td>1.50 ms</td></tr>
-<tr><td>regex, case-insensitive</td><td>0.72 ms</td><td>0.80 ms</td></tr>
-<tr><td>regex, no literal (full scan)</td><td>1.72 ms</td><td>1.91 ms</td></tr>
-<tr><td>symbol, exact</td><td>3.66 ms</td><td>4.32 ms</td></tr>
-<tr><td>symbol, prefix</td><td>4.01 ms</td><td>4.35 ms</td></tr>
-<tr><td>references</td><td>0.67 ms</td><td>1.00 ms</td></tr>
-<tr><td>incremental: modify one file</td><td>10.1 ms</td><td>14.0 ms</td></tr>
+<tr><td>text, common word</td><td>24.6 ms</td><td>25.4 ms</td></tr>
+<tr><td>text, identifier</td><td>7.80 ms</td><td>8.16 ms</td></tr>
+<tr><td>text, no match</td><td>0.6 µs</td><td>0.7 µs</td></tr>
+<tr><td>text, short (two characters)</td><td>28.9 ms</td><td>29.7 ms</td></tr>
+<tr><td>text, full ranking</td><td>24.6 ms</td><td>25.6 ms</td></tr>
+<tr><td>text, path-filtered</td><td>10.8 ms</td><td>11.6 ms</td></tr>
+<tr><td>regex with literal</td><td>24.4 ms</td><td>25.3 ms</td></tr>
+<tr><td>regex, case-insensitive</td><td>3.08 ms</td><td>3.26 ms</td></tr>
+<tr><td>regex, no literal (full scan)</td><td>37.6 ms</td><td>38.9 ms</td></tr>
+<tr><td>symbol, exact</td><td>6.85 ms</td><td>7.70 ms</td></tr>
+<tr><td>symbol, prefix</td><td>4.48 ms</td><td>4.88 ms</td></tr>
+<tr><td>references</td><td>2.22 ms</td><td>2.34 ms</td></tr>
+<tr><td>incremental: modify one file</td><td>6.4 ms</td><td>49.7 ms</td></tr>
 </tbody>
 </table>
 </div>
+<p>Ranking quality in the same run: precision@1 1.00, precision@5 1.00.</p>
 <h2 id="synthetic-criterion-same-run"><a class="header" href="#synthetic-criterion-same-run">Synthetic (Criterion), same run</a></h2>
 <div class="table-wrapper">
 <table>
@@ -5332,14 +5339,14 @@ references, 5.9k dependency edges.</p>
 <tr><th>Benchmark</th><th>Corpus</th><th>Mean</th></tr>
 </thead>
 <tbody>
-<tr><td>text search, common query</td><td>100 files</td><td>0.39 ms</td></tr>
-<tr><td>text search, rare query</td><td>100 files</td><td>27 µs</td></tr>
+<tr><td>text search, common query</td><td>100 files</td><td>0.78 ms</td></tr>
+<tr><td>text search, rare query</td><td>100 files</td><td>8.5 µs</td></tr>
 <tr><td>text search, no match</td><td>100 files</td><td>0.45 µs</td></tr>
-<tr><td>regex, literal</td><td>100 files</td><td>0.49 ms</td></tr>
-<tr><td>regex, alternation</td><td>100 files</td><td>0.52 ms</td></tr>
-<tr><td>regex, no literal</td><td>100 files</td><td>0.71 ms</td></tr>
-<tr><td>index build</td><td>100 files</td><td>53 ms</td></tr>
-<tr><td>index save / load</td><td>1,000 files</td><td>7.9 ms / 9.2 ms</td></tr>
+<tr><td>regex, literal</td><td>100 files</td><td>0.54 ms</td></tr>
+<tr><td>regex, alternation</td><td>100 files</td><td>0.73 ms</td></tr>
+<tr><td>regex, no literal</td><td>100 files</td><td>0.69 ms</td></tr>
+<tr><td>index build</td><td>100 files</td><td>62 ms</td></tr>
+<tr><td>index save / load</td><td>1,000 files</td><td>8.3 ms / 5.5 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5378,47 +5385,35 @@ its build has finished. Build time is not in the table; it is on the
 NTFS drive the same ripgrep query took about one second instead of
 forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
-<h2 id="results-on-a-laptop"><a class="header" href="#results-on-a-laptop">Results on a laptop</a></h2>
-<p>11th Gen Intel Core i5-1135G7, 8 logical CPUs, ext4 on NVMe, ripgrep
-15.0.0. ugrep was not installed on this machine; the CI run has it.</p>
-<p><strong>tokio 1.45.0 + Django 5.2</strong> — 6,240 files.</p>
+<h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
+on commit <code>140425f</code> (v0.19.0, 2026-10-24): GitHub-hosted <code>ubuntu-latest</code>,
+AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
+<p><strong>tokio 1.45.0 + Django 5.2</strong>, 7,601 files.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
+<tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>40.1 ms</td><td>10.4 ms</td><td>0.90 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>33.0 ms</td><td>11.7 ms</td><td>1.03 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>30.4 ms</td><td>7.5 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>31.7 ms</td><td>10.5 ms</td><td>1.51 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>37.5 ms</td><td>10.1 ms</td><td>1.17 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>45.5 ms</td><td>9.6 ms</td><td>1.11 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>31.2 ms</td><td>9.3 ms</td><td>0.76 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>69.6 ms</td><td>87.1 ms</td><td>31.2 ms</td><td>30.17 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>59.9 ms</td><td>84.2 ms</td><td>13.4 ms</td><td>10.23 ms</td></tr>
+<tr><td>rare identifier (no match)</td><td>56.0 ms</td><td>84.1 ms</td><td>5.2 ms</td><td>0.02 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>56.7 ms</td><td>87.6 ms</td><td>7.8 ms</td><td>2.78 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>64.7 ms</td><td>115.9 ms</td><td>30.7 ms</td><td>30.36 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>80.7 ms</td><td>130.3 ms</td><td>43.6 ms</td><td>43.55 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>58.1 ms</td><td>87.7 ms</td><td>9.4 ms</td><td>4.76 ms</td></tr>
 </tbody>
 </table>
 </div>
-<p><strong>54 crates from the cargo registry</strong> — 11,451 files, 268 MB on disk.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Query</th><th>ripgrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
-</thead>
-<tbody>
-<tr><td>common word <code>return</code></td><td>58.6 ms</td><td>16.5 ms</td><td>1.08 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>49.0 ms</td><td>9.3 ms</td><td>1.14 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>39.1 ms</td><td>7.3 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>42.0 ms</td><td>13.3 ms</td><td>3.66 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>138.9 ms</td><td>13.3 ms</td><td>1.40 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>92.7 ms</td><td>14.5 ms</td><td>2.63 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>47.2 ms</td><td>9.9 ms</td><td>0.96 ms</td></tr>
-</tbody>
-</table>
-</div>
+<p>The <a href="#latest-results">latest results</a> page shows the newest run. Hand-run laptop
+tables from before v0.17.0 used to sit here, with the engine near 1 ms on
+every row. They were removed because v0.17.0 deliberately made queries with
+many matches slower (see below), so they no longer describe fcs.</p>
 <h2 id="reading-the-numbers"><a class="header" href="#reading-the-numbers">Reading the numbers</a></h2>
 <ul>
-<li><strong>ripgrep is fast.</strong> Thirty-odd milliseconds for a full scan of six
-thousand files is remarkable, and for a one-off search from a shell it
+<li><strong>ripgrep is fast.</strong> Sixty-odd milliseconds on a 4-vCPU runner for a
+full scan of seven thousand files is remarkable, and for a one-off search from a shell it
 is the right tool. Nothing here argues otherwise.</li>
 <li><strong>ugrep is in the CI run.</strong> On the GitHub runner (4 vCPUs) the first
 two runs put ugrep at 6 ms against ripgrep’s 60 ms on every query that
@@ -5427,20 +5422,25 @@ had a match, and at 84 ms on the one that had none. That was ugrep’s
 <a href="#latest-results">latest results</a> page shows the corrected run. It is a good
 reminder of why the script and the raw JSON are published with the
 numbers.</li>
-<li><strong>The engine’s time does not grow with the tree.</strong> Between the two
-trees ripgrep’s cost doubles to quadruples on the regex rows because it
-reads more bytes and prints more lines; the engine stays near a
-millisecond because the trigram index narrows every query to the few
-files that can match before any text is read, and it prints fifty. On a
-tree ten times larger the scan takes ten times longer and the index
-does not.</li>
+<li><strong>The engine’s time follows the matches, not the tree.</strong> The trigram
+index narrows every query to the files that can match before any text
+is read, so a rare identifier costs microseconds however large the tree
+is. A word that matches thousands of lines costs tens of milliseconds,
+because fcs reads and ranks up to 32,768 matches (the match budget)
+before it returns the best fifty. Before v0.17.0 the budget was 512 and
+those rows took about a millisecond, but page one held only 10% of the
+exhaustive top 50 instead of 81%; see
+<a href="#search-limits">search limits</a>. A scan tool’s time grows with every
+byte in the tree; the engine’s stops growing at the budget.</li>
 <li><strong>A query per keystroke changes the arithmetic.</strong> An editor or web UI
 that searches as you type issues ten queries for a ten-letter
-identifier. Forty milliseconds each is a visible stutter; one
-millisecond each is not. This, and not the single-query gap, is why the
+identifier. As the identifier gets longer it matches fewer lines, so
+later keystrokes cost a few milliseconds or less, while a scan pays the
+full read every time. This, and not the single-query gap, is why the
 project is a server.</li>
-<li><strong>The <code>fcs</code> client column is mostly process start.</strong> Seven of its eight
-milliseconds are the OS starting a process and one HTTP request. A
+<li><strong>The <code>fcs</code> client column is mostly process start.</strong> About five
+milliseconds of each row are the OS starting a process and one HTTP
+request. A
 client that keeps a connection, such as the web UI or an editor
 extension, sees the engine column.</li>
 <li><strong>Scan tools do not rank.</strong> Both tools return matching lines; only one
@@ -5822,6 +5822,29 @@ once, that is about 480 MB.</p>
 <p><strong>Defaults:</strong> <code>min_match_budget = 32768</code>, <code>match_budget_multiplier = 8</code>
 (which only matters for pages ending past 4,096), <code>max_match_budget = 100000</code>. The rest of the huge-query gap is the per-file cap (below) and
 files with thousands of hits each.</p>
+<p><strong>What it costs on a small repository.</strong> The sweep above was measured on a
+large corpus. On tokio 1.45.0 + Django 5.2 (about 6,300 files), the same
+machine ran <code>examples/corpus_bench</code> at v0.16.2 (budget 512) and v0.17.0
+(budget 32,768):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Query</th><th>v0.16.2 p50</th><th>v0.17.0 p50</th></tr>
+</thead>
+<tbody>
+<tr><td>text, common word</td><td>4.7 to 5.5 ms</td><td>54 to 60 ms</td></tr>
+<tr><td>text, two characters</td><td>4.1 to 4.5 ms</td><td>45 to 47 ms</td></tr>
+<tr><td>regex, no literal</td><td>3.0 to 3.6 ms</td><td>100 to 108 ms</td></tr>
+</tbody>
+</table>
+</div>
+<p>That is about ten times slower for common words and thirty times for a
+regex with no literal, and index builds did not change. It buys the
+quality above: page 1 holds the best hits instead of the first ones found.
+It was not named in the 0.17.0 changelog; the
+<a href="#changelog">changelog</a> now records it. Queries with few
+matches (identifiers, rare words) did not change. Whether the budget can
+be made cheaper when a repository has few files is an open question.</p>
 <h2 id="reading-order-1"><a class="header" href="#reading-order-1">Reading order</a></h2>
 <p>Before 0.17, <code>rank=full</code>, which was auto’s choice below 5,000 candidates,
 read files in the order they were discovered on disk. At the same budget
@@ -6066,6 +6089,25 @@ targets and records its numbers for comparison with the previous release.</li>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
+<h3 id="documentation"><a class="header" href="#documentation">Documentation</a></h3>
+<ul>
+<li><strong>Benchmark numbers now match what fcs does.</strong> The README, the book’s
+benchmark pages and the project site showed numbers from 8 September
+(before v0.17.0), with a common word at about 1 ms. They now show the
+v0.19.0 run: a common word over tokio + Django is 24.6 ms at p50, an
+identifier 7.8 ms, and a query with no match 0.6 µs.</li>
+<li><strong>The v0.17.0 slowdown, named.</strong> v0.17.0 raised the match budget from
+512 to 32,768, so a search ranks many more matches before it returns
+page one. On a ~6,300-file repository that made common-word text
+searches about 10 times slower (about 5 ms to about 55 ms on the same
+machine) and regexes with no literal about 30 times slower (about 3 ms to
+about 100 ms). It buys ranking quality: page one now holds 81% of the
+exhaustive top 50 instead of 10%. Queries with few matches and index
+builds did not change. See the book’s Search limits page.</li>
+<li>The release run-book in <code>docs/DEVELOPMENT.md</code> now matches how releases
+are cut, and the instruction files say which docs repeat which numbers so
+they are updated together.</li>
+</ul>
 <h2 id="0190---2026-10-24"><a class="header" href="#0190---2026-10-24"><a href="https://github.com/jburrow/fast_code_search/compare/v0.18.1...v0.19.0">0.19.0</a> - 2026-10-24</a></h2>
 <p>Searches keep running while the watcher applies changes, the index checks
 itself and survives crashes and full disks, and fcs gains diff impact
@@ -6475,7 +6517,7 @@ add text to find.</li>
 <li>The index size statistic counts indexed bytes, not files on disk.</li>
 <li>The web UI no longer merges <code>Foo.ts</code> and <code>foo.ts</code> into one group.</li>
 </ul>
-<h3 id="documentation"><a class="header" href="#documentation">Documentation</a></h3>
+<h3 id="documentation-1"><a class="header" href="#documentation-1">Documentation</a></h3>
 <ul>
 <li>The book’s matching, search limits, memory and ranking pages and the
 CLI guide describe the new behaviour and every remaining difference
@@ -8759,55 +8801,106 @@ valgrind --tool=callgrind --callgrind-out-file=cg.out \
   target/release/examples/corpus_bench bench-corpus/tokio bench-corpus/django --iterations 3
 callgrind_annotate --inclusive=yes cg.out | head -60
 </code></pre>
+<h2 id="docs-that-repeat-numbers"><a class="header" href="#docs-that-repeat-numbers">Docs that repeat numbers</a></h2>
+<p>Some facts are stated in more than one place. When one changes, update
+every place in the same PR, and say in the PR which you updated:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Fact</th><th>Where it appears</th></tr>
+</thead>
+<tbody>
+<tr><td>Benchmark numbers (build, memory, query p50/p95, Criterion)</td><td><code>README.md</code> (Benchmarks), <code>docs/book/src/benchmarks/latest.md</code> (Last hand-checked run), <code>docs/book/src/benchmarks/comparison.md</code> (Results), <code>docs/site/index.html</code> (bench-stats)</td></tr>
+<tr><td>Number of backtest queries</td><td><code>README.md</code>, <code>docs/book/src/benchmarks/methodology.md</code> (count <code>[[query]]</code> in <code>benches/rg_backtest.toml</code>)</td></tr>
+<tr><td>Search limits and defaults</td><td><code>docs/book/src/benchmarks/search-limits.md</code>, <code>docs/book/src/reference/config-template.md</code>, the server’s <code>--init</code> template</td></tr>
+<tr><td>Divergences from grep, ripgrep and git grep</td><td><code>docs/book/src/reference/matching.md</code></td></tr>
+<tr><td>Released version</td><td><code>Cargo.toml</code>, <code>Cargo.lock</code>, <code>CHANGELOG.md</code>, <code>docs/book/src/start/install.md</code></td></tr>
+<tr><td>Ports, CLI flags, config keys</td><td><code>README.md</code>, <code>docs/CLI.md</code>, the book’s reference pages</td></tr>
+</tbody>
+</table>
+</div>
+<p>Numbers always name the Benchmarks run and commit they come from, so a
+reader can tell how old they are.</p>
 <h2 id="release-process"><a class="header" href="#release-process">Release Process</a></h2>
-<p>Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.</p>
+<p>Releases are automated via GitHub Actions. The maintainer cuts every
+release: a release PR bumps the version, then the maintainer pushes the
+version tag, and the tag builds and publishes everything. Releases are
+immutable, so a mistake means a new patch version, not an edit.</p>
+<h3 id="before-you-start"><a class="header" href="#before-you-start">Before you start</a></h3>
+<ul>
+<li><code>main</code> is green: no open issue labelled <code>main-red</code> and the latest CI,
+Benchmarks and Pages runs on <code>main</code> passed. A red workflow is fixed or
+explained in the release PR first.</li>
+<li>The published benchmark numbers are current. The README, the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/latest.md">latest results</a> and
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/comparison.md">comparison</a> pages and the project site
+(<code>docs/site/index.html</code>) repeat numbers from one named Benchmarks run. If
+that run predates a change that moved them (any metric the A/B marked
+slower or faster), refresh all four from the latest run on <code>main</code> in the
+release PR. See <a href="#docs-that-repeat-numbers">Docs that repeat numbers</a>.</li>
+</ul>
 <h3 id="steps-to-release"><a class="header" href="#steps-to-release">Steps to Release</a></h3>
 <ol>
 <li>
-<p><strong>Update version</strong> in <code>Cargo.toml</code>:</p>
-<pre><code class="language-toml">version = "0.2.0"
-</code></pre>
-</li>
-<li>
-<p><strong>Update CHANGELOG.md</strong>:</p>
+<p><strong>Open a release PR</strong> from a branch off <code>main</code> that changes only:</p>
 <ul>
-<li>Move items from <code>[Unreleased]</code> to new version section</li>
-<li>Add release date</li>
-<li>Update comparison links at bottom of file</li>
+<li><code>Cargo.toml</code>: <code>version = "X.Y.Z"</code>.</li>
+<li><code>Cargo.lock</code>: the <code>fast_code_search</code> package’s version line (<code>cargo check</code> rewrites
+it; no other entry should change).</li>
+<li><code>CHANGELOG.md</code>: move <code>[Unreleased]</code> items into a dated <code>## [X.Y.Z] - YYYY-MM-DD</code> section with a short summary and an <strong>Upgrading</strong> note,
+leave an empty <code>[Unreleased]</code>, and update the compare links at the
+bottom (<code>[Unreleased]</code> from <code>vX.Y.Z...HEAD</code>, plus a new <code>[X.Y.Z]</code> line).
+Any slowdown the A/B found since the last release is named here with
+what it buys.</li>
+<li><code>docs/book/src/start/install.md</code>: the version in the checksum and
+cosign examples and the container tags.</li>
 </ul>
+<p>Fill in the <a href="https://github.com/jburrow/fast_code_search/blob/main/.github/PULL_REQUEST_TEMPLATE.md">PR template</a> and title
+it <code>chore: release vX.Y.Z</code>.</p>
 </li>
 <li>
-<p><strong>Run quality checks</strong>:</p>
-<pre><code class="language-bash">cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+<p><strong>Run quality checks</strong> locally before pushing:</p>
+<pre><code class="language-bash">cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
 </code></pre>
 </li>
 <li>
-<p><strong>Commit the version bump</strong>:</p>
-<pre><code class="language-bash">git add Cargo.toml CHANGELOG.md
-git commit -m "chore: release v0.2.0"
+<p><strong>Merge</strong> (squash) once CI is green. The Windows semantic test
+<code>test_add_and_search</code> is a known flake; it is the only check that may be
+red at merge, and only if it is the only one.</p>
+</li>
+<li>
+<p><strong>Tag the merge commit and push the tag</strong> (maintainer; tokens used by
+automation cannot push tags):</p>
+<pre><code class="language-bash">git fetch origin
+git tag vX.Y.Z &lt;merge-commit-sha&gt;
+git push origin vX.Y.Z
 </code></pre>
 </li>
 <li>
-<p><strong>Create and push the tag</strong>:</p>
-<pre><code class="language-bash">git tag v0.2.0
-git push origin main
-git push origin v0.2.0
-</code></pre>
-</li>
-<li>
-<p><strong>Monitor the release workflow</strong>: The <a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/release.yml">release workflow</a> will:</p>
+<p><strong>Check the release is healthy.</strong> The tag starts the
+<a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/release.yml">release workflow</a> and the
+<a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/container.yml">container workflow</a>. When both pass:</p>
 <ul>
-<li>Build release binaries for Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64)</li>
-<li>Package each with config template, proto files, README, and LICENSE</li>
-<li>Generate SHA256 checksums</li>
-<li>Create a GitHub Release with changelog notes</li>
+<li>The GitHub Release has 15 assets: 5 archives, each with a <code>.sha256</code>
+and a <code>.sigstore.json</code>.</li>
+<li>One archive verifies and reports the right version:
+<pre><code class="language-bash">sha256sum -c fast_code_search-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
+./fcs --version                     # fcs X.Y.Z
+./fast_code_search_server --version # fast_code_search X.Y.Z
+</code></pre>
+</li>
+<li>A smoke run indexes a public tree (for example tokio), <code>GET /api/check</code> reports no problems, and a plain search returns the same
+count as <code>rg -F</code> on that tree.</li>
+<li><code>ghcr.io/jburrow/fast_code_search</code> has <code>X.Y.Z</code>, <code>X.Y</code> and (for a
+non-pre-release) <code>latest</code>.</li>
 </ul>
 </li>
 </ol>
 <h3 id="release-artifacts"><a class="header" href="#release-artifacts">Release Artifacts</a></h3>
-<p>Each release includes platform-specific archives:</p>
+<p>Each release includes platform-specific archives, each with a <code>.sha256</code>
+checksum and a Sigstore bundle (<code>.sigstore.json</code>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -8824,9 +8917,10 @@ git push origin v0.2.0
 </div>
 <p>Each archive contains:</p>
 <ul>
-<li><code>fast_code_search_server</code> (or <code>.exe</code> on Windows)</li>
+<li><code>fast_code_search_server</code> and <code>fcs</code> (or <code>.exe</code> on Windows)</li>
 <li><code>config.toml.example</code></li>
-<li><code>proto/search.proto</code></li>
+<li><code>deploy/</code> (startup unit files), <code>RUN-AT-STARTUP.md</code>, <code>CLI.md</code></li>
+<li><code>proto/</code></li>
 <li><code>README.md</code></li>
 <li><code>LICENSE</code></li>
 </ul>

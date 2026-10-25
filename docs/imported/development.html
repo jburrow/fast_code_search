@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-ae576244.js";
+            window.path_to_searchindex_js = "../searchindex-4d74412e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -579,55 +579,106 @@ valgrind --tool=callgrind --callgrind-out-file=cg.out \
   target/release/examples/corpus_bench bench-corpus/tokio bench-corpus/django --iterations 3
 callgrind_annotate --inclusive=yes cg.out | head -60
 </code></pre>
+<h2 id="docs-that-repeat-numbers"><a class="header" href="#docs-that-repeat-numbers">Docs that repeat numbers</a></h2>
+<p>Some facts are stated in more than one place. When one changes, update
+every place in the same PR, and say in the PR which you updated:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Fact</th><th>Where it appears</th></tr>
+</thead>
+<tbody>
+<tr><td>Benchmark numbers (build, memory, query p50/p95, Criterion)</td><td><code>README.md</code> (Benchmarks), <code>docs/book/src/benchmarks/latest.md</code> (Last hand-checked run), <code>docs/book/src/benchmarks/comparison.md</code> (Results), <code>docs/site/index.html</code> (bench-stats)</td></tr>
+<tr><td>Number of backtest queries</td><td><code>README.md</code>, <code>docs/book/src/benchmarks/methodology.md</code> (count <code>[[query]]</code> in <code>benches/rg_backtest.toml</code>)</td></tr>
+<tr><td>Search limits and defaults</td><td><code>docs/book/src/benchmarks/search-limits.md</code>, <code>docs/book/src/reference/config-template.md</code>, the server’s <code>--init</code> template</td></tr>
+<tr><td>Divergences from grep, ripgrep and git grep</td><td><code>docs/book/src/reference/matching.md</code></td></tr>
+<tr><td>Released version</td><td><code>Cargo.toml</code>, <code>Cargo.lock</code>, <code>CHANGELOG.md</code>, <code>docs/book/src/start/install.md</code></td></tr>
+<tr><td>Ports, CLI flags, config keys</td><td><code>README.md</code>, <code>docs/CLI.md</code>, the book’s reference pages</td></tr>
+</tbody>
+</table>
+</div>
+<p>Numbers always name the Benchmarks run and commit they come from, so a
+reader can tell how old they are.</p>
 <h2 id="release-process"><a class="header" href="#release-process">Release Process</a></h2>
-<p>Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.</p>
+<p>Releases are automated via GitHub Actions. The maintainer cuts every
+release: a release PR bumps the version, then the maintainer pushes the
+version tag, and the tag builds and publishes everything. Releases are
+immutable, so a mistake means a new patch version, not an edit.</p>
+<h3 id="before-you-start"><a class="header" href="#before-you-start">Before you start</a></h3>
+<ul>
+<li><code>main</code> is green: no open issue labelled <code>main-red</code> and the latest CI,
+Benchmarks and Pages runs on <code>main</code> passed. A red workflow is fixed or
+explained in the release PR first.</li>
+<li>The published benchmark numbers are current. The README, the book’s
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/latest.md">latest results</a> and
+<a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/comparison.md">comparison</a> pages and the project site
+(<code>docs/site/index.html</code>) repeat numbers from one named Benchmarks run. If
+that run predates a change that moved them (any metric the A/B marked
+slower or faster), refresh all four from the latest run on <code>main</code> in the
+release PR. See <a href="#docs-that-repeat-numbers">Docs that repeat numbers</a>.</li>
+</ul>
 <h3 id="steps-to-release"><a class="header" href="#steps-to-release">Steps to Release</a></h3>
 <ol>
 <li>
-<p><strong>Update version</strong> in <code>Cargo.toml</code>:</p>
-<pre><code class="language-toml">version = "0.2.0"
-</code></pre>
-</li>
-<li>
-<p><strong>Update CHANGELOG.md</strong>:</p>
+<p><strong>Open a release PR</strong> from a branch off <code>main</code> that changes only:</p>
 <ul>
-<li>Move items from <code>[Unreleased]</code> to new version section</li>
-<li>Add release date</li>
-<li>Update comparison links at bottom of file</li>
+<li><code>Cargo.toml</code>: <code>version = "X.Y.Z"</code>.</li>
+<li><code>Cargo.lock</code>: the <code>fast_code_search</code> package’s version line (<code>cargo check</code> rewrites
+it; no other entry should change).</li>
+<li><code>CHANGELOG.md</code>: move <code>[Unreleased]</code> items into a dated <code>## [X.Y.Z] - YYYY-MM-DD</code> section with a short summary and an <strong>Upgrading</strong> note,
+leave an empty <code>[Unreleased]</code>, and update the compare links at the
+bottom (<code>[Unreleased]</code> from <code>vX.Y.Z...HEAD</code>, plus a new <code>[X.Y.Z]</code> line).
+Any slowdown the A/B found since the last release is named here with
+what it buys.</li>
+<li><code>docs/book/src/start/install.md</code>: the version in the checksum and
+cosign examples and the container tags.</li>
 </ul>
+<p>Fill in the <a href="https://github.com/jburrow/fast_code_search/blob/main/.github/PULL_REQUEST_TEMPLATE.md">PR template</a> and title
+it <code>chore: release vX.Y.Z</code>.</p>
 </li>
 <li>
-<p><strong>Run quality checks</strong>:</p>
-<pre><code class="language-bash">cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+<p><strong>Run quality checks</strong> locally before pushing:</p>
+<pre><code class="language-bash">cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
 </code></pre>
 </li>
 <li>
-<p><strong>Commit the version bump</strong>:</p>
-<pre><code class="language-bash">git add Cargo.toml CHANGELOG.md
-git commit -m "chore: release v0.2.0"
+<p><strong>Merge</strong> (squash) once CI is green. The Windows semantic test
+<code>test_add_and_search</code> is a known flake; it is the only check that may be
+red at merge, and only if it is the only one.</p>
+</li>
+<li>
+<p><strong>Tag the merge commit and push the tag</strong> (maintainer; tokens used by
+automation cannot push tags):</p>
+<pre><code class="language-bash">git fetch origin
+git tag vX.Y.Z &lt;merge-commit-sha&gt;
+git push origin vX.Y.Z
 </code></pre>
 </li>
 <li>
-<p><strong>Create and push the tag</strong>:</p>
-<pre><code class="language-bash">git tag v0.2.0
-git push origin main
-git push origin v0.2.0
-</code></pre>
-</li>
-<li>
-<p><strong>Monitor the release workflow</strong>: The <a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/release.yml">release workflow</a> will:</p>
+<p><strong>Check the release is healthy.</strong> The tag starts the
+<a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/release.yml">release workflow</a> and the
+<a href="https://github.com/jburrow/fast_code_search/blob/main/.github/workflows/container.yml">container workflow</a>. When both pass:</p>
 <ul>
-<li>Build release binaries for Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64)</li>
-<li>Package each with config template, proto files, README, and LICENSE</li>
-<li>Generate SHA256 checksums</li>
-<li>Create a GitHub Release with changelog notes</li>
+<li>The GitHub Release has 15 assets: 5 archives, each with a <code>.sha256</code>
+and a <code>.sigstore.json</code>.</li>
+<li>One archive verifies and reports the right version:
+<pre><code class="language-bash">sha256sum -c fast_code_search-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
+./fcs --version                     # fcs X.Y.Z
+./fast_code_search_server --version # fast_code_search X.Y.Z
+</code></pre>
+</li>
+<li>A smoke run indexes a public tree (for example tokio), <code>GET /api/check</code> reports no problems, and a plain search returns the same
+count as <code>rg -F</code> on that tree.</li>
+<li><code>ghcr.io/jburrow/fast_code_search</code> has <code>X.Y.Z</code>, <code>X.Y</code> and (for a
+non-pre-release) <code>latest</code>.</li>
 </ul>
 </li>
 </ol>
 <h3 id="release-artifacts"><a class="header" href="#release-artifacts">Release Artifacts</a></h3>
-<p>Each release includes platform-specific archives:</p>
+<p>Each release includes platform-specific archives, each with a <code>.sha256</code>
+checksum and a Sigstore bundle (<code>.sigstore.json</code>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -644,9 +695,10 @@ git push origin v0.2.0
 </div>
 <p>Each archive contains:</p>
 <ul>
-<li><code>fast_code_search_server</code> (or <code>.exe</code> on Windows)</li>
+<li><code>fast_code_search_server</code> and <code>fcs</code> (or <code>.exe</code> on Windows)</li>
 <li><code>config.toml.example</code></li>
-<li><code>proto/search.proto</code></li>
+<li><code>deploy/</code> (startup unit files), <code>RUN-AT-STARTUP.md</code>, <code>CLI.md</code></li>
+<li><code>proto/</code></li>
 <li><code>README.md</code></li>
 <li><code>LICENSE</code></li>
 </ul>
