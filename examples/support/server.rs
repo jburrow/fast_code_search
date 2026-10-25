@@ -190,6 +190,14 @@ impl Server {
         bail!("a check was always running")
     }
 
+    /// The index's estimated heap bytes by structure, from
+    /// `/api/diagnostics` (`None` if the server would not say).
+    pub fn memory(&self) -> Option<fast_code_search::search::MemoryBreakdown> {
+        let r = self.get("/api/diagnostics?sample_count=1").ok()?;
+        let v: serde_json::Value = r.json().ok()?;
+        serde_json::from_value(v["index"]["memory"].clone()).ok()
+    }
+
     /// SIGTERM (a graceful stop that saves the index), then wait.
     pub fn stop(&self) -> Result<()> {
         let mut child = self.child.lock().unwrap();

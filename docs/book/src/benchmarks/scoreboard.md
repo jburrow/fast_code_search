@@ -56,6 +56,7 @@ The searchers cycle through cheap and expensive queries (`task_17_`,
 | `max_pending` | The largest backlog the server reported (sampled every second; the JSON has the curve) | reported |
 | `rescans` | "The watched paths will be rescanned" in the server log | reported |
 | `peak_rss_mb`, `cpu_secs` | The server process's peak memory and CPU time (Linux) | memory per scenario |
+| `memory_mb` | The index's [estimated heap by structure](../how-it-works/memory.md#where-it-goes) at the end of the scenario, largest first, so a memory change names the part that grew | reported |
 | `captures`, `stall_captures` | [Diagnostic captures](../guides/diagnostic-captures.md) written; the second leaves out `slow_search`, which an overloaded CPU alone can cause | stalls 0 |
 | `crashes` | The server exited before it was told to stop | 0 |
 | `check_problems` | What `GET /api/check?all=true` finds once the index has settled: invariants, every file's content, the file set against a fresh walk | 0 |

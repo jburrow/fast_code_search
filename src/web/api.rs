@@ -429,6 +429,7 @@ pub fn path_statuses(engine: &SearchEngine, paths: &[String]) -> Vec<PathStatus>
 pub struct DiagnosticsCache {
     pub generation: u64,
     pub files_by_extension: Vec<ExtensionBreakdown>,
+    pub memory: crate::search::MemoryBreakdown,
 }
 
 /// Readiness: 200 once the index can serve results (a build/reconcile has
@@ -1433,8 +1434,8 @@ pub async fn diagnostics_handler(
                 .ok()
                 .and_then(|c| c.as_ref().filter(|c| c.generation == generation).cloned())
         };
-        let files_by_extension = match cached {
-            Some(c) => c.files_by_extension,
+        let (files_by_extension, memory) = match cached {
+            Some(c) => (c.files_by_extension, c.memory),
             None => {
                 let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
                 for file_id in 0..engine.file_store.len() as u32 {
@@ -1461,13 +1462,15 @@ pub async fn diagnostics_handler(
                     .collect();
                 v.sort_by_key(|f| std::cmp::Reverse(f.count));
                 v.truncate(20); // Top 20 extensions
+                let memory = engine.memory_breakdown();
                 if let Ok(mut c) = diagnostics_cache.lock() {
                     *c = Some(DiagnosticsCache {
                         generation,
                         files_by_extension: v.clone(),
+                        memory: memory.clone(),
                     });
                 }
-                v
+                (v, memory)
             }
         };
 
@@ -1775,6 +1778,8 @@ pub async fn diagnostics_handler(
                 dependency_edges: stats.dependency_edges,
                 files_by_extension,
                 sample_files,
+                memory: Some(memory),
+                resident_bytes: diagnostics::resident_bytes(),
             },
             self_tests,
             test_summary,

@@ -18,6 +18,7 @@ use tracing::warn;
 mod freshness;
 mod impact;
 mod invariants;
+mod memory;
 mod paths;
 mod persist;
 mod progress;
@@ -34,6 +35,7 @@ pub use impact::{
     UseTier, UserFile, DEFAULT_IMPACT_FILES, DEFAULT_IMPACT_LINES, MAX_IMPACT_SYMBOLS,
 };
 pub use invariants::{FileCheck, InvariantReport};
+pub use memory::{MemoryBreakdown, MemoryPart};
 pub use paths::{PathMatch, PathQuery, PathSearch};
 pub use progress::*;
 pub use scope::{GraphScope, MAX_SCOPE_HOPS};
