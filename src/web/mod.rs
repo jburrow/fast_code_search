@@ -343,6 +343,12 @@ async fn request_timeout_middleware(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    // A check reads every file it is asked to, which takes minutes on a
+    // large index, and runs one at a time (a second gets 429), so this
+    // timeout would only cut it off: `fcs check --live` waits up to an hour.
+    if req.uri().path() == "/api/check" {
+        return next.run(req).await;
+    }
     match tokio::time::timeout(state.request_timeout, next.run(req)).await {
         Ok(resp) => resp,
         Err(_) => {
@@ -526,7 +532,7 @@ mod tests {
 
     /// The whole-request timeout answers with the JSON error envelope and a
     /// `Retry-After` header (not an empty 408), so clients can treat it like
-    /// any other API error. Uses a deliberately slow route so the outcome
+    /// any other API error, and leaves `/api/check` alone. Uses a deliberately slow route so the outcome
     /// does not depend on how fast a real search happens to be.
     #[tokio::test]
     async fn request_timeout_answers_with_json_504() {
@@ -555,6 +561,13 @@ mod tests {
                     "done"
                 }),
             )
+            .route(
+                "/api/check",
+                get(|| async {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    "checked"
+                }),
+            )
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 request_timeout_middleware,
@@ -579,6 +592,13 @@ mod tests {
             body["error"].as_str().unwrap_or("").contains("timed out"),
             "{body}"
         );
+
+        // A check is not cut off: it can take minutes on a large index.
+        let resp = reqwest::get(format!("http://{addr}/api/check"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "checked");
     }
 
     #[test]

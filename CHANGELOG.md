@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built by inserts keep spare capacity.
 
 ### Fixed
+- **`fcs check --live --all-content` was cut off on a large index.** The
+  server's whole-request timeout (`request_timeout_secs`, 30 s) applied to
+  `/api/check`, so a check that read every file of a large tree answered
+  504 while the client was ready to wait an hour. The check runs one at a
+  time and only reads, so it is no longer timed out. Found by the scale
+  scoreboard on a 200,000-file tree with real-sized files.
 - **Folders that could not be read went missing without a word.** When
   the build, a restart's check or a rescan could not list a folder
   (permission denied, an I/O error), it logged a debug line and skipped
