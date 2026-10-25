@@ -32,39 +32,33 @@ the benchmark workflow runs it on every push and the result appears on the
   NTFS drive the same ripgrep query took about one second instead of
   forty milliseconds, and publishing that would have been dishonest.
 
-## Results on a laptop
+## Results on the CI runner
 
-11th Gen Intel Core i5-1135G7, 8 logical CPUs, ext4 on NVMe, ripgrep
-15.0.0. ugrep was not installed on this machine; the CI run has it.
+From [run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420)
+on commit `140425f` (v0.19.0, 2026-10-24): GitHub-hosted `ubuntu-latest`,
+AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.
 
-**tokio 1.45.0 + Django 5.2** — 6,240 files.
+**tokio 1.45.0 + Django 5.2**, 7,601 files.
 
-| Query | ripgrep | fcs (client) | fcs (engine) |
-|---|---|---|---|
-| common word `return` | 40.1 ms | 10.4 ms | 0.90 ms |
-| identifier `Config` | 33.0 ms | 11.7 ms | 1.03 ms |
-| rare identifier (no match) | 30.4 ms | 7.5 ms | 0.01 ms |
-| two words `fn main` | 31.7 ms | 10.5 ms | 1.51 ms |
-| regex with literal `fn\s+\w+\(` | 37.5 ms | 10.1 ms | 1.17 ms |
-| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 45.5 ms | 9.6 ms | 1.11 ms |
-| case-insensitive `(?i)unwrap\(` | 31.2 ms | 9.3 ms | 0.76 ms |
+| Query | ripgrep | ugrep | fcs (client) | fcs (engine) |
+|---|---|---|---|---|
+| common word `return` | 69.6 ms | 87.1 ms | 31.2 ms | 30.17 ms |
+| identifier `Config` | 59.9 ms | 84.2 ms | 13.4 ms | 10.23 ms |
+| rare identifier (no match) | 56.0 ms | 84.1 ms | 5.2 ms | 0.02 ms |
+| two words `fn main` | 56.7 ms | 87.6 ms | 7.8 ms | 2.78 ms |
+| regex with literal `fn\s+\w+\(` | 64.7 ms | 115.9 ms | 30.7 ms | 30.36 ms |
+| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 80.7 ms | 130.3 ms | 43.6 ms | 43.55 ms |
+| case-insensitive `(?i)unwrap\(` | 58.1 ms | 87.7 ms | 9.4 ms | 4.76 ms |
 
-**54 crates from the cargo registry** — 11,451 files, 268 MB on disk.
-
-| Query | ripgrep | fcs (client) | fcs (engine) |
-|---|---|---|---|
-| common word `return` | 58.6 ms | 16.5 ms | 1.08 ms |
-| identifier `Config` | 49.0 ms | 9.3 ms | 1.14 ms |
-| rare identifier (no match) | 39.1 ms | 7.3 ms | 0.01 ms |
-| two words `fn main` | 42.0 ms | 13.3 ms | 3.66 ms |
-| regex with literal `fn\s+\w+\(` | 138.9 ms | 13.3 ms | 1.40 ms |
-| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 92.7 ms | 14.5 ms | 2.63 ms |
-| case-insensitive `(?i)unwrap\(` | 47.2 ms | 9.9 ms | 0.96 ms |
+The [latest results](latest.md) page shows the newest run. Hand-run laptop
+tables from before v0.17.0 used to sit here, with the engine near 1 ms on
+every row. They were removed because v0.17.0 deliberately made queries with
+many matches slower (see below), so they no longer describe fcs.
 
 ## Reading the numbers
 
-- **ripgrep is fast.** Thirty-odd milliseconds for a full scan of six
-  thousand files is remarkable, and for a one-off search from a shell it
+- **ripgrep is fast.** Sixty-odd milliseconds on a 4-vCPU runner for a
+  full scan of seven thousand files is remarkable, and for a one-off search from a shell it
   is the right tool. Nothing here argues otherwise.
 - **ugrep is in the CI run.** On the GitHub runner (4 vCPUs) the first
   two runs put ugrep at 6 ms against ripgrep's 60 ms on every query that
@@ -73,20 +67,25 @@ the benchmark workflow runs it on every push and the result appears on the
   [latest results](latest.md) page shows the corrected run. It is a good
   reminder of why the script and the raw JSON are published with the
   numbers.
-- **The engine's time does not grow with the tree.** Between the two
-  trees ripgrep's cost doubles to quadruples on the regex rows because it
-  reads more bytes and prints more lines; the engine stays near a
-  millisecond because the trigram index narrows every query to the few
-  files that can match before any text is read, and it prints fifty. On a
-  tree ten times larger the scan takes ten times longer and the index
-  does not.
+- **The engine's time follows the matches, not the tree.** The trigram
+  index narrows every query to the files that can match before any text
+  is read, so a rare identifier costs microseconds however large the tree
+  is. A word that matches thousands of lines costs tens of milliseconds,
+  because fcs reads and ranks up to 32,768 matches (the match budget)
+  before it returns the best fifty. Before v0.17.0 the budget was 512 and
+  those rows took about a millisecond, but page one held only 10% of the
+  exhaustive top 50 instead of 81%; see
+  [search limits](search-limits.md). A scan tool's time grows with every
+  byte in the tree; the engine's stops growing at the budget.
 - **A query per keystroke changes the arithmetic.** An editor or web UI
   that searches as you type issues ten queries for a ten-letter
-  identifier. Forty milliseconds each is a visible stutter; one
-  millisecond each is not. This, and not the single-query gap, is why the
+  identifier. As the identifier gets longer it matches fewer lines, so
+  later keystrokes cost a few milliseconds or less, while a scan pays the
+  full read every time. This, and not the single-query gap, is why the
   project is a server.
-- **The `fcs` client column is mostly process start.** Seven of its eight
-  milliseconds are the OS starting a process and one HTTP request. A
+- **The `fcs` client column is mostly process start.** About five
+  milliseconds of each row are the OS starting a process and one HTTP
+  request. A
   client that keeps a connection, such as the web UI or an editor
   extension, sees the engine column.
 - **Scan tools do not rank.** Both tools return matching lines; only one

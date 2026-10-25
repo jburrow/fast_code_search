@@ -213,25 +213,35 @@ measurement per commit with an explanation of what each chart means. The
 page says what is deliberately not claimed.
 
 The numbers below are from
-[run 34254363545](https://github.com/jburrow/fast_code_search/actions/runs/34254363545)
-on commit `f46e7bf` (2026-09-08, GitHub-hosted `ubuntu-latest`, 4 vCPU):
-6,237 files, 38.9 MB of text, 242k symbol references.
+[run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420)
+on commit `140425f` (v0.19.0, 2026-10-24, GitHub-hosted `ubuntu-latest`, 4 vCPU):
+6,268 files, 41.4 MB of text, 385k symbol references.
 
 | Measure | Value |
 |---------|-------|
-| Full build (read, trigrams, symbols, imports, merge) | 4.3 s (1,460 files/s) |
-| Resident memory after build | 118 MB |
-| Index save / reconciling load | 0.20 s / 0.25 s (21.5 MB on disk) |
-| Text search, common word, p50 / p95 | 0.95 ms / 1.03 ms |
-| Text search, identifier, p50 | 1.5 ms |
-| Regex with literal / case-insensitive / no literal, p50 | 1.4 ms / 0.7 ms / 1.7 ms |
-| Symbol search, p50 | 3.7 ms |
-| Reference search, p50 | 0.7 ms |
-| Incremental update of one file, p50 / p95 | 10 ms / 14 ms |
+| Full build (read, trigrams, symbols, imports, merge) | 5.5 s (1,132 files/s) |
+| Resident memory after build | 137 MB |
+| Index save / reconciling load | 0.19 s / 0.31 s (24.6 MB on disk) |
+| Text search, common word, p50 / p95 | 24.6 ms / 25.4 ms |
+| Text search, identifier, p50 | 7.8 ms |
+| Regex with literal / case-insensitive / no literal, p50 | 24.4 ms / 3.1 ms / 37.6 ms |
+| Symbol search, p50 | 6.9 ms |
+| Reference search, p50 | 2.2 ms |
+| Incremental update of one file, p50 / p95 | 6.4 ms / 50 ms |
 
-The same run's Criterion suite over a synthetic corpus puts a common-word text
-search at 0.39 ms and a no-match query at 0.45 µs. A nightly job indexes the
-`rust-lang/rust` 1.89.0 tree and records throughput and memory in its job summary.
+A common word costs tens of milliseconds because fcs ranks the matches it
+finds before it returns page one. Since v0.17.0 it ranks up to 32,768 matches
+(it was 512), so page one now holds 81% of the exhaustive top 50 instead of
+10%; before v0.17.0 the same query took about 1 ms and its first page mostly
+missed the best hits. The
+[search limits](https://jburrow.github.io/fast_code_search/docs/benchmarks/search-limits.html)
+page has the measurements. Rare identifiers and queries with no match stay
+well under a millisecond in the engine.
+
+The same run's Criterion suite over a small synthetic corpus (100 files) puts a
+common-word text search at 0.78 ms and a no-match query at 0.45 µs. A nightly
+job indexes the `rust-lang/rust` 1.89.0 tree and records throughput and memory
+in its job summary.
 
 Speed is only half of it. The
 [ranking-quality suite](https://jburrow.github.io/fast_code_search/docs/benchmarks/ranking-quality.html)
@@ -239,14 +249,14 @@ names the file and line a reader would want first for each query (`struct
 Runtime` → the definition, not a doc comment; `Field` → the model field, not the
 GDAL one) and currently scores precision@1 = 1.00, precision@5 = 1.00. A
 [ripgrep backtest](https://jburrow.github.io/fast_code_search/docs/benchmarks/correctness.html)
-runs 124 queries through fcs and rg on the same trees and fails CI on any line one
+runs 143 queries through fcs and rg on the same trees and fails CI on any line one
 finds and the other does not; where fcs deliberately differs from grep, ripgrep and
 git grep is
 [documented](https://jburrow.github.io/fast_code_search/docs/reference/matching.html). The
 [comparison](https://jburrow.github.io/fast_code_search/docs/benchmarks/comparison.html)
-page puts ripgrep at 30–80 ms per query on these trees against about a
-millisecond in the engine, and says plainly when a scan tool is the better
-choice. Reproduce any of it locally:
+page puts ripgrep at 55–80 ms per query on these trees against 5–45 ms for
+`fcs` (under a millisecond for a rare identifier in the engine), and says
+plainly when a scan tool is the better choice. Reproduce any of it locally:
 
 ```bash
 cargo run --release --example corpus_bench -- path/to/repo [more paths]

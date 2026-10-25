@@ -62,6 +62,25 @@ profiler found in an hour.
 - A flaky test gets an issue with its measured failure rate and a fix at
   the root, not retries until green.
 
+## Docs stay true
+
+Between September and October 2026 the README, the book and the site kept
+showing a common-word search at about 1 ms after v0.17.0 had made it about
+25 ms, and the slowdown was never named. Docs that state a number or a
+behaviour are part of the change that moves it.
+
+- **Update every place that states a fact in the PR that changes it.**
+  The table in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#docs-that-repeat-numbers)
+  lists the facts that repeat (benchmark numbers, backtest count, limits,
+  version) and where. Grep the docs for the old value before calling it
+  done.
+- **Published numbers name their run.** A benchmark number in the docs
+  says which Benchmarks workflow run and commit it came from. If a change
+  moves a published metric, refresh the numbers from a run that includes it.
+- **A release checks the docs.** The release run-book in
+  `docs/DEVELOPMENT.md` is followed in full, including the benchmark-number
+  check and the health check after the tag.
+
 ## Pull requests
 
 - One PR per piece of work; fold follow-ups into the open PR.

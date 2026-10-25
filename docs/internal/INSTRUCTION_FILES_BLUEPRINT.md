@@ -19,6 +19,7 @@ This document defines how instruction content is organized across repository doc
 | Agent-oriented repo map and coding conventions | `.github/copilot-instructions.md` | Keep aligned with canonical docs |
 | Hard rules for agents (search behaviour, performance, main health) | `CLAUDE.md` | Short; rules only, pointers for everything else |
 | User-visible change log policy and history | `CHANGELOG.md` | Required for user-facing changes |
+| Facts repeated across docs (benchmark numbers, backtest count, limits, version) | `docs/DEVELOPMENT.md` ("Docs that repeat numbers") | Lists every place each fact appears |
 
 ## File Roles and Scope
 
@@ -45,7 +46,8 @@ This document defines how instruction content is organized across repository doc
 ### `docs/DEVELOPMENT.md`
 
 - Should include:
-  - Full build/test/lint/release workflow
+  - Full build/test/lint/release workflow, including the release health check
+  - The table of facts repeated across docs and where each appears
   - Platform-specific setup details (Linux/macOS/Windows)
   - Performance and debugging references
 - Should be the canonical command reference used by other docs.
@@ -83,6 +85,7 @@ Apply these rules to avoid conflicts:
 3. **API/proto policy**: gRPC changes must consider both `proto/search.proto` and `proto/semantic_search.proto` where relevant.
 4. **Port references**: keep keyword vs semantic ports consistent across all docs.
 5. **Platform setup**: include Windows path for required tools where Linux/macOS commands are shown.
+6. **Repeated facts**: a number or behaviour stated in more than one doc is updated everywhere in the PR that changes it, and benchmark numbers name the workflow run and commit they come from.
 
 ## Drift Prevention Checklist
 
@@ -92,6 +95,7 @@ When changing workflows or architecture:
 2. Update any cross-references in secondary files.
 3. Verify commands still work (`cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`).
 4. Confirm user-visible changes are recorded in `CHANGELOG.md`.
+5. Grep the docs for any old value you changed (a number, a default, a flag) and update every hit listed in "Docs that repeat numbers".
 
 ## Recommended Lightweight Review Gate
 
@@ -101,6 +105,7 @@ For PR review template/checklist:
 - [ ] Updated cross-links in related docs
 - [ ] Kept command examples consistent with canonical guide
 - [ ] Updated `CHANGELOG.md` for user-visible changes
+- [ ] Updated every doc that repeats a changed number or behaviour
 
 ## Minimal Maintenance Routine
 
@@ -109,5 +114,6 @@ For PR review template/checklist:
   - CONTRIBUTING checklist requirements
   - Copilot instructions task cheatsheet
   - Development guide build/release targets
+  - Published benchmark numbers (README, book latest/comparison, site) against the latest Benchmarks run on `main`
 
 This blueprint is intentionally small. Keep it as policy and structure guidance, not another duplicated command reference.

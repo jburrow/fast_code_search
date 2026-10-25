@@ -468,51 +468,101 @@ valgrind --tool=callgrind --callgrind-out-file=cg.out \
 callgrind_annotate --inclusive=yes cg.out | head -60
 ```
 
+## Docs that repeat numbers
+
+Some facts are stated in more than one place. When one changes, update
+every place in the same PR, and say in the PR which you updated:
+
+| Fact | Where it appears |
+|---|---|
+| Benchmark numbers (build, memory, query p50/p95, Criterion) | `README.md` (Benchmarks), `docs/book/src/benchmarks/latest.md` (Last hand-checked run), `docs/book/src/benchmarks/comparison.md` (Results), `docs/site/index.html` (bench-stats) |
+| Number of backtest queries | `README.md`, `docs/book/src/benchmarks/methodology.md` (count `[[query]]` in `benches/rg_backtest.toml`) |
+| Search limits and defaults | `docs/book/src/benchmarks/search-limits.md`, `docs/book/src/reference/config-template.md`, the server's `--init` template |
+| Divergences from grep, ripgrep and git grep | `docs/book/src/reference/matching.md` |
+| Released version | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, `docs/book/src/start/install.md` |
+| Ports, CLI flags, config keys | `README.md`, `docs/CLI.md`, the book's reference pages |
+
+Numbers always name the Benchmarks run and commit they come from, so a
+reader can tell how old they are.
+
 ## Release Process
 
-Releases are automated via GitHub Actions. When you push a version tag, the release workflow builds binaries for all platforms and creates a GitHub Release.
+Releases are automated via GitHub Actions. The maintainer cuts every
+release: a release PR bumps the version, then the maintainer pushes the
+version tag, and the tag builds and publishes everything. Releases are
+immutable, so a mistake means a new patch version, not an edit.
+
+### Before you start
+
+- `main` is green: no open issue labelled `main-red` and the latest CI,
+  Benchmarks and Pages runs on `main` passed. A red workflow is fixed or
+  explained in the release PR first.
+- The published benchmark numbers are current. The README, the book's
+  [latest results](book/src/benchmarks/latest.md) and
+  [comparison](book/src/benchmarks/comparison.md) pages and the project site
+  (`docs/site/index.html`) repeat numbers from one named Benchmarks run. If
+  that run predates a change that moved them (any metric the A/B marked
+  slower or faster), refresh all four from the latest run on `main` in the
+  release PR. See [Docs that repeat numbers](#docs-that-repeat-numbers).
 
 ### Steps to Release
 
-1. **Update version** in `Cargo.toml`:
-   ```toml
-   version = "0.2.0"
-   ```
+1. **Open a release PR** from a branch off `main` that changes only:
+   - `Cargo.toml`: `version = "X.Y.Z"`.
+   - `Cargo.lock`: the `fast_code_search` package's version line (`cargo check` rewrites
+     it; no other entry should change).
+   - `CHANGELOG.md`: move `[Unreleased]` items into a dated `## [X.Y.Z] -
+     YYYY-MM-DD` section with a short summary and an **Upgrading** note,
+     leave an empty `[Unreleased]`, and update the compare links at the
+     bottom (`[Unreleased]` from `vX.Y.Z...HEAD`, plus a new `[X.Y.Z]` line).
+     Any slowdown the A/B found since the last release is named here with
+     what it buys.
+   - `docs/book/src/start/install.md`: the version in the checksum and
+     cosign examples and the container tags.
 
-2. **Update CHANGELOG.md**:
-   - Move items from `[Unreleased]` to new version section
-   - Add release date
-   - Update comparison links at bottom of file
+   Fill in the [PR template](../.github/PULL_REQUEST_TEMPLATE.md) and title
+   it `chore: release vX.Y.Z`.
 
-3. **Run quality checks**:
+2. **Run quality checks** locally before pushing:
    ```bash
-   cargo test
-   cargo clippy -- -D warnings
    cargo fmt --check
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo test
    ```
 
-4. **Commit the version bump**:
+3. **Merge** (squash) once CI is green. The Windows semantic test
+   `test_add_and_search` is a known flake; it is the only check that may be
+   red at merge, and only if it is the only one.
+
+4. **Tag the merge commit and push the tag** (maintainer; tokens used by
+   automation cannot push tags):
    ```bash
-   git add Cargo.toml CHANGELOG.md
-   git commit -m "chore: release v0.2.0"
+   git fetch origin
+   git tag vX.Y.Z <merge-commit-sha>
+   git push origin vX.Y.Z
    ```
 
-5. **Create and push the tag**:
-   ```bash
-   git tag v0.2.0
-   git push origin main
-   git push origin v0.2.0
-   ```
-
-6. **Monitor the release workflow**: The [release workflow](../.github/workflows/release.yml) will:
-   - Build release binaries for Linux (x86_64, ARM64), macOS (x86_64, ARM64), and Windows (x86_64)
-   - Package each with config template, proto files, README, and LICENSE
-   - Generate SHA256 checksums
-   - Create a GitHub Release with changelog notes
+5. **Check the release is healthy.** The tag starts the
+   [release workflow](../.github/workflows/release.yml) and the
+   [container workflow](../.github/workflows/container.yml). When both pass:
+   - The GitHub Release has 15 assets: 5 archives, each with a `.sha256`
+     and a `.sigstore.json`.
+   - One archive verifies and reports the right version:
+     ```bash
+     sha256sum -c fast_code_search-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
+     ./fcs --version                     # fcs X.Y.Z
+     ./fast_code_search_server --version # fast_code_search X.Y.Z
+     ```
+   - A smoke run indexes a public tree (for example tokio), `GET
+     /api/check` reports no problems, and a plain search returns the same
+     count as `rg -F` on that tree.
+   - `ghcr.io/jburrow/fast_code_search` has `X.Y.Z`, `X.Y` and (for a
+     non-pre-release) `latest`.
 
 ### Release Artifacts
 
-Each release includes platform-specific archives:
+Each release includes platform-specific archives, each with a `.sha256`
+checksum and a Sigstore bundle (`.sigstore.json`):
 
 | Platform | Archive |
 |----------|---------|
@@ -523,9 +573,10 @@ Each release includes platform-specific archives:
 | Windows x86_64 | `fast_code_search-v{VERSION}-x86_64-pc-windows-msvc.zip` |
 
 Each archive contains:
-- `fast_code_search_server` (or `.exe` on Windows)
+- `fast_code_search_server` and `fcs` (or `.exe` on Windows)
 - `config.toml.example`
-- `proto/search.proto`
+- `deploy/` (startup unit files), `RUN-AT-STARTUP.md`, `CLI.md`
+- `proto/`
 - `README.md`
 - `LICENSE`
 

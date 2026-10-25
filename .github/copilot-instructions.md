@@ -178,10 +178,15 @@ Windows: Use `scripts\run_semantic_server.ps1` (sets `ORT_DYLIB_PATH`).
 
 ## Documentation Updates
 
-When changing code, update:
+When changing code, update in the same PR:
 1. This file — for architecture/pattern changes
-2. `README.md` — for user-facing changes
+2. `README.md` and the book (`docs/book/src/`) — for user-facing changes
 3. `CHANGELOG.md` — for every user-visible change
+4. Every other place that states the same fact. Benchmark numbers, the
+   backtest query count, limits and defaults, and the released version each
+   appear in several files; the table in
+   [docs/DEVELOPMENT.md, "Docs that repeat numbers"](../docs/DEVELOPMENT.md#docs-that-repeat-numbers)
+   lists them. Before finishing, grep the docs for the old value.
 
 Instruction governance source: `docs/internal/INSTRUCTION_FILES_BLUEPRINT.md`
 
@@ -244,3 +249,9 @@ cargo bench -- --baseline before       # After changes, compare
 ```
 
 Reports at `target/criterion/report/index.html`. Benchmark groups: `text_search`, `regex_search`, `filtered_search`, `indexing`.
+
+For a change to indexing, search, persistence or the watcher, the evidence
+that counts is the same-machine A/B (`scripts/bench/ab.sh`, see
+[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md)). Published numbers (README,
+book, site) come from a named Benchmarks workflow run; refresh them all
+together when a change moves them.

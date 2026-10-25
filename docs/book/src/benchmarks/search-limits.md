@@ -73,6 +73,25 @@ once, that is about 480 MB.
 100000`. The rest of the huge-query gap is the per-file cap (below) and
 files with thousands of hits each.
 
+**What it costs on a small repository.** The sweep above was measured on a
+large corpus. On tokio 1.45.0 + Django 5.2 (about 6,300 files), the same
+machine ran `examples/corpus_bench` at v0.16.2 (budget 512) and v0.17.0
+(budget 32,768):
+
+| Query | v0.16.2 p50 | v0.17.0 p50 |
+|---|---|---|
+| text, common word | 4.7 to 5.5 ms | 54 to 60 ms |
+| text, two characters | 4.1 to 4.5 ms | 45 to 47 ms |
+| regex, no literal | 3.0 to 3.6 ms | 100 to 108 ms |
+
+That is about ten times slower for common words and thirty times for a
+regex with no literal, and index builds did not change. It buys the
+quality above: page 1 holds the best hits instead of the first ones found.
+It was not named in the 0.17.0 changelog; the
+[changelog](../imported/changelog.md) now records it. Queries with few
+matches (identifiers, rare words) did not change. Whether the budget can
+be made cheaper when a repository has few files is an open question.
+
 ## Reading order
 
 Before 0.17, `rank=full`, which was auto's choice below 5,000 candidates,
