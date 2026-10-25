@@ -32,7 +32,10 @@ Add `--show-paths` to list example files for each kind of problem, or
 `--json` for the full report. Exit status 1 means problems were found.
 
 - `--content N` reads N files spread over the index (default 2,000;
-  `--all-content` reads every file).
+  `--all-content` reads every file). Reading every file of a large index
+  takes minutes. `/api/check` is not cut off by `request_timeout_secs`,
+  and `fcs` waits up to an hour for it. One check runs at a time; a
+  second gets 429 until the first is done.
 - `--no-discovery` skips the walk of the disk.
 
 A change the watcher has not applied yet looks like a difference for a
