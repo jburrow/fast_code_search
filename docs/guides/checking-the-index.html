@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2318171e.js";
+            window.path_to_searchindex_js = "../searchindex-bb62b165.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -211,7 +211,10 @@ Add <code>--show-paths</code> to list example files for each kind of problem, or
 <code>--json</code> for the full report. Exit status 1 means problems were found.</p>
 <ul>
 <li><code>--content N</code> reads N files spread over the index (default 2,000;
-<code>--all-content</code> reads every file).</li>
+<code>--all-content</code> reads every file). Reading every file of a large index
+takes minutes. <code>/api/check</code> is not cut off by <code>request_timeout_secs</code>,
+and <code>fcs</code> waits up to an hour for it. One check runs at a time; a
+second gets 429 until the first is done.</li>
 <li><code>--no-discovery</code> skips the walk of the disk.</li>
 </ul>
 <p>A change the watcher has not applied yet looks like a difference for a

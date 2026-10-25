@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-2318171e.js";
+            window.path_to_searchindex_js = "../searchindex-bb62b165.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -213,6 +213,12 @@ built by inserts keep spare capacity.</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong><code>fcs check --live --all-content</code> was cut off on a large index.</strong> The
+server’s whole-request timeout (<code>request_timeout_secs</code>, 30 s) applied to
+<code>/api/check</code>, so a check that read every file of a large tree answered
+504 while the client was ready to wait an hour. The check runs one at a
+time and only reads, so it is no longer timed out. Found by the scale
+scoreboard on a 200,000-file tree with real-sized files.</li>
 <li><strong>Folders that could not be read went missing without a word.</strong> When
 the build, a restart’s check or a rescan could not list a folder
 (permission denied, an I/O error), it logged a debug line and skipped
