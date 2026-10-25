@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Folders that could not be read went missing without a word.** When
+  the build, a restart's check or a rescan could not list a folder
+  (permission denied, an I/O error), it logged a debug line and skipped
+  it, so its files were missing from every search. Each such folder is
+  now logged as a warning and counted with every search: "1 folder could
+  not be read, so the files in it are missing from the index", in the web
+  UI ("1 folder unreadable"), `fcs`, MCP, `/api/status` and `fcs check
+  --live`. The count clears when a later scan (a restart, a rescan) can read the
+  folder.
+- **Folders the watcher could not watch were not reported.** A folder the
+  file watcher could not list was dropped silently, and one it could not
+  watch (the OS watch limit) was only logged. Both are now counted while
+  watching ("2 folders not watched"): changes in them reach the index only
+  at the next rescan or restart.
+- **A file-watcher error now triggers a rescan.** An error from the OS
+  watcher (its event stream failed) was logged and nothing else, so the
+  events it lost were lost for good. The watched folders are now
+  reconciled with the disk, at most once every five minutes so a repeating
+  error cannot keep a rescan of a large tree running.
+
 ### Documentation
 
 - **Benchmark numbers now match what fcs does.** The README, the book's

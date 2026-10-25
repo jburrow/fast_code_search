@@ -61,9 +61,11 @@ pub fn start_watcher(indexer: &IndexerConfig) -> Result<FileWatcher> {
 pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
     info!("File watcher started");
     let queued = watcher.queued_counter();
+    let unwatched = watcher.unwatched_folders();
     let (applying, read_failures) = with_engine_write(&cfg.engine, |engine| {
         engine.watching = true;
         engine.watch_backlog.queued = queued;
+        engine.watch_backlog.unwatched_folders = unwatched;
         (
             Arc::clone(&engine.watch_backlog.applying),
             Arc::clone(&engine.watch_backlog.read_failures),

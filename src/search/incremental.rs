@@ -320,7 +320,10 @@ fn reconcile_dir(
     }
     let discovery = discovery_config(config, vec![dir.to_string_lossy().to_string()]);
     let mut keep = std::collections::HashSet::new();
-    for file in FileDiscoveryIterator::new(&discovery).filter(|f| !config.is_file_excluded(f)) {
+    let walk = FileDiscoveryIterator::new(&discovery).reporting_to(std::sync::Arc::clone(
+        &engine.watch_backlog.unreadable_folders,
+    ));
+    for file in walk.filter(|f| !config.is_file_excluded(f)) {
         match engine.find_file_id_exact(&file) {
             Some(id) => {
                 keep.insert(id);

@@ -77,6 +77,14 @@ pub struct IntegrityReport {
     pub discovery: BTreeMap<String, usize>,
     /// Changes the watcher still had to apply when the check ended.
     pub pending_changes: usize,
+    /// Folders the last scan could not read: their files are not indexed,
+    /// as ripgrep skips them (reported, not counted as problems). Example
+    /// paths under `folders.unreadable`.
+    #[serde(default)]
+    pub unreadable_folders: usize,
+    /// Folders the watcher could not watch (examples: `folders.unwatched`).
+    #[serde(default)]
+    pub unwatched_folders: usize,
     /// The startup build was still running (differences are expected).
     pub building: bool,
     /// How long the check took.
@@ -167,6 +175,29 @@ impl IntegrityReport {
                 &self.discovery,
             ),
             None => line(&mut out, "discovery: not run".into()),
+        }
+        for (n, kind, what) in [
+            (
+                self.unreadable_folders,
+                "unreadable",
+                "could not be read (their files are not indexed)",
+            ),
+            (self.unwatched_folders, "unwatched", "could not be watched"),
+        ] {
+            if n == 0 {
+                continue;
+            }
+            line(&mut out, format!("folders: {n} {what}"));
+            if with_paths {
+                for e in self
+                    .examples
+                    .get(&format!("folders.{kind}"))
+                    .into_iter()
+                    .flatten()
+                {
+                    line(&mut out, format!("    {e}"));
+                }
+            }
         }
         if let Some(s) = &self.scrub {
             let drift: u64 = s.drift.values().sum();
@@ -313,7 +344,27 @@ pub fn check(
 
     {
         let e = read(engine);
-        report.pending_changes = e.freshness().pending_changes;
+        let freshness = e.freshness();
+        report.pending_changes = freshness.pending_changes;
+        report.unreadable_folders = freshness.unreadable_folders;
+        report.unwatched_folders = freshness.unwatched_folders;
+        for (kind, folders) in [
+            ("unreadable", &e.watch_backlog.unreadable_folders),
+            ("unwatched", &e.watch_backlog.unwatched_folders),
+        ] {
+            if kind == "unwatched" && !e.watching {
+                continue;
+            }
+            let examples: Vec<String> = folders
+                .list()
+                .into_iter()
+                .take(opts.examples)
+                .map(|(p, _)| e.make_display_path(&p))
+                .collect();
+            if !examples.is_empty() {
+                report.examples.insert(format!("folders.{kind}"), examples);
+            }
+        }
         report.building = e.building;
         report.watching = e.watching;
         let scrub = e

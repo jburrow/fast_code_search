@@ -26,7 +26,8 @@ mod scope;
 mod text;
 
 pub use freshness::{
-    unix_now_ms, IndexFreshness, PathFreshness, ReadFailures, WatchBacklog, MAX_READ_ATTEMPTS,
+    unix_now_ms, FolderProblems, IndexFreshness, PathFreshness, ReadFailures, WatchBacklog,
+    MAX_READ_ATTEMPTS,
 };
 pub use impact::{
     ImpactFileSummary, ImpactOptions, ImpactReport, ImpactScope, SymbolImpact, TierCounts, UseLine,

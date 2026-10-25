@@ -158,6 +158,12 @@ These follow from fcs being a code search server rather than a line filter.
   search ("1 file could not be read and is left out of the index"); the
   server log names it, and it is indexed again when it next changes and
   can be read.
+- **Folders that can't be read.** ripgrep prints an error for a folder it
+  cannot list and searches the rest; fcs does the same, and also counts
+  the folder with every search ("1 folder could not be read, so the files
+  in it are missing from the index"). The server log names it. The count
+  clears at the next scan that can read it: a restart, a rescan after lost
+  events, or the folder being renamed or created again.
 
 ## Known differences
 

@@ -477,6 +477,12 @@ test('indexFreshnessLabel: names the changes the watcher has not applied yet', (
     const both = H.indexFreshnessLabel({ watching: true, pending_changes: 2, unreadable_files: 3 }, 0);
     assert.equal(both.text, 'Index updating · 2 file changes to apply · 3 files unreadable');
     assert.match(both.title, /3 files could not be read and are left out of the index/);
+    // Folders that could not be read or watched, too.
+    const folders = H.indexFreshnessLabel(
+        { watching: true, unreadable_folders: 1, unwatched_folders: 2 }, 0);
+    assert.equal(folders.text, '1 folder unreadable · 2 folders not watched');
+    assert.match(folders.title, /missing from the index/);
+    assert.equal(H.indexFreshnessLabel({ watching: false, unwatched_folders: 2 }, 0), null);
 });
 
 test('indexFreshnessLabel: says how old the index is when watching is off', () => {

@@ -506,10 +506,18 @@ fn run_indexing_pipeline(
     // Shared counters for progress tracking
     let files_discovered = Arc::new(AtomicUsize::new(discovery_offset));
     let discovery_done = Arc::new(AtomicBool::new(false));
+    let unreadable_folders = Arc::clone(
+        &index_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .watch_backlog
+            .unreadable_folders,
+    );
 
     // Spawn file discovery thread
     let discovery_handle = spawn_discovery_thread(
         indexer_config.discovery_config(paths_to_index.to_vec()),
+        unreadable_folders,
         stale_files,
         tx,
         files_discovered.clone(),
@@ -567,6 +575,7 @@ fn run_indexing_pipeline(
 #[allow(clippy::too_many_arguments)]
 fn spawn_discovery_thread(
     discovery_config: FileDiscoveryConfig,
+    unreadable_folders: Arc<crate::search::FolderProblems>,
     stale_files: Vec<PathBuf>,
     tx: SyncSender<PathBuf>,
     files_discovered: Arc<AtomicUsize>,
@@ -614,7 +623,7 @@ fn spawn_discovery_thread(
         }
 
         // Then discover files from paths that need indexing.
-        for path in FileDiscoveryIterator::new(&discovery_config) {
+        for path in FileDiscoveryIterator::new(&discovery_config).reporting_to(unreadable_folders) {
             if shutdown.load(Ordering::Acquire) {
                 break;
             }

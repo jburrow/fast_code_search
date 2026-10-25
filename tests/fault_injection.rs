@@ -705,3 +705,45 @@ fn updates_whose_save_failed_are_saved_at_shutdown() {
         "the saved index is out of date"
     );
 }
+
+/// A folder that can't be read is counted at every surface's freshness
+/// note, by the build and by the watcher, instead of its files going
+/// missing without a word; once it can be read, a rescan of its parent
+/// indexes it and the count goes away. (Real permissions, not a fault
+/// point: skipped where they are not enforced, as for root.)
+#[cfg(unix)]
+#[test]
+fn unreadable_folder_is_reported_until_it_can_be_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut rig = Rig::new(&[("a.py", "x = 'visible'\n")], true);
+    let locked = rig.root.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("b.py"), "y = 'hidden'\n").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: permissions are not enforced for this user");
+        return;
+    }
+    rig.build();
+    rig.start_watching();
+    let f = rig.engine.read().unwrap().freshness();
+    assert_eq!((f.unreadable_folders, f.unwatched_folders), (1, 1));
+    assert!(
+        rig.note().contains("1 folder could not be read"),
+        "{}",
+        rig.note()
+    );
+    assert_eq!(rig.found_in("hidden"), Vec::<String>::new());
+
+    // Readable again: touching the parent makes the watcher reconcile it.
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(rig.root.join("c.py"), "z = 1\n").unwrap();
+    std::fs::rename(&locked, rig.root.join("unlocked")).unwrap();
+    rig.wait_for("the folder to be indexed", |r| {
+        r.found_in("hidden") == ["b.py"]
+    });
+    rig.wait_for("the count to clear", |r| {
+        r.engine.read().unwrap().freshness().unreadable_folders == 0
+    });
+}

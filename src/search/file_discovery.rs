@@ -101,6 +101,17 @@ pub struct FileDiscoveryIterator {
     /// Stack of directory walkers (one per path).
     walkers: Vec<Walker>,
 
+    /// The folder each walker starts from, parallel to `walkers`.
+    roots: Vec<PathBuf>,
+
+    /// Where folders that could not be read are recorded, if anywhere
+    /// ([`Self::reporting_to`]).
+    problems: Option<Arc<crate::search::FolderProblems>>,
+
+    /// Walk errors seen so far (the first is logged as a warning, the rest
+    /// counted in one line at the end).
+    walk_errors: usize,
+
     /// The eligibility rules every discovered file is checked against.
     rules: EligibilityProbe,
 }
@@ -294,7 +305,7 @@ impl FileDiscoveryIterator {
         let rules = EligibilityProbe::new(config);
         let dir_filter = Arc::new(rules.exclude_filter.clone());
 
-        let walkers: Vec<Walker> = config
+        let (walkers, roots): (Vec<Walker>, Vec<PathBuf>) = config
             .paths
             .iter()
             .filter_map(|path_str| {
@@ -353,10 +364,88 @@ impl FileDiscoveryIterator {
                             .filter_entry(predicate),
                     )
                 })
+                .map(|walker| (walker, path.to_path_buf()))
             })
-            .collect();
+            .unzip();
 
-        Self { walkers, rules }
+        Self {
+            walkers,
+            roots,
+            rules,
+            problems: None,
+            walk_errors: 0,
+        }
+    }
+
+    /// Record every folder this walk cannot read in `problems`, after
+    /// forgetting what was recorded under the folders it walks (the walk
+    /// is the new word on them) and folders that are gone (deleted or
+    /// renamed; a renamed one is walked under its new name).
+    pub fn reporting_to(mut self, problems: Arc<crate::search::FolderProblems>) -> Self {
+        for root in &self.roots {
+            problems.forget_under(root);
+        }
+        problems.forget_missing();
+        self.problems = Some(problems);
+        self
+    }
+
+    /// A walk error: logged (the first as a warning), and recorded when it
+    /// means a folder (rarely a single entry) could not be read.
+    fn walk_error(&mut self, error: WalkError) {
+        self.walk_errors += 1;
+        let recorded = match (&self.problems, &error.path, error.io) {
+            (Some(problems), Some(path), true) => problems.record(path, &error.message),
+            _ => false,
+        };
+        if self.walk_errors == 1 || recorded {
+            tracing::warn!(
+                path = %error.path.as_deref().unwrap_or(Path::new("")).display(),
+                error = %error.message,
+                "Could not read a folder; files in it are not indexed"
+            );
+        } else {
+            tracing::debug!(error = %error.message, "Error walking directory");
+        }
+    }
+}
+
+/// What a directory walk could not do.
+struct WalkError {
+    /// The folder or entry it could not read, when the walker says.
+    path: Option<PathBuf>,
+    message: String,
+    /// An I/O error (permission denied, a vanished folder), as opposed to a
+    /// symlink loop or a bad pattern in an ignore file.
+    io: bool,
+}
+
+impl From<walkdir::Error> for WalkError {
+    fn from(e: walkdir::Error) -> Self {
+        Self {
+            path: e.path().map(Path::to_path_buf),
+            io: e.io_error().is_some(),
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<ignore::Error> for WalkError {
+    fn from(e: ignore::Error) -> Self {
+        fn path_of(e: &ignore::Error) -> Option<&Path> {
+            match e {
+                ignore::Error::WithPath { path, .. } => Some(path),
+                ignore::Error::WithDepth { err, .. }
+                | ignore::Error::WithLineNumber { err, .. } => path_of(err),
+                ignore::Error::Loop { child, .. } => Some(child),
+                _ => None,
+            }
+        }
+        Self {
+            path: path_of(&e).map(Path::to_path_buf),
+            io: e.io_error().is_some(),
+            message: e.to_string(),
+        }
     }
 }
 
@@ -437,17 +526,17 @@ impl Iterator for FileDiscoveryIterator {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(walker) = self.walkers.last_mut() {
             // Try to get the next entry from the current walker
-            let next: Option<Result<(PathBuf, bool), String>> = match walker {
+            let next: Option<Result<(PathBuf, bool), WalkError>> = match walker {
                 Walker::Plain(w) => w.next().map(|r| {
                     r.map(|e| (e.path().to_path_buf(), e.file_type().is_file()))
-                        .map_err(|e| e.to_string())
+                        .map_err(WalkError::from)
                 }),
                 Walker::Ignore(w) => w.next().map(|r| {
                     r.map(|e| {
                         let is_file = e.file_type().is_some_and(|t| t.is_file());
                         (e.into_path(), is_file)
                     })
-                    .map_err(|e| e.to_string())
+                    .map_err(WalkError::from)
                 }),
             };
             match next {
@@ -462,16 +551,24 @@ impl Iterator for FileDiscoveryIterator {
                     return Some(path);
                 }
                 Some(Err(e)) => {
-                    tracing::debug!(error = %e, "Error walking directory");
+                    self.walk_error(e);
                     continue;
                 }
                 None => {
                     // Current walker exhausted, move to next
                     self.walkers.pop();
+                    self.roots.pop();
                 }
             }
         }
 
+        if self.walk_errors > 1 {
+            tracing::warn!(
+                errors = self.walk_errors,
+                "Some folders could not be read; files in them are not indexed"
+            );
+            self.walk_errors = 0;
+        }
         None
     }
 }
@@ -978,5 +1075,53 @@ mod prune_tests {
         assert!(probe.is_eligible_path(Path::new("/nowhere/a.rs"), Some(5)));
         assert!(!probe.is_eligible_path(Path::new("/nowhere/a.rs"), Some(11)));
         assert!(!probe.is_eligible_path(Path::new("/nowhere/a.py"), Some(5)));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unreadable_folder_tests {
+    use super::*;
+    use crate::search::FolderProblems;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A folder the walk cannot list is recorded (it used to be skipped with
+    /// a debug line), and forgotten once a later walk can read it.
+    #[test]
+    fn a_folder_that_cannot_be_read_is_recorded_until_it_can() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("ok")).unwrap();
+        std::fs::create_dir_all(root.join("locked")).unwrap();
+        std::fs::write(root.join("ok/a.rs"), "fn a() {}").unwrap();
+        std::fs::write(root.join("locked/b.rs"), "fn b() {}").unwrap();
+        let locked = root.join("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            // Running as root: every folder is readable, nothing to check.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!("skipped: permissions are not enforced for this user");
+            return;
+        }
+        for gitignore in [true, false] {
+            let mut config =
+                FileDiscoveryConfig::new(vec![root.to_string_lossy().to_string()], vec![]);
+            config.respect_gitignore = gitignore;
+            let problems = Arc::new(FolderProblems::default());
+            let found: Vec<PathBuf> = FileDiscoveryIterator::new(&config)
+                .reporting_to(Arc::clone(&problems))
+                .collect();
+            assert_eq!(found, vec![root.join("ok/a.rs")], "gitignore {gitignore}");
+            let listed: Vec<PathBuf> = problems.list().into_iter().map(|(p, _)| p).collect();
+            assert_eq!(listed, vec![locked.clone()], "gitignore {gitignore}");
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config = FileDiscoveryConfig::new(vec![root.to_string_lossy().to_string()], vec![]);
+        let problems = Arc::new(FolderProblems::default());
+        problems.record(&locked, "permission denied");
+        let found = FileDiscoveryIterator::new(&config)
+            .reporting_to(Arc::clone(&problems))
+            .count();
+        assert_eq!(found, 2);
+        assert!(problems.is_empty(), "readable again: {:?}", problems.list());
     }
 }

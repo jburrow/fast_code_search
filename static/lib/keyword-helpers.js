@@ -731,24 +731,49 @@ function formatAge(ms) {
  * The freshness note beside the timing, or null when there is nothing to
  * warn about: a file watcher keeps the index current and has applied every
  * change it has seen, no scan has finished yet (the progress panel covers
- * the first build), and every file could be read.
- * @param {{watching?: boolean, synced_at_ms?: number, pending_changes?: number, unreadable_files?: number}|undefined} index `index` of a search response
+ * the first build), and every file and folder could be read and watched.
+ * @param {{watching?: boolean, synced_at_ms?: number, pending_changes?: number, unreadable_files?: number, unreadable_folders?: number, unwatched_folders?: number}|undefined} index `index` of a search response
  * @param {number} nowMs
  * @returns {{text: string, title: string}|null}
  */
 function indexFreshnessLabel(index, nowMs) {
-    const label = indexSyncLabel(index, nowMs);
+    const parts = [indexSyncLabel(index, nowMs)];
+    const count = (n, what) => `${n.toLocaleString('en-US')} ${what}${n === 1 ? '' : 's'}`;
     const n = (index && index.unreadable_files) || 0;
-    if (n <= 0) return label;
-    const files = `${n.toLocaleString('en-US')} file${n === 1 ? '' : 's'}`;
-    const unreadable = {
-        text: `${files} unreadable`,
-        title: `${files} could not be read and ${n === 1 ? 'is' : 'are'} left out of the index, `
-            + 'so results do not include them. The server log names them; they are indexed '
-            + 'again when they change and can be read.',
+    if (n > 0) {
+        const files = count(n, 'file');
+        parts.push({
+            text: `${files} unreadable`,
+            title: `${files} could not be read and ${n === 1 ? 'is' : 'are'} left out of the index, `
+                + 'so results do not include them. The server log names them; they are indexed '
+                + 'again when they change and can be read.',
+        });
+    }
+    const dirs = (index && index.unreadable_folders) || 0;
+    if (dirs > 0) {
+        const folders = count(dirs, 'folder');
+        parts.push({
+            text: `${folders} unreadable`,
+            title: `${folders} could not be read, so the files in ${dirs === 1 ? 'it are' : 'them are'} `
+                + 'missing from the index and from these results. The server log names '
+                + `${dirs === 1 ? 'it' : 'them'}.`,
+        });
+    }
+    const unwatched = (index && index.watching && index.unwatched_folders) || 0;
+    if (unwatched > 0) {
+        const folders = count(unwatched, 'folder');
+        parts.push({
+            text: `${folders} not watched`,
+            title: `${folders} could not be watched, so changes in ${unwatched === 1 ? 'it' : 'them'} `
+                + 'reach the index only at the next rescan or restart. The server log says why.',
+        });
+    }
+    const shown = parts.filter(Boolean);
+    if (!shown.length) return null;
+    return {
+        text: shown.map(p => p.text).join(' · '),
+        title: shown.map(p => p.title).join(' '),
     };
-    if (!label) return unreadable;
-    return { text: `${label.text} · ${unreadable.text}`, title: `${label.title} ${unreadable.title}` };
 }
 
 /** The watcher-backlog or watching-off part of {@link indexFreshnessLabel}. */
