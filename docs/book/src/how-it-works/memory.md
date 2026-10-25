@@ -76,6 +76,7 @@ the server hands them back to the system once a build or a load is done
 |---|---|---|---|
 | tokio + Django | 135 MB | 107 MB | 8 ms |
 | Linux kernel | 793 MB | 709 MB | 36 ms |
+| Linux + LLVM + Rust + Kubernetes (302,000 files) | 1,718 MB | 1,613 MB | not timed |
 
 What is left above the live heap is fragmentation: freed memory that
 shares pages with live data. Compacting the posting lists after a build

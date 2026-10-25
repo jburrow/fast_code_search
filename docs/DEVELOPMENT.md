@@ -445,6 +445,7 @@ persistence or the watcher, compare it with `main` on one machine:
 ```bash
 scripts/bench/ab.sh                      # base origin/main, 5 rounds
 scripts/bench/ab.sh --base v0.18.0 --rounds 5
+scripts/bench/ab.sh --corpus small,real --rounds 3   # also the 302k-file corpus
 ```
 
 The script builds `examples/corpus_bench` at the base (in a worktree under
@@ -457,6 +458,14 @@ slower than every round of the base. Both conditions matter: run against
 itself on a 4-core VM, main moved single metrics by up to 18% over 5 rounds,
 but never with all rounds on one side. A slowdown can be the right trade; the
 PR and the CHANGELOG entry then say what it buys.
+
+`--corpus real` adds a pinned corpus the size of a large monorepo: Linux
+v6.11, LLVM 19.1.0, Rust 1.82.0 and Kubernetes v1.31.0, about 302,000
+files and 3 GB (about 4 GB of disk once cloned). Costs that grow with the
+tree, such as the single-threaded merge, a load or memory, show there and
+not in tokio + Django. A build takes about 7 minutes, so a round takes about
+17 minutes on 4 cores. Use it for changes to indexing, persistence or memory,
+and say in the PR how many rounds the table had.
 
 To find where time goes, profile the same benchmark with callgrind and
 collect every thread (a toggle on the main thread misses rayon's workers):

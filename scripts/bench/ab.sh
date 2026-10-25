@@ -5,11 +5,19 @@
 # numbers from one machine in one sitting are what a PR should quote.
 #
 #   scripts/bench/ab.sh [--base origin/main] [--rounds 5] [--threshold 10]
+#                       [--corpus small|real|small,real]
 #
 # Builds examples/corpus_bench at the base (in a temporary worktree) and
-# at the working tree, fetches tokio 1.45.0 and Django 5.2 into
-# bench-corpus/ when missing (the Benchmarks workflow's corpus), runs them
-# alternately, and prints a markdown table. Exits 1 when a metric is
+# at the working tree, fetches the corpora into bench-corpus/ when missing,
+# runs them alternately, and prints a markdown table per corpus:
+#
+#   small  tokio 1.45.0 + Django 5.2 (about 6,300 files; the Benchmarks
+#          workflow's corpus). The default.
+#   real   Linux v6.11, LLVM 19.1.0, Rust 1.82.0, Kubernetes v1.31.0
+#          (about 302,000 files, 3 GB; about 4 GB of disk once cloned).
+#          A build takes minutes, so a round takes about 17 minutes on 4
+#          cores: use it for changes to indexing, persistence or memory,
+#          and say how many rounds the table had. Exits 1 when a metric is
 # more than --threshold percent slower AND every round of this tree was
 # slower than every round of the base, so a slowdown is never missed;
 # a slowdown can still be the right trade, but then the PR says so.
@@ -18,14 +26,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-BASE=origin/main; ROUNDS=5; THRESHOLD=10
+BASE=origin/main; ROUNDS=5; THRESHOLD=10; CORPORA=small
+usage="usage: $0 [--base REF] [--rounds N] [--threshold PCT] [--corpus small|real|small,real]"
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="$2"; shift 2;;
     --rounds) ROUNDS="$2"; shift 2;;
     --threshold) THRESHOLD="$2"; shift 2;;
-    *) echo "usage: $0 [--base REF] [--rounds N] [--threshold PCT]" >&2; exit 2;;
+    --corpus) CORPORA="$2"; shift 2;;
+    *) echo "$usage" >&2; exit 2;;
   esac
+done
+for c in ${CORPORA//,/ }; do
+  case "$c" in small|real) ;; *) echo "$usage" >&2; exit 2;; esac
 done
 
 WORK=${AB_WORK:-target/ab}
@@ -36,8 +49,24 @@ corpus() { # name repo ref
   [ -d "bench-corpus/$1" ] && return
   git clone -q --depth 1 --branch "$3" "https://github.com/$2.git" "bench-corpus/$1"
 }
-corpus tokio tokio-rs/tokio tokio-1.45.0
-corpus django django/django 5.2
+paths() { # corpus -> its folders
+  case "$1" in
+    small) echo bench-corpus/tokio bench-corpus/django;;
+    real) echo bench-corpus/linux bench-corpus/llvm-project bench-corpus/rust bench-corpus/kubernetes;;
+  esac
+}
+for c in ${CORPORA//,/ }; do
+  case "$c" in
+    small)
+      corpus tokio tokio-rs/tokio tokio-1.45.0
+      corpus django django/django 5.2;;
+    real)
+      corpus linux torvalds/linux v6.11
+      corpus llvm-project llvm/llvm-project llvmorg-19.1.0
+      corpus rust rust-lang/rust 1.82.0
+      corpus kubernetes kubernetes/kubernetes v1.31.0;;
+  esac
+done
 
 base_sha=$(git rev-parse --short "$BASE")
 if [ ! -x "$WORK/bin/base-$base_sha" ]; then
@@ -51,20 +80,26 @@ cargo build -q --release --example corpus_bench
 cp target/release/examples/corpus_bench "$WORK/bin/head"
 
 for round in $(seq 1 "$ROUNDS"); do
-  for side in "base-$base_sha" head; do
-    "$WORK/bin/$side" bench-corpus/tokio bench-corpus/django --label ab \
-      --iterations 20 --bencher > "$WORK/results/${side%%-*}-$round.txt" 2>/dev/null
+  for c in ${CORPORA//,/ }; do
+    for side in "base-$base_sha" head; do
+      # shellcheck disable=SC2046 # one argument per folder
+      "$WORK/bin/$side" $(paths "$c") --label "ab-$c" \
+        --iterations 20 --bencher > "$WORK/results/${side%%-*}-$c-$round.txt" 2>/dev/null
+    done
   done
   echo "round $round of $ROUNDS done" >&2
 done
 
-python3 - "$WORK/results" "$base_sha" "$THRESHOLD" <<'PY'
+status=0
+for c in ${CORPORA//,/ }; do
+[ "$CORPORA" = small ] || echo "### $c: $(paths "$c" | sed 's|bench-corpus/||g')"
+python3 - "$WORK/results" "$base_sha" "$THRESHOLD" "$c" <<'PY' || status=1
 import glob, re, statistics, sys
-results, base_sha, threshold = sys.argv[1], sys.argv[2], float(sys.argv[3])
+results, base_sha, threshold, corpus = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
 data = {}
 for side in ("base", "head"):
-    for f in glob.glob(f"{results}/{side}-*.txt"):
-        for m in re.finditer(r"corpus_bench/ab/(\S+) \.\.\. bench: (\d+)", open(f).read()):
+    for f in glob.glob(f"{results}/{side}-{corpus}-*.txt"):
+        for m in re.finditer(rf"corpus_bench/ab-{corpus}/(\S+) \.\.\. bench: (\d+)", open(f).read()):
             data.setdefault(m.group(1), {}).setdefault(side, []).append(int(m.group(2)))
 def fmt(name, v):
     if name.endswith("_bytes"):
@@ -86,10 +121,17 @@ for name, sides in data.items():
     if flag:
         slower.append(name)
     print(f"| {name} | {fmt(name, b)} | {fmt(name, h)} | {pct:+.0f}%{flag} |")
-print(f"\nMedian of {len(next(iter(data.values()))['head'])} interleaved rounds on this machine; "
+rounds = len(next(iter(data.values()))['head'])
+print(f"\nMedian of {rounds} interleaved rounds on this machine; "
       f"**slower** = over {threshold:.0f}% and every round slower than every base round.")
+if rounds < 3:
+    print(f"With {rounds} round(s) every round can land on one side by chance, so a "
+          "**slower** flag is only a lead: rerun with --rounds 3 or more before acting on it.")
 if slower:
     print(f"\nMore than {threshold:.0f}% slower: {', '.join(slower)}. Fix it, or say in the PR "
           "(Performance section) and CHANGELOG what it buys.", file=sys.stderr)
     sys.exit(1)
 PY
+echo
+done
+exit $status

@@ -15,8 +15,10 @@
 
 <!-- Required when indexing, search, persistence or the watcher change:
      paste the table from `scripts/bench/ab.sh` (same machine, base vs this
-     branch). Name any metric that got slower and what it buys; the same
-     goes in the CHANGELOG entry. Otherwise write "Not affected". -->
+     branch). For indexing, persistence or memory changes, add the
+     302k-file corpus (`--corpus small,real`). Name any metric that got
+     slower and what it buys; the same goes in the CHANGELOG entry.
+     Otherwise write "Not affected". -->
 
 ## Notes for the reviewer
 
