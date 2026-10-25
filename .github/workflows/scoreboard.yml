@@ -1,6 +1,7 @@
 name: Scale scoreboard
 
-# The real server binary on a generated tree of 200,000 files, searched
+# The real server binary on a generated tree of 200,000 files shaped like
+# real code (examples/support/load_tree.rs), searched
 # over HTTP while the tree changes the way branch switches, formatters and
 # builds change it (examples/scoreboard.rs). Every scenario reports the same
 # numbers: searches turned away, latency, how long until the index matches
@@ -9,9 +10,11 @@ name: Scale scoreboard
 # benches/scoreboard/targets.toml fails the run. The book's "Scale
 # scoreboard" page has the targets and the measurements behind them.
 #
-# Nightly with the full ten-minute stream; on pull requests that touch
-# locking, watching, saving or limits with a two-minute stream, and the
-# table in the job summary.
+# Nightly on 200,000 files with the full ten-minute stream, where the
+# time and memory targets apply. On pull requests that touch locking,
+# watching, saving or limits: 50,000 files and a two-minute stream (the
+# zero targets apply; the tree is shaped like real code, so 200,000 files
+# take about an hour), with the table in the job summary.
 #
 # The second job kills the server with SIGKILL at random moments (during a
 # build, a load, a stream of edits, a burst, a shutdown save), starts it
@@ -90,7 +93,7 @@ jobs:
             --targets benches/scoreboard/targets.toml \
             --markdown scoreboard.md --json scoreboard.json
         env:
-          FILES: ${{ github.event.inputs.files || '200000' }}
+          FILES: ${{ github.event.inputs.files || (github.event_name == 'pull_request' && '50000' || '200000') }}
           STREAM: ${{ github.event.inputs.stream_seconds || (github.event_name == 'pull_request' && '120' || '600') }}
 
       - name: Report
