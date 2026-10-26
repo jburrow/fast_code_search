@@ -228,7 +228,7 @@ impl TrigramIndex {
 
     /// Read the posting lists in place from `postings`, a file just
     /// written from this index with the same document ids, below `ids`,
-    /// and with no stale entries ([`Self::postings_to_save`]). The lists
+    /// and with no stale entries ([`Self::with_postings_to_save`]). The lists
     /// held on the heap are all in it, and are dropped at the next change
     /// or [`Self::settle`]. Takes `&self` because the checkpoint runs under
     /// the engine's read lock, while queries run: a query reads either
