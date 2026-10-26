@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Loading a saved index is about 2.5 times faster.** With one file
+  changed since the save, a load of the 302,000-file real corpus took
+  10.3 s and now takes 4.1 s (same machine, median of 5). A load used to
+  renumber the files that survived, which rebuilt every posting list when
+  even one file had changed; each saved file now keeps its id and the
+  changed and deleted ones are tombstoned, as a removal at runtime is.
+  From the same profile: the checksum is computed eight bytes at a time,
+  path tables use a faster hash, directory counts are added once per
+  directory, symbols are moved rather than copied, and the ranking
+  metadata pass runs on every core.
 - **About 10% less memory on large trees: each file's path is held once.**
   The ranking metadata, the import resolver's path tables and the import
   lists kept their own copies of every path (five to eight per file); they

@@ -57,7 +57,12 @@ exits, however it exits.
 4. Register files lazily (no reads), restore the posting lists from the
    mapping in parallel, restore symbols, references and edges — or
    re-extract them from content if the file was written by an older
-   extractor — and rebuild the fast-ranking metadata.
+   extractor — and rebuild the fast-ranking metadata. Every saved file
+   gets its saved position back as its id, and the stale and removed ones
+   are then tombstoned, as a removal at runtime is, so the posting lists
+   are used as saved. (Renumbering the survivors instead rebuilt every
+   posting list whenever a single file had changed, the largest cost of
+   a load.) The gaps go at the next save.
 5. Re-index the stale files that the current configuration and ignore
    files still allow, then discover anything new under the roots.
 
