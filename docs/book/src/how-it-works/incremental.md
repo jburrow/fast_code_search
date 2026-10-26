@@ -75,7 +75,7 @@ lock, so searches keep being answered while a batch is read from disk:
    since it was read has an event of its own on the way.
 
 **Symbol names.** Symbol search finds files through a dictionary of
-symbol names built after a build or a load (see
+symbol names built after a build and saved with the index (see
 [Candidates](candidates.md#verification-and-modes)). Files installed after
 that are searched symbol by symbol, which costs more per file, until the
 dictionary is rebuilt: once a sixteenth of the files (at least 4,096) have

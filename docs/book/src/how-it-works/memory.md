@@ -5,7 +5,7 @@
 | Structure | Grows with | Notes |
 |---|---|---|
 | Trigram posting lists | distinct trigrams × files | Roaring bitmaps; run-optimised after a build |
-| Symbol tables | definitions | per file, restored from the saved index; plus a dictionary of distinct names, built after a build or load |
+| Symbol tables | definitions | per file, restored from the saved index; plus a dictionary of distinct names, built after a build and saved with the index |
 | Reference tables | call sites and type mentions | names interned once; positions packed |
 | Dependency graph | resolved imports | bidirectional, with cached dependent counts |
 | File store | files | one small entry per file; content is **not** kept |

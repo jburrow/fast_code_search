@@ -4664,3 +4664,79 @@ fn file_metadata_slices_the_stored_path() {
         }
     }
 }
+
+/// The symbol name dictionary is saved with the index and restored by a
+/// load, through the removed file's gap in the positions and with a file
+/// changed after the build still searched symbol by symbol.
+#[test]
+fn test_symbol_names_survive_save_and_load() {
+    use crate::config::IndexerConfig;
+
+    let temp_dir = TempDir::new().unwrap();
+    let paths: Vec<_> = (0..4)
+        .map(|i| temp_dir.path().join(format!("f{i}.rs")))
+        .collect();
+    for (i, p) in paths.iter().enumerate() {
+        fs::write(
+            p,
+            format!("pub fn shared_name() {{}}\npub struct Item{i};\n"),
+        )
+        .unwrap();
+    }
+    age_files(temp_dir.path());
+    let config = IndexerConfig {
+        paths: vec![temp_dir.path().to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    for p in &paths {
+        engine.index_file(p).unwrap();
+    }
+    engine.finalize();
+    // A removed file leaves a gap in the saved positions; a changed one is
+    // stale in the dictionary.
+    assert!(engine.remove_file(&paths[1]));
+    fs::write(&paths[3], "pub fn renamed_after_build() {}\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&paths[3])
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(30))
+        .unwrap();
+    engine.update_file(&paths[3]).unwrap();
+    let index_path = temp_dir.path().join("index.bin");
+    engine.save_index(&index_path, &config).unwrap();
+
+    let mut loaded = SearchEngine::new();
+    let stale = loaded.load_index(&index_path).unwrap();
+    assert!(stale.is_empty(), "{stale:?}");
+    let changed = loaded.find_file_id(&paths[3].to_string_lossy()).unwrap();
+    assert_eq!(
+        loaded
+            .symbol_names
+            .unindexed(loaded.symbol_cache.len())
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![changed],
+        "restored from the file (a rebuild would have no stale files)"
+    );
+    let run = |e: &SearchEngine, q: &str| -> Vec<(String, usize, u64)> {
+        let mut v: Vec<_> = e
+            .search_symbols(q, "", "", 50)
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.file_path, m.line_number, m.score.to_bits()))
+            .collect();
+        v.sort();
+        v
+    };
+    let queries = ["shared", "item", "Item2", "renamed", "item1", "f0"];
+    let restored: Vec<_> = queries.iter().map(|q| run(&loaded, q)).collect();
+    assert_eq!(restored[0].len(), 2, "f0 and f2 define shared_name");
+    assert_eq!(restored[3].len(), 1);
+    assert!(restored[4].is_empty(), "f1 was removed");
+    loaded.symbol_names = Default::default();
+    for (q, want) in queries.iter().zip(restored) {
+        assert_eq!(run(&loaded, q), want, "{q}");
+    }
+}
