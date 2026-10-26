@@ -35,8 +35,8 @@ the benchmark workflow runs it on every push and the result appears on the
 ## Results on the CI runner
 
 <!-- bench:comparison-run -->
-From [run 40253883745](https://github.com/jburrow/fast_code_search/actions/runs/40253883745)
-on commit `faccb0f` (2026-10-26, version 0.19.0): GitHub-hosted `ubuntu-latest`,
+From [run 40411254740](https://github.com/jburrow/fast_code_search/actions/runs/40411254740)
+on commit `b1f9287` (2026-10-26, version 0.19.0): GitHub-hosted `ubuntu-latest`,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.
 <!-- /bench:comparison-run -->
 
@@ -45,13 +45,13 @@ AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.
 
 | Query | ripgrep | ugrep | fcs (client) | fcs (engine) |
 |---|---|---|---|---|
-| common word `return` | 70.8 ms | 84.5 ms | 31.8 ms | 31.47 ms |
-| identifier `Config` | 61.7 ms | 88.7 ms | 14.2 ms | 10.94 ms |
-| rare identifier `xq9zv_nothing_here` | 57.0 ms | 84.3 ms | 5.3 ms | 0.02 ms |
-| two words `fn main` | 57.8 ms | 85.7 ms | 7.6 ms | 2.89 ms |
-| regex with literal `fn\s+\w+\(` | 65.1 ms | 116.6 ms | 31.7 ms | 32.08 ms |
-| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 82.8 ms | 131.7 ms | 46.3 ms | 44.33 ms |
-| case-insensitive `(?i)unwrap\(` | 59.5 ms | 86.8 ms | 9.3 ms | 4.85 ms |
+| common word `return` | 71.3 ms | 94.2 ms | 31.4 ms | 30.75 ms |
+| identifier `Config` | 61.3 ms | 89.6 ms | 13.6 ms | 10.53 ms |
+| rare identifier `xq9zv_nothing_here` | 57.6 ms | 89.7 ms | 4.9 ms | 0.02 ms |
+| two words `fn main` | 73.5 ms | 86.8 ms | 8.6 ms | 3.79 ms |
+| regex with literal `fn\s+\w+\(` | 81.6 ms | 115.9 ms | 33.3 ms | 31.39 ms |
+| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 83.0 ms | 131.9 ms | 44.1 ms | 44.39 ms |
+| case-insensitive `(?i)unwrap\(` | 59.4 ms | 86.0 ms | 9.6 ms | 4.88 ms |
 <!-- /bench:comparison-table -->
 
 The [latest results](latest.md) page shows the newest run. Hand-run laptop
