@@ -114,7 +114,21 @@ pub struct FileDiscoveryIterator {
 
     /// The eligibility rules every discovered file is checked against.
     rules: EligibilityProbe,
+
+    /// Folder stamps being recorded ([`Self::recording_stamps`]).
+    recorder: Option<crate::search::dir_stamps::StampRecorder>,
+
+    /// Stamps still valid from before a restart walk, merged into the
+    /// recorded ones ([`Self::for_restart`]).
+    kept: rustc_hash::FxHashMap<PathBuf, crate::index::DirStamp>,
+
+    /// Whether every walker ran to the end (stamps from a cut-short walk
+    /// would hide the folders it never reached).
+    finished: bool,
 }
+
+/// Saved folders a walker does not enter (see [`crate::search::dir_stamps`]).
+type Known = Arc<rustc_hash::FxHashSet<PathBuf>>;
 
 /// The single eligibility rule set — exclude patterns, include-extension
 /// whitelist, binary extensions, size cap, and `.gitignore` when enabled —
@@ -302,10 +316,7 @@ impl EligibilityProbe {
 impl FileDiscoveryIterator {
     /// Create a new file discovery iterator from the given configuration.
     pub fn new(config: &FileDiscoveryConfig) -> Self {
-        let rules = EligibilityProbe::new(config);
-        let dir_filter = Arc::new(rules.exclude_filter.clone());
-
-        let (walkers, roots): (Vec<Walker>, Vec<PathBuf>) = config
+        let starts = config
             .paths
             .iter()
             .filter_map(|path_str| {
@@ -314,6 +325,39 @@ impl FileDiscoveryIterator {
                     tracing::warn!(path = %path_str, "Path does not exist, skipping");
                     return None;
                 }
+                Some((path.to_path_buf(), None))
+            })
+            .collect();
+        Self::walking(config, starts)
+    }
+
+    /// A restart walk: only the folders `plan` names, from the stamps the
+    /// last complete walk saved. Records stamps as it goes, merged over the
+    /// ones the plan kept.
+    pub(crate) fn for_restart(
+        config: &FileDiscoveryConfig,
+        plan: crate::search::dir_stamps::RestartPlan,
+    ) -> Self {
+        let mut starts: Vec<(PathBuf, Option<Known>)> = plan
+            .changed
+            .iter()
+            .map(|dir| (dir.clone(), Some(plan.known.clone())))
+            .collect();
+        starts.extend(plan.subtrees.iter().map(|dir| (dir.clone(), None)));
+        let mut walk = Self::walking(config, starts).recording_stamps();
+        walk.kept = plan.kept;
+        walk
+    }
+
+    /// Walk from each start; a start with a `Known` set never enters those
+    /// folders below it.
+    fn walking(config: &FileDiscoveryConfig, starts: Vec<(PathBuf, Option<Known>)>) -> Self {
+        let rules = EligibilityProbe::new(config);
+        let dir_filter = Arc::new(rules.exclude_filter.clone());
+
+        let (walkers, roots): (Vec<Walker>, Vec<PathBuf>) = starts
+            .into_iter()
+            .map(|(path, known)| {
                 // Do NOT follow symlinks: following them duplicates files when a
                 // link points inside the same root (the same file indexed under
                 // two paths -> duplicate search results) and can pull in trees
@@ -322,10 +366,10 @@ impl FileDiscoveryIterator {
                 //
                 // Excluded directories are pruned before they are read (the
                 // root itself, depth 0, is always entered).
-                Some(if config.respect_gitignore {
+                let walker = if config.respect_gitignore {
                     let filter = dir_filter.clone();
                     Walker::Ignore(
-                        ignore::WalkBuilder::new(path)
+                        ignore::WalkBuilder::new(&path)
                             .follow_links(false)
                             // Keep hidden files: exclusions are the user's call
                             // via exclude_patterns (".git" is in the defaults).
@@ -346,7 +390,8 @@ impl FileDiscoveryIterator {
                             .filter_entry(move |e| {
                                 e.depth() == 0
                                     || !e.file_type().is_some_and(|t| t.is_dir())
-                                    || !is_excluded_dir(&filter, e.path())
+                                    || !(is_excluded_dir(&filter, e.path())
+                                        || known.as_ref().is_some_and(|k| k.contains(e.path())))
                             })
                             .build(),
                     )
@@ -355,16 +400,17 @@ impl FileDiscoveryIterator {
                     let predicate: DirPredicate = Box::new(move |e: &walkdir::DirEntry| {
                         e.depth() == 0
                             || !e.file_type().is_dir()
-                            || !is_excluded_dir(&filter, e.path())
+                            || !(is_excluded_dir(&filter, e.path())
+                                || known.as_ref().is_some_and(|k| k.contains(e.path())))
                     });
                     Walker::Plain(
-                        WalkDir::new(path)
+                        WalkDir::new(&path)
                             .follow_links(false)
                             .into_iter()
                             .filter_entry(predicate),
                     )
-                })
-                .map(|walker| (walker, path.to_path_buf()))
+                };
+                (walker, path)
             })
             .unzip();
 
@@ -374,7 +420,32 @@ impl FileDiscoveryIterator {
             rules,
             problems: None,
             walk_errors: 0,
+            recorder: None,
+            kept: Default::default(),
+            finished: false,
         }
+    }
+
+    /// Record a stamp for every folder the walk enters, for
+    /// [`Self::take_stamps`].
+    pub fn recording_stamps(mut self) -> Self {
+        self.recorder = Some(crate::search::dir_stamps::StampRecorder::new());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_recorder(&mut self, recorder: crate::search::dir_stamps::StampRecorder) {
+        self.recorder = Some(recorder);
+    }
+
+    /// The folder stamps, once the walk has run to its end; `None` if it
+    /// was cut short or was not recording.
+    pub fn take_stamps(&mut self) -> Option<crate::index::DirStamps> {
+        if !self.finished {
+            return None;
+        }
+        let recorder = self.recorder.take()?;
+        Some(recorder.finish(std::mem::take(&mut self.kept)))
     }
 
     /// Record every folder this walk cannot read in `problems`, after
@@ -394,6 +465,9 @@ impl FileDiscoveryIterator {
     /// means a folder (rarely a single entry) could not be read.
     fn walk_error(&mut self, error: WalkError) {
         self.walk_errors += 1;
+        if let (Some(recorder), Some(path)) = (&mut self.recorder, &error.path) {
+            recorder.unreadable(path);
+        }
         let recorded = match (&self.problems, &error.path, error.io) {
             (Some(problems), Some(path), true) => problems.record(path, &error.message),
             _ => false,
@@ -526,21 +600,31 @@ impl Iterator for FileDiscoveryIterator {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(walker) = self.walkers.last_mut() {
             // Try to get the next entry from the current walker
-            let next: Option<Result<(PathBuf, bool), WalkError>> = match walker {
+            let next: Option<Result<(PathBuf, bool, bool), WalkError>> = match walker {
                 Walker::Plain(w) => w.next().map(|r| {
-                    r.map(|e| (e.path().to_path_buf(), e.file_type().is_file()))
-                        .map_err(WalkError::from)
+                    r.map(|e| {
+                        let t = e.file_type();
+                        (e.path().to_path_buf(), t.is_file(), t.is_dir())
+                    })
+                    .map_err(WalkError::from)
                 }),
                 Walker::Ignore(w) => w.next().map(|r| {
                     r.map(|e| {
-                        let is_file = e.file_type().is_some_and(|t| t.is_file());
-                        (e.into_path(), is_file)
+                        let t = e.file_type();
+                        let is_file = t.is_some_and(|t| t.is_file());
+                        let is_dir = t.is_some_and(|t| t.is_dir());
+                        (e.into_path(), is_file, is_dir)
                     })
                     .map_err(WalkError::from)
                 }),
             };
             match next {
-                Some(Ok((path, is_file))) => {
+                Some(Ok((path, is_file, is_dir))) => {
+                    if is_dir {
+                        if let Some(recorder) = &mut self.recorder {
+                            recorder.record_dir(&path);
+                        }
+                    }
                     // Skip non-files
                     if !is_file {
                         continue;
@@ -562,6 +646,7 @@ impl Iterator for FileDiscoveryIterator {
             }
         }
 
+        self.finished = true;
         if self.walk_errors > 1 {
             tracing::warn!(
                 errors = self.walk_errors,

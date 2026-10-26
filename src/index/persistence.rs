@@ -283,6 +283,28 @@ pub struct PersistedIndex {
     /// 2 s at 302,000 files). `None` when the index had none yet.
     /// (Format v9 / magic FCSIDX06.)
     pub symbol_names: Option<PersistedSymbolNames>,
+    /// What the last complete walk saw of each folder, so a restart
+    /// re-reads only the folders that changed (`search::dir_stamps`).
+    /// `None` when no complete walk has run since the index was built
+    /// (a checkpoint, an interrupted build). (Format v10 / magic FCSIDX07.)
+    pub dir_stamps: Option<DirStamps>,
+}
+
+/// Each walked folder's modification time and a fingerprint of its ignore
+/// files, plus a fingerprint of the user's global excludes file.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct DirStamps {
+    pub global: u64,
+    pub dirs: Vec<DirStamp>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct DirStamp {
+    pub path: PathBuf,
+    /// Nanoseconds since the Unix epoch; 0 means "always re-read".
+    pub mtime_ns: u64,
+    /// Fingerprint of the folder's ignore files (and `.git`'s presence).
+    pub ignores: u64,
 }
 
 /// The symbol name dictionary (`search::engine::symbol_names`), with file
@@ -324,7 +346,7 @@ const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 4 + 8;
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX06";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX07";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -340,7 +362,8 @@ impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
     /// 8: trigrams are Unicode simple case folded (`search::fold`).
     /// 9: the symbol name dictionary is saved (`symbol_names`).
-    pub const CURRENT_VERSION: u32 = 9;
+    /// 10: folder stamps are saved (`dir_stamps`).
+    pub const CURRENT_VERSION: u32 = 10;
 
     /// Create a new persisted index from the current state
     #[allow(clippy::too_many_arguments)]
@@ -366,6 +389,7 @@ impl PersistedIndex {
             reference_names,
             references,
             symbol_names: None,
+            dir_stamps: None,
         })
     }
 
@@ -1129,7 +1153,19 @@ mod tests {
         .unwrap();
         let mut idx = idx;
         idx.symbol_names = Some(golden_symbol_names());
+        idx.dir_stamps = Some(golden_dir_stamps());
         (idx, map)
+    }
+
+    fn golden_dir_stamps() -> DirStamps {
+        DirStamps {
+            global: 7,
+            dirs: vec![DirStamp {
+                path: PathBuf::from("/golden/src"),
+                mtime_ns: 1_700_000_000_000_000_000,
+                ignores: 42,
+            }],
+        }
     }
 
     fn golden_symbol_names() -> PersistedSymbolNames {
@@ -1144,7 +1180,7 @@ mod tests {
     }
 
     fn golden_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v9.fcsidx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v10.fcsidx")
     }
 
     /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
@@ -1161,7 +1197,7 @@ mod tests {
         if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
             std::fs::write(golden_path(), &bytes).unwrap();
         }
-        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v9.fcsidx");
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v10.fcsidx");
         assert_eq!(&bytes[..8], INDEX_MAGIC);
         assert!(
             bytes == golden,
@@ -1185,6 +1221,7 @@ mod tests {
         assert_eq!(loaded.reference_names, vec!["hello".to_string()]);
         assert_eq!(loaded.references[1][0].line, 5);
         assert_eq!(loaded.symbol_names, Some(golden_symbol_names()));
+        assert_eq!(loaded.dir_stamps, Some(golden_dir_stamps()));
         let dir = loaded.trigram_index.entries();
         assert_eq!(dir.len(), 3);
         assert!(dir

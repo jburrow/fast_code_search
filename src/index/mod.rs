@@ -3,7 +3,9 @@ pub mod persistence;
 pub mod trigram;
 
 pub use lazy_file_store::{LazyFileStore, LazyMappedFile};
-pub use persistence::{PersistedFileMetadata, PersistedIndex, PersistedSymbolNames};
+pub use persistence::{
+    DirStamp, DirStamps, PersistedFileMetadata, PersistedIndex, PersistedSymbolNames,
+};
 pub use trigram::{
     extract_trigrams, extract_unique_trigrams, extract_unique_trigrams_lowercase, Trigram,
     TrigramIndex,

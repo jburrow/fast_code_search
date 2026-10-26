@@ -1,7 +1,7 @@
 # Index file format
 
-The persisted index (`index_path`) is a single file, format **v9**, magic
-`FCSIDX06`. Everything is little-endian.
+The persisted index (`index_path`) is a single file, format **v10**, magic
+`FCSIDX07`. Everything is little-endian.
 
 ```text
 magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
@@ -31,6 +31,10 @@ parallel; nothing is copied in between.
   distinct case-folded names, the files and symbol kinds behind each, and
   the files it does not describe yet. Saved so a load need not rebuild it
   (about 2 s at 302,000 files).
+- folder stamps from the last complete walk: each folder's modification
+  time and a fingerprint of its ignore files, and a fingerprint of the
+  user's global excludes file, so a restart re-reads only the folders that
+  changed (see [Persistence](../how-it-works/persistence.md#load)).
 
 File positions in the table are compacted (removed files are absent), and
 every other section is remapped to those positions on save. A load gives
@@ -45,7 +49,7 @@ changed or deleted since the save are tombstoned rather than renumbered.
   removes the temporary file a killed save left.
 - **Detects drift.** Each file's mtime and size at read time are stored;
   on load a file whose stat differs is re-read.
-- **Pinned.** `tests/fixtures/index-v9.fcsidx` is compared byte for byte
+- **Pinned.** `tests/fixtures/index-v10.fcsidx` is compared byte for byte
   in the test suite; a deliberate format change bumps the magic and
   regenerates the fixture (`FCS_WRITE_GOLDEN=1 cargo test golden`).
 - **Older formats** are rejected with a message asking for a rebuild;

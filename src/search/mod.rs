@@ -1,4 +1,5 @@
 pub mod background_indexer;
+pub(crate) mod dir_stamps;
 pub mod engine;
 pub mod engine_lock;
 pub mod file_discovery;
@@ -17,6 +18,8 @@ pub use background_indexer::{
     run as run_background_indexer, save_after_watcher_shutdown, save_on_watcher_update,
     BackgroundIndexerConfig,
 };
+#[doc(hidden)]
+pub use dir_stamps::{restart_walk_for_bench, TEST_WALK_DELAY_NS};
 pub use engine::{
     create_progress_broadcaster, unix_now_ms, BudgetRule, FileCheck, FolderProblems, GraphScope,
     ImpactOptions, ImpactReport, IndexFreshness, IndexingProgress, IndexingStatus, InvariantReport,
