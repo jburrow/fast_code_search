@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-74cfdcbb.js";
+            window.path_to_searchindex_js = "searchindex-4d9eceb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4003,8 +4003,8 @@ scrub_invariants_minutes = 60.0
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
-<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v10</strong>, magic
-<code>FCSIDX07</code>. Everything is little-endian.</p>
+<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v11</strong>, magic
+<code>FCSIDX08</code>. Everything is little-endian.</p>
 <pre><code class="language-text">magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
 META     bincode-encoded metadata (see below)
 DIR      dir_count × { trigram[3], pad[1], offset:u64, len:u32 }, sorted by trigram
@@ -4015,8 +4015,10 @@ memory-mapped, the magic and both version fields are checked, the section
 lengths are validated against the file size, the checksum is verified, and
 the directory is checked to be sorted and in bounds before any bincode
 decoding happens, so a truncated, corrupt or foreign file is rejected
-early and cheaply. Bitmaps are deserialized straight out of the mapping in
-parallel; nothing is copied in between.</p>
+early and cheaply. The server then keeps the file mapped and reads the
+bitmaps in place: a query decodes only the lists for its trigrams, and the
+lists stay in the page cache instead of on the heap (on Windows, which
+cannot replace a mapped file, they are decoded at load).</p>
 <h2 id="metadata-section"><a class="header" href="#metadata-section">Metadata section</a></h2>
 <ul>
 <li>the configuration fingerprint (with the extraction schema tag, see
@@ -4035,10 +4037,18 @@ time and a fingerprint of its ignore files, and a fingerprint of the
 user’s global excludes file, so a restart re-reads only the folders that
 changed (see <a href="#load">Persistence</a>).</li>
 </ul>
-<p>File positions in the table are compacted (removed files are absent), and
-every other section is remapped to those positions on save. A load gives
-each file its position as its id, so the sections are used as saved; files
-changed or deleted since the save are tombstoned rather than renumbered.</p>
+<p>A load gives each file its position as its id, so every section is used
+as saved; files changed or deleted since the save are tombstoned rather
+than renumbered. Two kinds of save fill the table differently:</p>
+<ul>
+<li>a <strong>checkpoint</strong>, while the server runs, keeps every id: a file removed
+since the load is an empty slot (empty path), and the metadata lists the
+slots (<code>dead_slots</code>). Nothing is renumbered, a posting list no change
+touched is copied as its bytes, and the bitmaps may still name the empty
+slots, which a load masks out.</li>
+<li>a <strong>full save</strong>, at shutdown, compacts: removed files are absent and
+every other section is remapped to the new positions.</li>
+</ul>
 <h2 id="guarantees"><a class="header" href="#guarantees">Guarantees</a></h2>
 <ul>
 <li><strong>Atomic.</strong> A save writes a unique temporary file next to the target,
@@ -4047,7 +4057,7 @@ process. A crash leaves the previous index intact, and the next start
 removes the temporary file a killed save left.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
-<li><strong>Pinned.</strong> <code>tests/fixtures/index-v10.fcsidx</code> is compared byte for byte
+<li><strong>Pinned.</strong> <code>tests/fixtures/index-v11.fcsidx</code> is compared byte for byte
 in the test suite; a deliberate format change bumps the magic and
 regenerates the fixture (<code>FCS_WRITE_GOLDEN=1 cargo test golden</code>).</li>
 <li><strong>Older formats</strong> are rejected with a message asking for a rebuild;
@@ -4666,8 +4676,10 @@ the index.</li>
 parsed in parallel on the watcher’s own threads (half the cores), so
 the searches running on the shared thread pool are not queued behind
 a burst.</li>
-<li><strong>Install</strong> (write lock, in steps). The removals go first, with a
-single pass over every posting list; then the parsed files, 512 at a
+<li><strong>Install</strong> (write lock, in steps). The removals go first: one bit
+each for the posting lists read from the mapped index file (see
+<a href="#load">Persistence</a>), and a single pass over the lists
+held on the heap (all of them before the index is first saved); then the parsed files, 512 at a
 time, each step under its own write lock with a short pause between
 steps for the searches that arrived meanwhile. A step that had to wait
 for searches to get the lock keeps installing for about as long as it
@@ -4915,21 +4927,41 @@ page describes the behaviour.</p>
 metadata, trigram directory and bitmaps are streamed into a uniquely
 named temporary file next to the target, fsynced, and renamed into place.
 Two saves cannot interleave, and a crash at any point leaves the previous
-file intact. Checkpoints during a long build use the same path.</p>
+file intact.</p>
+<p>There are two kinds of save:</p>
 <ul>
-<li><strong>A save that is killed</strong> (<code>kill -9</code>, a power cut, the out-of-memory
+<li>
+<p><strong>Checkpoints</strong>, while the server runs (during a long build, after it,
+and every <code>save_after_updates</code> changes), keep every file’s id: a file
+removed since the load is written as an empty slot. Nothing is
+renumbered, and a posting list no change touched is copied from the
+mapped file as its bytes. Afterwards the server reads the posting lists
+from the file it just wrote and frees the copies it held, so the file it
+loaded at startup is released.</p>
+</li>
+<li>
+<p><strong>The save at shutdown</strong> compacts: the empty slots go and every file
+after them is renumbered, so the file on disk has no gaps.</p>
+</li>
+<li>
+<p><strong>A save that is killed</strong> (<code>kill -9</code>, a power cut, the out-of-memory
 killer) leaves its temporary file (<code>&lt;index_path&gt;</code> with <code>.tmp.&lt;pid&gt;.&lt;n&gt;</code>
 in place of its extension, as large as the index). The next server to
 take the index lock removes them before it loads (“Removed temp files
-left by an index save that did not finish” in the log).</li>
-<li><strong>A failed rename</strong> (Windows refuses to replace a file another process
+left by an index save that did not finish” in the log).</p>
+</li>
+<li>
+<p><strong>A failed rename</strong> (Windows refuses to replace a file another process
 has open) is tried once more with the old index moved aside; if that
 fails too, the old index is put back. The save fails, and the index on
-disk is the previous one.</li>
-<li><strong>A failed save</strong> (disk full) is logged as an error, and with
+disk is the previous one.</p>
+</li>
+<li>
+<p><strong>A failed save</strong> (disk full) is logged as an error, and with
 <code>save_after_updates</code> the updates it held still count: the next save,
 after more updates or at shutdown, writes them. The index on disk is
-older until then, so the next start re-reads the files changed since.</li>
+older until then, so the next start re-reads the files changed since.</p>
+</li>
 </ul>
 <p><code>tests/fault_injection.rs</code> fails the write and the rename on purpose
 (fault points <code>save.write</code> and <code>save.rename</code>), and <code>examples/chaos.rs</code>
@@ -4963,15 +4995,27 @@ current configuration and <code>.gitignore</code> rules (gitignore matchers cach
 per directory), so a rule change takes effect without a rebuild.</p>
 </li>
 <li>
-<p>Register files lazily (no reads), restore the posting lists from the
-mapping in parallel, restore symbols, references and edges — or
-re-extract them from content if the file was written by an older
-extractor — and rebuild the fast-ranking metadata. Every saved file
-gets its saved position back as its id, and the stale and removed ones
-are then tombstoned, as a removal at runtime is, so the posting lists
-are used as saved. (Renumbering the survivors instead rebuilt every
-posting list whenever a single file had changed, the largest cost of
-a load.) The gaps go at the next save.</p>
+<p>Register files lazily (no reads), restore symbols, references and
+edges — or re-extract them from content if the file was written by an
+older extractor — and rebuild the fast-ranking metadata. Every saved
+file gets its saved position back as its id, and the stale and removed
+ones (and a checkpoint’s empty slots) are then tombstoned, as a removal
+at runtime is, so the posting lists are used as saved. (Renumbering the
+survivors instead rebuilt every posting list whenever a single file had
+changed, the largest cost of a load.) The gaps go at the save at
+shutdown.</p>
+<p><strong>The posting lists are not decoded.</strong> The file stays mapped, and a
+query decodes only the lists for its own trigrams, about 13 µs per
+query at 302,000 files (a first page takes 2 to 86 ms). The lists stay
+in the page cache, which the OS can evict and share, instead of on the
+heap: at 302,000 files a loaded server holds 6 MB of posting data on
+the heap instead of about 479 MB, with 350 MB of the file mapped. The mapped lists still name the files removed or
+re-indexed since the save; those ids are kept in a small set the mapped
+lists are read without, so a removal costs one bit instead of a pass
+over every list. Files indexed after the load are held on the heap and
+united with the mapped lists until the next checkpoint writes them
+out. On Windows, which cannot replace a file that is mapped, the lists are decoded at load as before. If the
+lists had to be renumbered (a path saved twice), they are decoded too.</p>
 </li>
 <li>
 <p>Re-index the stale files that the current configuration and ignore
@@ -6382,6 +6426,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>A loaded index keeps its posting lists in the index file.</strong> The
+server maps the file and a query decodes only the lists for its own
+trigrams, so the lists sit in the page cache, which the OS can evict and
+share, instead of on the heap: at 302,000 files a loaded index holds
+6 MB of posting data on the heap instead of about 479 MB (350 MB of the
+file is mapped instead), and loads 17% faster (4.1 s to 3.4 s, same
+machine, median of 3). Query times are unchanged. Removing or changing a file
+costs one bit for the mapped lists instead of a pass over every list.
+Saves while the server runs (checkpoints) now keep every file’s id,
+writing a removed file as an empty slot, copy unchanged lists from the
+mapped file as they are, and leave the server reading the file they
+wrote; the save at shutdown compacts the slots away. <code>index.memory</code> in
+<code>/api/diagnostics</code> reports the mapped bytes as <code>mapped_postings_bytes</code>.
+Index format v11 (the first start after upgrading rebuilds the index
+once). Known limitation: on Windows, which cannot replace a mapped file,
+the lists are still decoded onto the heap at load.</li>
 <li><strong>Loading a saved index is about 2.5 times faster.</strong> With one file
 changed since the save, a load of the 302,000-file real corpus took
 10.3 s and now takes 4.1 s (same machine, median of 5). A load used to
@@ -6400,8 +6460,8 @@ now saves each folder’s modification time and a fingerprint of its
 ignore files, and a restart reads only the folders whose time or ignore
 files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
 a configuration change, a change to the global excludes file, or when
-the index has no stamps yet. Index format v10: the first start after
-upgrading rebuilds the index once. Known limitation: on a file system
+the index has no stamps yet. Index format v10 (now v11, above): the
+first start after upgrading rebuilds the index once. Known limitation: on a file system
 that does not update a folder’s time when its entries change, a file
 added while the server was stopped is found only once it or its folder
 changes again.</li>
@@ -9029,14 +9089,14 @@ query + walker) under <code>catch_unwind</code>.</li>
 <li><strong>Merge, under the engine write lock</strong>: <code>index_batch</code> registers files,
 inserts postings, stores symbols, queues imports; unresolved imports are
 parked and retried only when a file with a matching name appears.</li>
-<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v10
-(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX07</code>, version,
+<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v11
+(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX08</code>, version,
 CRC-32, section lengths), then a bincode metadata section (file table,
 symbols, edges, parked imports, reference names and per-file references),
 a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
 back to back. Save streams bitmaps from the live map; load memory-maps the
 file, checks bounds and checksum, and deserializes bitmaps in parallel from
-the mapping. <code>tests/fixtures/index-v10.fcsidx</code> pins the format byte for
+the mapping. <code>tests/fixtures/index-v11.fcsidx</code> pins the format byte for
 byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
 deliberate format change (and bump the version).</li>
 </ol>
@@ -9243,6 +9303,7 @@ persistence or the watcher, compare it with <code>main</code> on one machine:</p
 <pre><code class="language-bash">scripts/bench/ab.sh                      # base origin/main, 5 rounds
 scripts/bench/ab.sh --base v0.18.0 --rounds 5
 scripts/bench/ab.sh --corpus small,real --rounds 3   # also the 302k-file corpus
+scripts/bench/ab.sh --loaded             # also time queries on the index loaded from disk
 </code></pre>
 <p>The script builds <code>examples/corpus_bench</code> at the base (in a worktree under
 <code>target/ab/</code>, cached per commit) and at the working tree, fetches tokio 1.45.0

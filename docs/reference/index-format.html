@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-74cfdcbb.js";
+            window.path_to_searchindex_js = "../searchindex-4d9eceb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -182,8 +182,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
-<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v10</strong>, magic
-<code>FCSIDX07</code>. Everything is little-endian.</p>
+<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v11</strong>, magic
+<code>FCSIDX08</code>. Everything is little-endian.</p>
 <pre><code class="language-text">magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
 META     bincode-encoded metadata (see below)
 DIR      dir_count × { trigram[3], pad[1], offset:u64, len:u32 }, sorted by trigram
@@ -194,8 +194,10 @@ memory-mapped, the magic and both version fields are checked, the section
 lengths are validated against the file size, the checksum is verified, and
 the directory is checked to be sorted and in bounds before any bincode
 decoding happens, so a truncated, corrupt or foreign file is rejected
-early and cheaply. Bitmaps are deserialized straight out of the mapping in
-parallel; nothing is copied in between.</p>
+early and cheaply. The server then keeps the file mapped and reads the
+bitmaps in place: a query decodes only the lists for its trigrams, and the
+lists stay in the page cache instead of on the heap (on Windows, which
+cannot replace a mapped file, they are decoded at load).</p>
 <h2 id="metadata-section"><a class="header" href="#metadata-section">Metadata section</a></h2>
 <ul>
 <li>the configuration fingerprint (with the extraction schema tag, see
@@ -214,10 +216,18 @@ time and a fingerprint of its ignore files, and a fingerprint of the
 user’s global excludes file, so a restart re-reads only the folders that
 changed (see <a href="../how-it-works/persistence.html#load">Persistence</a>).</li>
 </ul>
-<p>File positions in the table are compacted (removed files are absent), and
-every other section is remapped to those positions on save. A load gives
-each file its position as its id, so the sections are used as saved; files
-changed or deleted since the save are tombstoned rather than renumbered.</p>
+<p>A load gives each file its position as its id, so every section is used
+as saved; files changed or deleted since the save are tombstoned rather
+than renumbered. Two kinds of save fill the table differently:</p>
+<ul>
+<li>a <strong>checkpoint</strong>, while the server runs, keeps every id: a file removed
+since the load is an empty slot (empty path), and the metadata lists the
+slots (<code>dead_slots</code>). Nothing is renumbered, a posting list no change
+touched is copied as its bytes, and the bitmaps may still name the empty
+slots, which a load masks out.</li>
+<li>a <strong>full save</strong>, at shutdown, compacts: removed files are absent and
+every other section is remapped to the new positions.</li>
+</ul>
 <h2 id="guarantees"><a class="header" href="#guarantees">Guarantees</a></h2>
 <ul>
 <li><strong>Atomic.</strong> A save writes a unique temporary file next to the target,
@@ -226,7 +236,7 @@ process. A crash leaves the previous index intact, and the next start
 removes the temporary file a killed save left.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
-<li><strong>Pinned.</strong> <code>tests/fixtures/index-v10.fcsidx</code> is compared byte for byte
+<li><strong>Pinned.</strong> <code>tests/fixtures/index-v11.fcsidx</code> is compared byte for byte
 in the test suite; a deliberate format change bumps the magic and
 regenerates the fixture (<code>FCS_WRITE_GOLDEN=1 cargo test golden</code>).</li>
 <li><strong>Older formats</strong> are rejected with a message asking for a rebuild;

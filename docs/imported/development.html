@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-74cfdcbb.js";
+            window.path_to_searchindex_js = "../searchindex-4d9eceb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -357,14 +357,14 @@ query + walker) under <code>catch_unwind</code>.</li>
 <li><strong>Merge, under the engine write lock</strong>: <code>index_batch</code> registers files,
 inserts postings, stores symbols, queues imports; unresolved imports are
 parked and retried only when a file with a matching name appears.</li>
-<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v10
-(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX07</code>, version,
+<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v11
+(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX08</code>, version,
 CRC-32, section lengths), then a bincode metadata section (file table,
 symbols, edges, parked imports, reference names and per-file references),
 a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
 back to back. Save streams bitmaps from the live map; load memory-maps the
 file, checks bounds and checksum, and deserializes bitmaps in parallel from
-the mapping. <code>tests/fixtures/index-v10.fcsidx</code> pins the format byte for
+the mapping. <code>tests/fixtures/index-v11.fcsidx</code> pins the format byte for
 byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
 deliberate format change (and bump the version).</li>
 </ol>
@@ -571,6 +571,7 @@ persistence or the watcher, compare it with <code>main</code> on one machine:</p
 <pre><code class="language-bash">scripts/bench/ab.sh                      # base origin/main, 5 rounds
 scripts/bench/ab.sh --base v0.18.0 --rounds 5
 scripts/bench/ab.sh --corpus small,real --rounds 3   # also the 302k-file corpus
+scripts/bench/ab.sh --loaded             # also time queries on the index loaded from disk
 </code></pre>
 <p>The script builds <code>examples/corpus_bench</code> at the base (in a worktree under
 <code>target/ab/</code>, cached per commit) and at the working tree, fetches tokio 1.45.0

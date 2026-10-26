@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-74cfdcbb.js";
+            window.path_to_searchindex_js = "../searchindex-4d9eceb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -188,6 +188,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>A loaded index keeps its posting lists in the index file.</strong> The
+server maps the file and a query decodes only the lists for its own
+trigrams, so the lists sit in the page cache, which the OS can evict and
+share, instead of on the heap: at 302,000 files a loaded index holds
+6 MB of posting data on the heap instead of about 479 MB (350 MB of the
+file is mapped instead), and loads 17% faster (4.1 s to 3.4 s, same
+machine, median of 3). Query times are unchanged. Removing or changing a file
+costs one bit for the mapped lists instead of a pass over every list.
+Saves while the server runs (checkpoints) now keep every file’s id,
+writing a removed file as an empty slot, copy unchanged lists from the
+mapped file as they are, and leave the server reading the file they
+wrote; the save at shutdown compacts the slots away. <code>index.memory</code> in
+<code>/api/diagnostics</code> reports the mapped bytes as <code>mapped_postings_bytes</code>.
+Index format v11 (the first start after upgrading rebuilds the index
+once). Known limitation: on Windows, which cannot replace a mapped file,
+the lists are still decoded onto the heap at load.</li>
 <li><strong>Loading a saved index is about 2.5 times faster.</strong> With one file
 changed since the save, a load of the 302,000-file real corpus took
 10.3 s and now takes 4.1 s (same machine, median of 5). A load used to
@@ -206,8 +222,8 @@ now saves each folder’s modification time and a fingerprint of its
 ignore files, and a restart reads only the folders whose time or ignore
 files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
 a configuration change, a change to the global excludes file, or when
-the index has no stamps yet. Index format v10: the first start after
-upgrading rebuilds the index once. Known limitation: on a file system
+the index has no stamps yet. Index format v10 (now v11, above): the
+first start after upgrading rebuilds the index once. Known limitation: on a file system
 that does not update a folder’s time when its entries change, a file
 added while the server was stopped is found only once it or its folder
 changes again.</li>

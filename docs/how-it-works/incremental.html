@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-74cfdcbb.js";
+            window.path_to_searchindex_js = "../searchindex-4d9eceb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -235,8 +235,10 @@ the index.</li>
 parsed in parallel on the watcher’s own threads (half the cores), so
 the searches running on the shared thread pool are not queued behind
 a burst.</li>
-<li><strong>Install</strong> (write lock, in steps). The removals go first, with a
-single pass over every posting list; then the parsed files, 512 at a
+<li><strong>Install</strong> (write lock, in steps). The removals go first: one bit
+each for the posting lists read from the mapped index file (see
+<a href="persistence.html#load">Persistence</a>), and a single pass over the lists
+held on the heap (all of them before the index is first saved); then the parsed files, 512 at a
 time, each step under its own write lock with a short pause between
 steps for the searches that arrived meanwhile. A step that had to wait
 for searches to get the lock keeps installing for about as long as it
