@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-aa57f889.js";
+            window.path_to_searchindex_js = "searchindex-12f53306.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4536,7 +4536,9 @@ and example paths, ×5 when the query matches the file’s name. It stops
 when it has collected enough matches to rank the page (the match budget,
 see <a href="#search-limits">Search limits</a>), so for a word with a
 million hits page 1 is the best of the best-looking files, not of the
-first folders on disk. <code>rank=auto</code> and <code>rank=fast</code> also stop after
+first folders on disk. The order is settled only as far as the search
+reads (a partial selection, then a sort of that part), so a search that
+stops a thousand files in does not sort the other 300,000. <code>rank=auto</code> and <code>rank=fast</code> also stop after
 <code>search.fast_rank_files</code> files when the server sets one (no limit by
 default; a request may ask for more with <code>max_files</code>, up to
 <code>search.max_fast_rank_files</code>); <code>rank=full</code> never stops at a file limit.</p>
@@ -6313,6 +6315,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Searches with many candidate files sort only what they read.</strong> Every
+search reads its candidates best first and usually stops at its match
+budget a thousand or two files in, but it sorted all of them first: at
+302,000 candidates, scoring and sorting took 31 to 34 ms. The order is
+now settled lazily (a selection of the next part, then a sort of just
+that part), with the same order. Same-machine runs at 302,000 files:
+short-text search -15%, regex with a literal -10%; other queries within
+noise.</li>
 <li><strong>Symbol search about 12 times faster on large trees.</strong> It tested every
 symbol of every file whose text contained the query: for <code>Error</code> on the
 302,000-file real corpus (Linux, LLVM, Rust, Kubernetes) that was 5.3

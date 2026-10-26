@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-aa57f889.js";
+            window.path_to_searchindex_js = "../searchindex-12f53306.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -260,7 +260,9 @@ and example paths, ×5 when the query matches the file’s name. It stops
 when it has collected enough matches to rank the page (the match budget,
 see <a href="../benchmarks/search-limits.html">Search limits</a>), so for a word with a
 million hits page 1 is the best of the best-looking files, not of the
-first folders on disk. <code>rank=auto</code> and <code>rank=fast</code> also stop after
+first folders on disk. The order is settled only as far as the search
+reads (a partial selection, then a sort of that part), so a search that
+stops a thousand files in does not sort the other 300,000. <code>rank=auto</code> and <code>rank=fast</code> also stop after
 <code>search.fast_rank_files</code> files when the server sets one (no limit by
 default; a request may ask for more with <code>max_files</code>, up to
 <code>search.max_fast_rank_files</code>); <code>rank=full</code> never stops at a file limit.</p>
