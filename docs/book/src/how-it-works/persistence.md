@@ -80,13 +80,13 @@ exits, however it exits.
    query decodes only the lists for its own trigrams, about 13 µs per
    query at 302,000 files (a first page takes 2 to 86 ms). The lists stay
    in the page cache, which the OS can evict and share, instead of on the
-   heap: at 302,000 files that is about 450 MB of heap a loaded server no
-   longer holds. The mapped lists still name the files removed or
+   heap: at 302,000 files a loaded server holds 6 MB of posting data on
+   the heap instead of about 479 MB, with 350 MB of the file mapped. The mapped lists still name the files removed or
    re-indexed since the save; those ids are kept in a small set the mapped
    lists are read without, so a removal costs one bit instead of a pass
    over every list. Files indexed after the load are held on the heap and
-   united with the mapped lists until the next checkpoint writes them out. On Windows, which cannot replace
-   a file that is mapped, the lists are decoded at load as before. If the
+   united with the mapped lists until the next checkpoint writes them
+   out. On Windows, which cannot replace a file that is mapped, the lists are decoded at load as before. If the
    lists had to be renumbered (a path saved twice), they are decoded too.
 5. Re-index the stale files that the current configuration and ignore
    files still allow, then discover anything new under the roots.

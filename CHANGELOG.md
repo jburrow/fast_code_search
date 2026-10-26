@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A loaded index keeps its posting lists in the index file.** The
   server maps the file and a query decodes only the lists for its own
   trigrams, so the lists sit in the page cache, which the OS can evict and
-  share, instead of on the heap: @@MEMORY@@. Removing or changing a file
+  share, instead of on the heap: at 302,000 files a loaded index holds
+  6 MB of posting data on the heap instead of about 479 MB (350 MB of the
+  file is mapped instead), and loads 17% faster (4.1 s to 3.4 s, same
+  machine, median of 3). Query times are unchanged. Removing or changing a file
   costs one bit for the mapped lists instead of a pass over every list.
   Saves while the server runs (checkpoints) now keep every file's id,
   writing a removed file as an empty slot, copy unchanged lists from the
