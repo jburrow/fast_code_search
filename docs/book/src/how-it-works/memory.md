@@ -39,15 +39,15 @@ The figures are estimates from lengths and capacities, not allocator
 measurements (`src/heap_size.rs`). `tests/heap_estimates.rs` keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (commit after `faccb0f`, with the
-symbol name dictionary):
+Checked the same way on public code (commit after `d62cc56`, with one
+path per file):
 
 | Corpus | Index | Live heap | Estimated |
 |---|---|---|---|
-| tokio + Django (6,200 files) | just built | 78.0 MB | 49.1 MB (63%) |
-| tokio + Django | loaded from disk | 44.9 MB | 41.9 MB (93%) |
-| Linux kernel (85,700 files, 1.23 GB) | just built | 576.4 MB | 533.6 MB (93%) |
-| Linux kernel | loaded from disk | 504.0 MB | 495.3 MB (98%) |
+| tokio + Django (6,200 files) | just built | 76.3 MB | 48.3 MB (63%) |
+| tokio + Django | loaded from disk | 43.7 MB | 39.9 MB (91%) |
+| Linux kernel (85,700 files, 1.23 GB) | just built | 575.1 MB | 533.2 MB (93%) |
+| Linux kernel | loaded from disk | 479.7 MB | 470.7 MB (98%) |
 
 The Linux kernel, loaded from disk:
 
@@ -55,17 +55,36 @@ The Linux kernel, loaded from disk:
 |---|---|
 | symbols (46.5 MB of it the name dictionary) | 253.8 MB |
 | postings | 172.3 MB |
-| graph_paths | 37.5 MB |
-| file_metadata | 14.0 MB |
-| file_table | 12.7 MB |
+| graph_paths | 17.2 MB |
+| file_table | 14.7 MB |
+| file_metadata | 7.8 MB |
 | references | 3.2 MB |
 | everything else | 1.8 MB |
 
+**Each path is held once.** The file store interns every file's canonical
+path; the ranking metadata (its root-qualified path is an offset into that
+path), the import resolver's path tables and the import lists all share
+that one allocation, so `file_table` counts the paths and the others count
+only their own tables. On the 302,000-file real corpus this took resident
+memory after a build from 1,665 MB to 1,504 MB (same machine, 3 rounds).
+The lowercase file-name stem is the exception: it is kept inside the
+metadata (up to 23 bytes; 85% of stems fit), because every candidate file
+of a search reads it and reading it through the path cost a cache miss per
+file.
+
+Known limitations: on Windows the metadata keeps its own copy of the
+root-qualified path, since it is spelled with `/` and the stored path with
+`\`. A search with a path filter reads every candidate's path from the
+file store: on an index just built (paths spread through the heap among
+the build's other allocations) that measured 19% slower on 302,000 files
+(95 to 113 ms); on an index loaded from disk, where the paths are
+allocated in order, it is as fast as before.
+
 **A just-built index holds more than the same index loaded.** On tokio +
-Django it is 78 MB against 44 MB. Posting lists built one insert at a time
+Django it is 76 MB against 44 MB. Posting lists built one insert at a time
 keep spare capacity (a list in one container costs 168 bytes instead of 42),
 and the estimates cannot see that spare capacity, which is why they cover
-only 64% there. A restart gives the memory back.
+only 63% there. A restart gives the memory back.
 
 Resident memory is higher again. A build allocates and frees far more
 than the index it leaves behind (file contents, per-batch trigram sets,
