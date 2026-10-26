@@ -102,6 +102,64 @@ fn past_last_line(text: &str, at: usize) -> bool {
     at == text.len() && (text.is_empty() || text.ends_with('\n'))
 }
 
+/// The lines a document's matching symbols sit on, found in one pass that
+/// stops at the last of them. `get(n)` returns what `content.lines().nth(n)`
+/// would: a trailing `\r` is dropped only before a `\n`, and the end of a
+/// file that ends in a newline starts no line.
+struct SymbolLines<'a> {
+    /// (0-based line number, line), sorted by line number.
+    lines: Vec<(usize, &'a str)>,
+}
+
+impl<'a> SymbolLines<'a> {
+    fn new(content: &'a str, symbols: &[&Symbol]) -> Self {
+        let mut wanted: Vec<usize> = symbols
+            .iter()
+            .filter(|s| s.symbol_type != SymbolType::FileName)
+            .map(|s| s.line)
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        let bytes = content.as_bytes();
+        let mut lines = Vec::with_capacity(wanted.len());
+        let mut newlines = memchr::memchr_iter(b'\n', bytes);
+        // `start` is where line `line_no` begins.
+        let (mut line_no, mut start) = (0usize, 0usize);
+        for want in wanted {
+            while line_no < want {
+                match newlines.next() {
+                    Some(nl) => (line_no, start) = (line_no + 1, nl + 1),
+                    None => return Self { lines },
+                }
+            }
+            if start == bytes.len() {
+                break;
+            }
+            let line = match newlines.next() {
+                Some(nl) => {
+                    let line = &content[start..nl];
+                    (line_no, start) = (line_no + 1, nl + 1);
+                    line.strip_suffix('\r').unwrap_or(line)
+                }
+                None => {
+                    let line = &content[start..];
+                    (line_no, start) = (line_no + 1, bytes.len());
+                    line
+                }
+            };
+            lines.push((want, line));
+        }
+        Self { lines }
+    }
+
+    fn get(&self, line: usize) -> Option<&'a str> {
+        self.lines
+            .binary_search_by_key(&line, |&(n, _)| n)
+            .ok()
+            .map(|i| self.lines[i].1)
+    }
+}
+
 impl SearchEngine {
     /// Run a plain-text search for `terms` over `candidates`.
     pub(super) fn run_terms(
@@ -175,6 +233,27 @@ impl SearchEngine {
         // — thousands for a short name — burned the match budget on
         // `FieldInfo` and `Fieldset` before the file defining `Field` was
         // opened.
+        let w = &RankingWeights::DEFAULT;
+        let name_factor = |lower: &str| {
+            if lower == query_lower {
+                w.symbol_exact_name
+            } else if lower.starts_with(&query_lower) {
+                w.symbol_prefix_name
+            } else {
+                1.0
+            }
+        };
+        let kind_factor = |kind: &SymbolType| match kind {
+            SymbolType::Variable | SymbolType::Constant => w.symbol_value_kind,
+            // A file whose only match is its name is still a result (phase 2
+            // reports it as a filename hit), but it is opened after files
+            // defining a matching symbol.
+            SymbolType::FileName => Self::FILENAME_ONLY_PREFILTER,
+            _ => 1.0,
+        };
+        let score = |name_factor: f64, kind: f64, id: u32| {
+            (name_factor * kind) as f32 * self.get_file_metadata(id).base_score.max(0.1)
+        };
         let name_matches = |name: &str| -> bool {
             match (opts.case_sensitive, opts.whole_word) {
                 (true, true) => name == query,
@@ -185,41 +264,68 @@ impl SearchEngine {
                 (false, false) => contains_case_insensitive(name, &query_lower),
             }
         };
-        let w = &RankingWeights::DEFAULT;
-        let mut scored: Vec<(f32, u32)> = candidates
-            .iter()
-            .filter_map(|id| {
-                let symbols = self.symbol_cache.get(id as usize)?;
-                let meta = self.get_file_metadata(id);
-                let best = symbols
+        // Symbol by symbol: files the name dictionary does not describe, and
+        // every case-sensitive search (the dictionary holds folded names).
+        let score_file = |id: u32| -> Option<(f32, u32)> {
+            let best = self
+                .symbol_cache
+                .get(id as usize)?
+                .iter()
+                .filter(|s| name_matches(&s.name))
+                .map(|s| {
+                    score(
+                        name_factor(&fold_str(&s.name)),
+                        kind_factor(&s.symbol_type),
+                        id,
+                    )
+                })
+                .fold(None, |acc: Option<f32>, v| {
+                    Some(acc.map_or(v, |a| a.max(v)))
+                })?;
+            Some((best, id))
+        };
+        let num_files = self.symbol_cache.len();
+        let hits = self.symbol_names.matching_names(&query_lower);
+        let mut scored: Vec<(f32, u32)> = match hits {
+            // Case-insensitive: a name matches exactly when its folded form
+            // contains the folded query (whole word: equals it), so the
+            // dictionary's matching names and their files are the answer.
+            // At 302,000 files `Error` is in the text of 85,000 files and a
+            // symbol name of 7,000; testing the symbols of the 85,000 was 95%
+            // of the search.
+            Some(hits) if !opts.case_sensitive => {
+                let unindexed = self.symbol_names.unindexed(num_files);
+                let mut best: FxHashMap<u32, f32> = FxHashMap::default();
+                for hit in hits {
+                    if opts.whole_word && hit.name != query_lower {
+                        continue;
+                    }
+                    let factor = name_factor(hit.name);
+                    for (&id, &kinds) in hit.files.iter().zip(hit.kinds) {
+                        if unindexed.contains(id) || !candidates.contains(id) {
+                            continue;
+                        }
+                        let v = score(factor, symbol_names::kind_factor(kinds, kind_factor), id);
+                        best.entry(id).and_modify(|b| *b = b.max(v)).or_insert(v);
+                    }
+                }
+                let mut scored: Vec<(f32, u32)> = best.into_iter().map(|(id, v)| (v, id)).collect();
+                scored.extend((&*candidates & &unindexed).iter().filter_map(score_file));
+                scored
+            }
+            // Case-sensitive: the dictionary only narrows the files to test.
+            Some(_) => {
+                let defining = self
+                    .symbol_names
+                    .files_matching(&query_lower, num_files)
+                    .expect("matching_names returned names");
+                (&*candidates & &defining)
                     .iter()
-                    .filter(|s| name_matches(&s.name))
-                    .map(|s| {
-                        let lower = fold_str(&s.name).into_owned();
-                        let name_factor = if lower == query_lower {
-                            w.symbol_exact_name
-                        } else if lower.starts_with(&query_lower) {
-                            w.symbol_prefix_name
-                        } else {
-                            1.0
-                        };
-                        let kind = match s.symbol_type {
-                            SymbolType::Variable | SymbolType::Constant => w.symbol_value_kind,
-                            // A file whose only match is its name is still a
-                            // result (phase 2 reports it as a filename hit),
-                            // but it is opened after files defining a
-                            // matching symbol.
-                            SymbolType::FileName => Self::FILENAME_ONLY_PREFILTER,
-                            _ => 1.0,
-                        };
-                        (name_factor * kind) as f32 * meta.base_score.max(0.1)
-                    })
-                    .fold(None, |acc: Option<f32>, v| {
-                        Some(acc.map_or(v, |a| a.max(v)))
-                    })?;
-                Some((best, id))
-            })
-            .collect();
+                    .filter_map(score_file)
+                    .collect()
+            }
+            None => candidates.iter().filter_map(score_file).collect(),
+        };
         // Ties by path, as results are: file ids follow discovery order,
         // which differs between machines.
         scored.sort_unstable_by(|a, b| {
@@ -1019,8 +1125,9 @@ impl SearchEngine {
         let (is_src_lib, is_test_path) = self.path_signals_for(doc_id, &file.path);
         let display_path = self.make_display_path(&file.path);
 
-        // Collect lines into a vector for indexed access
-        let lines: Vec<&str> = content.lines().collect();
+        // Only the lines the matching symbols sit on: splitting the whole
+        // file into lines was three quarters of a symbol search.
+        let lines = SymbolLines::new(&content, &matching_symbols);
 
         // Build matches from matching symbols
         let mut matches = Vec::with_capacity(matching_symbols.len());
@@ -1059,7 +1166,7 @@ impl SearchEngine {
 
             // Get the line content (symbol.line is 0-based)
             let line = match lines.get(symbol.line) {
-                Some(l) => *l,
+                Some(l) => l,
                 None => continue,
             };
             // Symbols are captured at index time. If the file changed on
@@ -1554,5 +1661,55 @@ impl SearchEngine {
         } else {
             Some(matches)
         }
+    }
+}
+
+#[cfg(test)]
+mod symbol_lines_tests {
+    use super::*;
+
+    fn sym(line: usize) -> Symbol {
+        Symbol {
+            name: "x".into(),
+            symbol_type: SymbolType::Function,
+            line,
+            column: 0,
+            is_definition: true,
+        }
+    }
+
+    #[test]
+    fn symbol_lines_agree_with_str_lines() {
+        let texts = [
+            "",
+            "\n",
+            "a",
+            "a\n",
+            "a\nb",
+            "a\r\nb\r\n",
+            "a\r",
+            "a\rb\n",
+            "\n\n\nx",
+            "one\ntwo\r\n\nfour\r",
+            "é\nü\r\n",
+        ];
+        for text in texts {
+            let syms: Vec<Symbol> = (0..7).rev().chain([2, 0, 2]).map(sym).collect();
+            let refs: Vec<&Symbol> = syms.iter().collect();
+            let lines = SymbolLines::new(text, &refs);
+            for n in 0..7 {
+                assert_eq!(lines.get(n), text.lines().nth(n), "line {n} of {text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn symbol_lines_holds_only_wanted_lines() {
+        let syms = [sym(1)];
+        let refs: Vec<&Symbol> = syms.iter().collect();
+        let lines = SymbolLines::new("a\nb\nc\n", &refs);
+        assert_eq!(lines.get(1), Some("b"));
+        assert_eq!(lines.get(0), None);
+        assert_eq!(lines.get(2), None);
     }
 }

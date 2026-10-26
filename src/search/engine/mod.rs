@@ -24,6 +24,7 @@ mod persist;
 mod progress;
 mod query;
 mod scope;
+mod symbol_names;
 mod text;
 
 pub use freshness::{
@@ -1249,6 +1250,10 @@ pub struct SearchEngine {
     pub trigram_index: TrigramIndex,
     pub dependency_index: DependencyIndex,
     symbol_cache: Vec<Vec<Symbol>>,
+    /// Distinct folded symbol names and the files defining each: the
+    /// filter that keeps symbol search from testing every symbol of every
+    /// candidate file. Rebuilt with the file metadata.
+    symbol_names: symbol_names::SymbolNameIndex,
     /// Per-file symbol references (call sites, type mentions), names
     /// interned through `ref_names` / `ref_name_ids`. Parallel to
     /// `symbol_cache`; a slot is cleared when its file is removed.
@@ -1340,6 +1345,7 @@ impl SearchEngine {
             trigram_index: TrigramIndex::new(),
             dependency_index: DependencyIndex::new(),
             symbol_cache: Vec::new(),
+            symbol_names: Default::default(),
             reference_cache: Vec::new(),
             ref_names: Vec::new(),
             ref_name_ids: FxHashMap::default(),
@@ -1626,11 +1632,7 @@ impl SearchEngine {
                 }
             }
 
-            // Store symbols
-            while self.symbol_cache.len() <= file_id as usize {
-                self.symbol_cache.push(Vec::new());
-            }
-            self.symbol_cache[file_id as usize] = pre_indexed.symbols;
+            self.set_symbols(file_id, pre_indexed.symbols);
             self.store_references(file_id, pre_indexed.references);
 
             // Store imports for later resolution
@@ -2106,6 +2108,23 @@ impl SearchEngine {
             syms.shrink_to_fit();
         }
         self.symbol_cache.shrink_to_fit();
+        self.rebuild_symbol_names();
+    }
+
+    /// Store the symbols of file `id`, keeping the name dictionary honest:
+    /// the file is checked symbol by symbol until the next rebuild.
+    fn set_symbols(&mut self, id: u32, symbols: Vec<Symbol>) {
+        if self.symbol_cache.len() <= id as usize {
+            self.symbol_cache.resize(id as usize + 1, Vec::new());
+        }
+        self.symbol_cache[id as usize] = symbols;
+        if self.symbol_names.mark_stale(id) {
+            self.rebuild_symbol_names();
+        }
+    }
+
+    fn rebuild_symbol_names(&mut self) {
+        self.symbol_names = symbol_names::SymbolNameIndex::build(&self.symbol_cache);
     }
 
     /// Size on disk of file `id` as indexed (0 when unknown).
@@ -2426,10 +2445,7 @@ impl SearchEngine {
         }
 
         self.trigram_index.add_document_trigrams(id, pre.trigrams);
-        while self.symbol_cache.len() <= id as usize {
-            self.symbol_cache.push(Vec::new());
-        }
-        self.symbol_cache[id as usize] = pre.symbols;
+        self.set_symbols(id, pre.symbols);
         self.store_references(id, pre.references);
 
         // Resolved by the caller once every file of the batch is back in

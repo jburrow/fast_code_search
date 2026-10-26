@@ -39,7 +39,14 @@ Candidates are then read and verified: the text query is searched with a
 whole-buffer scan (memchr-based, or a Unicode case fold when needed) that
 resolves line boundaries only at hits; a regex is compiled once per query
 with `(?mR)` and run in one pass per file with one hit per line. Symbol
-queries match definition names; reference queries look up the interned
+queries match definition names through a dictionary of every distinct
+case-folded name (one string, searched with `memmem`) that lists the files
+defining each name and the kinds of symbol it names there. A
+case-insensitive query ranks files from the matching names alone; a
+case-sensitive one tests the symbols of those files only. Files whose
+symbols changed after the dictionary was built are tested symbol by symbol,
+and the dictionary is rebuilt once a sixteenth of the files (at least
+4,096) have changed. Reference queries look up the interned
 identifier in each candidate's reference table and verify the position
 against the current content.
 

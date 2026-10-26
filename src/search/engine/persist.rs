@@ -180,6 +180,7 @@ impl SearchEngine {
         // Size the symbol cache to the number of files actually registered.
         let total_new_files = self.file_store.len();
         self.symbol_cache = vec![Vec::new(); total_new_files];
+        self.symbol_names = Default::default();
         self.install_references(persisted.reference_names.clone(), total_new_files);
 
         // Register files in dependency_index for future import resolution
@@ -239,6 +240,7 @@ impl SearchEngine {
 
         // Reset derived state
         self.symbol_cache = vec![Vec::new(); total_files];
+        self.symbol_names = Default::default();
         self.install_references(Vec::new(), total_files);
         self.pending_imports.clear();
         self.waiting_imports.clear();
@@ -831,6 +833,8 @@ impl SearchEngine {
         self.compute_all_file_metadata();
         self.generation += 1;
         mark("file_metadata");
+        self.rebuild_symbol_names();
+        mark("symbol_names");
 
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices
             .iter()

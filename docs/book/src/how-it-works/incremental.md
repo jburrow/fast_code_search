@@ -74,6 +74,16 @@ lock, so searches keep being answered while a batch is read from disk:
    (the initial build can run alongside), and a file that changed again
    since it was read has an event of its own on the way.
 
+**Symbol names.** Symbol search finds files through a dictionary of
+symbol names built after a build or a load (see
+[Candidates](candidates.md#verification-and-modes)). Files installed after
+that are searched symbol by symbol, which costs more per file, until the
+dictionary is rebuilt: once a sixteenth of the files (at least 4,096) have
+changed, inside the install step that crosses that line. **Known
+limitation:** that step holds the write lock for the rebuild too, about
+2 s at 302,000 files, so searches arriving then wait that long, once per
+that many changed files.
+
 **Imports.** Every file's imports are kept as written. After each step
 the files whose imports could resolve differently now are resolved again:
 those that imported a removed file, and those with an import naming a
