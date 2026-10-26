@@ -54,10 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows the day it lands. Counts are published only from a passing run,
   so the run stays red until the work is removed, or accepted with an
   `Accept-instructions:` line in the commit message. The Criterion suites
-  no longer run in CI (they still run with `cargo bench`); the job takes
-  about 7 minutes longer.
+  no longer run in CI (they still run with `cargo bench`), and the job
+  takes about as long as before (18 minutes on its first run, 20 before).
 
 ### Fixed
+- **The symbol-search benchmark timed a search no front end runs.** The
+  library's `search_symbols` (used by the corpus benchmark, the validator
+  and tests) ran an older single-pass search; the web API, gRPC, MCP and
+  `fcs` run the two-phase one. `search_symbols` now runs that one too, so
+  the published symbol numbers are what a user waits for: on the
+  302,000-file corpus about 510 ms for an exact name and 580 ms for a
+  prefix, not the 350 ms the benchmark showed (tokio + Django: 19 and
+  13 ms, not 13 and 8). Nothing a user runs got slower; the benchmark now
+  measures it. Making these faster is the next item (a symbol name index).
 - **`fcs check --live --all-content` was cut off on a large index.** The
   server's whole-request timeout (`request_timeout_secs`, 30 s) applied to
   `/api/check`, so a check that read every file of a large tree answered
