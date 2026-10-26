@@ -515,8 +515,24 @@ fn run_indexing_pipeline(
             .unreadable_folders,
     );
 
+    // After a load, the saved folder stamps say which folders changed since
+    // the last complete walk: only those are read (see `dir_stamps`).
+    let restart_plan = if loaded_from_persistence {
+        let roots: Vec<PathBuf> = paths_to_index.iter().map(PathBuf::from).collect();
+        let engine = index_engine.read().unwrap_or_else(|p| p.into_inner());
+        engine
+            .dir_stamps
+            .as_ref()
+            .and_then(|stamps| crate::search::dir_stamps::plan_restart(stamps, &roots))
+    } else {
+        None
+    };
+    let stamps_out: Arc<std::sync::Mutex<Option<crate::index::DirStamps>>> = Arc::default();
+
     // Spawn file discovery thread
     let discovery_handle = spawn_discovery_thread(
+        restart_plan,
+        stamps_out.clone(),
         indexer_config.discovery_config(paths_to_index.to_vec()),
         unreadable_folders,
         stale_files,
@@ -558,6 +574,13 @@ fn run_indexing_pipeline(
     // Wait for discovery thread; log if it panicked
     if let Err(e) = discovery_handle.join() {
         tracing::error!("File discovery thread panicked: {:?}", e);
+    } else if let Some(stamps) = stamps_out.lock().ok().and_then(|mut s| s.take()) {
+        // A walk cut short leaves the stamps from the load: they still
+        // describe the last complete walk.
+        index_engine
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .dir_stamps = Some(stamps);
     }
 
     let final_discovered = files_discovered.load(Ordering::Relaxed);
@@ -575,6 +598,8 @@ fn run_indexing_pipeline(
 /// Spawn the file discovery thread.
 #[allow(clippy::too_many_arguments)]
 fn spawn_discovery_thread(
+    restart_plan: Option<crate::search::dir_stamps::RestartPlan>,
+    stamps_out: Arc<std::sync::Mutex<Option<crate::index::DirStamps>>>,
     discovery_config: FileDiscoveryConfig,
     unreadable_folders: Arc<crate::search::FolderProblems>,
     stale_files: Vec<PathBuf>,
@@ -623,8 +648,24 @@ fn spawn_discovery_thread(
             files_discovered.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Then discover files from paths that need indexing.
-        for path in FileDiscoveryIterator::new(&discovery_config).reporting_to(unreadable_folders) {
+        // Then discover files from paths that need indexing: every folder,
+        // or after a load only the folders that changed since the last
+        // complete walk. Either way the walk records folder stamps for the
+        // next restart.
+        let mut walk = match restart_plan {
+            Some(plan) => {
+                info!(
+                    folders_checked = plan.checked,
+                    folders_changed = plan.changed.len(),
+                    subtrees = plan.subtrees.len(),
+                    "Reading only the folders that changed since the last walk"
+                );
+                FileDiscoveryIterator::for_restart(&discovery_config, plan)
+            }
+            None => FileDiscoveryIterator::new(&discovery_config).recording_stamps(),
+        }
+        .reporting_to(unreadable_folders);
+        for path in &mut walk {
             if shutdown.load(Ordering::Acquire) {
                 break;
             }
@@ -648,6 +689,12 @@ fn spawn_discovery_thread(
                     p.message = format!("Discovering... {} files found", count);
                     let _ = discovery_progress_tx.send(p.clone());
                 }
+            }
+        }
+
+        if !shutdown.load(Ordering::Acquire) {
+            if let Ok(mut out) = stamps_out.lock() {
+                *out = walk.take_stamps();
             }
         }
 

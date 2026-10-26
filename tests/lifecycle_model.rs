@@ -251,6 +251,11 @@ struct World {
 
 impl World {
     fn new() -> Self {
+        // Folder stamps are trusted at once, so restarts read only the
+        // folders that changed (the path a real restart takes); `start`
+        // waits out the file system's clock tick instead.
+        fast_code_search::search::TEST_WALK_DELAY_NS
+            .store(10_000_000_000, std::sync::atomic::Ordering::Relaxed);
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
         let root = base.join("tree");
@@ -291,6 +296,9 @@ impl World {
             progress_tx: create_progress_broadcaster(),
             shutdown: Arc::new(AtomicBool::new(false)),
         });
+        // A folder changed in the same clock tick as the walk would keep
+        // its time (see `TEST_WALK_DELAY_NS` above).
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
     fn abs(&self, rel: &str) -> PathBuf {

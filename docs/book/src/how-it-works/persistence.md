@@ -65,6 +65,33 @@ exits, however it exits.
    a load.) The gaps go at the next save.
 5. Re-index the stale files that the current configuration and ignore
    files still allow, then discover anything new under the roots.
+   **Only the folders that changed are read.** The last complete walk
+   saved each folder's modification time and a fingerprint of its ignore
+   files (`.gitignore`, `.ignore`, `.rgignore`, `.git/info/exclude`).
+   Adding, deleting or renaming an entry changes a folder's time, so a
+   folder whose time and ignore files match holds no new file. On restart
+   every saved folder is stat'ed (in parallel). The changed ones are read
+   one level deep, new folders are walked whole, and a folder whose ignore
+   files changed is walked whole, since its rules apply below it. This is
+   the trick git's untracked cache uses. At 302,000 files (28,616 folders)
+   it took 0.18 s where a full walk took 2.6 s with the file system cache
+   warm, and 1.3 s where a full walk took 9.2 s with it cold.
+
+   A full walk happens instead when the configuration changed, the user's
+   global excludes file (`core.excludesFile`) changed, a root is new, or
+   the index has no stamps yet: a fresh build saves them once its walk
+   ends, and a checkpoint from a build that did not finish has none. A
+   folder modified within 2 seconds of the walk is not stamped (a coarse
+   clock could give a later change the same time), and neither is one the
+   walk could not read; the folders above them are read again on the next
+   restart, so it reaches them.
+
+   **Known limitation.** This relies on the file system updating a
+   folder's modification time when an entry is added, removed or renamed,
+   as local file systems do. On one that does not (some network or FUSE
+   mounts), a file added while the server was stopped is found only when
+   the watcher sees it change or its folder changes otherwise. Deleting
+   the index file makes the next start walk everything.
 
 Roots are compared in canonical form, so a symlinked temp directory on
 macOS or an 8.3 short name on Windows is the same root as its long

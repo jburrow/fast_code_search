@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path tables use a faster hash, directory counts are added once per
   directory, symbols are moved rather than copied, and the ranking
   metadata pass runs on every core.
+- **Restarts read only the folders that changed.** After loading a saved
+  index, the server looked for new files by walking every folder under the
+  roots: at 302,000 files, 2.6 s with the file system cache warm and 9.2 s
+  cold, while answers said the index was incomplete. The last complete walk
+  now saves each folder's modification time and a fingerprint of its
+  ignore files, and a restart reads only the folders whose time or ignore
+  files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
+  a configuration change, a change to the global excludes file, or when
+  the index has no stamps yet. Index format v10: the first start after
+  upgrading rebuilds the index once. Known limitation: on a file system
+  that does not update a folder's time when its entries change, a file
+  added while the server was stopped is found only once it or its folder
+  changes again.
 - **About 10% less memory on large trees: each file's path is held once.**
   The ranking metadata, the import resolver's path tables and the import
   lists kept their own copies of every path (five to eight per file); they

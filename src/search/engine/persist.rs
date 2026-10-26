@@ -542,6 +542,7 @@ impl SearchEngine {
             references,
         )?;
         persisted.symbol_names = symbol_names;
+        persisted.dir_stamps = self.dir_stamps.clone();
         match &remapped_trigrams {
             Some(remapped) => persisted.save(path, remapped.iter().map(|(t, docs)| (t, docs)))?,
             None => persisted.save(path, self.trigram_index.lists())?,
@@ -679,6 +680,9 @@ impl SearchEngine {
             Some(0),
             &format!("Checking {} files for changes...", total_files),
         );
+        // Folder stamps describe the walk under the configuration they
+        // were taken with.
+        self.dir_stamps = persisted.dir_stamps.take().filter(|_| config_compatible);
         let mut file_statuses = batch_check_files(&persisted.files, &removed_paths);
         mark("check_files");
 

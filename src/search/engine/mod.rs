@@ -1371,6 +1371,10 @@ pub struct SearchEngine {
     /// filter that keeps symbol search from testing every symbol of every
     /// candidate file. Rebuilt with the file metadata.
     symbol_names: symbol_names::SymbolNameIndex,
+    /// What the last complete walk saw of each folder (see
+    /// `search::dir_stamps`), saved with the index so a restart re-reads
+    /// only the folders that changed. `None` until a complete walk ran.
+    pub(crate) dir_stamps: Option<crate::index::DirStamps>,
     /// Per-file symbol references (call sites, type mentions), names
     /// interned through `ref_names` / `ref_name_ids`. Parallel to
     /// `symbol_cache`; a slot is cleared when its file is removed.
@@ -1463,6 +1467,7 @@ impl SearchEngine {
             dependency_index: DependencyIndex::new(),
             symbol_cache: Vec::new(),
             symbol_names: Default::default(),
+            dir_stamps: None,
             reference_cache: Vec::new(),
             ref_names: Vec::new(),
             ref_name_ids: FxHashMap::default(),
