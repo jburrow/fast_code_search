@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f6e680e0.js";
+            window.path_to_searchindex_js = "../searchindex-1921b447.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -215,8 +215,8 @@ forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
 <h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
 <!-- bench:comparison-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40253883745">run 40253883745</a>
-on commit <code>faccb0f</code> (2026-10-26, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40411254740">run 40411254740</a>
+on commit <code>b1f9287</code> (2026-10-26, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <!-- /bench:comparison-run -->
 <!-- bench:comparison-table -->
@@ -227,13 +227,13 @@ AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>70.8 ms</td><td>84.5 ms</td><td>31.8 ms</td><td>31.47 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>61.7 ms</td><td>88.7 ms</td><td>14.2 ms</td><td>10.94 ms</td></tr>
-<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>57.0 ms</td><td>84.3 ms</td><td>5.3 ms</td><td>0.02 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>57.8 ms</td><td>85.7 ms</td><td>7.6 ms</td><td>2.89 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>65.1 ms</td><td>116.6 ms</td><td>31.7 ms</td><td>32.08 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>82.8 ms</td><td>131.7 ms</td><td>46.3 ms</td><td>44.33 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.5 ms</td><td>86.8 ms</td><td>9.3 ms</td><td>4.85 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>71.3 ms</td><td>94.2 ms</td><td>31.4 ms</td><td>30.75 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>61.3 ms</td><td>89.6 ms</td><td>13.6 ms</td><td>10.53 ms</td></tr>
+<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>57.6 ms</td><td>89.7 ms</td><td>4.9 ms</td><td>0.02 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>73.5 ms</td><td>86.8 ms</td><td>8.6 ms</td><td>3.79 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>81.6 ms</td><td>115.9 ms</td><td>33.3 ms</td><td>31.39 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>83.0 ms</td><td>131.9 ms</td><td>44.1 ms</td><td>44.39 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.4 ms</td><td>86.0 ms</td><td>9.6 ms</td><td>4.88 ms</td></tr>
 </tbody>
 </table>
 </div>

@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f6e680e0.js";
+            window.path_to_searchindex_js = "searchindex-1921b447.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5072,7 +5072,7 @@ is all that is needed.</p>
 <tr><th>Structure</th><th>Grows with</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build</td></tr>
+<tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build; after a load read in place from the mapped index file (page cache, not heap), except lists indexed since</td></tr>
 <tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build and saved with the index</td></tr>
 <tr><td>Reference tables</td><td>call sites and type mentions</td><td>names interned once; positions packed</td></tr>
 <tr><td>Dependency graph</td><td>resolved imports</td><td>bidirectional, with cached dependent counts</td></tr>
@@ -5082,8 +5082,9 @@ is all that is needed.</p>
 </table>
 </div>
 <p>Small files are read into owned buffers per access and dropped
-afterwards, so search traffic does not accumulate memory. The CI corpus
-(6,237 files, 38.9 MB) sits at about 120 MB resident after a build.</p>
+afterwards, so search traffic does not accumulate memory. The
+<a href="#latest-results">latest results</a> give the CI corpus’s resident
+memory after a build.</p>
 <h2 id="where-it-goes"><a class="header" href="#where-it-goes">Where it goes</a></h2>
 <p><code>/api/diagnostics</code> reports the index’s estimated heap per structure under
 <code>index.memory</code>, largest first, next to the process’s resident memory
@@ -5112,18 +5113,20 @@ records it per scenario.</p>
 measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (commit after <code>d62cc56</code>, with one
-path per file):</p>
+Checked the same way on public code (at <code>b1f9287</code>). A loaded index reads
+its posting lists in place from the mapped index file, so they are not
+heap; the mapped bytes are reported apart (<code>mapped_postings_bytes</code>) and
+are page cache the system can evict and share:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th></tr>
+<tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th><th>Posting lists mapped</th></tr>
 </thead>
 <tbody>
-<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>76.3 MB</td><td>48.3 MB (63%)</td></tr>
-<tr><td>tokio + Django</td><td>loaded from disk</td><td>43.7 MB</td><td>39.9 MB (91%)</td></tr>
-<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>575.1 MB</td><td>533.2 MB (93%)</td></tr>
-<tr><td>Linux kernel</td><td>loaded from disk</td><td>479.7 MB</td><td>470.7 MB (98%)</td></tr>
+<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>75.2 MB</td><td>46.4 MB (62%)</td><td>none</td></tr>
+<tr><td>tokio + Django</td><td>loaded from disk</td><td>19.4 MB</td><td>18.7 MB (96%)</td><td>12.6 MB</td></tr>
+<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>547.9 MB</td><td>505.3 MB (92%)</td><td>none</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>286.3 MB</td><td>282.3 MB (99%)</td><td>149.3 MB</td></tr>
 </tbody>
 </table>
 </div>
@@ -5134,13 +5137,13 @@ path per file):</p>
 <tr><th>Part</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>symbols (46.5 MB of it the name dictionary)</td><td>253.8 MB</td></tr>
-<tr><td>postings</td><td>172.3 MB</td></tr>
-<tr><td>graph_paths</td><td>17.2 MB</td></tr>
-<tr><td>file_table</td><td>14.7 MB</td></tr>
+<tr><td>symbols</td><td>239.0 MB</td></tr>
+<tr><td>graph_paths</td><td>14.0 MB</td></tr>
+<tr><td>file_table</td><td>12.7 MB</td></tr>
 <tr><td>file_metadata</td><td>7.8 MB</td></tr>
+<tr><td>postings (on the heap: the table and lists indexed since the load)</td><td>4.0 MB</td></tr>
 <tr><td>references</td><td>3.2 MB</td></tr>
-<tr><td>everything else</td><td>1.8 MB</td></tr>
+<tr><td>everything else</td><td>1.7 MB</td></tr>
 </tbody>
 </table>
 </div>
@@ -5162,10 +5165,11 @@ the build’s other allocations) that measured 19% slower on 302,000 files
 (95 to 113 ms); on an index loaded from disk, where the paths are
 allocated in order, it is as fast as before.</p>
 <p><strong>A just-built index holds more than the same index loaded.</strong> On tokio +
-Django it is 76 MB against 44 MB. Posting lists built one insert at a time
-keep spare capacity (a list in one container costs 168 bytes instead of 42),
-and the estimates cannot see that spare capacity, which is why they cover
-only 63% there. A restart gives the memory back.</p>
+Django it is 75 MB against 19 MB. Most of the gap is the posting lists,
+which a loaded index reads from the mapped file. The rest is spare
+capacity: posting lists built one insert at a time keep it (a list in one
+container costs 168 bytes instead of 42), and the estimates cannot see it,
+which is why they cover only 62% there. A restart gives the memory back.</p>
 <p>Resident memory is higher again. A build allocates and frees far more
 than the index it leaves behind (file contents, per-batch trigram sets,
 merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
@@ -5562,8 +5566,8 @@ large the tree is, and ranks. Results are on the
 </script>
 <h2 id="pinned-run"><a class="header" href="#pinned-run">Pinned run</a></h2>
 <!-- bench:latest-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40253883745">run 40253883745</a>
-on commit <code>faccb0f</code> (2026-10-26, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40411254740">run 40411254740</a>
+on commit <code>b1f9287</code> (2026-10-26, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
 <!-- /bench:latest-run -->
 <p>The <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
 same numbers; the per-commit trend is at
@@ -5583,10 +5587,10 @@ measurements and the cost on small repositories.</p>
 </thead>
 <tbody>
 <tr><td>Discovery</td><td>114 ms</td></tr>
-<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.85 s, 1,294 files/s, 8.5 MB/s</td></tr>
-<tr><td>Resident memory after build</td><td>105 MB (process before build: 8.8 MB)</td></tr>
-<tr><td>Index save</td><td>189 ms (24.6 MB on disk)</td></tr>
-<tr><td>Index load, reconciling</td><td>282 ms</td></tr>
+<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.76 s, 1,318 files/s, 8.7 MB/s</td></tr>
+<tr><td>Resident memory after build</td><td>103 MB (process before build: 8.9 MB)</td></tr>
+<tr><td>Index save</td><td>113 ms (26.0 MB on disk)</td></tr>
+<tr><td>Index load, reconciling</td><td>84.3 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5596,19 +5600,19 @@ measurements and the cost on small repositories.</p>
 <tr><th>Query</th><th>p50</th><th>p95</th></tr>
 </thead>
 <tbody>
-<tr><td>text, common word</td><td>23.8 ms</td><td>26.1 ms</td></tr>
-<tr><td>text, identifier</td><td>7.54 ms</td><td>7.92 ms</td></tr>
-<tr><td>text, no match</td><td>541 ns</td><td>681 ns</td></tr>
-<tr><td>text, short (two characters)</td><td>28.2 ms</td><td>30.2 ms</td></tr>
-<tr><td>text, full ranking</td><td>23.5 ms</td><td>24.1 ms</td></tr>
-<tr><td>text, path-filtered</td><td>11.1 ms</td><td>12.3 ms</td></tr>
-<tr><td>regex with literal</td><td>25.3 ms</td><td>26.4 ms</td></tr>
-<tr><td>regex, case-insensitive</td><td>3.31 ms</td><td>3.56 ms</td></tr>
-<tr><td>regex, no literal (full scan)</td><td>37.9 ms</td><td>42.0 ms</td></tr>
-<tr><td>symbol, exact</td><td>9.62 ms</td><td>11.2 ms</td></tr>
-<tr><td>symbol, prefix</td><td>6.38 ms</td><td>8.70 ms</td></tr>
-<tr><td>references</td><td>2.25 ms</td><td>2.53 ms</td></tr>
-<tr><td>incremental: modify one file</td><td>6.10 ms</td><td>50.9 ms</td></tr>
+<tr><td>text, common word</td><td>23.7 ms</td><td>25.3 ms</td></tr>
+<tr><td>text, identifier</td><td>7.18 ms</td><td>7.60 ms</td></tr>
+<tr><td>text, no match</td><td>581 ns</td><td>762 ns</td></tr>
+<tr><td>text, short (two characters)</td><td>29.0 ms</td><td>30.3 ms</td></tr>
+<tr><td>text, full ranking</td><td>23.8 ms</td><td>25.3 ms</td></tr>
+<tr><td>text, path-filtered</td><td>10.8 ms</td><td>11.3 ms</td></tr>
+<tr><td>regex with literal</td><td>25.0 ms</td><td>26.2 ms</td></tr>
+<tr><td>regex, case-insensitive</td><td>3.12 ms</td><td>3.62 ms</td></tr>
+<tr><td>regex, no literal (full scan)</td><td>36.8 ms</td><td>38.4 ms</td></tr>
+<tr><td>symbol, exact</td><td>3.63 ms</td><td>3.93 ms</td></tr>
+<tr><td>symbol, prefix</td><td>2.25 ms</td><td>2.52 ms</td></tr>
+<tr><td>references</td><td>2.26 ms</td><td>2.38 ms</td></tr>
+<tr><td>incremental: modify one file</td><td>5.65 ms</td><td>45.4 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5673,8 +5677,8 @@ forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
 <h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
 <!-- bench:comparison-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40253883745">run 40253883745</a>
-on commit <code>faccb0f</code> (2026-10-26, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40411254740">run 40411254740</a>
+on commit <code>b1f9287</code> (2026-10-26, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <!-- /bench:comparison-run -->
 <!-- bench:comparison-table -->
@@ -5685,13 +5689,13 @@ AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>70.8 ms</td><td>84.5 ms</td><td>31.8 ms</td><td>31.47 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>61.7 ms</td><td>88.7 ms</td><td>14.2 ms</td><td>10.94 ms</td></tr>
-<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>57.0 ms</td><td>84.3 ms</td><td>5.3 ms</td><td>0.02 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>57.8 ms</td><td>85.7 ms</td><td>7.6 ms</td><td>2.89 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>65.1 ms</td><td>116.6 ms</td><td>31.7 ms</td><td>32.08 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>82.8 ms</td><td>131.7 ms</td><td>46.3 ms</td><td>44.33 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.5 ms</td><td>86.8 ms</td><td>9.3 ms</td><td>4.85 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>71.3 ms</td><td>94.2 ms</td><td>31.4 ms</td><td>30.75 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>61.3 ms</td><td>89.6 ms</td><td>13.6 ms</td><td>10.53 ms</td></tr>
+<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>57.6 ms</td><td>89.7 ms</td><td>4.9 ms</td><td>0.02 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>73.5 ms</td><td>86.8 ms</td><td>8.6 ms</td><td>3.79 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>81.6 ms</td><td>115.9 ms</td><td>33.3 ms</td><td>31.39 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>83.0 ms</td><td>131.9 ms</td><td>44.1 ms</td><td>44.39 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.4 ms</td><td>86.0 ms</td><td>9.6 ms</td><td>4.88 ms</td></tr>
 </tbody>
 </table>
 </div>

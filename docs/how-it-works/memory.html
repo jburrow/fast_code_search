@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f6e680e0.js";
+            window.path_to_searchindex_js = "../searchindex-1921b447.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -189,7 +189,7 @@
 <tr><th>Structure</th><th>Grows with</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build</td></tr>
+<tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build; after a load read in place from the mapped index file (page cache, not heap), except lists indexed since</td></tr>
 <tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build and saved with the index</td></tr>
 <tr><td>Reference tables</td><td>call sites and type mentions</td><td>names interned once; positions packed</td></tr>
 <tr><td>Dependency graph</td><td>resolved imports</td><td>bidirectional, with cached dependent counts</td></tr>
@@ -199,8 +199,9 @@
 </table>
 </div>
 <p>Small files are read into owned buffers per access and dropped
-afterwards, so search traffic does not accumulate memory. The CI corpus
-(6,237 files, 38.9 MB) sits at about 120 MB resident after a build.</p>
+afterwards, so search traffic does not accumulate memory. The
+<a href="../benchmarks/latest.html">latest results</a> give the CI corpus’s resident
+memory after a build.</p>
 <h2 id="where-it-goes"><a class="header" href="#where-it-goes">Where it goes</a></h2>
 <p><code>/api/diagnostics</code> reports the index’s estimated heap per structure under
 <code>index.memory</code>, largest first, next to the process’s resident memory
@@ -229,18 +230,20 @@ records it per scenario.</p>
 measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (commit after <code>d62cc56</code>, with one
-path per file):</p>
+Checked the same way on public code (at <code>b1f9287</code>). A loaded index reads
+its posting lists in place from the mapped index file, so they are not
+heap; the mapped bytes are reported apart (<code>mapped_postings_bytes</code>) and
+are page cache the system can evict and share:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th></tr>
+<tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th><th>Posting lists mapped</th></tr>
 </thead>
 <tbody>
-<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>76.3 MB</td><td>48.3 MB (63%)</td></tr>
-<tr><td>tokio + Django</td><td>loaded from disk</td><td>43.7 MB</td><td>39.9 MB (91%)</td></tr>
-<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>575.1 MB</td><td>533.2 MB (93%)</td></tr>
-<tr><td>Linux kernel</td><td>loaded from disk</td><td>479.7 MB</td><td>470.7 MB (98%)</td></tr>
+<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>75.2 MB</td><td>46.4 MB (62%)</td><td>none</td></tr>
+<tr><td>tokio + Django</td><td>loaded from disk</td><td>19.4 MB</td><td>18.7 MB (96%)</td><td>12.6 MB</td></tr>
+<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>547.9 MB</td><td>505.3 MB (92%)</td><td>none</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>286.3 MB</td><td>282.3 MB (99%)</td><td>149.3 MB</td></tr>
 </tbody>
 </table>
 </div>
@@ -251,13 +254,13 @@ path per file):</p>
 <tr><th>Part</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>symbols (46.5 MB of it the name dictionary)</td><td>253.8 MB</td></tr>
-<tr><td>postings</td><td>172.3 MB</td></tr>
-<tr><td>graph_paths</td><td>17.2 MB</td></tr>
-<tr><td>file_table</td><td>14.7 MB</td></tr>
+<tr><td>symbols</td><td>239.0 MB</td></tr>
+<tr><td>graph_paths</td><td>14.0 MB</td></tr>
+<tr><td>file_table</td><td>12.7 MB</td></tr>
 <tr><td>file_metadata</td><td>7.8 MB</td></tr>
+<tr><td>postings (on the heap: the table and lists indexed since the load)</td><td>4.0 MB</td></tr>
 <tr><td>references</td><td>3.2 MB</td></tr>
-<tr><td>everything else</td><td>1.8 MB</td></tr>
+<tr><td>everything else</td><td>1.7 MB</td></tr>
 </tbody>
 </table>
 </div>
@@ -279,10 +282,11 @@ the build’s other allocations) that measured 19% slower on 302,000 files
 (95 to 113 ms); on an index loaded from disk, where the paths are
 allocated in order, it is as fast as before.</p>
 <p><strong>A just-built index holds more than the same index loaded.</strong> On tokio +
-Django it is 76 MB against 44 MB. Posting lists built one insert at a time
-keep spare capacity (a list in one container costs 168 bytes instead of 42),
-and the estimates cannot see that spare capacity, which is why they cover
-only 63% there. A restart gives the memory back.</p>
+Django it is 75 MB against 19 MB. Most of the gap is the posting lists,
+which a loaded index reads from the mapped file. The rest is spare
+capacity: posting lists built one insert at a time keep it (a list in one
+container costs 168 bytes instead of 42), and the estimates cannot see it,
+which is why they cover only 62% there. A restart gives the memory back.</p>
 <p>Resident memory is higher again. A build allocates and frees far more
 than the index it leaves behind (file contents, per-batch trigram sets,
 merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
