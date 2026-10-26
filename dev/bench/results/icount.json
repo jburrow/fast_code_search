@@ -1,0 +1,22 @@
+{
+ "schema": 1,
+ "commit": "72aaa384992bbf44d98557e050fd333c802a8720",
+ "instructions": {
+  "index_build": 88941140766,
+  "text/common": 273853084,
+  "text/identifier": 78197616,
+  "text/no_match": 6270,
+  "text/short": 193187966,
+  "text/full_rank": 273779120,
+  "text/filtered": 118158893,
+  "regex/literal": 142657821,
+  "regex/case_insensitive": 37395355,
+  "regex/no_literal": 491883451,
+  "symbol/exact": 86247069,
+  "symbol/prefix": 56892730,
+  "symbol/references": 20703592,
+  "incremental/modify_file": 59458749,
+  "index_save": 1148055454,
+  "index_load": 2977400151
+ }
+}
