@@ -818,12 +818,11 @@ impl SearchEngine {
         Ok(m)
     }
 
-    /// [`Self::search_symbols`] with explicit limits.
-    ///
-    /// Symbol search never truncates the candidate set by file score before
-    /// matching: a document is only *opened* when one of its cached symbol
-    /// names matches, so scanning every candidate's symbol cache is cheap and
-    /// an exact symbol in a low-scoring file is never excluded.
+    /// [`Self::search_symbols`] with explicit limits: the query as literal
+    /// text (no operators), searched exactly as the web API, gRPC, MCP and
+    /// `fcs` search symbols ([`Self::search_symbols_parsed`]). It used to
+    /// run its own single-pass search, so the corpus benchmark and the
+    /// validator timed a symbol search that no front end ran.
     pub fn search_symbols_with_limits(
         &self,
         query: &str,
@@ -831,19 +830,11 @@ impl SearchEngine {
         exclude_patterns: &str,
         limits: SearchLimits,
     ) -> Result<(Vec<SearchMatch>, SearchRankingInfo)> {
-        if query.trim().is_empty() {
-            return Ok((Vec::new(), SearchRankingInfo::empty(RankMode::Full)));
-        }
-        let path_filter = PathFilter::from_delimited(include_patterns, exclude_patterns)?;
-        let query_lower = fold_str(query).into_owned();
-        let candidates = self.apply_path_filter(self.text_candidates(&query_lower), &path_filter);
-        Ok(self.run_candidates(
-            &candidates,
-            RankMode::Full,
-            limits,
-            |_, meta| meta.base_score,
-            |doc_id, run| self.search_symbols_in_document(doc_id, query, &query_lower, run),
-        ))
+        let parsed = ParsedQuery {
+            text: query.to_string(),
+            ..Default::default()
+        };
+        self.search_symbols_parsed(&parsed, include_patterns, exclude_patterns, limits)
     }
 
     /// Symbol references: the lines where the identifier `name` is used
@@ -989,22 +980,6 @@ impl SearchEngine {
 
     /// Search for symbols matching the query in a document.
     /// Returns matches only for lines where a symbol name matches.
-    pub(super) fn search_symbols_in_document(
-        &self,
-        doc_id: u32,
-        original_query: &str,
-        query_lower: &str,
-        run: &QueryRun,
-    ) -> Option<Vec<SearchMatch>> {
-        self.search_symbols_in_document_opts(
-            doc_id,
-            original_query,
-            query_lower,
-            SearchOptions::default(),
-            run,
-        )
-    }
-
     pub(super) fn search_symbols_in_document_opts(
         &self,
         doc_id: u32,

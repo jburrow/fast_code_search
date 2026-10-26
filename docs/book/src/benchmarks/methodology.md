@@ -48,8 +48,10 @@ without the cost of spreading it, and each query is counted five times
 (median). Run-to-run noise on one commit, measured on 2026-10-25 over eight
 runs: 0.5% or less for every operation except symbol/exact and
 symbol/prefix, which moved by up to 4.2% for a reason not yet found; those
-two fail only at 10%. A run takes about 17 minutes on 4 cores, about 7 more
-than the Criterion suites it replaced.
+two fail only at 10%. On the GitHub runner the count takes about 10
+minutes, about what the Criterion suites it replaced took: the first run
+([40246218157](https://github.com/jburrow/fast_code_search/actions/runs/40246218157))
+finished the whole job in 18 minutes, against 20 for the run before it.
 
 ## How queries are timed
 

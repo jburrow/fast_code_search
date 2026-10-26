@@ -23,7 +23,8 @@
 # the measure a PR quotes.
 #
 # DIR defaults to tokio 1.45.0 + Django 5.2 in bench-corpus/ (fetched when
-# missing). Needs valgrind. Takes about 15 minutes on 4 cores.
+# missing). Needs valgrind. Takes about 10 minutes on a GitHub runner, 17 on a
+# 4 vCPU VM.
 #
 # Exit status: 0, or 1 when --compare finds an operation over the
 # threshold, or 2 on a usage or run error.
