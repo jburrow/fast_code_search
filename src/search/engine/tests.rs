@@ -4750,15 +4750,15 @@ fn test_load_tombstones_changed_and_deleted_files() {
     use crate::config::IndexerConfig;
 
     let temp_dir = TempDir::new().unwrap();
-    let paths: Vec<_> = (0..6)
-        .map(|i| temp_dir.path().join(format!("f{i}.rs")))
-        .collect();
+    // The engine stores canonical paths (/private/var on macOS, \\?\ on Windows).
+    let root = temp_dir.path().canonicalize().unwrap();
+    let paths: Vec<_> = (0..6).map(|i| root.join(format!("f{i}.rs"))).collect();
     for (i, p) in paths.iter().enumerate() {
         fs::write(p, format!("pub fn token_{i}() {{}}\n// common_word\n")).unwrap();
     }
-    age_files(temp_dir.path());
+    age_files(&root);
     let config = IndexerConfig {
-        paths: vec![temp_dir.path().to_string_lossy().to_string()],
+        paths: vec![root.to_string_lossy().to_string()],
         ..Default::default()
     };
     let mut engine = SearchEngine::new();
