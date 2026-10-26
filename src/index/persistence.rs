@@ -258,6 +258,28 @@ pub struct PersistedIndex {
     pub reference_names: Vec<String>,
     /// Per-file symbol references (parallel to `files`, by position).
     pub references: Vec<Vec<PackedRef>>,
+    /// The symbol name dictionary, so a load need not rebuild it (about
+    /// 2 s at 302,000 files). `None` when the index had none yet.
+    /// (Format v9 / magic FCSIDX06.)
+    pub symbol_names: Option<PersistedSymbolNames>,
+}
+
+/// The symbol name dictionary (`search::engine::symbol_names`), with file
+/// positions in place of ids.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct PersistedSymbolNames {
+    /// The distinct folded names, each followed by a line break.
+    pub text: String,
+    /// Where each name starts in `text`.
+    pub starts: Vec<u32>,
+    /// Name `i`'s files are `files[file_ranges[i]..file_ranges[i + 1]]`.
+    pub file_ranges: Vec<u32>,
+    pub files: Vec<u32>,
+    /// Parallel to `files`: the kinds of symbol the name names there.
+    pub kinds: Vec<u8>,
+    /// Positions whose symbols the dictionary does not describe (changed
+    /// or added after it was built): searched symbol by symbol.
+    pub stale: Vec<u32>,
 }
 
 /// On-disk layout (all integers little-endian):
@@ -281,7 +303,7 @@ const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 4 + 8;
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX05";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX06";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -296,7 +318,8 @@ fn bincode_opts() -> impl Options {
 impl PersistedIndex {
     /// Current persistence format version (bump this when format changes)
     /// 8: trigrams are Unicode simple case folded (`search::fold`).
-    pub const CURRENT_VERSION: u32 = 8;
+    /// 9: the symbol name dictionary is saved (`symbol_names`).
+    pub const CURRENT_VERSION: u32 = 9;
 
     /// Create a new persisted index from the current state
     #[allow(clippy::too_many_arguments)]
@@ -321,6 +344,7 @@ impl PersistedIndex {
             pending_imports,
             reference_names,
             references,
+            symbol_names: None,
         })
     }
 
@@ -1056,11 +1080,24 @@ mod tests {
             references,
         )
         .unwrap();
+        let mut idx = idx;
+        idx.symbol_names = Some(golden_symbol_names());
         (idx, map)
     }
 
+    fn golden_symbol_names() -> PersistedSymbolNames {
+        PersistedSymbolNames {
+            text: "hello\nmain.rs\n".into(),
+            starts: vec![0, 6],
+            file_ranges: vec![0, 1, 2],
+            files: vec![0, 1],
+            kinds: vec![1, 4],
+            stale: vec![1],
+        }
+    }
+
     fn golden_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v8.fcsidx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v9.fcsidx")
     }
 
     /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
@@ -1077,7 +1114,7 @@ mod tests {
         if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
             std::fs::write(golden_path(), &bytes).unwrap();
         }
-        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v8.fcsidx");
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v9.fcsidx");
         assert_eq!(&bytes[..8], INDEX_MAGIC);
         assert!(
             bytes == golden,
@@ -1100,6 +1137,7 @@ mod tests {
         assert_eq!(loaded.pending_imports.len(), 1);
         assert_eq!(loaded.reference_names, vec!["hello".to_string()]);
         assert_eq!(loaded.references[1][0].line, 5);
+        assert_eq!(loaded.symbol_names, Some(golden_symbol_names()));
         let dir = loaded.trigram_index.entries();
         assert_eq!(dir.len(), 3);
         assert!(dir

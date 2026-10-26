@@ -507,8 +507,19 @@ impl SearchEngine {
             .filter_map(|(id, path, imports)| Some((*id_to_pos.get(&id)?, path, imports)))
             .collect();
 
+        // The symbol name dictionary, by position, so the load need not
+        // rebuild it.
+        let mut position = vec![u32::MAX; total_ids as usize];
+        for (pos, &id) in live_ids.iter().enumerate() {
+            position[id as usize] = pos as u32;
+        }
+        let symbol_names = self
+            .symbol_names
+            .to_persisted(&position, self.symbol_cache.len());
+        drop(position);
+
         // Create persisted index with config fingerprint
-        let persisted = PersistedIndex::new(
+        let mut persisted = PersistedIndex::new(
             config.fingerprint(),
             config.paths.clone(),
             files,
@@ -518,6 +529,7 @@ impl SearchEngine {
             self.reference_names().to_vec(),
             references,
         )?;
+        persisted.symbol_names = symbol_names;
         match &remapped_trigrams {
             Some(remapped) => persisted.save(path, remapped.iter().map(|(t, docs)| (t, docs)))?,
             None => persisted.save(path, self.trigram_index.lists())?,
@@ -625,7 +637,7 @@ impl SearchEngine {
             None,
             "Deserializing index data...",
         );
-        let persisted = PersistedIndex::load(path)?;
+        let mut persisted = PersistedIndex::load(path)?;
         let total_files = persisted.files.len();
         mark("read_and_decode");
 
@@ -787,6 +799,19 @@ impl SearchEngine {
             symbols_reextracted = persisted.symbols.is_empty() || !schema_current;
             if !symbols_reextracted {
                 self.restore_symbols_and_deps(&orig_to_new, &persisted);
+                if let Some(saved) = persisted.symbol_names.take() {
+                    let mut id = vec![u32::MAX; persisted.files.len()];
+                    for (&orig, &new) in &orig_to_new {
+                        if let Some(slot) = id.get_mut(orig as usize) {
+                            *slot = new;
+                        }
+                    }
+                    self.symbol_names = symbol_names::SymbolNameIndex::from_persisted(
+                        saved,
+                        &id,
+                        self.symbol_cache.len(),
+                    );
+                }
                 tracing::info!(
                     files_restored = valid_count,
                     "Restored symbol and dependency caches from persisted index"
@@ -833,7 +858,11 @@ impl SearchEngine {
         self.compute_all_file_metadata();
         self.generation += 1;
         mark("file_metadata");
-        self.rebuild_symbol_names();
+        // Restored from the file above unless the symbols were re-extracted
+        // or the file had none.
+        if !self.symbol_names.is_built() {
+            self.rebuild_symbol_names();
+        }
         mark("symbol_names");
 
         let already_indexed_files: Vec<std::path::PathBuf> = valid_file_indices

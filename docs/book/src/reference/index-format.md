@@ -1,7 +1,7 @@
 # Index file format
 
-The persisted index (`index_path`) is a single file, format **v8**, magic
-`FCSIDX05`. Everything is little-endian.
+The persisted index (`index_path`) is a single file, format **v9**, magic
+`FCSIDX06`. Everything is little-endian.
 
 ```text
 magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
@@ -25,7 +25,12 @@ parallel; nothing is copied in between.
 - the file table: path (raw bytes, so non-UTF-8 names survive), mtime in
   nanoseconds, size, and which configured root the file belongs to;
 - per-file symbols and references (reference names interned in one table);
-- resolved dependency edges and imports still waiting for their target.
+- resolved dependency edges and imports still waiting for their target;
+- the symbol name dictionary symbol search filters by (see
+  [Candidates](../how-it-works/candidates.md#verification-and-modes)): the
+  distinct case-folded names, the files and symbol kinds behind each, and
+  the files it does not describe yet. Saved so a load need not rebuild it
+  (about 2 s at 302,000 files).
 
 File positions in the table are compacted (removed files are absent), and
 every other section is remapped to those positions on save and back to
@@ -39,7 +44,7 @@ live ids on load, so ids stay stable across restarts.
   removes the temporary file a killed save left.
 - **Detects drift.** Each file's mtime and size at read time are stored;
   on load a file whose stat differs is re-read.
-- **Pinned.** `tests/fixtures/index-v8.fcsidx` is compared byte for byte
+- **Pinned.** `tests/fixtures/index-v9.fcsidx` is compared byte for byte
   in the test suite; a deliberate format change bumps the magic and
   regenerates the fixture (`FCS_WRITE_GOLDEN=1 cargo test golden`).
 - **Older formats** are rejected with a message asking for a rebuild;

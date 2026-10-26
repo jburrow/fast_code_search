@@ -42,9 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Django.
   **What it costs:** the dictionary takes memory (63 MB at 302,000 files,
   46 MB for the Linux kernel; resident +4%), and it is built after every
-  build and load on one thread, which makes loading about 2.5 s (19%)
-  slower at 302,000 files. Built on all cores it took half the time but
-  fragmented memory: resident grew 160 MB. Files changed after the
+  build on one thread (about 2 s at 302,000 files; on all cores it took
+  half the time but fragmented memory: resident grew 160 MB). It is saved
+  with the index, so a load restores it instead (index format v9: the
+  first start after upgrading rebuilds the index once). Files changed after the
   dictionary was built are searched symbol by symbol until a sixteenth of
   the files (at least 4,096) have changed; the update that crosses that
   line rebuilds it under the write lock.

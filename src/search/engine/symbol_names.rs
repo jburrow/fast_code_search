@@ -19,6 +19,7 @@
 //! change after that is marked stale and always checked; when stale files
 //! pile up the dictionary is rebuilt.
 
+use crate::index::PersistedSymbolNames;
 use crate::search::fold::fold_char;
 use crate::symbols::{Symbol, SymbolType};
 use memchr::memmem;
@@ -299,6 +300,84 @@ impl SymbolNameIndex {
         Some(out)
     }
 
+    pub(super) fn is_built(&self) -> bool {
+        self.built
+    }
+
+    /// For saving: file ids become positions (`position[id]`, `u32::MAX`
+    /// for a file not saved). Files the dictionary does not describe out of
+    /// `num_files` are listed as stale. `None` before the first build.
+    pub(super) fn to_persisted(
+        &self,
+        position: &[u32],
+        num_files: usize,
+    ) -> Option<PersistedSymbolNames> {
+        if !self.built {
+            return None;
+        }
+        let pos = |id: u32| {
+            position
+                .get(id as usize)
+                .copied()
+                .filter(|&p| p != u32::MAX)
+        };
+        let (file_ranges, files, kinds) = self.remap(pos);
+        Some(PersistedSymbolNames {
+            text: self.text.clone(),
+            starts: self.starts.clone(),
+            file_ranges,
+            files,
+            kinds,
+            stale: self.unindexed(num_files).iter().filter_map(pos).collect(),
+        })
+    }
+
+    /// For loading: positions become ids (`id[position]`, `u32::MAX` for a
+    /// file not loaded); the index has `num_files` files, all described.
+    pub(super) fn from_persisted(
+        saved: PersistedSymbolNames,
+        id: &[u32],
+        num_files: usize,
+    ) -> Self {
+        let map = |p: u32| id.get(p as usize).copied().filter(|&i| i != u32::MAX);
+        let mut index = Self {
+            text: saved.text,
+            starts: saved.starts,
+            file_ranges: saved.file_ranges,
+            files: saved.files,
+            kinds: saved.kinds,
+            built_files: num_files as u32,
+            stale: saved.stale.into_iter().filter_map(map).collect(),
+            files_seen: 0,
+            built: true,
+        };
+        let (file_ranges, files, kinds) = index.remap(map);
+        index.file_ranges = file_ranges;
+        index.files = files;
+        index.kinds = kinds;
+        index
+    }
+
+    /// The file lists with every file mapped through `map`, dropping files
+    /// it has no entry for.
+    fn remap(&self, map: impl Fn(u32) -> Option<u32>) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
+        let mut file_ranges = Vec::with_capacity(self.file_ranges.len());
+        let mut files = Vec::with_capacity(self.files.len());
+        let mut kinds = Vec::with_capacity(self.kinds.len());
+        file_ranges.push(0);
+        for name in 0..self.file_ranges.len().saturating_sub(1) {
+            let range = self.file_ranges[name] as usize..self.file_ranges[name + 1] as usize;
+            for (&file, &kind) in self.files[range.clone()].iter().zip(&self.kinds[range]) {
+                if let Some(to) = map(file) {
+                    files.push(to);
+                    kinds.push(kind);
+                }
+            }
+            file_ranges.push(files.len() as u32);
+        }
+        (file_ranges, files, kinds)
+    }
+
     pub(super) fn heap_bytes(&self) -> u64 {
         (self.text.capacity()
             + 4 * (self.starts.capacity() + self.file_ranges.capacity() + self.files.capacity())
@@ -436,5 +515,40 @@ mod tests {
         assert_eq!(kind_factor(KIND_VALUE | KIND_OTHER, f), 1.0);
         assert_eq!(kind_factor(KIND_VALUE, f), 0.9);
         assert_eq!(kind_factor(KIND_FILE_NAME | KIND_VALUE, f), 0.9);
+    }
+
+    #[test]
+    fn save_and_load_map_files_through_positions() {
+        // Files 0..4; 1 is not saved (removed), 3 is stale, 4 is new.
+        let cache = vec![
+            file(&["alpha"]),
+            file(&["alpha", "beta"]),
+            file(&["beta"]),
+            file(&["alpha"]),
+        ];
+        let mut idx = SymbolNameIndex::build(&cache);
+        idx.mark_stale(3);
+        idx.mark_stale(4);
+        let position = [0, u32::MAX, 1, 2, 3];
+        let saved = idx.to_persisted(&position, 5).unwrap();
+        assert_eq!(saved.stale, vec![2, 3]);
+        // Loaded with the positions as ids 10.. (a file of 13).
+        let loaded = SymbolNameIndex::from_persisted(saved, &[10, 11, 12, 13], 14);
+        assert!(loaded.is_built());
+        let names = |q: &str| -> Vec<(String, Vec<u32>)> {
+            loaded
+                .matching_names(q)
+                .unwrap()
+                .into_iter()
+                .map(|h| (h.name.to_string(), h.files.to_vec()))
+                .collect()
+        };
+        assert_eq!(names("alpha"), vec![("alpha".to_string(), vec![10, 12])]);
+        assert_eq!(names("beta"), vec![("beta".to_string(), vec![11])]);
+        assert_eq!(
+            loaded.unindexed(14).iter().collect::<Vec<_>>(),
+            vec![12, 13]
+        );
+        assert!(SymbolNameIndex::default().to_persisted(&[], 0).is_none());
     }
 }
