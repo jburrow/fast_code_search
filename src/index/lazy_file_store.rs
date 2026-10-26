@@ -255,6 +255,17 @@ impl LazyFileStore {
         }
     }
 
+    /// Take the next id for a file that is already gone (an empty slot a
+    /// checkpoint saved for a removed file), so the ids after it come back
+    /// as they were saved. The slot is tombstoned and has no path.
+    pub fn push_dead_slot(&mut self) -> u32 {
+        let id = self.files.len() as u32;
+        self.files
+            .push(LazyMappedFile::from_shared(Arc::from(Path::new(""))));
+        self.tombstoned.insert(id);
+        id
+    }
+
     /// Get the total number of registered files
     pub fn len(&self) -> usize {
         self.files.len()

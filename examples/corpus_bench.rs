@@ -544,6 +544,8 @@ fn main() -> Result<()> {
     if args.loaded_queries {
         metrics.extend(query_metrics(&loaded, n, page, "loaded/"));
     }
+    // Posting lists of a loaded index are read in place from the file.
+    let loaded_memory = loaded.memory_breakdown();
     drop(loaded);
 
     // Report.
@@ -702,6 +704,15 @@ fn main() -> Result<()> {
                 args.label, p.name, p.bytes
             );
         }
+        println!(
+            "test corpus_bench/{}/loaded_memory_postings_bytes ... bench: {} ns/iter (+/- 0)",
+            args.label,
+            loaded_memory.bytes("postings")
+        );
+        println!(
+            "test corpus_bench/{}/loaded_mapped_postings_bytes ... bench: {} ns/iter (+/- 0)",
+            args.label, loaded_memory.mapped_postings_bytes
+        );
     }
     Ok(())
 }

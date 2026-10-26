@@ -1,7 +1,7 @@
 # Index file format
 
-The persisted index (`index_path`) is a single file, format **v10**, magic
-`FCSIDX07`. Everything is little-endian.
+The persisted index (`index_path`) is a single file, format **v11**, magic
+`FCSIDX08`. Everything is little-endian.
 
 ```text
 magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
@@ -15,8 +15,10 @@ memory-mapped, the magic and both version fields are checked, the section
 lengths are validated against the file size, the checksum is verified, and
 the directory is checked to be sorted and in bounds before any bincode
 decoding happens, so a truncated, corrupt or foreign file is rejected
-early and cheaply. Bitmaps are deserialized straight out of the mapping in
-parallel; nothing is copied in between.
+early and cheaply. The server then keeps the file mapped and reads the
+bitmaps in place: a query decodes only the lists for its trigrams, and the
+lists stay in the page cache instead of on the heap (on Windows, which
+cannot replace a mapped file, they are decoded at load).
 
 ## Metadata section
 
@@ -36,10 +38,17 @@ parallel; nothing is copied in between.
   user's global excludes file, so a restart re-reads only the folders that
   changed (see [Persistence](../how-it-works/persistence.md#load)).
 
-File positions in the table are compacted (removed files are absent), and
-every other section is remapped to those positions on save. A load gives
-each file its position as its id, so the sections are used as saved; files
-changed or deleted since the save are tombstoned rather than renumbered.
+A load gives each file its position as its id, so every section is used
+as saved; files changed or deleted since the save are tombstoned rather
+than renumbered. Two kinds of save fill the table differently:
+
+- a **checkpoint**, while the server runs, keeps every id: a file removed
+  since the load is an empty slot (empty path), and the metadata lists the
+  slots (`dead_slots`). Nothing is renumbered, a posting list no change
+  touched is copied as its bytes, and the bitmaps may still name the empty
+  slots, which a load masks out.
+- a **full save**, at shutdown, compacts: removed files are absent and
+  every other section is remapped to the new positions.
 
 ## Guarantees
 
@@ -49,7 +58,7 @@ changed or deleted since the save are tombstoned rather than renumbered.
   removes the temporary file a killed save left.
 - **Detects drift.** Each file's mtime and size at read time are stored;
   on load a file whose stat differs is re-read.
-- **Pinned.** `tests/fixtures/index-v10.fcsidx` is compared byte for byte
+- **Pinned.** `tests/fixtures/index-v11.fcsidx` is compared byte for byte
   in the test suite; a deliberate format change bumps the magic and
   regenerates the fixture (`FCS_WRITE_GOLDEN=1 cargo test golden`).
 - **Older formats** are rejected with a message asking for a rebuild;

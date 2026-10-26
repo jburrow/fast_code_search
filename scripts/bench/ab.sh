@@ -5,7 +5,7 @@
 # numbers from one machine in one sitting are what a PR should quote.
 #
 #   scripts/bench/ab.sh [--base origin/main] [--rounds 5] [--threshold 10]
-#                       [--corpus small|real|small,real]
+#                       [--corpus small|real|small,real] [--loaded]
 #
 # Builds examples/corpus_bench at the base (in a temporary worktree) and
 # at the working tree, fetches the corpora into bench-corpus/ when missing,
@@ -26,14 +26,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-BASE=origin/main; ROUNDS=5; THRESHOLD=10; CORPORA=small
-usage="usage: $0 [--base REF] [--rounds N] [--threshold PCT] [--corpus small|real|small,real]"
+BASE=origin/main; ROUNDS=5; THRESHOLD=10; CORPORA=small; EXTRA=()
+usage="usage: $0 [--base REF] [--rounds N] [--threshold PCT] [--corpus small|real|small,real] [--loaded]"
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="$2"; shift 2;;
     --rounds) ROUNDS="$2"; shift 2;;
     --threshold) THRESHOLD="$2"; shift 2;;
     --corpus) CORPORA="$2"; shift 2;;
+    # Also time every query on the index as loaded from disk (`loaded/...`
+    # rows): for changes to how a loaded index is held.
+    --loaded) EXTRA+=(--loaded-queries); shift;;
     *) echo "$usage" >&2; exit 2;;
   esac
 done
@@ -84,7 +87,7 @@ for round in $(seq 1 "$ROUNDS"); do
     for side in "base-$base_sha" head; do
       # shellcheck disable=SC2046 # one argument per folder
       "$WORK/bin/$side" $(paths "$c") --label "ab-$c" \
-        --iterations 20 --bencher > "$WORK/results/${side%%-*}-$c-$round.txt" 2>/dev/null
+        --iterations 20 --bencher "${EXTRA[@]}" > "$WORK/results/${side%%-*}-$c-$round.txt" 2>/dev/null
     done
   done
   echo "round $round of $ROUNDS done" >&2

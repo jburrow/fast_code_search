@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A loaded index keeps its posting lists in the index file.** The
+  server maps the file and a query decodes only the lists for its own
+  trigrams, so the lists sit in the page cache, which the OS can evict and
+  share, instead of on the heap: @@MEMORY@@. Removing or changing a file
+  costs one bit for the mapped lists instead of a pass over every list.
+  Saves while the server runs (checkpoints) now keep every file's id,
+  writing a removed file as an empty slot, copy unchanged lists from the
+  mapped file as they are, and leave the server reading the file they
+  wrote; the save at shutdown compacts the slots away. `index.memory` in
+  `/api/diagnostics` reports the mapped bytes as `mapped_postings_bytes`.
+  Index format v11 (the first start after upgrading rebuilds the index
+  once). Known limitation: on Windows, which cannot replace a mapped file,
+  the lists are still decoded onto the heap at load.
 - **Loading a saved index is about 2.5 times faster.** With one file
   changed since the save, a load of the 302,000-file real corpus took
   10.3 s and now takes 4.1 s (same machine, median of 5). A load used to
@@ -26,8 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignore files, and a restart reads only the folders whose time or ignore
   files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
   a configuration change, a change to the global excludes file, or when
-  the index has no stamps yet. Index format v10: the first start after
-  upgrading rebuilds the index once. Known limitation: on a file system
+  the index has no stamps yet. Index format v10 (now v11, above): the
+  first start after upgrading rebuilds the index once. Known limitation: on a file system
   that does not update a folder's time when its entries change, a file
   added while the server was stopped is found only once it or its folder
   changes again.

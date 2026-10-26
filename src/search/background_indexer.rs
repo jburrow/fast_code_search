@@ -322,6 +322,7 @@ pub fn run(config: BackgroundIndexerConfig) {
             loaded_from_persistence,
             total_indexed,
             removed_files_count,
+            SaveKind::Checkpoint,
         );
     }
 
@@ -795,6 +796,7 @@ fn process_batches(
                             loaded_from_persistence,
                             total_indexed,
                             0,
+                            SaveKind::Checkpoint,
                         );
                         last_checkpoint_indexed = total_indexed;
                     }
@@ -1205,7 +1207,14 @@ pub fn save_on_watcher_update(
 ) -> bool {
     indexer_config.save_after_updates > 0
         && updates_since_save >= indexer_config.save_after_updates
-        && save_index_if_needed(indexer_config, engine, true, updates_since_save, 0)
+        && save_index_if_needed(
+            indexer_config,
+            engine,
+            true,
+            updates_since_save,
+            0,
+            SaveKind::Checkpoint,
+        )
 }
 
 /// Save the index on shutdown if any watcher updates were applied since the
@@ -1223,7 +1232,23 @@ pub fn save_after_watcher_shutdown(
         updates = updates_since_save,
         "Shutdown: saving index with pending watcher updates"
     );
-    save_index_if_needed(indexer_config, engine, true, updates_since_save, 0);
+    save_index_if_needed(
+        indexer_config,
+        engine,
+        true,
+        updates_since_save,
+        0,
+        SaveKind::Full,
+    );
+}
+
+/// Which save: while the server runs, a checkpoint keeps every file's id
+/// (`SearchEngine::checkpoint_index`); at shutdown a full save drops the
+/// removed files' slots (`SearchEngine::save_index`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SaveKind {
+    Checkpoint,
+    Full,
 }
 
 /// Save the index to disk if configured and appropriate. False when a
@@ -1234,6 +1259,7 @@ fn save_index_if_needed(
     loaded_from_persistence: bool,
     total_indexed: usize,
     removed_files_count: usize,
+    kind: SaveKind,
 ) -> bool {
     let Some(ref index_path_str) = indexer_config.index_path else {
         return true;
@@ -1272,9 +1298,13 @@ fn save_index_if_needed(
         tracing::warn!("Storage: {problem}");
     }
 
-    match index_engine.read() {
+    let saved = match index_engine.read() {
         Ok(engine) => {
-            if let Err(e) = engine.save_index(index_path, indexer_config) {
+            let result = match kind {
+                SaveKind::Checkpoint => engine.checkpoint_index(index_path, indexer_config),
+                SaveKind::Full => engine.save_index(index_path, indexer_config),
+            };
+            if let Err(e) = result {
                 let hint = crate::storage::explain_no_space(&e, index_path).unwrap_or_default();
                 tracing::error!(
                     error = %format!("{e:#}"),
@@ -1295,7 +1325,14 @@ fn save_index_if_needed(
             tracing::error!(error = %e, "Failed to acquire read lock to save index");
             false
         }
+    };
+    if saved {
+        // The save left the posting lists readable in place from the file
+        // just written; free the heap copies now rather than at the next
+        // change.
+        engine_lock::write(index_engine).trigram_index.settle();
     }
+    saved
 }
 
 #[cfg(test)]
