@@ -160,6 +160,71 @@ impl<'a> SymbolLines<'a> {
     }
 }
 
+/// Candidate files best first (score descending, then id), sorted only as
+/// far as [`Self::upto`] has asked: each call settles at least twice the
+/// sorted prefix so far with one `select_nth_unstable`, then sorts just
+/// that part. The prefix always equals the same prefix of a full sort.
+struct LazyOrder {
+    scored: Vec<(u32, f32)>,
+    /// Candidates past this are never read (a file cap).
+    len: usize,
+    sorted: usize,
+}
+
+impl LazyOrder {
+    /// The first sort settles at least this many: below it a full sort of
+    /// the part is as cheap as selecting it.
+    const MIN_STEP: usize = 1024;
+
+    fn new(scored: Vec<(u32, f32)>, cap: usize) -> Self {
+        let len = scored.len().min(cap);
+        Self {
+            scored,
+            len,
+            sorted: 0,
+        }
+    }
+
+    /// Already in order (discovery order, no metadata yet).
+    fn in_order(ids: Vec<u32>) -> Self {
+        let len = ids.len();
+        Self {
+            scored: ids.into_iter().map(|id| (id, 0.0)).collect(),
+            len,
+            sorted: len,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn cmp(a: &(u32, f32), b: &(u32, f32)) -> std::cmp::Ordering {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    }
+
+    /// The first `end` candidates in order.
+    fn upto(&mut self, end: usize) -> &[(u32, f32)] {
+        let end = end.min(self.len);
+        if end > self.sorted {
+            let target = end
+                .max(self.sorted.saturating_mul(2))
+                .max(Self::MIN_STEP)
+                .min(self.len);
+            let rest = &mut self.scored[self.sorted..];
+            let take = target - self.sorted;
+            if take < rest.len() {
+                rest.select_nth_unstable_by(take - 1, Self::cmp);
+            }
+            rest[..take].sort_unstable_by(Self::cmp);
+            self.sorted = target;
+        }
+        &self.scored[..end]
+    }
+}
+
 impl SearchEngine {
     /// Run a plain-text search for `terms` over `candidates`.
     pub(super) fn run_terms(
@@ -436,25 +501,25 @@ impl SearchEngine {
             usize::MAX
         };
 
-        let doc_ids: Vec<u32> = if !self.file_metadata.is_empty() {
-            // Order by file metadata (no reads); fast ranking opens at most
-            // the top `max_files`.
-            let mut scored: Vec<(u32, f32)> = candidates
-                .iter()
-                .map(|id| {
-                    let score = fast_score(id, self.get_file_metadata(id));
-                    (id, score * boost(id) as f32)
-                })
-                .collect();
-            scored.sort_unstable_by(|a, b| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.0.cmp(&b.0))
-            });
-            scored.iter().take(file_cap).map(|(id, _)| *id).collect()
+        // Order by file metadata (no reads); fast ranking opens at most the
+        // top `max_files`. The order is settled only as far as the scan
+        // reads: sorting every candidate took 31 ms of a 112 ms full-scan
+        // regex at 302,000 files, and the budget usually stops the scan a
+        // few thousand files in.
+        let mut doc_ids = if !self.file_metadata.is_empty() {
+            LazyOrder::new(
+                candidates
+                    .iter()
+                    .map(|id| {
+                        let score = fast_score(id, self.get_file_metadata(id));
+                        (id, score * boost(id) as f32)
+                    })
+                    .collect(),
+                file_cap,
+            )
         } else {
             // No metadata yet (freshly loaded index): discovery order.
-            candidates.iter().take(file_cap).collect()
+            LazyOrder::in_order(candidates.iter().take(file_cap).collect())
         };
         let candidates_searched = doc_ids.len();
 
@@ -498,9 +563,9 @@ impl SearchEngine {
                 break;
             }
             let end = (i + chunk).min(doc_ids.len());
-            let per: Vec<Option<Vec<SearchMatch>>> = doc_ids[i..end]
+            let per: Vec<Option<Vec<SearchMatch>>> = doc_ids.upto(end)[i..end]
                 .par_iter()
-                .map(|&doc_id| {
+                .map(|&(doc_id, _)| {
                     if doc_run.exhausted() {
                         return None;
                     }
@@ -1711,5 +1776,35 @@ mod symbol_lines_tests {
         assert_eq!(lines.get(1), Some("b"));
         assert_eq!(lines.get(0), None);
         assert_eq!(lines.get(2), None);
+    }
+}
+
+#[cfg(test)]
+mod lazy_order_tests {
+    use super::*;
+
+    #[test]
+    fn lazy_order_matches_a_full_sort() {
+        // Many ties, so the id tie-break matters.
+        let scored: Vec<(u32, f32)> = (0..10_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) % 10_007, (i % 37) as f32))
+            .collect();
+        let mut full = scored.clone();
+        full.sort_unstable_by(LazyOrder::cmp);
+        for cap in [usize::MAX, 5_000, 10, 0] {
+            let mut lazy = LazyOrder::new(scored.clone(), cap);
+            let want = &full[..full.len().min(cap)];
+            assert_eq!(lazy.len(), want.len());
+            let mut end = 0;
+            for step in [1, 7, 1_000, 3_000, 50_000] {
+                end = (end + step).min(lazy.len());
+                assert_eq!(lazy.upto(end), &want[..end], "cap {cap}, end {end}");
+            }
+        }
+        let mut discovery = LazyOrder::in_order(vec![5, 1, 3]);
+        assert_eq!(
+            discovery.upto(10).iter().map(|p| p.0).collect::<Vec<_>>(),
+            vec![5, 1, 3]
+        );
     }
 }
