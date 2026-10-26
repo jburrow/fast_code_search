@@ -1,0 +1,590 @@
+{
+ "schema": 1,
+ "generated_at": "2026-10-26T23:37:16Z",
+ "commit": "a708ca278fcfec17437aeb3ca8d5f5454304090e",
+ "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40418402342",
+ "corpus": {
+  "build": {
+   "build_ns": 4879172265,
+   "discovery_ns": 114469188,
+   "files_per_second": 1284.6441280547817,
+   "index_bytes": 25951637,
+   "load_ns": 84451895,
+   "rss_after_bytes": 102326272,
+   "rss_before_bytes": 8949760,
+   "save_ns": 119676216
+  },
+  "corpus": {
+   "bytes": 41382284,
+   "dependency_edges": 9784,
+   "files": 6268,
+   "roots": [
+    "/home/runner/work/fast_code_search/fast_code_search/bench-corpus/tokio",
+    "/home/runner/work/fast_code_search/fast_code_search/bench-corpus/django"
+   ],
+   "symbol_references": 384986,
+   "trigrams": 135693
+  },
+  "iterations": 30,
+  "label": "tokio+django",
+  "machine": {
+   "arch": "x86_64",
+   "ci": true,
+   "cpu_model": "AMD EPYC 7763 64-Core Processor",
+   "fast_code_search": "0.19.0",
+   "git_sha": "a708ca278f",
+   "logical_cpus": 4,
+   "mem_total_bytes": 16766414848,
+   "os": "Ubuntu 24.04.5 LTS",
+   "runner": "GitHub Actions 1000011397",
+   "rustc": "1.89",
+   "timestamp_utc": "2026-10-26T23:32:38Z"
+  },
+  "memory": {
+   "mapped_postings_bytes": 0,
+   "parts": [
+    {
+     "bytes": 26060724,
+     "name": "postings",
+     "what": "trigram posting lists"
+    },
+    {
+     "bytes": 6979176,
+     "name": "references",
+     "what": "symbol references"
+    },
+    {
+     "bytes": 5893433,
+     "name": "symbols",
+     "what": "symbol definitions"
+    },
+    {
+     "bytes": 4182877,
+     "name": "imports",
+     "what": "imports as written, and those still unresolved"
+    },
+    {
+     "bytes": 1454049,
+     "name": "graph_paths",
+     "what": "path tables for import resolution"
+    },
+    {
+     "bytes": 1287780,
+     "name": "file_table",
+     "what": "indexed paths and the path lookup"
+    },
+    {
+     "bytes": 751824,
+     "name": "dir_index",
+     "what": "files by folder (for the watcher)"
+    },
+    {
+     "bytes": 538163,
+     "name": "file_metadata",
+     "what": "ranking metadata and display paths"
+    },
+    {
+     "bytes": 364785,
+     "name": "graph_edges",
+     "what": "dependency edges and counts"
+    }
+   ],
+   "total_bytes": 47512811
+  },
+  "queries": [
+   {
+    "detail": "50 results",
+    "name": "text/common",
+    "p50_ns": 25264866,
+    "p95_ns": 27326222
+   },
+   {
+    "detail": "50 results",
+    "name": "text/identifier",
+    "p50_ns": 7495735,
+    "p95_ns": 7753185
+   },
+   {
+    "detail": "0 results",
+    "name": "text/no_match",
+    "p50_ns": 601,
+    "p95_ns": 761
+   },
+   {
+    "detail": "50 results",
+    "name": "text/short",
+    "p50_ns": 29329639,
+    "p95_ns": 31268507
+   },
+   {
+    "detail": "50 results",
+    "name": "text/full_rank",
+    "p50_ns": 25162746,
+    "p95_ns": 26294456
+   },
+   {
+    "detail": "50 results",
+    "name": "text/filtered",
+    "p50_ns": 12331527,
+    "p95_ns": 13307388
+   },
+   {
+    "detail": "50 results",
+    "name": "regex/literal",
+    "p50_ns": 25874563,
+    "p95_ns": 26627799
+   },
+   {
+    "detail": "50 results",
+    "name": "regex/case_insensitive",
+    "p50_ns": 3214427,
+    "p95_ns": 3409782
+   },
+   {
+    "detail": "50 results (budget)",
+    "name": "regex/no_literal",
+    "p50_ns": 38919742,
+    "p95_ns": 40066782
+   },
+   {
+    "detail": "50 results",
+    "name": "symbol/exact",
+    "p50_ns": 4116710,
+    "p95_ns": 4552423
+   },
+   {
+    "detail": "50 results",
+    "name": "symbol/prefix",
+    "p50_ns": 2474176,
+    "p95_ns": 2712701
+   },
+   {
+    "detail": "50 results",
+    "name": "symbol/references",
+    "p50_ns": 2373959,
+    "p95_ns": 2629967
+   },
+   {
+    "detail": "20 files",
+    "name": "incremental/modify_file",
+    "p50_ns": 6610661,
+    "p95_ns": 46666204
+   }
+  ],
+  "schema": 1
+ },
+ "ranking_quality": {
+  "description": "tokio 1.45.0 + Django 5.2",
+  "files": 7577,
+  "precision_at_1": 1.0,
+  "precision_at_5": 1.0,
+  "queries": 20,
+  "results": [
+   {
+    "expect_file": "tokio/src/runtime/runtime.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub struct Runtime",
+    "first": "tokio/tokio/src/runtime/runtime.rs:95 pub struct Runtime {",
+    "mode": "text",
+    "q": "struct Runtime",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/runtime/runtime.rs:95 pub struct Runtime {",
+     "tokio/tokio/src/runtime/metrics/runtime.rs:20 pub struct RuntimeMetrics {",
+     "tokio/tokio/src/runtime/tests/task.rs:374 struct Runtime(Arc<Inner>);"
+    ],
+    "why": "the definition, not the many mentions in docs and tests"
+   },
+   {
+    "expect_file": "tokio/src/sync/mutex.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub struct Mutex<T",
+    "first": "tokio/tokio/src/sync/mutex.rs:133 pub struct Mutex<T: ?Sized> {",
+    "mode": "text",
+    "q": "pub struct Mutex",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/sync/mutex.rs:133 pub struct Mutex<T: ?Sized> {",
+     "tokio/tokio/src/sync/mutex.rs:151 pub struct MutexGuard<'a, T: ?Sized> {"
+    ],
+    "why": "tokio's Mutex definition"
+   },
+   {
+    "expect_file": "tokio/src/time/sleep.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub fn sleep(duration",
+    "first": "tokio/tokio/src/time/sleep.rs:123 pub fn sleep(duration: Duration) -> Sleep {",
+    "mode": "text",
+    "q": "fn sleep",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/time/sleep.rs:123 pub fn sleep(duration: Duration) -> Sleep {",
+     "tokio/tokio/src/time/sleep.rs:62 pub fn sleep_until(deadline: Instant) -> Sleep {",
+     "tokio/tokio/tests/rt_handle_block_on.rs:464 fn sleep() {",
+     "tokio/tokio/tests/rt_handle_block_on.rs:486 fn sleep_after_shutdown_panics() {",
+     "tokio/tokio/tests/rt_handle_block_on.rs:473 fn sleep_before_shutdown_panics() {"
+    ],
+    "why": "the free function, above test helpers named sleep"
+   },
+   {
+    "expect_file": "",
+    "expect_file_any": [
+     "tokio/src/runtime/runtime.rs",
+     "tokio/src/runtime/handle.rs"
+    ],
+    "expect_line_contains": "pub fn block_on",
+    "first": "tokio/tokio/src/runtime/handle.rs:300 pub fn block_on<F: Future>(&self, future: F) -> F::Output {",
+    "mode": "text",
+    "q": "fn block_on",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/runtime/handle.rs:300 pub fn block_on<F: Future>(&self, future: F) -> F::Output {",
+     "tokio/tokio/src/runtime/handle.rs:310 fn block_on_inner<F: Future>(&self, future: F, _meta: SpawnMeta<'_>) -> F::Output {",
+     "tokio/tokio/src/runtime/local_runtime/runtime.rs:220 pub fn block_on<F: Future>(&self, future: F) -> F::Output {",
+     "tokio/tokio/src/runtime/local_runtime/runtime.rs:232 fn block_on_inner<F: Future>(&self, future: F, _meta: SpawnMeta<'_>) -> F::Output {",
+     "tokio/tokio/src/runtime/runtime.rs:325 pub fn block_on<F: Future>(&self, future: F) -> F::Output {"
+    ],
+    "why": "the public Runtime::block_on / Handle::block_on, not the scheduler's internal fn"
+   },
+   {
+    "expect_file": "tokio/src/sync/notify.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub struct Notify",
+    "first": "tokio/tokio/src/sync/notify.rs:201 pub struct Notify {",
+    "mode": "text",
+    "q": "struct Notify",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/sync/notify.rs:201 pub struct Notify {",
+     "tokio/tokio/src/sync/notify.rs:328 struct NotifyWaitersList<'a> {",
+     "tokio/tokio/tests/sync_notify.rs:191 struct NotifyOnDrop(Arc<Notify>);"
+    ],
+    "why": "the definition"
+   },
+   {
+    "expect_file": "tokio/src/sync/semaphore.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub struct Semaphore",
+    "first": "tokio/tokio/src/sync/semaphore.rs:392 pub struct Semaphore {",
+    "mode": "text",
+    "q": "struct Semaphore",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/sync/semaphore.rs:392 pub struct Semaphore {",
+     "tokio/tokio/src/sync/semaphore.rs:407 pub struct SemaphorePermit<'a> {",
+     "tokio/tokio/src/sync/batch_semaphore.rs:35 pub(crate) struct Semaphore {",
+     "tokio/tokio/src/sync/mpsc/bounded.rs:173 pub(crate) struct Semaphore {",
+     "tokio/tokio/src/sync/mpsc/unbounded.rs:106 pub(crate) struct Semaphore(pub(crate) AtomicUsize);"
+    ],
+    "why": "the definition"
+   },
+   {
+    "expect_file": "django/http/response.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class HttpResponse(",
+    "first": "django/django/http/response.py:365 class HttpResponse(HttpResponseBase):",
+    "mode": "text",
+    "q": "class HttpResponse",
+    "rank": 1,
+    "top": [
+     "django/django/http/response.py:365 class HttpResponse(HttpResponseBase):",
+     "django/django/http/response.py:103 class HttpResponseBase:",
+     "django/django/http/response.py:709 class HttpResponseGone(HttpResponse):",
+     "django/django/http/response.py:685 class HttpResponseNotFound(HttpResponse):",
+     "django/django/http/response.py:689 class HttpResponseForbidden(HttpResponse):"
+    ],
+    "why": "the class itself, above HttpResponseRedirect and friends"
+   },
+   {
+    "expect_file": "django/shortcuts.py",
+    "expect_file_any": [],
+    "expect_line_contains": "def get_object_or_404(",
+    "first": "django/django/shortcuts.py:69 def get_object_or_404(klass, *args, **kwargs):",
+    "mode": "text",
+    "q": "def get_object_or_404",
+    "rank": 1,
+    "top": [
+     "django/django/shortcuts.py:69 def get_object_or_404(klass, *args, **kwargs):"
+    ],
+    "why": "the definition"
+   },
+   {
+    "expect_file": "django/db/models/query.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class QuerySet(",
+    "first": "django/django/db/models/query.py:277 class QuerySet(AltersData):",
+    "mode": "text",
+    "q": "class QuerySet",
+    "rank": 1,
+    "top": [
+     "django/django/db/models/query.py:277 class QuerySet(AltersData):",
+     "django/tests/queries/test_iterator.py:11 class QuerySetIteratorTests(TestCase):",
+     "django/tests/queries/test_qs_combinators.py:33 class QuerySetSetOperationTests(TestCase):",
+     "django/tests/queries/tests.py:2811 class QuerySetSupportsPythonIdioms(TestCase):",
+     "django/tests/queries/tests.py:3652 class QuerySetExceptionTests(SimpleTestCase):"
+    ],
+    "why": "the definition"
+   },
+   {
+    "expect_file": "django/forms/models.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class ModelForm(",
+    "first": "django/django/forms/models.py:565 class ModelForm(BaseModelForm, metaclass=ModelFormMetaclass):",
+    "mode": "text",
+    "q": "class ModelForm",
+    "rank": 1,
+    "top": [
+     "django/django/forms/models.py:565 class ModelForm(BaseModelForm, metaclass=ModelFormMetaclass):",
+     "django/django/forms/models.py:258 class ModelFormOptions:",
+     "django/django/forms/models.py:272 class ModelFormMetaclass(DeclarativeFieldsMetaclass):",
+     "django/django/views/generic/edit.py:76 class ModelFormMixin(FormMixin, SingleObjectMixin):",
+     "django/tests/model_forms/tests.py:3300 class ModelForm(forms.ModelForm):"
+    ],
+    "why": "the definition"
+   },
+   {
+    "expect_file": "django/test/client.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class Client(",
+    "first": "django/django/test/client.py:1028 class Client(ClientMixin, RequestFactory):",
+    "mode": "text",
+    "q": "class Client",
+    "rank": 1,
+    "top": [
+     "django/django/test/client.py:1028 class Client(ClientMixin, RequestFactory):",
+     "django/django/test/client.py:782 class ClientMixin:",
+     "django/django/test/client.py:158 class ClientHandler(BaseHandler):",
+     "django/tests/expressions_case/models.py:53 class Client(models.Model):",
+     "django/tests/select_related_regress/models.py:81 class Client(models.Model):"
+    ],
+    "why": "the test client definition"
+   },
+   {
+    "expect_file": "django/http/response.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class HttpResponseBase",
+    "first": "django/django/http/response.py:103 class HttpResponseBase:",
+    "mode": "text",
+    "q": "HttpResponseBase",
+    "rank": 1,
+    "top": [
+     "django/django/http/response.py:103 class HttpResponseBase:",
+     "django/django/http/response.py:365 class HttpResponse(HttpResponseBase):",
+     "django/django/http/response.py:438 class StreamingHttpResponse(HttpResponseBase):",
+     "django/django/http/__init__.py:15 HttpResponseBase,",
+     "django/django/http/__init__.py:37 \"HttpResponseBase\","
+    ],
+    "why": "a bare identifier: its definition should beat its uses"
+   },
+   {
+    "expect_file": "tokio/src/runtime/runtime.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub struct Runtime",
+    "first": "tokio/tokio/src/runtime/runtime.rs:95 pub struct Runtime {",
+    "mode": "symbols",
+    "q": "Runtime",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/runtime/runtime.rs:95 pub struct Runtime {",
+     "tokio/tokio/src/runtime/runtime.rs:129 impl Runtime {",
+     "tokio/tokio/src/runtime/runtime.rs:475 impl Drop for Runtime {",
+     "tokio/tokio/src/runtime/runtime.rs:494 impl std::panic::UnwindSafe for Runtime {}",
+     "tokio/tokio/src/runtime/runtime.rs:496 impl std::panic::RefUnwindSafe for Runtime {}"
+    ],
+    "why": "exact name match, the struct"
+   },
+   {
+    "expect_file": "django/shortcuts.py",
+    "expect_file_any": [],
+    "expect_line_contains": null,
+    "first": "django/django/shortcuts.py:69 def get_object_or_404(klass, *args, **kwargs):",
+    "mode": "symbols",
+    "q": "get_object_or_404",
+    "rank": 1,
+    "top": [
+     "django/django/shortcuts.py:69 def get_object_or_404(klass, *args, **kwargs):",
+     "django/django/shortcuts.py:97 async def aget_object_or_404(klass, *args, **kwargs):",
+     "django/tests/get_object_or_404/tests.py:10 def test_get_object_or_404(self):",
+     "django/tests/get_object_or_404/tests.py:116 def test_get_object_or_404_queryset_attribute_error(self):",
+     "django/tests/async/test_async_shortcuts.py:16 async def test_aget_object_or_404(self):"
+    ],
+    "why": "exact name match"
+   },
+   {
+    "expect_file": "tokio/src/runtime/task/join.rs",
+    "expect_file_any": [],
+    "expect_line_contains": "pub struct JoinHandle",
+    "first": "tokio/tokio/src/runtime/task/join.rs:156 pub struct JoinHandle<T> {",
+    "mode": "symbols",
+    "q": "JoinHandle",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/runtime/task/join.rs:156 pub struct JoinHandle<T> {",
+     "tokio/tokio/src/runtime/task/join.rs:168 impl<T> JoinHandle<T> {",
+     "tokio/tokio/src/runtime/task/join.rs:351 impl<T> Drop for JoinHandle<T> {",
+     "tokio/tokio/src/runtime/task/join.rs:315 impl<T> Unpin for JoinHandle<T> {}",
+     "tokio/tokio/src/runtime/task/join.rs:317 impl<T> Future for JoinHandle<T> {"
+    ],
+    "why": "the struct, above the many impl blocks"
+   },
+   {
+    "expect_file": "django/http/response.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class HttpResponse(",
+    "first": "django/django/http/response.py:365 class HttpResponse(HttpResponseBase):",
+    "mode": "symbols",
+    "q": "HttpResponse",
+    "rank": 1,
+    "top": [
+     "django/django/http/response.py:365 class HttpResponse(HttpResponseBase):",
+     "django/django/http/response.py:103 class HttpResponseBase:",
+     "django/django/http/response.py:709 class HttpResponseGone(HttpResponse):",
+     "django/django/http/response.py:685 class HttpResponseNotFound(HttpResponse):",
+     "django/django/http/response.py:689 class HttpResponseForbidden(HttpResponse):"
+    ],
+    "why": "exact name match over HttpResponseRedirect etc."
+   },
+   {
+    "expect_file": "django/db/models/fields/__init__.py",
+    "expect_file_any": [],
+    "expect_line_contains": "class Field(",
+    "first": "django/django/db/models/fields/__init__.py:119 class Field(RegisterLookupMixin):",
+    "mode": "symbols",
+    "q": "Field",
+    "rank": 1,
+    "top": [
+     "django/django/db/models/fields/__init__.py:119 class Field(RegisterLookupMixin):",
+     "django/django/db/models/fields/__init__.py:2784 class AutoFieldMixin:",
+     "django/django/db/models/fields/__init__.py:1205 class CharField(Field):",
+     "django/django/db/models/fields/__init__.py:2445 class TextField(Field):",
+     "django/django/db/models/fields/__init__.py:2729 class UUIDField(Field):"
+    ],
+    "why": "the widely imported model Field, not the GDAL one"
+   },
+   {
+    "expect_file": "tokio/src/time/sleep.rs",
+    "expect_file_any": [],
+    "expect_line_contains": null,
+    "first": "tokio/tokio/src/time/sleep.rs:123 pub fn sleep(duration: Duration) -> Sleep {",
+    "mode": "regex",
+    "q": "pub fn sleep\\(",
+    "rank": 1,
+    "top": [
+     "tokio/tokio/src/time/sleep.rs:123 pub fn sleep(duration: Duration) -> Sleep {"
+    ],
+    "why": "literal-accelerated regex"
+   },
+   {
+    "expect_file": "django/forms/forms.py",
+    "expect_file_any": [],
+    "expect_line_contains": null,
+    "first": "django/django/forms/forms.py:432 class Form(BaseForm, metaclass=DeclarativeFieldsMetaclass):",
+    "mode": "regex",
+    "q": "^class Form\\(",
+    "rank": 1,
+    "top": [
+     "django/django/forms/forms.py:432 class Form(BaseForm, metaclass=DeclarativeFieldsMetaclass):"
+    ],
+    "why": "anchored regex"
+   },
+   {
+    "expect_file": "django/contrib/flatpages/views.py",
+    "expect_file_any": [],
+    "expect_line_contains": null,
+    "first": "django/django/contrib/flatpages/views.py:37 f = get_object_or_404(FlatPage, url=url, sites=site_id)",
+    "mode": "references",
+    "q": "get_object_or_404",
+    "rank": 1,
+    "top": [
+     "django/django/contrib/flatpages/views.py:37 f = get_object_or_404(FlatPage, url=url, sites=site_id)",
+     "django/django/contrib/flatpages/views.py:41 f = get_object_or_404(FlatPage, url=url, sites=site_id)",
+     "django/tests/test_utils/views.py:9 person = get_object_or_404(Person, pk=pk)",
+     "django/tests/get_object_or_404/tests.py:16 get_object_or_404(Article, title=\"Foo\")",
+     "django/tests/get_object_or_404/tests.py:21 self.assertEqual(get_object_or_404(Article, title__contains=\"Run\"), article)"
+    ],
+    "why": "the one call site in shipped (non-test) code; the definition itself must not be listed as a reference"
+   }
+  ],
+  "schema": 1
+ },
+ "comparison": {
+  "schema": 1,
+  "machine": {
+   "cpu_model": "AMD EPYC 7763 64-Core Processor",
+   "logical_cpus": 4
+  },
+  "tree": "tokio+django",
+  "tree_files": 7601,
+  "files_indexed": 6268,
+  "runs": 7,
+  "tools": {
+   "ripgrep": "ripgrep 14.1.0",
+   "ugrep": "ugrep 5.0.0 x86_64-pc-linux-gnu +sse2; -P:pcre2jit; -z:zlib,bzip2,lzma,lz4,zstd,brotli"
+  },
+  "queries": [
+   {
+    "label": "common word",
+    "query": "return",
+    "kind": "literal",
+    "ripgrep_ms": 72.166,
+    "ugrep_ms": 92.175,
+    "fcs_client_ms": 32.9529,
+    "fcs_engine_ms": 32.040049
+   },
+   {
+    "label": "identifier",
+    "query": "Config",
+    "kind": "literal",
+    "ripgrep_ms": 61.9082,
+    "ugrep_ms": 90.0601,
+    "fcs_client_ms": 14.0391,
+    "fcs_engine_ms": 10.876168999999999
+   },
+   {
+    "label": "rare identifier",
+    "query": "xq9zv_nothing_here",
+    "kind": "literal",
+    "ripgrep_ms": 57.333,
+    "ugrep_ms": 89.498,
+    "fcs_client_ms": 5.30322,
+    "fcs_engine_ms": 0.020809
+   },
+   {
+    "label": "two words",
+    "query": "fn main",
+    "kind": "literal",
+    "ripgrep_ms": 58.1682,
+    "ugrep_ms": 88.957,
+    "fcs_client_ms": 7.87305,
+    "fcs_engine_ms": 2.9577679999999997
+   },
+   {
+    "label": "regex with literal",
+    "query": "fn\\s+\\w+\\(",
+    "kind": "regex",
+    "ripgrep_ms": 65.9329,
+    "ugrep_ms": 117.498,
+    "fcs_client_ms": 31.769,
+    "fcs_engine_ms": 31.354193000000002
+   },
+   {
+    "label": "regex, no literal",
+    "query": "[a-z]+_[a-z]+_[a-z]+\\(",
+    "kind": "regex",
+    "ripgrep_ms": 83.3501,
+    "ugrep_ms": 132.73,
+    "fcs_client_ms": 46.3052,
+    "fcs_engine_ms": 44.000981
+   },
+   {
+    "label": "case-insensitive",
+    "query": "(?i)unwrap\\(",
+    "kind": "regex",
+    "ripgrep_ms": 59.2649,
+    "ugrep_ms": 87.511,
+    "fcs_client_ms": 9.646,
+    "fcs_engine_ms": 4.840027999999999
+   }
+  ]
+ }
+}
