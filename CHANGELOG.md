@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   113 ms), because the paths it reads are spread through the heap; on an
   index loaded from disk it is as fast as before. Other searches measured
   2 to 12% faster.
+- **Searches with many candidate files sort only what they read.** Every
+  search reads its candidates best first and usually stops at its match
+  budget a thousand or two files in, but it sorted all of them first: at
+  302,000 candidates, scoring and sorting took 31 to 34 ms. The order is
+  now settled lazily (a selection of the next part, then a sort of just
+  that part), with the same order. Same-machine runs at 302,000 files:
+  short-text search -15%, regex with a literal -10%; other queries within
+  noise.
 - **Symbol search about 12 times faster on large trees.** It tested every
   symbol of every file whose text contained the query: for `Error` on the
   302,000-file real corpus (Linux, LLVM, Rust, Kubernetes) that was 5.3
