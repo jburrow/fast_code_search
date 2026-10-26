@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-10f28fdb.js";
+            window.path_to_searchindex_js = "searchindex-b242ad20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4032,8 +4032,9 @@ the files it does not describe yet. Saved so a load need not rebuild it
 (about 2 s at 302,000 files).</li>
 </ul>
 <p>File positions in the table are compacted (removed files are absent), and
-every other section is remapped to those positions on save and back to
-live ids on load, so ids stay stable across restarts.</p>
+every other section is remapped to those positions on save. A load gives
+each file its position as its id, so the sections are used as saved; files
+changed or deleted since the save are tombstoned rather than renumbered.</p>
 <h2 id="guarantees"><a class="header" href="#guarantees">Guarantees</a></h2>
 <ul>
 <li><strong>Atomic.</strong> A save writes a unique temporary file next to the target,
@@ -4954,7 +4955,12 @@ per directory), so a rule change takes effect without a rebuild.</li>
 <li>Register files lazily (no reads), restore the posting lists from the
 mapping in parallel, restore symbols, references and edges — or
 re-extract them from content if the file was written by an older
-extractor — and rebuild the fast-ranking metadata.</li>
+extractor — and rebuild the fast-ranking metadata. Every saved file
+gets its saved position back as its id, and the stale and removed ones
+are then tombstoned, as a removal at runtime is, so the posting lists
+are used as saved. (Renumbering the survivors instead rebuilt every
+posting list whenever a single file had changed, the largest cost of
+a load.) The gaps go at the next save.</li>
 <li>Re-index the stale files that the current configuration and ignore
 files still allow, then discover anything new under the roots.</li>
 </ol>
@@ -6337,6 +6343,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Loading a saved index is about 2.5 times faster.</strong> With one file
+changed since the save, a load of the 302,000-file real corpus took
+10.3 s and now takes 4.1 s (same machine, median of 5). A load used to
+renumber the files that survived, which rebuilt every posting list when
+even one file had changed; each saved file now keeps its id and the
+changed and deleted ones are tombstoned, as a removal at runtime is.
+From the same profile: the checksum is computed eight bytes at a time,
+path tables use a faster hash, directory counts are added once per
+directory, symbols are moved rather than copied, and the ranking
+metadata pass runs on every core.</li>
 <li><strong>About 10% less memory on large trees: each file’s path is held once.</strong>
 The ranking metadata, the import resolver’s path tables and the import
 lists kept their own copies of every path (five to eight per file); they

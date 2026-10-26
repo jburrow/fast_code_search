@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-10f28fdb.js";
+            window.path_to_searchindex_js = "../searchindex-b242ad20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -211,8 +211,9 @@ the files it does not describe yet. Saved so a load need not rebuild it
 (about 2 s at 302,000 files).</li>
 </ul>
 <p>File positions in the table are compacted (removed files are absent), and
-every other section is remapped to those positions on save and back to
-live ids on load, so ids stay stable across restarts.</p>
+every other section is remapped to those positions on save. A load gives
+each file its position as its id, so the sections are used as saved; files
+changed or deleted since the save are tombstoned rather than renumbered.</p>
 <h2 id="guarantees"><a class="header" href="#guarantees">Guarantees</a></h2>
 <ul>
 <li><strong>Atomic.</strong> A save writes a unique temporary file next to the target,
