@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4b62dba9.js";
+            window.path_to_searchindex_js = "../searchindex-aa57f889.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -216,8 +216,8 @@
 </script>
 <h2 id="pinned-run"><a class="header" href="#pinned-run">Pinned run</a></h2>
 <!-- bench:latest-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40235234406">run 40235234406</a>
-on commit <code>c635718</code> (2026-10-25, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40253883745">run 40253883745</a>
+on commit <code>faccb0f</code> (2026-10-26, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
 <!-- /bench:latest-run -->
 <p>The <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
 same numbers; the per-commit trend is at
@@ -236,11 +236,11 @@ measurements and the cost on small repositories.</p>
 <tr><th>Build</th><th>Value</th></tr>
 </thead>
 <tbody>
-<tr><td>Discovery</td><td>138 ms</td></tr>
-<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.91 s, 1,277 files/s, 8.4 MB/s</td></tr>
-<tr><td>Resident memory after build</td><td>104 MB (process before build: 8.7 MB)</td></tr>
-<tr><td>Index save</td><td>198 ms (24.6 MB on disk)</td></tr>
-<tr><td>Index load, reconciling</td><td>278 ms</td></tr>
+<tr><td>Discovery</td><td>114 ms</td></tr>
+<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.85 s, 1,294 files/s, 8.5 MB/s</td></tr>
+<tr><td>Resident memory after build</td><td>105 MB (process before build: 8.8 MB)</td></tr>
+<tr><td>Index save</td><td>189 ms (24.6 MB on disk)</td></tr>
+<tr><td>Index load, reconciling</td><td>282 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -250,19 +250,19 @@ measurements and the cost on small repositories.</p>
 <tr><th>Query</th><th>p50</th><th>p95</th></tr>
 </thead>
 <tbody>
-<tr><td>text, common word</td><td>23.2 ms</td><td>24.9 ms</td></tr>
-<tr><td>text, identifier</td><td>7.11 ms</td><td>7.45 ms</td></tr>
-<tr><td>text, no match</td><td>571 ns</td><td>671 ns</td></tr>
-<tr><td>text, short (two characters)</td><td>27.6 ms</td><td>29.1 ms</td></tr>
-<tr><td>text, full ranking</td><td>22.8 ms</td><td>23.6 ms</td></tr>
-<tr><td>text, path-filtered</td><td>10.1 ms</td><td>10.6 ms</td></tr>
-<tr><td>regex with literal</td><td>23.6 ms</td><td>24.7 ms</td></tr>
-<tr><td>regex, case-insensitive</td><td>2.97 ms</td><td>3.11 ms</td></tr>
-<tr><td>regex, no literal (full scan)</td><td>35.1 ms</td><td>36.6 ms</td></tr>
-<tr><td>symbol, exact</td><td>6.47 ms</td><td>6.77 ms</td></tr>
-<tr><td>symbol, prefix</td><td>4.17 ms</td><td>4.60 ms</td></tr>
-<tr><td>references</td><td>2.20 ms</td><td>2.35 ms</td></tr>
-<tr><td>incremental: modify one file</td><td>5.77 ms</td><td>47.6 ms</td></tr>
+<tr><td>text, common word</td><td>23.8 ms</td><td>26.1 ms</td></tr>
+<tr><td>text, identifier</td><td>7.54 ms</td><td>7.92 ms</td></tr>
+<tr><td>text, no match</td><td>541 ns</td><td>681 ns</td></tr>
+<tr><td>text, short (two characters)</td><td>28.2 ms</td><td>30.2 ms</td></tr>
+<tr><td>text, full ranking</td><td>23.5 ms</td><td>24.1 ms</td></tr>
+<tr><td>text, path-filtered</td><td>11.1 ms</td><td>12.3 ms</td></tr>
+<tr><td>regex with literal</td><td>25.3 ms</td><td>26.4 ms</td></tr>
+<tr><td>regex, case-insensitive</td><td>3.31 ms</td><td>3.56 ms</td></tr>
+<tr><td>regex, no literal (full scan)</td><td>37.9 ms</td><td>42.0 ms</td></tr>
+<tr><td>symbol, exact</td><td>9.62 ms</td><td>11.2 ms</td></tr>
+<tr><td>symbol, prefix</td><td>6.38 ms</td><td>8.70 ms</td></tr>
+<tr><td>references</td><td>2.25 ms</td><td>2.53 ms</td></tr>
+<tr><td>incremental: modify one file</td><td>6.10 ms</td><td>50.9 ms</td></tr>
 </tbody>
 </table>
 </div>

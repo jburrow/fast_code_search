@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4b62dba9.js";
+            window.path_to_searchindex_js = "../searchindex-aa57f889.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -247,6 +247,15 @@ install time, since the index may have changed since it was planned
 (the initial build can run alongside), and a file that changed again
 since it was read has an event of its own on the way.</li>
 </ol>
+<p><strong>Symbol names.</strong> Symbol search finds files through a dictionary of
+symbol names built after a build or a load (see
+<a href="candidates.html#verification-and-modes">Candidates</a>). Files installed after
+that are searched symbol by symbol, which costs more per file, until the
+dictionary is rebuilt: once a sixteenth of the files (at least 4,096) have
+changed, inside the install step that crosses that line. <strong>Known
+limitation:</strong> that step holds the write lock for the rebuild too, about
+2 s at 302,000 files, so searches arriving then wait that long, once per
+that many changed files.</p>
 <p><strong>Imports.</strong> Every file’s imports are kept as written. After each step
 the files whose imports could resolve differently now are resolved again:
 those that imported a removed file, and those with an import naming a

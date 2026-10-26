@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4b62dba9.js";
+            window.path_to_searchindex_js = "../searchindex-aa57f889.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -190,7 +190,7 @@
 </thead>
 <tbody>
 <tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build</td></tr>
-<tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index</td></tr>
+<tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build or load</td></tr>
 <tr><td>Reference tables</td><td>call sites and type mentions</td><td>names interned once; positions packed</td></tr>
 <tr><td>Dependency graph</td><td>resolved imports</td><td>bidirectional, with cached dependent counts</td></tr>
 <tr><td>File store</td><td>files</td><td>one small entry per file; content is <strong>not</strong> kept</td></tr>
@@ -215,7 +215,7 @@ records it per scenario.</p>
 <tbody>
 <tr><td><code>postings</code></td><td>trigram posting lists (Roaring bitmaps) and their table</td></tr>
 <tr><td><code>references</code></td><td>symbol references and their interned names</td></tr>
-<tr><td><code>symbols</code></td><td>symbol definitions</td></tr>
+<tr><td><code>symbols</code></td><td>symbol definitions and the name dictionary</td></tr>
 <tr><td><code>imports</code></td><td>imports as written, and those still waiting for a file to resolve to</td></tr>
 <tr><td><code>graph_paths</code></td><td>path tables the import resolver looks paths up in</td></tr>
 <tr><td><code>graph_edges</code></td><td>dependency edges and dependent counts</td></tr>
@@ -228,18 +228,19 @@ records it per scenario.</p>
 <p>The figures are estimates from lengths and capacities, not allocator
 measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
-index fall outside 75% to 105% of the heap it really holds (they are 89%).
-Checked the same way on public code:</p>
+index fall outside 75% to 105% of the heap it really holds.
+Checked the same way on public code (commit after <code>faccb0f</code>, with the
+symbol name dictionary):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>tokio + Django (6,300 files)</td><td>just built</td><td>78.3 MB</td><td>50.3 MB (64%)</td></tr>
-<tr><td>tokio + Django</td><td>loaded from disk</td><td>44.0 MB</td><td>40.2 MB (91%)</td></tr>
-<tr><td>Linux kernel (85,500 files, 1.23 GB)</td><td>just built</td><td>593.8 MB</td><td>551.6 MB (93%)</td></tr>
-<tr><td>Linux kernel</td><td>loaded from disk</td><td>458.1 MB</td><td>448.8 MB (98%)</td></tr>
+<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>78.0 MB</td><td>49.1 MB (63%)</td></tr>
+<tr><td>tokio + Django</td><td>loaded from disk</td><td>44.9 MB</td><td>41.9 MB (93%)</td></tr>
+<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>576.4 MB</td><td>533.6 MB (93%)</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>504.0 MB</td><td>495.3 MB (98%)</td></tr>
 </tbody>
 </table>
 </div>
@@ -250,7 +251,7 @@ Checked the same way on public code:</p>
 <tr><th>Part</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>symbols</td><td>207.3 MB</td></tr>
+<tr><td>symbols (46.5 MB of it the name dictionary)</td><td>253.8 MB</td></tr>
 <tr><td>postings</td><td>172.3 MB</td></tr>
 <tr><td>graph_paths</td><td>37.5 MB</td></tr>
 <tr><td>file_metadata</td><td>14.0 MB</td></tr>
