@@ -2759,6 +2759,10 @@ fn test_regex_single_pass_keeps_per_line_semantics() {
     assert_eq!(run(r"fn \w+\(\)"), vec![(1, 0, 10), (5, 0, 9)]);
     // A whole-file pattern still spans lines.
     assert_eq!(run(r"fn\r\nmain\("), vec![(3, 0, 2)]);
+    // A line's `\r` belongs to its terminator, as in `rg --crlf`: classes
+    // that could match it do not (line 1's `{}` is followed only by `\r`).
+    assert!(run(r"end[^a-z]").is_empty());
+    assert_eq!(run(r"\{\}\s"), vec![(5, 23, 26)]);
 }
 
 /// Results are in plain rank order with each file's hits kept together:

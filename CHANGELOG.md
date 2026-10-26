@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mapped file as they are, and leave the server reading the file they
   wrote; the save at shutdown compacts the slots away. `index.memory` in
   `/api/diagnostics` reports the mapped bytes as `mapped_postings_bytes`.
-  Index format v11 (the first start after upgrading rebuilds the index
-  once). Known limitation: on Windows, which cannot replace a mapped file,
+  Index format v11, now v12 (see Fixed; the first start after upgrading
+  rebuilds the index once). Known limitation: on Windows, which cannot replace a mapped file,
   the lists are still decoded onto the heap at load.
 - **Loading a saved index is about 2.5 times faster.** With one file
   changed since the save, a load of the 302,000-file real corpus took
@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignore files, and a restart reads only the folders whose time or ignore
   files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
   a configuration change, a change to the global excludes file, or when
-  the index has no stamps yet. Index format v10 (now v11, above): the
+  the index has no stamps yet. Index format v10 (now v12): the
   first start after upgrading rebuilds the index once. Known limitation: on a file system
   that does not update a folder's time when its entries change, a file
   added while the server was stopped is found only once it or its folder
@@ -138,6 +138,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes about as long as before (18 minutes on its first run, 20 before).
 
 ### Fixed
+- **A restart missed a file that had been too large or binary.** The
+  restart walk (above) skipped folders whose time had not changed, but a
+  file skipped for its size or contents is not in the load's checks, and
+  cutting it down rewrites the file, not its folder, so it never joined the
+  index. Each folder stamp now counts the folder's eligible files, and a
+  folder holding a different number in the index is read again (such
+  folders are read on every restart). Index format v12. Found by the
+  lifecycle model test on `main`.
+- **A regex could take in a CRLF line's `\r`.** `one[^A-Za-z0-9_]` matched
+  `line one` on a line ending in `\r\n`, where `rg --crlf` does not: the
+  `\r` now belongs to the line ending for every pattern, not only `$`.
+  Found by a generated query in the ripgrep backtest.
+- **Saves take a third of the instructions they did.** B6's faster CRC
+  cost more per call, and the save called it for every few bytes bincode
+  wrote, which made saves 7% dearer; the write buffer now sits in front of
+  the CRC, which runs over whole 64 KiB buffers. tokio + Django: 1,269 to
+  432 million instructions per save (callgrind, one thread).
 - **The symbol-search benchmark timed a search no front end runs.** The
   library's `search_symbols` (used by the corpus benchmark, the validator
   and tests) ran an older single-pass search; the web API, gRPC, MCP and

@@ -521,10 +521,9 @@ fn run_indexing_pipeline(
     let restart_plan = if loaded_from_persistence {
         let roots: Vec<PathBuf> = paths_to_index.iter().map(PathBuf::from).collect();
         let engine = index_engine.read().unwrap_or_else(|p| p.into_inner());
-        engine
-            .dir_stamps
-            .as_ref()
-            .and_then(|stamps| crate::search::dir_stamps::plan_restart(stamps, &roots))
+        engine.dir_stamps.as_ref().and_then(|stamps| {
+            crate::search::dir_stamps::plan_restart(stamps, &roots, &engine.indexed_files_per_dir())
+        })
     } else {
         None
     };

@@ -1483,7 +1483,17 @@ impl SearchEngine {
                     let mut line_end = text[m.start()..]
                         .find('\n')
                         .map_or(text.len(), |i| i + m.start());
-                    if m.end() <= line_end {
+                    // A line's `\r\n` ends it, as in ripgrep's `--crlf`: a
+                    // match that takes in the `\r` (`one[^a-z]` on
+                    // `one\r\n`) is not a match on that line, so it is
+                    // checked again on the line without it, below.
+                    let content_end =
+                        if text.as_bytes()[line_start..line_end].last() == Some(&b'\r') {
+                            line_end - 1
+                        } else {
+                            line_end
+                        };
+                    if m.end() <= content_end {
                         let raw = &text[line_start..line_end];
                         let line = raw.strip_suffix('\r').unwrap_or(raw);
                         let m_start = (m.start() - line_start).min(line.len());
@@ -1492,8 +1502,9 @@ impl SearchEngine {
                             break;
                         }
                     } else {
-                        // The match crosses a line break (e.g. `\s+`): per-line
-                        // semantics evaluate each line on its own.
+                        // The match crosses a line break (e.g. `\s+`), or takes
+                        // in a line's `\r`: per-line semantics evaluate each
+                        // line on its own.
                         let span_end = text[m.end()..]
                             .find('\n')
                             .map_or(text.len(), |i| i + m.end());

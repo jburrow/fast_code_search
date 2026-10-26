@@ -254,7 +254,7 @@ names the file and line a reader would want first for each query (`struct
 Runtime` → the definition, not a doc comment; `Field` → the model field, not the
 GDAL one) and currently scores precision@1 = 1.00, precision@5 = 1.00. A
 [ripgrep backtest](https://jburrow.github.io/fast_code_search/docs/benchmarks/correctness.html)
-runs 143 queries through fcs and rg on the same trees and fails CI on any line one
+runs 144 queries through fcs and rg on the same trees and fails CI on any line one
 finds and the other does not; where fcs deliberately differs from grep, ripgrep and
 git grep is
 [documented](https://jburrow.github.io/fast_code_search/docs/reference/matching.html). The
