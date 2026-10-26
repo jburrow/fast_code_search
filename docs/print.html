@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4d9eceb0.js";
+            window.path_to_searchindex_js = "searchindex-f6e680e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -2327,6 +2327,7 @@ and offline <code>fcs</code> and requires identical hits (<code>tests/frontend_p
 <tr><td>Regex dialect</td><td>Rust <code>regex</code></td><td>Rust <code>regex</code> (PCRE2 with <code>-P</code>)</td><td>POSIX BRE/ERE (<code>-E</code>), PCRE with <code>-P</code></td><td>POSIX BRE/ERE, PCRE with <code>-P</code></td></tr>
 <tr><td>Byte order mark at the start of a file</td><td>ignored, so <code>^</code> matches line 1</td><td>ignored (kept with <code>-E none</code>)</td><td>part of line 1, so <code>^</code> misses it</td><td>part of line 1, so <code>^</code> misses it</td></tr>
 <tr><td><code>$</code> on a line ending in CRLF</td><td>matches before the <code>\r</code></td><td>only with <code>--crlf</code></td><td>no</td><td>no</td></tr>
+<tr><td>A class such as <code>[^a-z]</code> or <code>\s</code> at the end of a CRLF line</td><td>does not match the <code>\r</code></td><td>only with <code>--crlf</code></td><td>matches it</td><td>matches it</td></tr>
 <tr><td>Pattern that mentions <code>\n</code></td><td>runs over the whole file and reports the line where the match starts</td><td>needs <code>-U</code></td><td>not supported</td><td>not supported</td></tr>
 <tr><td>Case-insensitive folding</td><td>Unicode simple case folding: <code>Σ</code>, <code>σ</code> and <code>ς</code> are the same letter, so are <code>s</code> and the long <code>ſ</code>, <code>k</code> and the Kelvin sign <code>K</code>, the micro sign <code>µ</code> and <code>μ</code>; <code>ß</code> is not <code>ss</code> and <code>İ</code> is not <code>i</code></td><td>the same</td><td>depends on the locale</td><td>depends on the locale</td></tr>
 <tr><td>Hidden files (<code>.github/</code>, <code>.env.example</code>)</td><td>searched</td><td>skipped unless <code>--hidden</code></td><td>searched</td><td>searched if tracked</td></tr>
@@ -4003,8 +4004,8 @@ scrub_invariants_minutes = 60.0
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
-<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v11</strong>, magic
-<code>FCSIDX08</code>. Everything is little-endian.</p>
+<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v12</strong>, magic
+<code>FCSIDX09</code>. Everything is little-endian.</p>
 <pre><code class="language-text">magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
 META     bincode-encoded metadata (see below)
 DIR      dir_count × { trigram[3], pad[1], offset:u64, len:u32 }, sorted by trigram
@@ -4033,7 +4034,8 @@ distinct case-folded names, the files and symbol kinds behind each, and
 the files it does not describe yet. Saved so a load need not rebuild it
 (about 2 s at 302,000 files).</li>
 <li>folder stamps from the last complete walk: each folder’s modification
-time and a fingerprint of its ignore files, and a fingerprint of the
+time, a fingerprint of its ignore files and how many eligible files it
+held (v12), and a fingerprint of the
 user’s global excludes file, so a restart re-reads only the folders that
 changed (see <a href="#load">Persistence</a>).</li>
 </ul>
@@ -4057,7 +4059,7 @@ process. A crash leaves the previous index intact, and the next start
 removes the temporary file a killed save left.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
-<li><strong>Pinned.</strong> <code>tests/fixtures/index-v11.fcsidx</code> is compared byte for byte
+<li><strong>Pinned.</strong> <code>tests/fixtures/index-v12.fcsidx</code> is compared byte for byte
 in the test suite; a deliberate format change bumps the magic and
 regenerates the fixture (<code>FCS_WRITE_GOLDEN=1 cargo test golden</code>).</li>
 <li><strong>Older formats</strong> are rejected with a message asking for a rebuild;
@@ -5031,6 +5033,12 @@ files changed is walked whole, since its rules apply below it. This is
 the trick git’s untracked cache uses. At 302,000 files (28,616 folders)
 it took 0.18 s where a full walk took 2.6 s with the file system cache
 warm, and 1.3 s where a full walk took 9.2 s with it cold.</p>
+<p>A folder whose time matches is still read when the index holds a
+different number of its files than the walk found eligible there. The
+stat pass only checks indexed files, so a file skipped for being too
+large, binary or unreadable would otherwise never be seen to change:
+a file that was too large and is then cut down rewrites its contents,
+not its folder. Such folders are read (one level) on every restart.</p>
 <p>A full walk happens instead when the configuration changed, the user’s
 global excludes file (<code>core.excludesFile</code>) changed, a root is new, or
 the index has no stamps yet: a fresh build saves them once its walk
@@ -5506,7 +5514,7 @@ cargo run --release --example ranking_quality -- … --explain 'struct Runtime' 
 </code></pre>
 <h2 id="correctness-against-ripgrep"><a class="header" href="#correctness-against-ripgrep">Correctness against ripgrep</a></h2>
 <p>Fast and well ranked is worthless if a match is missing. A backtest runs
-143 searches through fcs and through ripgrep on the same trees and fails on
+144 searches through fcs and through ripgrep on the same trees and fails on
 any line one finds and the other does not; see <a href="#correctness-against-ripgrep-1">Correctness against
 ripgrep</a> for how it works and how to extend it.</p>
 <h2 id="comparison-with-scan-tools"><a class="header" href="#comparison-with-scan-tools">Comparison with scan tools</a></h2>
@@ -6439,8 +6447,8 @@ writing a removed file as an empty slot, copy unchanged lists from the
 mapped file as they are, and leave the server reading the file they
 wrote; the save at shutdown compacts the slots away. <code>index.memory</code> in
 <code>/api/diagnostics</code> reports the mapped bytes as <code>mapped_postings_bytes</code>.
-Index format v11 (the first start after upgrading rebuilds the index
-once). Known limitation: on Windows, which cannot replace a mapped file,
+Index format v11, now v12 (see Fixed; the first start after upgrading
+rebuilds the index once). Known limitation: on Windows, which cannot replace a mapped file,
 the lists are still decoded onto the heap at load.</li>
 <li><strong>Loading a saved index is about 2.5 times faster.</strong> With one file
 changed since the save, a load of the 302,000-file real corpus took
@@ -6460,7 +6468,7 @@ now saves each folder’s modification time and a fingerprint of its
 ignore files, and a restart reads only the folders whose time or ignore
 files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
 a configuration change, a change to the global excludes file, or when
-the index has no stamps yet. Index format v10 (now v11, above): the
+the index has no stamps yet. Index format v10 (now v12): the
 first start after upgrading rebuilds the index once. Known limitation: on a file system
 that does not update a folder’s time when its entries change, a file
 added while the server was stopped is found only once it or its folder
@@ -6558,6 +6566,23 @@ takes about as long as before (18 minutes on its first run, 20 before).</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>A restart missed a file that had been too large or binary.</strong> The
+restart walk (above) skipped folders whose time had not changed, but a
+file skipped for its size or contents is not in the load’s checks, and
+cutting it down rewrites the file, not its folder, so it never joined the
+index. Each folder stamp now counts the folder’s eligible files, and a
+folder holding a different number in the index is read again (such
+folders are read on every restart). Index format v12. Found by the
+lifecycle model test on <code>main</code>.</li>
+<li><strong>A regex could take in a CRLF line’s <code>\r</code>.</strong> <code>one[^A-Za-z0-9_]</code> matched
+<code>line one</code> on a line ending in <code>\r\n</code>, where <code>rg --crlf</code> does not: the
+<code>\r</code> now belongs to the line ending for every pattern, not only <code>$</code>.
+Found by a generated query in the ripgrep backtest.</li>
+<li><strong>Saves take a third of the instructions they did.</strong> B6’s faster CRC
+cost more per call, and the save called it for every few bytes bincode
+wrote, which made saves 7% dearer; the write buffer now sits in front of
+the CRC, which runs over whole 64 KiB buffers. tokio + Django: 1,269 to
+432 million instructions per save (callgrind, one thread).</li>
 <li><strong>The symbol-search benchmark timed a search no front end runs.</strong> The
 library’s <code>search_symbols</code> (used by the corpus benchmark, the validator
 and tests) ran an older single-pass search; the web API, gRPC, MCP and
@@ -9089,14 +9114,14 @@ query + walker) under <code>catch_unwind</code>.</li>
 <li><strong>Merge, under the engine write lock</strong>: <code>index_batch</code> registers files,
 inserts postings, stores symbols, queues imports; unresolved imports are
 parked and retried only when a file with a matching name appears.</li>
-<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v11
-(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX08</code>, version,
+<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v12
+(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX09</code>, version,
 CRC-32, section lengths), then a bincode metadata section (file table,
 symbols, edges, parked imports, reference names and per-file references),
 a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
 back to back. Save streams bitmaps from the live map; load memory-maps the
 file, checks bounds and checksum, and deserializes bitmaps in parallel from
-the mapping. <code>tests/fixtures/index-v11.fcsidx</code> pins the format byte for
+the mapping. <code>tests/fixtures/index-v12.fcsidx</code> pins the format byte for
 byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
 deliberate format change (and bump the version).</li>
 </ol>

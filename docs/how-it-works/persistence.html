@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4d9eceb0.js";
+            window.path_to_searchindex_js = "../searchindex-f6e680e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -294,6 +294,12 @@ files changed is walked whole, since its rules apply below it. This is
 the trick git’s untracked cache uses. At 302,000 files (28,616 folders)
 it took 0.18 s where a full walk took 2.6 s with the file system cache
 warm, and 1.3 s where a full walk took 9.2 s with it cold.</p>
+<p>A folder whose time matches is still read when the index holds a
+different number of its files than the walk found eligible there. The
+stat pass only checks indexed files, so a file skipped for being too
+large, binary or unreadable would otherwise never be seen to change:
+a file that was too large and is then cut down rewrites its contents,
+not its folder. Such folders are read (one level) on every restart.</p>
 <p>A full walk happens instead when the configuration changed, the user’s
 global excludes file (<code>core.excludesFile</code>) changed, a root is new, or
 the index has no stamps yet: a fresh build saves them once its walk

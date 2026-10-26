@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4d9eceb0.js";
+            window.path_to_searchindex_js = "../searchindex-f6e680e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -201,8 +201,8 @@ writing a removed file as an empty slot, copy unchanged lists from the
 mapped file as they are, and leave the server reading the file they
 wrote; the save at shutdown compacts the slots away. <code>index.memory</code> in
 <code>/api/diagnostics</code> reports the mapped bytes as <code>mapped_postings_bytes</code>.
-Index format v11 (the first start after upgrading rebuilds the index
-once). Known limitation: on Windows, which cannot replace a mapped file,
+Index format v11, now v12 (see Fixed; the first start after upgrading
+rebuilds the index once). Known limitation: on Windows, which cannot replace a mapped file,
 the lists are still decoded onto the heap at load.</li>
 <li><strong>Loading a saved index is about 2.5 times faster.</strong> With one file
 changed since the save, a load of the 302,000-file real corpus took
@@ -222,7 +222,7 @@ now saves each folder’s modification time and a fingerprint of its
 ignore files, and a restart reads only the folders whose time or ignore
 files changed: 0.18 s warm, 1.3 s cold. A full walk still happens after
 a configuration change, a change to the global excludes file, or when
-the index has no stamps yet. Index format v10 (now v11, above): the
+the index has no stamps yet. Index format v10 (now v12): the
 first start after upgrading rebuilds the index once. Known limitation: on a file system
 that does not update a folder’s time when its entries change, a file
 added while the server was stopped is found only once it or its folder
@@ -320,6 +320,23 @@ takes about as long as before (18 minutes on its first run, 20 before).</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>A restart missed a file that had been too large or binary.</strong> The
+restart walk (above) skipped folders whose time had not changed, but a
+file skipped for its size or contents is not in the load’s checks, and
+cutting it down rewrites the file, not its folder, so it never joined the
+index. Each folder stamp now counts the folder’s eligible files, and a
+folder holding a different number in the index is read again (such
+folders are read on every restart). Index format v12. Found by the
+lifecycle model test on <code>main</code>.</li>
+<li><strong>A regex could take in a CRLF line’s <code>\r</code>.</strong> <code>one[^A-Za-z0-9_]</code> matched
+<code>line one</code> on a line ending in <code>\r\n</code>, where <code>rg --crlf</code> does not: the
+<code>\r</code> now belongs to the line ending for every pattern, not only <code>$</code>.
+Found by a generated query in the ripgrep backtest.</li>
+<li><strong>Saves take a third of the instructions they did.</strong> B6’s faster CRC
+cost more per call, and the save called it for every few bytes bincode
+wrote, which made saves 7% dearer; the write buffer now sits in front of
+the CRC, which runs over whole 64 KiB buffers. tokio + Django: 1,269 to
+432 million instructions per save (callgrind, one thread).</li>
 <li><strong>The symbol-search benchmark timed a search no front end runs.</strong> The
 library’s <code>search_symbols</code> (used by the corpus benchmark, the validator
 and tests) ran an older single-pass search; the web API, gRPC, MCP and
