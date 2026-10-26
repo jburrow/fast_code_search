@@ -786,19 +786,26 @@ fn a_step_that_waited_for_searches_installs_more() {
     let changed = rewrite_all(&mut h, FILES);
     let changes: Vec<FileChange> = changed.into_iter().map(FileChange::Modified).collect();
 
-    // A long search holds the lock until the burst is planned, and for a
-    // while after, so the first step waits well past MAX_HOLD.
+    // A long search holds the lock until the burst's first step has waited
+    // for it well past MAX_HOLD. Holding it for a fixed time after the
+    // burst was planned was not enough: on a Windows runner parsing the
+    // 2,400 files took longer than that, so the step asked for the lock
+    // after it was free, never waited, and installed one chunk (#199).
     let search = h.engine.read().unwrap();
     let burst = {
         let (engine, config) = (h.engine.clone(), h.config.clone());
         std::thread::spawn(move || watch_loop::apply_burst(&engine, &changes, &config))
     };
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while search.watch_backlog.pending() < FILES {
-        assert!(Instant::now() < deadline, "the burst was never planned");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while engine_lock::writer_waiting_since()
+        .is_none_or(|since| since.elapsed() < watch_loop::MAX_HOLD * 3)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the burst never waited for the lock"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
-    std::thread::sleep(watch_loop::MAX_HOLD * 3);
     drop(search);
     let report = burst.join().unwrap().expect("burst applied");
 

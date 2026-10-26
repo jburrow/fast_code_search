@@ -268,6 +268,13 @@ pub fn read_deferring<T>(
     }
 }
 
+/// Since when the writers now waiting in [`write()`] have waited (`None`:
+/// none waits). The gate is one for the process, so in a test binary that
+/// runs several engines the writer may be another test's.
+pub fn writer_waiting_since() -> Option<Instant> {
+    GATE.waiting_since()
+}
+
 /// The write lock, recovering a poisoned lock.
 ///
 /// Taken in a moment when no search holds the lock, rather than by queueing
