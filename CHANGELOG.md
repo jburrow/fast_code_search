@@ -86,11 +86,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Benchmark numbers in the README, the book and the site are rendered,
+  not typed.** They come from one pinned Benchmarks run
+  (`docs/bench/published.json`), now the run for `c635718`, which includes
+  the faster build: tokio + Django builds in 4.9 s instead of 5.5 s. CI
+  fails when a page and the pinned run disagree. The file-format page said
+  format v7; the index has been v8 since v0.16.0.
 - **Benchmark numbers now match what fcs does.** The README, the book's
   benchmark pages and the project site showed numbers from 8 September
   (before v0.17.0), with a common word at about 1 ms. They now show the
   v0.19.0 run: a common word over tokio + Django is 24.6 ms at p50, an
-  identifier 7.8 ms, and a query with no match 0.6 µs.
+  identifier 7.8 ms, and a query with no match 0.6 µs (since refreshed
+  from a later run, see above).
 - **The v0.17.0 slowdown, named.** v0.17.0 raised the match budget from
   512 to 32,768, so a search ranks many more matches before it returns
   page one. On a ~6,300-file repository that made common-word text

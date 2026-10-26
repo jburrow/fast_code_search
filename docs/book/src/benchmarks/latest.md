@@ -28,16 +28,18 @@
       }
       el.innerHTML = h;
     })
-    .catch(() => { el.innerHTML = "<p><em>Live results are not available (the benchmark workflow has not published them yet); the table below is from the last hand-checked run.</em></p>"; });
+    .catch(() => { el.innerHTML = "<p><em>Live results are not available (the benchmark workflow has not published them yet); the tables below are from the pinned run.</em></p>"; });
 })();
 </script>
 
-## Last hand-checked run
+## Pinned run
 
-From [run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420)
-on commit `140425f` (v0.19.0, 2026-10-24), GitHub-hosted `ubuntu-latest`
-(AMD EPYC 7763, 4 vCPU, Ubuntu 24.04). The
-[README](https://github.com/jburrow/fast_code_search#benchmarks) carries the
+<!-- bench:latest-run -->
+From [run 40235234406](https://github.com/jburrow/fast_code_search/actions/runs/40235234406)
+on commit `c635718` (2026-10-25, version 0.19.0), GitHub-hosted `ubuntu-latest` (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).
+<!-- /bench:latest-run -->
+
+The [README](https://github.com/jburrow/fast_code_search#benchmarks) carries the
 same numbers; the per-commit trend is at
 [dev/bench](https://jburrow.github.io/fast_code_search/dev/bench/).
 
@@ -49,36 +51,42 @@ measurements and the cost on small repositories.
 
 ## Real corpus: tokio 1.45.0 + Django 5.2
 
-6,268 files, 41.4 MB of text, 136k distinct trigrams, 385k symbol
-references, 9.8k dependency edges.
+<!-- bench:latest-corpus -->
+6,268 files, 41.4 MB of text, 385k symbol references, 136k distinct trigrams, 9,784 dependency edges.
 
 | Build | Value |
 |---|---|
-| Discovery | 135 ms |
-| Build (read, trigrams, symbols, imports, merge) | 5.54 s, 1,132 files/s, 7.5 MB/s |
-| Resident memory after build | 137 MB (process before build: 9 MB) |
-| Index save | 188 ms (24.6 MB on disk) |
-| Index load, reconciling | 306 ms |
+| Discovery | 138 ms |
+| Build (read, trigrams, symbols, imports, merge) | 4.91 s, 1,277 files/s, 8.4 MB/s |
+| Resident memory after build | 104 MB (process before build: 8.7 MB) |
+| Index save | 198 ms (24.6 MB on disk) |
+| Index load, reconciling | 278 ms |
 
 | Query | p50 | p95 |
 |---|---|---|
-| text, common word | 24.6 ms | 25.4 ms |
-| text, identifier | 7.80 ms | 8.16 ms |
-| text, no match | 0.6 µs | 0.7 µs |
-| text, short (two characters) | 28.9 ms | 29.7 ms |
-| text, full ranking | 24.6 ms | 25.6 ms |
-| text, path-filtered | 10.8 ms | 11.6 ms |
-| regex with literal | 24.4 ms | 25.3 ms |
-| regex, case-insensitive | 3.08 ms | 3.26 ms |
-| regex, no literal (full scan) | 37.6 ms | 38.9 ms |
-| symbol, exact | 6.85 ms | 7.70 ms |
-| symbol, prefix | 4.48 ms | 4.88 ms |
-| references | 2.22 ms | 2.34 ms |
-| incremental: modify one file | 6.4 ms | 49.7 ms |
+| text, common word | 23.2 ms | 24.9 ms |
+| text, identifier | 7.11 ms | 7.45 ms |
+| text, no match | 571 ns | 671 ns |
+| text, short (two characters) | 27.6 ms | 29.1 ms |
+| text, full ranking | 22.8 ms | 23.6 ms |
+| text, path-filtered | 10.1 ms | 10.6 ms |
+| regex with literal | 23.6 ms | 24.7 ms |
+| regex, case-insensitive | 2.97 ms | 3.11 ms |
+| regex, no literal (full scan) | 35.1 ms | 36.6 ms |
+| symbol, exact | 6.47 ms | 6.77 ms |
+| symbol, prefix | 4.17 ms | 4.60 ms |
+| references | 2.20 ms | 2.35 ms |
+| incremental: modify one file | 5.77 ms | 47.6 ms |
 
 Ranking quality in the same run: precision@1 1.00, precision@5 1.00.
+<!-- /bench:latest-corpus -->
 
-## Synthetic (Criterion), same run
+## Synthetic (Criterion), last CI run
+
+From [run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420)
+on commit `140425f` (v0.19.0, 2026-10-24), the last run before the
+Benchmarks workflow replaced these suites with instruction counts (see
+[methodology](methodology.md)). They still run locally with `cargo bench`.
 
 | Benchmark | Corpus | Mean |
 |---|---|---|

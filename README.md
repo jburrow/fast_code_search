@@ -212,22 +212,25 @@ measurement per commit with an explanation of what each chart means. The
 [methodology](https://jburrow.github.io/fast_code_search/docs/benchmarks/methodology.html)
 page says what is deliberately not claimed.
 
-The numbers below are from
-[run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420)
-on commit `140425f` (v0.19.0, 2026-10-24, GitHub-hosted `ubuntu-latest`, 4 vCPU):
+<!-- bench:readme-run -->
+The numbers below are from [run 40235234406](https://github.com/jburrow/fast_code_search/actions/runs/40235234406)
+on commit `c635718` (2026-10-25, version 0.19.0), GitHub-hosted `ubuntu-latest` (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04):
 6,268 files, 41.4 MB of text, 385k symbol references.
+<!-- /bench:readme-run -->
 
+<!-- bench:readme-table -->
 | Measure | Value |
 |---------|-------|
-| Full build (read, trigrams, symbols, imports, merge) | 5.5 s (1,132 files/s) |
-| Resident memory after build | 137 MB |
-| Index save / reconciling load | 0.19 s / 0.31 s (24.6 MB on disk) |
-| Text search, common word, p50 / p95 | 24.6 ms / 25.4 ms |
-| Text search, identifier, p50 | 7.8 ms |
-| Regex with literal / case-insensitive / no literal, p50 | 24.4 ms / 3.1 ms / 37.6 ms |
-| Symbol search, p50 | 6.9 ms |
-| Reference search, p50 | 2.2 ms |
-| Incremental update of one file, p50 / p95 | 6.4 ms / 50 ms |
+| Full build (read, trigrams, symbols, imports, merge) | 4.91 s (1,277 files/s) |
+| Resident memory after build | 104 MB |
+| Index save / reconciling load | 198 ms / 278 ms (24.6 MB on disk) |
+| Text search, common word, p50 / p95 | 23.2 ms / 24.9 ms |
+| Text search, identifier, p50 | 7.11 ms |
+| Regex with literal / case-insensitive / no literal, p50 | 23.6 ms / 2.97 ms / 35.1 ms |
+| Symbol search, p50 | 6.47 ms |
+| Reference search, p50 | 2.20 ms |
+| Incremental update of one file, p50 / p95 | 5.77 ms / 47.6 ms |
+<!-- /bench:readme-table -->
 
 A common word costs tens of milliseconds because fcs ranks the matches it
 finds before it returns page one. Since v0.17.0 it ranks up to 32,768 matches
@@ -238,8 +241,10 @@ missed the best hits. The
 page has the measurements. Rare identifiers and queries with no match stay
 well under a millisecond in the engine.
 
-The same run's Criterion suite over a small synthetic corpus (100 files) puts a
-common-word text search at 0.78 ms and a no-match query at 0.45 µs. A nightly
+The Criterion suite over a small synthetic corpus (100 files), in its last CI
+run ([run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420),
+commit `140425f`), put a common-word text search at 0.78 ms and a no-match
+query at 0.45 µs; CI now counts instructions per operation instead. A nightly
 job indexes the `rust-lang/rust` 1.89.0 tree and records throughput and memory
 in its job summary.
 

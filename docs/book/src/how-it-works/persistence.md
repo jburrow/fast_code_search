@@ -67,6 +67,7 @@ spelling.
 
 ## When a rebuild happens anyway
 
-Only when the file's format version is older than the server's. The
+Only when the file's format version differs from the server's, older or
+newer (a downgrade rebuilds too). The
 message names the file; deleting it (or letting the server overwrite it)
 is all that is needed.

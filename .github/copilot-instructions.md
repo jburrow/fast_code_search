@@ -248,10 +248,13 @@ cargo bench -- --save-baseline before  # Before changes
 cargo bench -- --baseline before       # After changes, compare
 ```
 
-Reports at `target/criterion/report/index.html`. Benchmark groups: `text_search`, `regex_search`, `filtered_search`, `indexing`.
+Reports at `target/criterion/report/index.html`. Benchmark groups: `text_search`, `regex_search`, `filtered_search`, `indexing`. CI does not run these.
 
 For a change to indexing, search, persistence or the watcher, the evidence
 that counts is the same-machine A/B (`scripts/bench/ab.sh`, see
-[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md)). Published numbers (README,
-book, site) come from a named Benchmarks workflow run; refresh them all
-together when a change moves them.
+[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md)). On pushes to `main` the
+Benchmarks workflow also gates on instruction counts
+(`scripts/bench/icount.sh`). Published numbers (README, book, site) are
+rendered from one pinned Benchmarks run (`docs/bench/published.json`) by
+`scripts/docs/bench-tables.py`; never type a measured number into those
+pages by hand. To refresh: `scripts/docs/bench-tables.py --from-pages <commit>`.

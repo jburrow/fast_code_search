@@ -241,24 +241,28 @@
     <p class="section-subtitle">Real-corpus benchmarks on every push to main, with an instruction-count gate — trend data powered by <a href="https://github.com/benchmark-action/github-action-benchmark" target="_blank" rel="noopener">github-action-benchmark</a></p>
 
     <div class="bench-stats">
+<!-- bench:site-stats -->
       <div class="bench-stat">
-        <div class="bench-stat-value">7.8 ms</div>
+        <div class="bench-stat-value">7.11 ms</div>
         <div class="bench-stat-label">p50 identifier search, ranked, tokio + Django (6,268 files)</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">1,132 files/s</div>
+        <div class="bench-stat-value">1,277 files/s</div>
         <div class="bench-stat-label">Index build, symbols included</div>
       </div>
       <div class="bench-stat">
-        <div class="bench-stat-value">137 MB</div>
+        <div class="bench-stat-value">104 MB</div>
         <div class="bench-stat-label">Resident for 41.4 MB of source</div>
       </div>
+<!-- /bench:site-stats -->
       <div class="bench-stat">
         <div class="bench-stat-value">12</div>
         <div class="bench-stat-label">Languages with symbol ranking</div>
       </div>
     </div>
-    <p class="section-subtitle">From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">benchmark run 40113519420</a> (commit 140425f, v0.19.0, GitHub-hosted ubuntu-latest). A common word takes 24.6 ms because fcs ranks up to 32,768 matches before returning page one; the <a href="https://github.com/jburrow/fast_code_search/blob/main/README.md#benchmarks">README</a> carries the full table.</p>
+<!-- bench:site-run -->
+    <p class="section-subtitle">From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40235234406">benchmark run 40235234406</a> (commit c635718, 2026-10-25, GitHub-hosted ubuntu-latest). A common word takes 23.2 ms because fcs ranks up to 32,768 matches before returning page one; the <a href="https://github.com/jburrow/fast_code_search/blob/main/README.md#benchmarks">README</a> carries the full table.</p>
+<!-- /bench:site-run -->
     </div>
 
     <div class="bench-suites">

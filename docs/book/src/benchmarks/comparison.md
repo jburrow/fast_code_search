@@ -34,21 +34,25 @@ the benchmark workflow runs it on every push and the result appears on the
 
 ## Results on the CI runner
 
-From [run 40113519420](https://github.com/jburrow/fast_code_search/actions/runs/40113519420)
-on commit `140425f` (v0.19.0, 2026-10-24): GitHub-hosted `ubuntu-latest`,
+<!-- bench:comparison-run -->
+From [run 40235234406](https://github.com/jburrow/fast_code_search/actions/runs/40235234406)
+on commit `c635718` (2026-10-25, version 0.19.0): GitHub-hosted `ubuntu-latest`,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.
+<!-- /bench:comparison-run -->
 
+<!-- bench:comparison-table -->
 **tokio 1.45.0 + Django 5.2**, 7,601 files.
 
 | Query | ripgrep | ugrep | fcs (client) | fcs (engine) |
 |---|---|---|---|---|
-| common word `return` | 69.6 ms | 87.1 ms | 31.2 ms | 30.17 ms |
-| identifier `Config` | 59.9 ms | 84.2 ms | 13.4 ms | 10.23 ms |
-| rare identifier (no match) | 56.0 ms | 84.1 ms | 5.2 ms | 0.02 ms |
-| two words `fn main` | 56.7 ms | 87.6 ms | 7.8 ms | 2.78 ms |
-| regex with literal `fn\s+\w+\(` | 64.7 ms | 115.9 ms | 30.7 ms | 30.36 ms |
-| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 80.7 ms | 130.3 ms | 43.6 ms | 43.55 ms |
-| case-insensitive `(?i)unwrap\(` | 58.1 ms | 87.7 ms | 9.4 ms | 4.76 ms |
+| common word `return` | 70.6 ms | 89.3 ms | 30.7 ms | 30.08 ms |
+| identifier `Config` | 61.1 ms | 87.1 ms | 13.4 ms | 10.16 ms |
+| rare identifier `xq9zv_nothing_here` | 56.9 ms | 94.3 ms | 5.5 ms | 0.02 ms |
+| two words `fn main` | 72.9 ms | 87.6 ms | 7.6 ms | 2.73 ms |
+| regex with literal `fn\s+\w+\(` | 65.9 ms | 114.8 ms | 30.9 ms | 30.59 ms |
+| regex, no literal `[a-z]+_[a-z]+_[a-z]+\(` | 82.2 ms | 131.7 ms | 44.1 ms | 43.46 ms |
+| case-insensitive `(?i)unwrap\(` | 59.4 ms | 90.8 ms | 8.5 ms | 4.63 ms |
+<!-- /bench:comparison-table -->
 
 The [latest results](latest.md) page shows the newest run. Hand-run laptop
 tables from before v0.17.0 used to sit here, with the engine near 1 ms on
