@@ -1,18 +1,18 @@
 {
  "schema": 1,
- "generated_at": "2026-10-26T16:28:44Z",
- "commit": "784ed8399e711ad9ee75048ae3f30b36748a1fa9",
- "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40355449593",
+ "generated_at": "2026-10-26T17:02:00Z",
+ "commit": "3387c8171377bb4b03d834f4cd9498df2f81d0bb",
+ "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40359066349",
  "corpus": {
   "build": {
-   "build_ns": 2650726184,
-   "discovery_ns": 84989386,
-   "files_per_second": 2364.635033914163,
-   "index_bytes": 25951628,
-   "load_ns": 106705105,
-   "rss_after_bytes": 101879808,
-   "rss_before_bytes": 8966144,
-   "save_ns": 414719586
+   "build_ns": 4975212094,
+   "discovery_ns": 68047663,
+   "files_per_second": 1259.845787792459,
+   "index_bytes": 25951629,
+   "load_ns": 145006244,
+   "rss_after_bytes": 102248448,
+   "rss_before_bytes": 9179136,
+   "save_ns": 158241356
   },
   "corpus": {
    "bytes": 41382284,
@@ -30,15 +30,15 @@
   "machine": {
    "arch": "x86_64",
    "ci": true,
-   "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+   "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
    "fast_code_search": "0.19.0",
-   "git_sha": "784ed8399e",
+   "git_sha": "3387c81713",
    "logical_cpus": 4,
-   "mem_total_bytes": 16766414848,
+   "mem_total_bytes": 16765378560,
    "os": "Ubuntu 24.04.5 LTS",
-   "runner": "GitHub Actions 1000011213",
+   "runner": "GitHub Actions 1000011260",
    "rustc": "1.89",
-   "timestamp_utc": "2026-10-26T16:24:59Z"
+   "timestamp_utc": "2026-10-26T16:56:19Z"
   },
   "memory": {
    "parts": [
@@ -94,80 +94,80 @@
    {
     "detail": "50 results",
     "name": "text/common",
-    "p50_ns": 15335062,
-    "p95_ns": 16105859
+    "p50_ns": 22994602,
+    "p95_ns": 24473517
    },
    {
     "detail": "50 results",
     "name": "text/identifier",
-    "p50_ns": 4905205,
-    "p95_ns": 5253582
+    "p50_ns": 6845372,
+    "p95_ns": 7327983
    },
    {
     "detail": "0 results",
     "name": "text/no_match",
-    "p50_ns": 301,
-    "p95_ns": 320
+    "p50_ns": 523,
+    "p95_ns": 602
    },
    {
     "detail": "50 results",
     "name": "text/short",
-    "p50_ns": 20307219,
-    "p95_ns": 21355244
+    "p50_ns": 24130130,
+    "p95_ns": 24678920
    },
    {
     "detail": "50 results",
     "name": "text/full_rank",
-    "p50_ns": 15056941,
-    "p95_ns": 15594325
+    "p50_ns": 22569622,
+    "p95_ns": 23559802
    },
    {
     "detail": "50 results",
     "name": "text/filtered",
-    "p50_ns": 6647688,
-    "p95_ns": 7077333
+    "p50_ns": 10263739,
+    "p95_ns": 10772788
    },
    {
     "detail": "50 results",
     "name": "regex/literal",
-    "p50_ns": 17155808,
-    "p95_ns": 18397859
+    "p50_ns": 20475980,
+    "p95_ns": 20988837
    },
    {
     "detail": "50 results",
     "name": "regex/case_insensitive",
-    "p50_ns": 1739883,
-    "p95_ns": 2098076
+    "p50_ns": 2997311,
+    "p95_ns": 3132620
    },
    {
     "detail": "50 results (budget)",
     "name": "regex/no_literal",
-    "p50_ns": 24083754,
-    "p95_ns": 24899469
+    "p50_ns": 35599230,
+    "p95_ns": 37046817
    },
    {
     "detail": "50 results",
     "name": "symbol/exact",
-    "p50_ns": 2267523,
-    "p95_ns": 2695390
+    "p50_ns": 3235479,
+    "p95_ns": 3455695
    },
    {
     "detail": "50 results",
     "name": "symbol/prefix",
-    "p50_ns": 1343874,
-    "p95_ns": 1524578
+    "p50_ns": 2078562,
+    "p95_ns": 2181807
    },
    {
     "detail": "50 results",
     "name": "symbol/references",
-    "p50_ns": 1295300,
-    "p95_ns": 1362102
+    "p50_ns": 2063479,
+    "p95_ns": 2403582
    },
    {
     "detail": "20 files",
     "name": "incremental/modify_file",
-    "p50_ns": 5255476,
-    "p95_ns": 30917069
+    "p50_ns": 5825367,
+    "p95_ns": 49843338
    }
   ],
   "schema": 1
@@ -509,7 +509,7 @@
  "comparison": {
   "schema": 1,
   "machine": {
-   "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+   "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
    "logical_cpus": 4
   },
   "tree": "tokio+django",
@@ -525,64 +525,64 @@
     "label": "common word",
     "query": "return",
     "kind": "literal",
-    "ripgrep_ms": 47.052,
-    "ugrep_ms": 58.7251,
-    "fcs_client_ms": 22.7871,
-    "fcs_engine_ms": 19.544465
+    "ripgrep_ms": 50.123,
+    "ugrep_ms": 61.2649,
+    "fcs_client_ms": 27.7681,
+    "fcs_engine_ms": 27.704448
    },
    {
     "label": "identifier",
     "query": "Config",
     "kind": "literal",
-    "ripgrep_ms": 40.5381,
-    "ugrep_ms": 59.1309,
-    "fcs_client_ms": 9.58691,
-    "fcs_engine_ms": 7.043201
+    "ripgrep_ms": 44.6821,
+    "ugrep_ms": 58.3789,
+    "fcs_client_ms": 11.5808,
+    "fcs_engine_ms": 9.59979
    },
    {
     "label": "rare identifier",
     "query": "xq9zv_nothing_here",
     "kind": "literal",
-    "ripgrep_ms": 37.4031,
-    "ugrep_ms": 54.4871,
-    "fcs_client_ms": 3.98413,
-    "fcs_engine_ms": 0.011157
+    "ripgrep_ms": 40.8101,
+    "ugrep_ms": 58.4099,
+    "fcs_client_ms": 3.90088,
+    "fcs_engine_ms": 0.010003000000000001
    },
    {
     "label": "two words",
     "query": "fn main",
     "kind": "literal",
-    "ripgrep_ms": 39.1099,
-    "ugrep_ms": 54.9919,
-    "fcs_client_ms": 5.76294,
-    "fcs_engine_ms": 1.972676
+    "ripgrep_ms": 41.9519,
+    "ugrep_ms": 58.543,
+    "fcs_client_ms": 6.24609,
+    "fcs_engine_ms": 2.6400400000000004
    },
    {
     "label": "regex with literal",
     "query": "fn\\s+\\w+\\(",
     "kind": "regex",
-    "ripgrep_ms": 56.686,
-    "ugrep_ms": 76.8601,
-    "fcs_client_ms": 24.2581,
-    "fcs_engine_ms": 21.602059999999998
+    "ripgrep_ms": 48.145,
+    "ugrep_ms": 86.9099,
+    "fcs_client_ms": 25.6089,
+    "fcs_engine_ms": 25.255951
    },
    {
     "label": "regex, no literal",
     "query": "[a-z]+_[a-z]+_[a-z]+\\(",
     "kind": "regex",
-    "ripgrep_ms": 56.1711,
-    "ugrep_ms": 77.1541,
-    "fcs_client_ms": 30.6321,
-    "fcs_engine_ms": 30.296552000000002
+    "ripgrep_ms": 60.928,
+    "ugrep_ms": 105.347,
+    "fcs_client_ms": 41.3149,
+    "fcs_engine_ms": 40.708800000000004
    },
    {
     "label": "case-insensitive",
     "query": "(?i)unwrap\\(",
     "kind": "regex",
-    "ripgrep_ms": 41.01,
-    "ugrep_ms": 53.6101,
-    "fcs_client_ms": 6.70215,
-    "fcs_engine_ms": 2.993036
+    "ripgrep_ms": 42.6938,
+    "ugrep_ms": 57.804,
+    "fcs_client_ms": 7.5249,
+    "fcs_engine_ms": 4.29638
    }
   ]
  }
