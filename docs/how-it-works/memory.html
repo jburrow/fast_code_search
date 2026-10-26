@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-f98c774d.js";
+            window.path_to_searchindex_js = "../searchindex-10f28fdb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -190,7 +190,7 @@
 </thead>
 <tbody>
 <tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build</td></tr>
-<tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build or load</td></tr>
+<tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build and saved with the index</td></tr>
 <tr><td>Reference tables</td><td>call sites and type mentions</td><td>names interned once; positions packed</td></tr>
 <tr><td>Dependency graph</td><td>resolved imports</td><td>bidirectional, with cached dependent counts</td></tr>
 <tr><td>File store</td><td>files</td><td>one small entry per file; content is <strong>not</strong> kept</td></tr>

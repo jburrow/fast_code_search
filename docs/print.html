@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f98c774d.js";
+            window.path_to_searchindex_js = "searchindex-10f28fdb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4003,8 +4003,8 @@ scrub_invariants_minutes = 60.0
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
-<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v8</strong>, magic
-<code>FCSIDX05</code>. Everything is little-endian.</p>
+<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v9</strong>, magic
+<code>FCSIDX06</code>. Everything is little-endian.</p>
 <pre><code class="language-text">magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
 META     bincode-encoded metadata (see below)
 DIR      dir_count × { trigram[3], pad[1], offset:u64, len:u32 }, sorted by trigram
@@ -4024,7 +4024,12 @@ parallel; nothing is copied in between.</p>
 <li>the file table: path (raw bytes, so non-UTF-8 names survive), mtime in
 nanoseconds, size, and which configured root the file belongs to;</li>
 <li>per-file symbols and references (reference names interned in one table);</li>
-<li>resolved dependency edges and imports still waiting for their target.</li>
+<li>resolved dependency edges and imports still waiting for their target;</li>
+<li>the symbol name dictionary symbol search filters by (see
+<a href="#verification-and-modes">Candidates</a>): the
+distinct case-folded names, the files and symbol kinds behind each, and
+the files it does not describe yet. Saved so a load need not rebuild it
+(about 2 s at 302,000 files).</li>
 </ul>
 <p>File positions in the table are compacted (removed files are absent), and
 every other section is remapped to those positions on save and back to
@@ -4037,7 +4042,7 @@ process. A crash leaves the previous index intact, and the next start
 removes the temporary file a killed save left.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
-<li><strong>Pinned.</strong> <code>tests/fixtures/index-v8.fcsidx</code> is compared byte for byte
+<li><strong>Pinned.</strong> <code>tests/fixtures/index-v9.fcsidx</code> is compared byte for byte
 in the test suite; a deliberate format change bumps the magic and
 regenerates the fixture (<code>FCS_WRITE_GOLDEN=1 cargo test golden</code>).</li>
 <li><strong>Older formats</strong> are rejected with a message asking for a rebuild;
@@ -4669,7 +4674,7 @@ install time, since the index may have changed since it was planned
 since it was read has an event of its own on the way.</li>
 </ol>
 <p><strong>Symbol names.</strong> Symbol search finds files through a dictionary of
-symbol names built after a build or a load (see
+symbol names built after a build and saved with the index (see
 <a href="#verification-and-modes">Candidates</a>). Files installed after
 that are searched symbol by symbol, which costs more per file, until the
 dictionary is rebuilt: once a sixteenth of the files (at least 4,096) have
@@ -4971,7 +4976,7 @@ is all that is needed.</p>
 </thead>
 <tbody>
 <tr><td>Trigram posting lists</td><td>distinct trigrams × files</td><td>Roaring bitmaps; run-optimised after a build</td></tr>
-<tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build or load</td></tr>
+<tr><td>Symbol tables</td><td>definitions</td><td>per file, restored from the saved index; plus a dictionary of distinct names, built after a build and saved with the index</td></tr>
 <tr><td>Reference tables</td><td>call sites and type mentions</td><td>names interned once; positions packed</td></tr>
 <tr><td>Dependency graph</td><td>resolved imports</td><td>bidirectional, with cached dependent counts</td></tr>
 <tr><td>File store</td><td>files</td><td>one small entry per file; content is <strong>not</strong> kept</td></tr>
@@ -6366,9 +6371,10 @@ the whole file into lines. Same-machine runs: <code>Error</code> 522 to 42 ms an
 Django.
 <strong>What it costs:</strong> the dictionary takes memory (63 MB at 302,000 files,
 46 MB for the Linux kernel; resident +4%), and it is built after every
-build and load on one thread, which makes loading about 2.5 s (19%)
-slower at 302,000 files. Built on all cores it took half the time but
-fragmented memory: resident grew 160 MB. Files changed after the
+build on one thread (about 2 s at 302,000 files; on all cores it took
+half the time but fragmented memory: resident grew 160 MB). It is saved
+with the index, so a load restores it instead (index format v9: the
+first start after upgrading rebuilds the index once). Files changed after the
 dictionary was built are searched symbol by symbol until a sixteenth of
 the files (at least 4,096) have changed; the update that crosses that
 line rebuilds it under the write lock.</li>
@@ -8955,14 +8961,14 @@ query + walker) under <code>catch_unwind</code>.</li>
 <li><strong>Merge, under the engine write lock</strong>: <code>index_batch</code> registers files,
 inserts postings, stores symbols, queues imports; unresolved imports are
 parked and retried only when a file with a matching name appears.</li>
-<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v7
-(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX05</code>, version,
+<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v9
+(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX06</code>, version,
 CRC-32, section lengths), then a bincode metadata section (file table,
 symbols, edges, parked imports, reference names and per-file references),
 a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
 back to back. Save streams bitmaps from the live map; load memory-maps the
 file, checks bounds and checksum, and deserializes bitmaps in parallel from
-the mapping. <code>tests/fixtures/index-v8.fcsidx</code> pins the format byte for
+the mapping. <code>tests/fixtures/index-v9.fcsidx</code> pins the format byte for
 byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
 deliberate format change (and bump the version).</li>
 </ol>
