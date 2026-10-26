@@ -4740,3 +4740,108 @@ fn test_symbol_names_survive_save_and_load() {
         assert_eq!(run(&loaded, q), want, "{q}");
     }
 }
+
+/// A load keeps the saved file ids and tombstones the files that changed or
+/// went away since the save, as a removal at runtime does, instead of
+/// renumbering every later file. Nothing of theirs may be found, every other
+/// file must keep its own hits, and the next save compacts the gaps away.
+#[test]
+fn test_load_tombstones_changed_and_deleted_files() {
+    use crate::config::IndexerConfig;
+
+    let temp_dir = TempDir::new().unwrap();
+    // The engine stores canonical paths (/private/var on macOS, \\?\ on Windows).
+    let root = temp_dir.path().canonicalize().unwrap();
+    let paths: Vec<_> = (0..6).map(|i| root.join(format!("f{i}.rs"))).collect();
+    for (i, p) in paths.iter().enumerate() {
+        fs::write(p, format!("pub fn token_{i}() {{}}\n// common_word\n")).unwrap();
+    }
+    age_files(&root);
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let mut engine = SearchEngine::new();
+    for p in &paths {
+        engine.index_file(p).unwrap();
+    }
+    engine.finalize();
+    let index_path = temp_dir.path().join("index.bin");
+    engine.save_index(&index_path, &config).unwrap();
+
+    fs::write(&paths[2], "pub fn token_2_rewritten_at_length() {}\n").unwrap();
+    fs::remove_file(&paths[4]).unwrap();
+
+    let mut loaded = SearchEngine::new();
+    let mut gone = loaded.load_index(&index_path).unwrap();
+    gone.sort();
+    assert_eq!(gone, vec![paths[2].clone(), paths[4].clone()]);
+    assert_eq!(loaded.file_store.live_len(), 4);
+    for i in [0, 1, 3, 5] {
+        let id = loaded.find_file_id(&paths[i].to_string_lossy()).unwrap();
+        assert_eq!(id, i as u32, "saved ids are kept");
+    }
+
+    let text = |e: &SearchEngine, q: &str| -> Vec<(String, usize)> {
+        let mut v: Vec<_> = e
+            .search(q, 50)
+            .into_iter()
+            .map(|m| (m.file_path, m.line_number))
+            .collect();
+        v.sort();
+        v
+    };
+    let file_of = |hits: &[(String, usize)]| -> Vec<String> {
+        hits.iter()
+            .map(|(p, _)| {
+                Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    };
+    for i in [0, 1, 3, 5] {
+        assert_eq!(
+            file_of(&text(&loaded, &format!("token_{i}"))),
+            vec![format!("f{i}.rs")]
+        );
+    }
+    assert!(text(&loaded, "token_2").is_empty());
+    assert!(text(&loaded, "token_4").is_empty());
+    assert_eq!(text(&loaded, "common_word").len(), 4);
+    for q in ["token_2", "token_4"] {
+        assert!(
+            loaded.search_symbols(q, "", "", 50).unwrap().is_empty(),
+            "{q}"
+        );
+    }
+
+    // Re-indexing the changed file gives it a fresh id. (Aged, so the next
+    // save does not count it as possibly still being written.)
+    fs::File::options()
+        .write(true)
+        .open(&paths[2])
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(30))
+        .unwrap();
+    loaded.index_file(&paths[2]).unwrap();
+    loaded.finalize();
+    assert_eq!(
+        file_of(&text(&loaded, "token_2_rewritten")),
+        vec!["f2.rs".to_string()]
+    );
+    assert_eq!(text(&loaded, "common_word").len(), 4);
+
+    let queries = ["token_", "common_word", "token_2_rewritten", "token_5"];
+    let before: Vec<_> = queries.iter().map(|q| text(&loaded, q)).collect();
+    let again = temp_dir.path().join("again.bin");
+    loaded.save_index(&again, &config).unwrap();
+    let mut reloaded = SearchEngine::new();
+    assert!(reloaded.load_index(&again).unwrap().is_empty());
+    assert_eq!(reloaded.file_store.len(), 5, "the save compacted the gaps");
+    for (q, want) in queries.iter().zip(before) {
+        assert_eq!(text(&reloaded, q), want, "{q}");
+    }
+}

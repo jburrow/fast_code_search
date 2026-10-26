@@ -171,33 +171,45 @@ impl SearchEngine {
     }
 
     /// Restore symbol caches and dependency graph directly from persisted data,
-    /// using the actual `original index → new file id` map.
+    /// using the actual `original index → new file id` map. Each file's
+    /// symbols and references are moved out of `persisted`, not copied.
     pub fn restore_symbols_and_deps(
         &mut self,
         orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
-        persisted: &crate::index::PersistedIndex,
+        persisted: &mut crate::index::PersistedIndex,
     ) {
         // Size the symbol cache to the number of files actually registered.
         let total_new_files = self.file_store.len();
         self.symbol_cache = vec![Vec::new(); total_new_files];
         self.symbol_names = Default::default();
-        self.install_references(persisted.reference_names.clone(), total_new_files);
+        self.install_references(
+            std::mem::take(&mut persisted.reference_names),
+            total_new_files,
+        );
 
         // Register files in dependency_index for future import resolution
         // and restore per-file symbol caches, keyed by the real new ids.
+        let mut ids: Vec<u32> = orig_to_new
+            .values()
+            .copied()
+            .filter(|&id| (id as usize) < total_new_files)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let file_store = &self.file_store;
+        self.dependency_index.register_canonical_files(
+            ids.iter()
+                .filter_map(|&id| Some((id, file_store.shared_path(id)?.clone()))),
+        );
         for (&orig_idx, &new_id) in orig_to_new {
             if (new_id as usize) >= total_new_files {
                 continue;
             }
-            if let Some(path) = self.file_store.shared_path(new_id) {
-                self.dependency_index
-                    .register_canonical_file(new_id, path.clone());
+            if let Some(syms) = persisted.symbols.get_mut(orig_idx as usize) {
+                self.symbol_cache[new_id as usize] = std::mem::take(syms);
             }
-            if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
-                self.symbol_cache[new_id as usize] = syms.clone();
-            }
-            if let Some(refs) = persisted.references.get(orig_idx as usize) {
-                self.set_packed_references(new_id, refs.clone());
+            if let Some(refs) = persisted.references.get_mut(orig_idx as usize) {
+                self.set_packed_references(new_id, std::mem::take(refs));
             }
         }
 
@@ -733,10 +745,15 @@ impl SearchEngine {
                 &format!("Registering {} files...", valid_count),
             );
 
-            let paths_to_register: Vec<std::path::PathBuf> = valid_file_indices
-                .iter()
-                .map(|&idx| persisted.files[idx].path.clone())
-                .collect();
+            // Every saved file is registered, the stale and removed ones
+            // too, so ids normally come back equal to the saved positions
+            // and nothing has to be renumbered. The files that did not
+            // survive are then tombstoned, as a removal at runtime is:
+            // dropping them from the numbering instead shifted every later
+            // id and rebuilt every posting list, which was the largest cost
+            // of a load with even one changed file.
+            let paths_to_register: Vec<std::path::PathBuf> =
+                persisted.files.iter().map(|f| f.path.clone()).collect();
             let total_content_bytes: u64 = valid_file_indices
                 .iter()
                 .map(|&idx| persisted.files[idx].size)
@@ -745,8 +762,24 @@ impl SearchEngine {
             // Lazy registration: no I/O, the persisted size stands in for the
             // content until a file is first read.
             self.file_store.reserve(paths_to_register.len());
-            let new_ids = self.file_store.register_files_bulk(&paths_to_register);
+            let all_ids = self.file_store.register_files_bulk(&paths_to_register);
+            let new_ids: Vec<u32> = valid_file_indices.iter().map(|&i| all_ids[i]).collect();
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
+            let mut doomed = roaring::RoaringBitmap::new();
+            for (idx, &id) in all_ids.iter().enumerate() {
+                if id != u32::MAX && !orig_to_new.contains_key(&(idx as u32)) {
+                    doomed.insert(id);
+                }
+            }
+            // A path saved twice registers once: never tombstone an id a
+            // surviving file holds.
+            for &id in orig_to_new.values() {
+                doomed.remove(id);
+            }
+            let in_place = all_ids
+                .iter()
+                .enumerate()
+                .all(|(idx, &id)| id == idx as u32);
             self.seed_indexed_meta_from_persisted(&valid_file_indices, &new_ids, &persisted);
             self.file_store.add_content_bytes(total_content_bytes);
             mark("register_files");
@@ -765,12 +798,22 @@ impl SearchEngine {
                 "Restoring search index...",
             );
             let lists = persisted.restore_posting_lists()?;
-            let remapped = Self::remap_trigram_bitmaps(lists, &orig_to_new, persisted.files.len());
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(remapped);
-            // The saved files are compacted: every id is a live file,
-            // including any too short to have a trigram.
+            let lists = if in_place {
+                lists
+            } else {
+                Self::remap_trigram_bitmaps(lists, &orig_to_new, persisted.files.len())
+            };
+            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(lists);
+            for id in &doomed {
+                self.file_store.remove_file_by_id(id);
+            }
+            // Every live id has a document, including files too short to
+            // have a trigram.
             self.trigram_index
-                .set_documents((0..self.file_store.len() as u32).collect());
+                .set_documents(self.file_store.live_ids().collect());
+            if in_place {
+                self.trigram_index.remove_documents(&doomed);
+            }
             self.trigram_index.finalize();
             mark("trigrams");
         }
@@ -798,7 +841,7 @@ impl SearchEngine {
             }
             symbols_reextracted = persisted.symbols.is_empty() || !schema_current;
             if !symbols_reextracted {
-                self.restore_symbols_and_deps(&orig_to_new, &persisted);
+                self.restore_symbols_and_deps(&orig_to_new, &mut persisted);
                 if let Some(saved) = persisted.symbol_names.take() {
                     let mut id = vec![u32::MAX; persisted.files.len()];
                     for (&orig, &new) in &orig_to_new {
@@ -872,7 +915,7 @@ impl SearchEngine {
 
         tracing::info!(
             path = %path.display(),
-            files_loaded = self.file_store.len(),
+            files_loaded = self.file_store.live_len(),
             stale_files = stale_files.len(),
             removed_files = removed_files.len(),
             new_paths = new_paths.len(),

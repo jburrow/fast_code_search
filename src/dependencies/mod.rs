@@ -8,7 +8,6 @@ pub mod graph;
 pub mod scope;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,9 +27,9 @@ pub struct DependencyIndex {
     /// Map from normalized path to file_id for import resolution
     /// The three path tables share one allocation per file, normally the
     /// file store's own.
-    path_to_id: HashMap<Arc<Path>, u32>,
+    path_to_id: FxHashMap<Arc<Path>, u32>,
     /// Inverted index: filename -> list of full paths (for fast non-relative import lookup)
-    filename_to_paths: HashMap<String, Vec<Arc<Path>>>,
+    filename_to_paths: FxHashMap<String, Vec<Arc<Path>>>,
     /// Reverse of `path_to_id`, so removal and re-registration are O(1)
     /// instead of a full scan (and so `filename_to_paths` can be pruned).
     id_to_path: FxHashMap<u32, Arc<Path>>,
@@ -318,6 +317,38 @@ impl DependencyIndex {
     /// Restoring a 61k-file index spent 16 s in realpath walks here. Pass
     /// the file store's interned path so the tables hold no copy of it.
     pub fn register_canonical_file(&mut self, file_id: u32, stored_path: Arc<Path>) {
+        self.register_canonical(file_id, stored_path, None);
+    }
+
+    /// [`Self::register_canonical_file`] for many files at once (a load).
+    /// Each directory's ancestors are counted once for all of its files,
+    /// rather than once per file: hashing every ancestor of every file was
+    /// most of this at 302,000 files.
+    pub fn register_canonical_files(&mut self, files: impl IntoIterator<Item = (u32, Arc<Path>)>) {
+        let mut per_dir: FxHashMap<PathBuf, u32> = FxHashMap::default();
+        for (file_id, stored_path) in files {
+            self.register_canonical(file_id, stored_path, Some(&mut per_dir));
+        }
+        for (dir, n) in per_dir {
+            for above in dir.ancestors() {
+                match self.files_below.get_mut(above) {
+                    Some(count) => *count += n,
+                    None => {
+                        self.files_below.insert(above.to_path_buf(), n);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Registers one file. With `per_dir`, the `files_below` counts are left
+    /// to the caller: the file is counted in its directory's entry there.
+    fn register_canonical(
+        &mut self,
+        file_id: u32,
+        stored_path: Arc<Path>,
+        per_dir: Option<&mut FxHashMap<PathBuf, u32>>,
+    ) {
         if self.path_to_id.get(&stored_path) == Some(&file_id) {
             return;
         }
@@ -330,10 +361,13 @@ impl DependencyIndex {
 
         // Add to filename inverted index for fast non-relative lookups
         if let Some(filename) = stored_path.file_name().and_then(|s| s.to_str()) {
-            self.filename_to_paths
-                .entry(filename.to_string())
-                .or_default()
-                .push(stored_path.clone());
+            match self.filename_to_paths.get_mut(filename) {
+                Some(paths) => paths.push(stored_path.clone()),
+                None => {
+                    self.filename_to_paths
+                        .insert(filename.to_string(), vec![stored_path.clone()]);
+                }
+            }
         }
 
         if stored_path.file_name().is_some_and(|n| n == "Cargo.toml") {
@@ -357,12 +391,27 @@ impl DependencyIndex {
             *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
         }
         if let Some(dir) = stored_path.parent() {
-            *self.files_per_dir.entry(dir.to_path_buf()).or_default() += 1;
-            for above in dir.ancestors() {
-                match self.files_below.get_mut(above) {
+            match self.files_per_dir.get_mut(dir) {
+                Some(n) => *n += 1,
+                None => {
+                    self.files_per_dir.insert(dir.to_path_buf(), 1);
+                }
+            }
+            match per_dir {
+                Some(per_dir) => match per_dir.get_mut(dir) {
                     Some(n) => *n += 1,
                     None => {
-                        self.files_below.insert(above.to_path_buf(), 1);
+                        per_dir.insert(dir.to_path_buf(), 1);
+                    }
+                },
+                None => {
+                    for above in dir.ancestors() {
+                        match self.files_below.get_mut(above) {
+                            Some(n) => *n += 1,
+                            None => {
+                                self.files_below.insert(above.to_path_buf(), 1);
+                            }
+                        }
                     }
                 }
             }
@@ -1357,6 +1406,50 @@ mod tests {
 
     fn id_of(temp: &tempfile::TempDir, idx: &DependencyIndex, rel: &str) -> Option<u32> {
         idx.get_file_id(&temp.path().join(rel).canonicalize().unwrap())
+    }
+
+    /// Registering a load's files in one batch leaves the same tables as
+    /// registering them one at a time.
+    #[test]
+    fn test_batch_registration_matches_one_at_a_time() {
+        let paths: Vec<Arc<Path>> = [
+            "/r/a/x.rs",
+            "/r/a/y.rs",
+            "/r/a/b/z.rs",
+            "/r/c/x.rs",
+            "/r/top.py",
+            "/other/Cargo.toml",
+        ]
+        .iter()
+        .map(|p| Arc::from(Path::new(p)))
+        .collect();
+        let mut one = DependencyIndex::new();
+        for (i, p) in paths.iter().enumerate() {
+            one.register_canonical_file(i as u32, p.clone());
+        }
+        let mut batch = DependencyIndex::new();
+        batch
+            .register_canonical_files(paths.iter().enumerate().map(|(i, p)| (i as u32, p.clone())));
+        let sorted = |m: &FxHashMap<PathBuf, u32>| {
+            let mut v: Vec<_> = m.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(sorted(&batch.files_below), sorted(&one.files_below));
+        assert_eq!(sorted(&batch.files_per_dir), sorted(&one.files_per_dir));
+        assert_eq!(batch.files_below[Path::new("/r")], 5);
+        assert_eq!(batch.files_below[Path::new("/r/a")], 3);
+        for (i, p) in paths.iter().enumerate() {
+            assert_eq!(batch.get_file_id(p), Some(i as u32));
+        }
+        assert_eq!(
+            batch.filename_to_paths["x.rs"],
+            one.filename_to_paths["x.rs"]
+        );
+        // Removing a batch-registered file undoes its counts.
+        batch.unregister_path_lookups(2);
+        one.unregister_path_lookups(2);
+        assert_eq!(sorted(&batch.files_below), sorted(&one.files_below));
     }
 
     /// Roadmap 2.5: Rust `use crate::…`, `super::`, `self::` and `mod foo;`

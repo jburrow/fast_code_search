@@ -33,8 +33,9 @@ parallel; nothing is copied in between.
   (about 2 s at 302,000 files).
 
 File positions in the table are compacted (removed files are absent), and
-every other section is remapped to those positions on save and back to
-live ids on load, so ids stay stable across restarts.
+every other section is remapped to those positions on save. A load gives
+each file its position as its id, so the sections are used as saved; files
+changed or deleted since the save are tombstoned rather than renumbered.
 
 ## Guarantees
 
