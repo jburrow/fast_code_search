@@ -5,7 +5,7 @@
 | Structure | Grows with | Notes |
 |---|---|---|
 | Trigram posting lists | distinct trigrams × files | Roaring bitmaps; run-optimised after a build |
-| Symbol tables | definitions | per file, restored from the saved index |
+| Symbol tables | definitions | per file, restored from the saved index; plus a dictionary of distinct names, built after a build or load |
 | Reference tables | call sites and type mentions | names interned once; positions packed |
 | Dependency graph | resolved imports | bidirectional, with cached dependent counts |
 | File store | files | one small entry per file; content is **not** kept |
@@ -27,7 +27,7 @@ records it per scenario.
 |---|---|
 | `postings` | trigram posting lists (Roaring bitmaps) and their table |
 | `references` | symbol references and their interned names |
-| `symbols` | symbol definitions |
+| `symbols` | symbol definitions and the name dictionary |
 | `imports` | imports as written, and those still waiting for a file to resolve to |
 | `graph_paths` | path tables the import resolver looks paths up in |
 | `graph_edges` | dependency edges and dependent counts |
@@ -38,21 +38,22 @@ records it per scenario.
 The figures are estimates from lengths and capacities, not allocator
 measurements (`src/heap_size.rs`). `tests/heap_estimates.rs` keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
-index fall outside 75% to 105% of the heap it really holds (they are 89%).
-Checked the same way on public code:
+index fall outside 75% to 105% of the heap it really holds.
+Checked the same way on public code (commit after `faccb0f`, with the
+symbol name dictionary):
 
 | Corpus | Index | Live heap | Estimated |
 |---|---|---|---|
-| tokio + Django (6,300 files) | just built | 78.3 MB | 50.3 MB (64%) |
-| tokio + Django | loaded from disk | 44.0 MB | 40.2 MB (91%) |
-| Linux kernel (85,500 files, 1.23 GB) | just built | 593.8 MB | 551.6 MB (93%) |
-| Linux kernel | loaded from disk | 458.1 MB | 448.8 MB (98%) |
+| tokio + Django (6,200 files) | just built | 78.0 MB | 49.1 MB (63%) |
+| tokio + Django | loaded from disk | 44.9 MB | 41.9 MB (93%) |
+| Linux kernel (85,700 files, 1.23 GB) | just built | 576.4 MB | 533.6 MB (93%) |
+| Linux kernel | loaded from disk | 504.0 MB | 495.3 MB (98%) |
 
 The Linux kernel, loaded from disk:
 
 | Part | Estimated |
 |---|---|
-| symbols | 207.3 MB |
+| symbols (46.5 MB of it the name dictionary) | 253.8 MB |
 | postings | 172.3 MB |
 | graph_paths | 37.5 MB |
 | file_metadata | 14.0 MB |

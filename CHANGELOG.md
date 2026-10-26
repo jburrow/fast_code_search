@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Symbol search about 12 times faster on large trees.** It tested every
+  symbol of every file whose text contained the query: for `Error` on the
+  302,000-file real corpus (Linux, LLVM, Rust, Kubernetes) that was 5.3
+  million symbols in 85,000 files, to find the 7,000 files defining a
+  matching name. A dictionary of the distinct case-folded symbol names
+  (1.6 million, one string searched with `memmem`) now lists the files and
+  symbol kinds behind each name, and a case-insensitive search ranks files
+  from it directly; a case-sensitive one tests only those files. Results
+  are the same. The lines a match is shown on are found without splitting
+  the whole file into lines. Same-machine runs: `Error` 522 to 42 ms and
+  `Req` 589 to 42 ms at 302,000 files, 22 to 9 ms and 15 to 6 ms on tokio +
+  Django.
+  **What it costs:** the dictionary takes memory (63 MB at 302,000 files,
+  46 MB for the Linux kernel; resident +4%), and it is built after every
+  build and load on one thread, which makes loading about 2.5 s (19%)
+  slower at 302,000 files. Built on all cores it took half the time but
+  fragmented memory: resident grew 160 MB. Files changed after the
+  dictionary was built are searched symbol by symbol until a sixteenth of
+  the files (at least 4,096) have changed; the update that crosses that
+  line rebuilds it under the write lock.
 - **Builds and large watcher batches up to twice as fast.**
   Merging a batch into the index ran on one thread and was half of a
   build's time; posting-list inserts were four fifths of that. The posting

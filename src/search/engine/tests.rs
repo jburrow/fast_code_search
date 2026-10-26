@@ -4473,3 +4473,135 @@ fn remap_trigram_bitmaps_translates_and_drops_ids() {
     assert_eq!(out[&abc].iter().collect::<Vec<_>>(), vec![0, 1, 2, 3]);
     assert_eq!(out[&xyz].iter().collect::<Vec<_>>(), vec![2]);
 }
+
+/// Symbol search filters by the name dictionary built at finalize. Files
+/// changed, added or removed after it, and a rebuild once enough change,
+/// must give the same results as testing every symbol.
+#[test]
+fn test_symbol_names_follow_updates_after_finalize() {
+    let temp_dir = TempDir::new().unwrap();
+    let a = temp_dir.path().join("a.rs");
+    let b = temp_dir.path().join("b.rs");
+    fs::write(&a, "pub fn alphabet() {}\n").unwrap();
+    fs::write(&b, "pub struct Beta;\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.index_file(&a).unwrap();
+    engine.index_file(&b).unwrap();
+    engine.finalize();
+    let names = |e: &SearchEngine, q: &str| -> Vec<String> {
+        let mut v: Vec<String> = e
+            .search_symbols(q, "", "", 50)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(&engine, "alpha"), vec!["pub fn alphabet() {}"]);
+
+    // Changed after the build: the old name is gone, the new one found.
+    fs::write(&a, "pub fn zebra() {}\n").unwrap();
+    engine.update_file(&a).unwrap();
+    assert!(names(&engine, "alpha").is_empty());
+    assert_eq!(names(&engine, "ZEB"), vec!["pub fn zebra() {}"]);
+
+    // Added after the build.
+    let c = temp_dir.path().join("c.rs");
+    fs::write(&c, "pub fn zebra_two() {}\n").unwrap();
+    engine.update_file(&c).unwrap();
+    assert_eq!(
+        names(&engine, "zebra"),
+        vec!["pub fn zebra() {}", "pub fn zebra_two() {}"]
+    );
+
+    // Removed after the build.
+    assert!(engine.remove_file(&b));
+    assert!(names(&engine, "beta").is_empty());
+
+    // Enough changes to rebuild the dictionary midway.
+    let mut paths = Vec::new();
+    for i in 0..4200 {
+        let p = temp_dir.path().join(format!("m{i}.rs"));
+        fs::write(&p, format!("pub fn many_{i}() {{}}\n")).unwrap();
+        paths.push(p);
+    }
+    engine.update_files(&paths);
+    assert!(
+        engine.symbol_names.built_files() > 2,
+        "4,200 new files rebuild the dictionary"
+    );
+    for (i, p) in paths.iter().enumerate() {
+        fs::write(p, format!("pub fn renamed_{i}() {{}}\n")).unwrap();
+    }
+    engine.update_files(&paths);
+    assert!(names(&engine, "many_").is_empty());
+    assert_eq!(
+        names(&engine, "renamed_4199"),
+        vec!["pub fn renamed_4199() {}"]
+    );
+    assert_eq!(names(&engine, "renamed_").len(), 50);
+    assert_eq!(names(&engine, "zebra").len(), 2);
+}
+
+/// Scoring symbol files from the name dictionary gives exactly the results
+/// of testing every symbol: this repository's own source, every mode.
+#[test]
+fn test_symbol_names_change_no_results() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut engine = SearchEngine::new();
+    for entry in walkdir_files(&src) {
+        engine.index_file(&entry).unwrap();
+    }
+    engine.resolve_imports();
+    engine.finalize();
+    let run = |e: &SearchEngine, raw: &str| {
+        let parsed = crate::search::query_syntax::parse(raw);
+        let (matches, info) = e
+            .search_symbols_parsed(&parsed, "", "", SearchLimits::new(200))
+            .unwrap();
+        let rows: Vec<(String, usize, String, u64)> = matches
+            .into_iter()
+            .map(|m| (m.file_path, m.line_number, m.content, m.score.to_bits()))
+            .collect();
+        (rows, info.total_candidates)
+    };
+    let queries = [
+        "search",
+        "Search",
+        "SearchEngine",
+        "fn",
+        "Error",
+        "err",
+        "new",
+        "s",
+        "mod",
+        "case:yes Search",
+        "case:yes search",
+        "word:yes new",
+        "word:yes New",
+        "case:yes word:yes SearchEngine",
+        "fold_str",
+        "nothing_like_this_anywhere",
+    ];
+    let with: Vec<_> = queries.iter().map(|q| run(&engine, q)).collect();
+    assert!(with.iter().filter(|(rows, _)| !rows.is_empty()).count() >= 12);
+    engine.symbol_names = Default::default();
+    for (q, expected) in queries.iter().zip(with) {
+        assert_eq!(run(&engine, q), expected, "{q}");
+    }
+}
+
+fn walkdir_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.extend(walkdir_files(&path));
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+    out.sort();
+    out
+}

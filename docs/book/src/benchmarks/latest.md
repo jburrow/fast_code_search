@@ -35,8 +35,8 @@
 ## Pinned run
 
 <!-- bench:latest-run -->
-From [run 40235234406](https://github.com/jburrow/fast_code_search/actions/runs/40235234406)
-on commit `c635718` (2026-10-25, version 0.19.0), GitHub-hosted `ubuntu-latest` (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).
+From [run 40253883745](https://github.com/jburrow/fast_code_search/actions/runs/40253883745)
+on commit `faccb0f` (2026-10-26, version 0.19.0), GitHub-hosted `ubuntu-latest` (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).
 <!-- /bench:latest-run -->
 
 The [README](https://github.com/jburrow/fast_code_search#benchmarks) carries the
@@ -56,27 +56,27 @@ measurements and the cost on small repositories.
 
 | Build | Value |
 |---|---|
-| Discovery | 138 ms |
-| Build (read, trigrams, symbols, imports, merge) | 4.91 s, 1,277 files/s, 8.4 MB/s |
-| Resident memory after build | 104 MB (process before build: 8.7 MB) |
-| Index save | 198 ms (24.6 MB on disk) |
-| Index load, reconciling | 278 ms |
+| Discovery | 114 ms |
+| Build (read, trigrams, symbols, imports, merge) | 4.85 s, 1,294 files/s, 8.5 MB/s |
+| Resident memory after build | 105 MB (process before build: 8.8 MB) |
+| Index save | 189 ms (24.6 MB on disk) |
+| Index load, reconciling | 282 ms |
 
 | Query | p50 | p95 |
 |---|---|---|
-| text, common word | 23.2 ms | 24.9 ms |
-| text, identifier | 7.11 ms | 7.45 ms |
-| text, no match | 571 ns | 671 ns |
-| text, short (two characters) | 27.6 ms | 29.1 ms |
-| text, full ranking | 22.8 ms | 23.6 ms |
-| text, path-filtered | 10.1 ms | 10.6 ms |
-| regex with literal | 23.6 ms | 24.7 ms |
-| regex, case-insensitive | 2.97 ms | 3.11 ms |
-| regex, no literal (full scan) | 35.1 ms | 36.6 ms |
-| symbol, exact | 6.47 ms | 6.77 ms |
-| symbol, prefix | 4.17 ms | 4.60 ms |
-| references | 2.20 ms | 2.35 ms |
-| incremental: modify one file | 5.77 ms | 47.6 ms |
+| text, common word | 23.8 ms | 26.1 ms |
+| text, identifier | 7.54 ms | 7.92 ms |
+| text, no match | 541 ns | 681 ns |
+| text, short (two characters) | 28.2 ms | 30.2 ms |
+| text, full ranking | 23.5 ms | 24.1 ms |
+| text, path-filtered | 11.1 ms | 12.3 ms |
+| regex with literal | 25.3 ms | 26.4 ms |
+| regex, case-insensitive | 3.31 ms | 3.56 ms |
+| regex, no literal (full scan) | 37.9 ms | 42.0 ms |
+| symbol, exact | 9.62 ms | 11.2 ms |
+| symbol, prefix | 6.38 ms | 8.70 ms |
+| references | 2.25 ms | 2.53 ms |
+| incremental: modify one file | 6.10 ms | 50.9 ms |
 
 Ranking quality in the same run: precision@1 1.00, precision@5 1.00.
 <!-- /bench:latest-corpus -->
