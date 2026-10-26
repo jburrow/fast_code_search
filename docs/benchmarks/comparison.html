@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a4e2f49a.js";
+            window.path_to_searchindex_js = "../searchindex-693936a0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -214,9 +214,12 @@ NTFS drive the same ripgrep query took about one second instead of
 forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
 <h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
-on commit <code>140425f</code> (v0.19.0, 2026-10-24): GitHub-hosted <code>ubuntu-latest</code>,
+<!-- bench:comparison-run -->
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40235234406">run 40235234406</a>
+on commit <code>c635718</code> (2026-10-25, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
+<!-- /bench:comparison-run -->
+<!-- bench:comparison-table -->
 <p><strong>tokio 1.45.0 + Django 5.2</strong>, 7,601 files.</p>
 <div class="table-wrapper">
 <table>
@@ -224,16 +227,17 @@ AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>69.6 ms</td><td>87.1 ms</td><td>31.2 ms</td><td>30.17 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>59.9 ms</td><td>84.2 ms</td><td>13.4 ms</td><td>10.23 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>56.0 ms</td><td>84.1 ms</td><td>5.2 ms</td><td>0.02 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>56.7 ms</td><td>87.6 ms</td><td>7.8 ms</td><td>2.78 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>64.7 ms</td><td>115.9 ms</td><td>30.7 ms</td><td>30.36 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>80.7 ms</td><td>130.3 ms</td><td>43.6 ms</td><td>43.55 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>58.1 ms</td><td>87.7 ms</td><td>9.4 ms</td><td>4.76 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>70.6 ms</td><td>89.3 ms</td><td>30.7 ms</td><td>30.08 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>61.1 ms</td><td>87.1 ms</td><td>13.4 ms</td><td>10.16 ms</td></tr>
+<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>56.9 ms</td><td>94.3 ms</td><td>5.5 ms</td><td>0.02 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>72.9 ms</td><td>87.6 ms</td><td>7.6 ms</td><td>2.73 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>65.9 ms</td><td>114.8 ms</td><td>30.9 ms</td><td>30.59 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>82.2 ms</td><td>131.7 ms</td><td>44.1 ms</td><td>43.46 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.4 ms</td><td>90.8 ms</td><td>8.5 ms</td><td>4.63 ms</td></tr>
 </tbody>
 </table>
 </div>
+<!-- /bench:comparison-table -->
 <p>The <a href="latest.html">latest results</a> page shows the newest run. Hand-run laptop
 tables from before v0.17.0 used to sit here, with the engine near 1 ms on
 every row. They were removed because v0.17.0 deliberately made queries with

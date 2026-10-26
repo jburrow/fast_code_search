@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a4e2f49a.js";
+            window.path_to_searchindex_js = "../searchindex-693936a0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -601,7 +601,7 @@ every place in the same PR, and say in the PR which you updated:</p>
 <tr><th>Fact</th><th>Where it appears</th></tr>
 </thead>
 <tbody>
-<tr><td>Benchmark numbers (build, memory, query p50/p95, Criterion)</td><td><code>README.md</code> (Benchmarks), <code>docs/book/src/benchmarks/latest.md</code> (Last hand-checked run), <code>docs/book/src/benchmarks/comparison.md</code> (Results), <code>docs/site/index.html</code> (bench-stats)</td></tr>
+<tr><td>Benchmark numbers (build, memory, query p50/p95, scan-tool comparison)</td><td>Rendered, not typed: <code>scripts/docs/bench-tables.py</code> fills the <code>&lt;!-- bench:... --&gt;</code> blocks in <code>README.md</code>, <code>docs/book/src/benchmarks/latest.md</code>, <code>docs/book/src/benchmarks/comparison.md</code> and <code>docs/site/index.html</code> from <code>docs/bench/published.json</code>; the Lint job fails when a block is stale. Prose outside the blocks must not repeat a measured number</td></tr>
 <tr><td>Number of backtest queries</td><td><code>README.md</code>, <code>docs/book/src/benchmarks/methodology.md</code> (count <code>[[query]]</code> in <code>benches/rg_backtest.toml</code>)</td></tr>
 <tr><td>Search limits and defaults</td><td><code>docs/book/src/benchmarks/search-limits.md</code>, <code>docs/book/src/reference/config-template.md</code>, the server’s <code>--init</code> template</td></tr>
 <tr><td>Divergences from grep, ripgrep and git grep</td><td><code>docs/book/src/reference/matching.md</code></td></tr>
@@ -625,10 +625,13 @@ explained in the release PR first.</li>
 <li>The published benchmark numbers are current. The README, the book’s
 <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/latest.md">latest results</a> and
 <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/comparison.md">comparison</a> pages and the project site
-(<code>docs/site/index.html</code>) repeat numbers from one named Benchmarks run. If
-that run predates a change that moved them (any metric the A/B marked
-slower or faster), refresh all four from the latest run on <code>main</code> in the
-release PR. See <a href="#docs-that-repeat-numbers">Docs that repeat numbers</a>.</li>
+(<code>docs/site/index.html</code>) repeat numbers from one named Benchmarks run,
+pinned in <code>docs/bench/published.json</code>. If that run predates a change that
+moved them (any metric the A/B marked slower or faster), pin the latest
+run on <code>main</code> in the release PR:
+<code>scripts/docs/bench-tables.py --from-pages &lt;commit&gt;</code> copies that commit’s
+published results and re-renders all four. See
+<a href="#docs-that-repeat-numbers">Docs that repeat numbers</a>.</li>
 </ul>
 <h3 id="steps-to-release"><a class="header" href="#steps-to-release">Steps to Release</a></h3>
 <ol>

@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-a4e2f49a.js";
+            window.path_to_searchindex_js = "searchindex-693936a0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4003,7 +4003,7 @@ scrub_invariants_minutes = 60.0
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
-<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v7</strong>, magic
+<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v8</strong>, magic
 <code>FCSIDX05</code>. Everything is little-endian.</p>
 <pre><code class="language-text">magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
 META     bincode-encoded metadata (see below)
@@ -4939,7 +4939,8 @@ files still allow, then discover anything new under the roots.</li>
 macOS or an 8.3 short name on Windows is the same root as its long
 spelling.</p>
 <h2 id="when-a-rebuild-happens-anyway"><a class="header" href="#when-a-rebuild-happens-anyway">When a rebuild happens anyway</a></h2>
-<p>Only when the file’s format version is older than the server’s. The
+<p>Only when the file’s format version differs from the server’s, older or
+newer (a downgrade rebuilds too). The
 message names the file; deleting it (or letting the server overwrite it)
 is all that is needed.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -5416,14 +5417,15 @@ large the tree is, and ranks. Results are on the
       }
       el.innerHTML = h;
     })
-    .catch(() => { el.innerHTML = "<p><em>Live results are not available (the benchmark workflow has not published them yet); the table below is from the last hand-checked run.</em></p>"; });
+    .catch(() => { el.innerHTML = "<p><em>Live results are not available (the benchmark workflow has not published them yet); the tables below are from the pinned run.</em></p>"; });
 })();
 </script>
-<h2 id="last-hand-checked-run"><a class="header" href="#last-hand-checked-run">Last hand-checked run</a></h2>
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
-on commit <code>140425f</code> (v0.19.0, 2026-10-24), GitHub-hosted <code>ubuntu-latest</code>
-(AMD EPYC 7763, 4 vCPU, Ubuntu 24.04). The
-<a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
+<h2 id="pinned-run"><a class="header" href="#pinned-run">Pinned run</a></h2>
+<!-- bench:latest-run -->
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40235234406">run 40235234406</a>
+on commit <code>c635718</code> (2026-10-25, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
+<!-- /bench:latest-run -->
+<p>The <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
 same numbers; the per-commit trend is at
 <a href="https://jburrow.github.io/fast_code_search/dev/bench/">dev/bench</a>.</p>
 <p>Text and regex queries that match often take tens of milliseconds because
@@ -5432,19 +5434,19 @@ ranked 512, and the same queries took about 1 ms but page one held only 10%
 of the exhaustive top 50 (81% now). <a href="#search-limits">Search limits</a> has the
 measurements and the cost on small repositories.</p>
 <h2 id="real-corpus-tokio-1450--django-52"><a class="header" href="#real-corpus-tokio-1450--django-52">Real corpus: tokio 1.45.0 + Django 5.2</a></h2>
-<p>6,268 files, 41.4 MB of text, 136k distinct trigrams, 385k symbol
-references, 9.8k dependency edges.</p>
+<!-- bench:latest-corpus -->
+<p>6,268 files, 41.4 MB of text, 385k symbol references, 136k distinct trigrams, 9,784 dependency edges.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Build</th><th>Value</th></tr>
 </thead>
 <tbody>
-<tr><td>Discovery</td><td>135 ms</td></tr>
-<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>5.54 s, 1,132 files/s, 7.5 MB/s</td></tr>
-<tr><td>Resident memory after build</td><td>137 MB (process before build: 9 MB)</td></tr>
-<tr><td>Index save</td><td>188 ms (24.6 MB on disk)</td></tr>
-<tr><td>Index load, reconciling</td><td>306 ms</td></tr>
+<tr><td>Discovery</td><td>138 ms</td></tr>
+<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.91 s, 1,277 files/s, 8.4 MB/s</td></tr>
+<tr><td>Resident memory after build</td><td>104 MB (process before build: 8.7 MB)</td></tr>
+<tr><td>Index save</td><td>198 ms (24.6 MB on disk)</td></tr>
+<tr><td>Index load, reconciling</td><td>278 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5454,24 +5456,29 @@ references, 9.8k dependency edges.</p>
 <tr><th>Query</th><th>p50</th><th>p95</th></tr>
 </thead>
 <tbody>
-<tr><td>text, common word</td><td>24.6 ms</td><td>25.4 ms</td></tr>
-<tr><td>text, identifier</td><td>7.80 ms</td><td>8.16 ms</td></tr>
-<tr><td>text, no match</td><td>0.6 µs</td><td>0.7 µs</td></tr>
-<tr><td>text, short (two characters)</td><td>28.9 ms</td><td>29.7 ms</td></tr>
-<tr><td>text, full ranking</td><td>24.6 ms</td><td>25.6 ms</td></tr>
-<tr><td>text, path-filtered</td><td>10.8 ms</td><td>11.6 ms</td></tr>
-<tr><td>regex with literal</td><td>24.4 ms</td><td>25.3 ms</td></tr>
-<tr><td>regex, case-insensitive</td><td>3.08 ms</td><td>3.26 ms</td></tr>
-<tr><td>regex, no literal (full scan)</td><td>37.6 ms</td><td>38.9 ms</td></tr>
-<tr><td>symbol, exact</td><td>6.85 ms</td><td>7.70 ms</td></tr>
-<tr><td>symbol, prefix</td><td>4.48 ms</td><td>4.88 ms</td></tr>
-<tr><td>references</td><td>2.22 ms</td><td>2.34 ms</td></tr>
-<tr><td>incremental: modify one file</td><td>6.4 ms</td><td>49.7 ms</td></tr>
+<tr><td>text, common word</td><td>23.2 ms</td><td>24.9 ms</td></tr>
+<tr><td>text, identifier</td><td>7.11 ms</td><td>7.45 ms</td></tr>
+<tr><td>text, no match</td><td>571 ns</td><td>671 ns</td></tr>
+<tr><td>text, short (two characters)</td><td>27.6 ms</td><td>29.1 ms</td></tr>
+<tr><td>text, full ranking</td><td>22.8 ms</td><td>23.6 ms</td></tr>
+<tr><td>text, path-filtered</td><td>10.1 ms</td><td>10.6 ms</td></tr>
+<tr><td>regex with literal</td><td>23.6 ms</td><td>24.7 ms</td></tr>
+<tr><td>regex, case-insensitive</td><td>2.97 ms</td><td>3.11 ms</td></tr>
+<tr><td>regex, no literal (full scan)</td><td>35.1 ms</td><td>36.6 ms</td></tr>
+<tr><td>symbol, exact</td><td>6.47 ms</td><td>6.77 ms</td></tr>
+<tr><td>symbol, prefix</td><td>4.17 ms</td><td>4.60 ms</td></tr>
+<tr><td>references</td><td>2.20 ms</td><td>2.35 ms</td></tr>
+<tr><td>incremental: modify one file</td><td>5.77 ms</td><td>47.6 ms</td></tr>
 </tbody>
 </table>
 </div>
 <p>Ranking quality in the same run: precision@1 1.00, precision@5 1.00.</p>
-<h2 id="synthetic-criterion-same-run"><a class="header" href="#synthetic-criterion-same-run">Synthetic (Criterion), same run</a></h2>
+<!-- /bench:latest-corpus -->
+<h2 id="synthetic-criterion-last-ci-run"><a class="header" href="#synthetic-criterion-last-ci-run">Synthetic (Criterion), last CI run</a></h2>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
+on commit <code>140425f</code> (v0.19.0, 2026-10-24), the last run before the
+Benchmarks workflow replaced these suites with instruction counts (see
+<a href="#benchmark-methodology">methodology</a>). They still run locally with <code>cargo bench</code>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -5525,9 +5532,12 @@ NTFS drive the same ripgrep query took about one second instead of
 forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
 <h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40113519420">run 40113519420</a>
-on commit <code>140425f</code> (v0.19.0, 2026-10-24): GitHub-hosted <code>ubuntu-latest</code>,
+<!-- bench:comparison-run -->
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40235234406">run 40235234406</a>
+on commit <code>c635718</code> (2026-10-25, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
+<!-- /bench:comparison-run -->
+<!-- bench:comparison-table -->
 <p><strong>tokio 1.45.0 + Django 5.2</strong>, 7,601 files.</p>
 <div class="table-wrapper">
 <table>
@@ -5535,16 +5545,17 @@ AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>69.6 ms</td><td>87.1 ms</td><td>31.2 ms</td><td>30.17 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>59.9 ms</td><td>84.2 ms</td><td>13.4 ms</td><td>10.23 ms</td></tr>
-<tr><td>rare identifier (no match)</td><td>56.0 ms</td><td>84.1 ms</td><td>5.2 ms</td><td>0.02 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>56.7 ms</td><td>87.6 ms</td><td>7.8 ms</td><td>2.78 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>64.7 ms</td><td>115.9 ms</td><td>30.7 ms</td><td>30.36 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>80.7 ms</td><td>130.3 ms</td><td>43.6 ms</td><td>43.55 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>58.1 ms</td><td>87.7 ms</td><td>9.4 ms</td><td>4.76 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>70.6 ms</td><td>89.3 ms</td><td>30.7 ms</td><td>30.08 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>61.1 ms</td><td>87.1 ms</td><td>13.4 ms</td><td>10.16 ms</td></tr>
+<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>56.9 ms</td><td>94.3 ms</td><td>5.5 ms</td><td>0.02 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>72.9 ms</td><td>87.6 ms</td><td>7.6 ms</td><td>2.73 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>65.9 ms</td><td>114.8 ms</td><td>30.9 ms</td><td>30.59 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>82.2 ms</td><td>131.7 ms</td><td>44.1 ms</td><td>43.46 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.4 ms</td><td>90.8 ms</td><td>8.5 ms</td><td>4.63 ms</td></tr>
 </tbody>
 </table>
 </div>
+<!-- /bench:comparison-table -->
 <p>The <a href="#latest-results">latest results</a> page shows the newest run. Hand-run laptop
 tables from before v0.17.0 used to sit here, with the engine near 1 ms on
 every row. They were removed because v0.17.0 deliberately made queries with
@@ -6362,11 +6373,18 @@ error cannot keep a rescan of a large tree running.</li>
 </ul>
 <h3 id="documentation"><a class="header" href="#documentation">Documentation</a></h3>
 <ul>
+<li><strong>Benchmark numbers in the README, the book and the site are rendered,
+not typed.</strong> They come from one pinned Benchmarks run
+(<code>docs/bench/published.json</code>), now the run for <code>c635718</code>, which includes
+the faster build: tokio + Django builds in 4.9 s instead of 5.5 s. CI
+fails when a page and the pinned run disagree. The file-format page said
+format v7; the index has been v8 since v0.16.0.</li>
 <li><strong>Benchmark numbers now match what fcs does.</strong> The README, the book’s
 benchmark pages and the project site showed numbers from 8 September
 (before v0.17.0), with a common word at about 1 ms. They now show the
 v0.19.0 run: a common word over tokio + Django is 24.6 ms at p50, an
-identifier 7.8 ms, and a query with no match 0.6 µs.</li>
+identifier 7.8 ms, and a query with no match 0.6 µs (since refreshed
+from a later run, see above).</li>
 <li><strong>The v0.17.0 slowdown, named.</strong> v0.17.0 raised the match budget from
 512 to 32,768, so a search ranks many more matches before it returns
 page one. On a ~6,300-file repository that made common-word text
@@ -9094,7 +9112,7 @@ every place in the same PR, and say in the PR which you updated:</p>
 <tr><th>Fact</th><th>Where it appears</th></tr>
 </thead>
 <tbody>
-<tr><td>Benchmark numbers (build, memory, query p50/p95, Criterion)</td><td><code>README.md</code> (Benchmarks), <code>docs/book/src/benchmarks/latest.md</code> (Last hand-checked run), <code>docs/book/src/benchmarks/comparison.md</code> (Results), <code>docs/site/index.html</code> (bench-stats)</td></tr>
+<tr><td>Benchmark numbers (build, memory, query p50/p95, scan-tool comparison)</td><td>Rendered, not typed: <code>scripts/docs/bench-tables.py</code> fills the <code>&lt;!-- bench:... --&gt;</code> blocks in <code>README.md</code>, <code>docs/book/src/benchmarks/latest.md</code>, <code>docs/book/src/benchmarks/comparison.md</code> and <code>docs/site/index.html</code> from <code>docs/bench/published.json</code>; the Lint job fails when a block is stale. Prose outside the blocks must not repeat a measured number</td></tr>
 <tr><td>Number of backtest queries</td><td><code>README.md</code>, <code>docs/book/src/benchmarks/methodology.md</code> (count <code>[[query]]</code> in <code>benches/rg_backtest.toml</code>)</td></tr>
 <tr><td>Search limits and defaults</td><td><code>docs/book/src/benchmarks/search-limits.md</code>, <code>docs/book/src/reference/config-template.md</code>, the server’s <code>--init</code> template</td></tr>
 <tr><td>Divergences from grep, ripgrep and git grep</td><td><code>docs/book/src/reference/matching.md</code></td></tr>
@@ -9118,10 +9136,13 @@ explained in the release PR first.</li>
 <li>The published benchmark numbers are current. The README, the book’s
 <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/latest.md">latest results</a> and
 <a href="https://github.com/jburrow/fast_code_search/blob/main/docs/book/src/benchmarks/comparison.md">comparison</a> pages and the project site
-(<code>docs/site/index.html</code>) repeat numbers from one named Benchmarks run. If
-that run predates a change that moved them (any metric the A/B marked
-slower or faster), refresh all four from the latest run on <code>main</code> in the
-release PR. See <a href="#docs-that-repeat-numbers">Docs that repeat numbers</a>.</li>
+(<code>docs/site/index.html</code>) repeat numbers from one named Benchmarks run,
+pinned in <code>docs/bench/published.json</code>. If that run predates a change that
+moved them (any metric the A/B marked slower or faster), pin the latest
+run on <code>main</code> in the release PR:
+<code>scripts/docs/bench-tables.py --from-pages &lt;commit&gt;</code> copies that commit’s
+published results and re-renders all four. See
+<a href="#docs-that-repeat-numbers">Docs that repeat numbers</a>.</li>
 </ul>
 <h3 id="steps-to-release"><a class="header" href="#steps-to-release">Steps to Release</a></h3>
 <ol>

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-a4e2f49a.js";
+            window.path_to_searchindex_js = "../searchindex-693936a0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -267,11 +267,18 @@ error cannot keep a rescan of a large tree running.</li>
 </ul>
 <h3 id="documentation"><a class="header" href="#documentation">Documentation</a></h3>
 <ul>
+<li><strong>Benchmark numbers in the README, the book and the site are rendered,
+not typed.</strong> They come from one pinned Benchmarks run
+(<code>docs/bench/published.json</code>), now the run for <code>c635718</code>, which includes
+the faster build: tokio + Django builds in 4.9 s instead of 5.5 s. CI
+fails when a page and the pinned run disagree. The file-format page said
+format v7; the index has been v8 since v0.16.0.</li>
 <li><strong>Benchmark numbers now match what fcs does.</strong> The README, the book’s
 benchmark pages and the project site showed numbers from 8 September
 (before v0.17.0), with a common word at about 1 ms. They now show the
 v0.19.0 run: a common word over tokio + Django is 24.6 ms at p50, an
-identifier 7.8 ms, and a query with no match 0.6 µs.</li>
+identifier 7.8 ms, and a query with no match 0.6 µs (since refreshed
+from a later run, see above).</li>
 <li><strong>The v0.17.0 slowdown, named.</strong> v0.17.0 raised the match budget from
 512 to 32,768, so a search ranks many more matches before it returns
 page one. On a ~6,300-file repository that made common-word text
