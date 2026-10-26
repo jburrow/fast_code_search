@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-12f53306.js";
+            window.path_to_searchindex_js = "../searchindex-f98c774d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -391,7 +391,11 @@ are tombstoned so ids stay stable.</li>
 <li><code>DependencyIndex</code>: bidirectional import graph with cached dependent counts and
 per-language resolution (Rust module paths, Python packages, JS/TS extensions
 and <code>index.*</code>).</li>
-<li><code>FileMetadata</code>: per-file fast-ranking score, lowercase stem, display path.</li>
+<li><code>FileMetadata</code>: per-file fast-ranking score, and the root-qualified path
+and stem as offsets into the file’s path.</li>
+<li>One path per file: the file store interns each canonical path once as an
+<code>Arc&lt;Path&gt;</code>; <code>FileMetadata</code>, the dependency index’s path tables and the
+import lists hold that same allocation, never a copy.</li>
 </ul>
 <h3 id="scoring"><a class="header" href="#scoring">Scoring</a></h3>
 <p>All weights live in <code>src/search/ranking.rs</code> (<code>RankingWeights</code>, <code>FileScoreWeights</code>).

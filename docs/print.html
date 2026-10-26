@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-12f53306.js";
+            window.path_to_searchindex_js = "searchindex-f98c774d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5010,18 +5010,18 @@ records it per scenario.</p>
 measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (commit after <code>faccb0f</code>, with the
-symbol name dictionary):</p>
+Checked the same way on public code (commit after <code>d62cc56</code>, with one
+path per file):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Corpus</th><th>Index</th><th>Live heap</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>78.0 MB</td><td>49.1 MB (63%)</td></tr>
-<tr><td>tokio + Django</td><td>loaded from disk</td><td>44.9 MB</td><td>41.9 MB (93%)</td></tr>
-<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>576.4 MB</td><td>533.6 MB (93%)</td></tr>
-<tr><td>Linux kernel</td><td>loaded from disk</td><td>504.0 MB</td><td>495.3 MB (98%)</td></tr>
+<tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>76.3 MB</td><td>48.3 MB (63%)</td></tr>
+<tr><td>tokio + Django</td><td>loaded from disk</td><td>43.7 MB</td><td>39.9 MB (91%)</td></tr>
+<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>575.1 MB</td><td>533.2 MB (93%)</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>479.7 MB</td><td>470.7 MB (98%)</td></tr>
 </tbody>
 </table>
 </div>
@@ -5034,19 +5034,36 @@ symbol name dictionary):</p>
 <tbody>
 <tr><td>symbols (46.5 MB of it the name dictionary)</td><td>253.8 MB</td></tr>
 <tr><td>postings</td><td>172.3 MB</td></tr>
-<tr><td>graph_paths</td><td>37.5 MB</td></tr>
-<tr><td>file_metadata</td><td>14.0 MB</td></tr>
-<tr><td>file_table</td><td>12.7 MB</td></tr>
+<tr><td>graph_paths</td><td>17.2 MB</td></tr>
+<tr><td>file_table</td><td>14.7 MB</td></tr>
+<tr><td>file_metadata</td><td>7.8 MB</td></tr>
 <tr><td>references</td><td>3.2 MB</td></tr>
 <tr><td>everything else</td><td>1.8 MB</td></tr>
 </tbody>
 </table>
 </div>
+<p><strong>Each path is held once.</strong> The file store interns every file’s canonical
+path; the ranking metadata (its root-qualified path is an offset into that
+path), the import resolver’s path tables and the import lists all share
+that one allocation, so <code>file_table</code> counts the paths and the others count
+only their own tables. On the 302,000-file real corpus this took resident
+memory after a build from 1,665 MB to 1,504 MB (same machine, 3 rounds).
+The lowercase file-name stem is the exception: it is kept inside the
+metadata (up to 23 bytes; 85% of stems fit), because every candidate file
+of a search reads it and reading it through the path cost a cache miss per
+file.</p>
+<p>Known limitations: on Windows the metadata keeps its own copy of the
+root-qualified path, since it is spelled with <code>/</code> and the stored path with
+<code>\</code>. A search with a path filter reads every candidate’s path from the
+file store: on an index just built (paths spread through the heap among
+the build’s other allocations) that measured 19% slower on 302,000 files
+(95 to 113 ms); on an index loaded from disk, where the paths are
+allocated in order, it is as fast as before.</p>
 <p><strong>A just-built index holds more than the same index loaded.</strong> On tokio +
-Django it is 78 MB against 44 MB. Posting lists built one insert at a time
+Django it is 76 MB against 44 MB. Posting lists built one insert at a time
 keep spare capacity (a list in one container costs 168 bytes instead of 42),
 and the estimates cannot see that spare capacity, which is why they cover
-only 64% there. A restart gives the memory back.</p>
+only 63% there. A restart gives the memory back.</p>
 <p>Resident memory is higher again. A build allocates and frees far more
 than the index it leaves behind (file contents, per-batch trigram sets,
 merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
@@ -6315,6 +6332,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>About 10% less memory on large trees: each file’s path is held once.</strong>
+The ranking metadata, the import resolver’s path tables and the import
+lists kept their own copies of every path (five to eight per file); they
+now share the file store’s one copy. On 4 cores the 302,000-file real
+corpus (Linux, LLVM, Rust, Kubernetes) sits at 1,504 MB resident after a
+build instead of 1,665 MB, and a loaded Linux kernel index holds 35 MB
+less heap (468 to 433 MB, counted by allocation). Results are identical. One slowdown, named:
+a search with a path filter (<code>file:</code>, include/exclude globs) on an index
+that was just built measured 19% slower on the large corpus (95 to
+113 ms), because the paths it reads are spread through the heap; on an
+index loaded from disk it is as fast as before. Other searches measured
+2 to 12% faster.</li>
 <li><strong>Searches with many candidate files sort only what they read.</strong> Every
 search reads its candidates best first and usually stops at its match
 budget a thousand or two files in, but it sorted all of them first: at
@@ -8960,7 +8989,11 @@ are tombstoned so ids stay stable.</li>
 <li><code>DependencyIndex</code>: bidirectional import graph with cached dependent counts and
 per-language resolution (Rust module paths, Python packages, JS/TS extensions
 and <code>index.*</code>).</li>
-<li><code>FileMetadata</code>: per-file fast-ranking score, lowercase stem, display path.</li>
+<li><code>FileMetadata</code>: per-file fast-ranking score, and the root-qualified path
+and stem as offsets into the file’s path.</li>
+<li>One path per file: the file store interns each canonical path once as an
+<code>Arc&lt;Path&gt;</code>; <code>FileMetadata</code>, the dependency index’s path tables and the
+import lists hold that same allocation, never a copy.</li>
 </ul>
 <h3 id="scoring"><a class="header" href="#scoring">Scoring</a></h3>
 <p>All weights live in <code>src/search/ranking.rs</code> (<code>RankingWeights</code>, <code>FileScoreWeights</code>).
