@@ -118,7 +118,7 @@ cargo run --release --example ranking_quality -- … --explain 'struct Runtime' 
 ## Correctness against ripgrep
 
 Fast and well ranked is worthless if a match is missing. A backtest runs
-143 searches through fcs and through ripgrep on the same trees and fails on
+144 searches through fcs and through ripgrep on the same trees and fails on
 any line one finds and the other does not; see [Correctness against
 ripgrep](correctness.md) for how it works and how to extend it.
 

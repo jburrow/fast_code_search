@@ -358,6 +358,11 @@ mode = "regex"
 why = "$ before \\r\\n"
 
 [[query]]
+q = "one[^A-Za-z0-9_]"
+mode = "regex"
+why = "a negated class must not take in a CRLF line's \\r (rg --crlf); fcs matched `line one\\r` (a generated query found it)"
+
+[[query]]
 q = "^$"
 mode = "regex"
 why = "empty lines"

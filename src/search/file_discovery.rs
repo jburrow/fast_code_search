@@ -630,7 +630,18 @@ impl Iterator for FileDiscoveryIterator {
                         continue;
                     }
                     if !self.rules.accepts(&path) {
+                        // Skipped only for its size: still counted, so a
+                        // restart sees its folder hold a file the index
+                        // does not (see `DirStamp::files`).
+                        if let Some(recorder) = &mut self.recorder {
+                            if self.rules.accepts_with_size(&path, Some(0)) {
+                                recorder.count_file(&path);
+                            }
+                        }
                         continue;
+                    }
+                    if let Some(recorder) = &mut self.recorder {
+                        recorder.count_file(&path);
                     }
                     return Some(path);
                 }

@@ -2767,6 +2767,23 @@ impl SearchEngine {
     }
 
     /// Total number of recorded references across live files.
+    /// How many indexed files each folder holds, for a restart's check of
+    /// the saved folder stamps (`search::dir_stamps::plan_restart`).
+    pub(crate) fn indexed_files_per_dir(&self) -> rustc_hash::FxHashMap<PathBuf, u32> {
+        let mut counts: rustc_hash::FxHashMap<PathBuf, u32> = Default::default();
+        for id in self.file_store.live_ids() {
+            if let Some(dir) = self.file_store.get_path(id).and_then(Path::parent) {
+                match counts.get_mut(dir) {
+                    Some(n) => *n += 1,
+                    None => {
+                        counts.insert(dir.to_path_buf(), 1);
+                    }
+                }
+            }
+        }
+        counts
+    }
+
     pub fn reference_count(&self) -> usize {
         self.reference_cache.iter().map(Vec::len).sum()
     }

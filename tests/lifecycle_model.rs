@@ -655,3 +655,21 @@ fn changed_file_that_is_now_ignored_stays_out_after_a_restart() {
     ])
     .unwrap();
 }
+
+/// A file skipped for being too large is not in the load's stat pass, and
+/// cutting it down does not change its folder's time: the restart walk must
+/// still read the folder (it once skipped it, so the file never came back).
+#[test]
+fn file_cut_down_from_too_large_is_indexed_after_a_restart() {
+    replay(&[
+        Op::Lost(Box::new(Op::Oversize { file: 19 })),
+        Op::Restart,
+        Op::Save,
+        Op::Write {
+            file: 19,
+            lines: vec![vec![0]],
+        },
+        Op::Crash,
+    ])
+    .unwrap();
+}

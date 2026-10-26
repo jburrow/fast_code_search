@@ -102,6 +102,13 @@ exits, however it exits.
    it took 0.18 s where a full walk took 2.6 s with the file system cache
    warm, and 1.3 s where a full walk took 9.2 s with it cold.
 
+   A folder whose time matches is still read when the index holds a
+   different number of its files than the walk found eligible there. The
+   stat pass only checks indexed files, so a file skipped for being too
+   large, binary or unreadable would otherwise never be seen to change:
+   a file that was too large and is then cut down rewrites its contents,
+   not its folder. Such folders are read (one level) on every restart.
+
    A full walk happens instead when the configuration changed, the user's
    global excludes file (`core.excludesFile`) changed, a root is new, or
    the index has no stamps yet: a fresh build saves them once its walk

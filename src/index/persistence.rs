@@ -382,6 +382,13 @@ pub struct DirStamp {
     pub mtime_ns: u64,
     /// Fingerprint of the folder's ignore files (and `.git`'s presence).
     pub ignores: u64,
+    /// Files directly in the folder that the walk found eligible, counting
+    /// those it skipped for their size. A restart reads the folder again
+    /// when the index holds a different number of files from it: an
+    /// eligible file that is not indexed (too large, binary, unreadable)
+    /// is not in the load's stat pass, so only a read of its folder sees
+    /// it change.
+    pub files: u32,
 }
 
 /// The symbol name dictionary (`search::engine::symbol_names`), with file
@@ -423,7 +430,7 @@ const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 4 + 8;
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX08";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX09";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -441,7 +448,7 @@ impl PersistedIndex {
     /// 9: the symbol name dictionary is saved (`symbol_names`).
     /// 10: folder stamps are saved (`dir_stamps`).
     /// 11: checkpoints keep removed ids as empty slots (`dead_slots`).
-    pub const CURRENT_VERSION: u32 = 11;
+    pub const CURRENT_VERSION: u32 = 12;
 
     /// Create a new persisted index from the current state
     #[allow(clippy::too_many_arguments)]
@@ -598,16 +605,19 @@ impl PersistedIndex {
 
             // Header placeholder; the real one is written once the body
             // length and CRC are known.
-            let mut writer = std::io::BufWriter::new(&file);
-            writer
+            (&file)
                 .write_all(&[0u8; HEADER_LEN])
                 .with_context(|| err("header"))?;
 
-            let mut body = CrcWriter::new(writer);
+            // The buffer sits in front of the checksum, so the CRC runs
+            // over whole buffers: bincode writes a few bytes at a time, and
+            // per write the CRC's set-up cost more than its work (7% of a
+            // save's instructions, from B6's slicing-by-8 CRC).
+            let mut body = std::io::BufWriter::with_capacity(64 * 1024, CrcWriter::new(&file));
             bincode_opts()
                 .serialize_into(&mut body, self)
                 .with_context(|| err("metadata"))?;
-            let meta_len = body.written;
+            let meta_len = body.get_ref().written + body.buffer().len() as u64;
             for e in &dir {
                 body.write_all(&e.trigram.as_bytes())
                     .with_context(|| err("directory"))?;
@@ -623,14 +633,15 @@ impl PersistedIndex {
                     .with_context(|| err("posting lists"))?;
             }
             drop(entries);
-            let crc = body.crc();
-            let mut writer = body.inner;
 
-            // Flush the BufWriter explicitly so I/O errors (e.g. disk full) surface
-            // here instead of being silently swallowed when the writer is dropped.
+            // Flush explicitly so I/O errors (e.g. disk full) surface here
+            // instead of being silently swallowed when the writer is dropped.
             crate::faults::io("save.write", path).with_context(|| err("body"))?;
-            writer.flush().with_context(|| err("body"))?;
-            drop(writer);
+            let body = body
+                .into_inner()
+                .map_err(|e| e.into_error())
+                .with_context(|| err("body"))?;
+            let crc = body.crc();
 
             let mut header = Vec::with_capacity(HEADER_LEN);
             header.extend_from_slice(INDEX_MAGIC);
@@ -1309,6 +1320,7 @@ mod tests {
                 path: PathBuf::from("/golden/src"),
                 mtime_ns: 1_700_000_000_000_000_000,
                 ignores: 42,
+                files: 3,
             }],
         }
     }
@@ -1325,7 +1337,7 @@ mod tests {
     }
 
     fn golden_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v11.fcsidx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v12.fcsidx")
     }
 
     /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
@@ -1342,7 +1354,7 @@ mod tests {
         if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
             std::fs::write(golden_path(), &bytes).unwrap();
         }
-        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v11.fcsidx");
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v12.fcsidx");
         assert_eq!(&bytes[..8], INDEX_MAGIC);
         assert!(
             bytes == golden,

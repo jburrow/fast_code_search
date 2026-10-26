@@ -44,6 +44,7 @@ and offline `fcs` and requires identical hits (`tests/frontend_parity.rs`).
 | Regex dialect | Rust `regex` | Rust `regex` (PCRE2 with `-P`) | POSIX BRE/ERE (`-E`), PCRE with `-P` | POSIX BRE/ERE, PCRE with `-P` |
 | Byte order mark at the start of a file | ignored, so `^` matches line 1 | ignored (kept with `-E none`) | part of line 1, so `^` misses it | part of line 1, so `^` misses it |
 | `$` on a line ending in CRLF | matches before the `\r` | only with `--crlf` | no | no |
+| A class such as `[^a-z]` or `\s` at the end of a CRLF line | does not match the `\r` | only with `--crlf` | matches it | matches it |
 | Pattern that mentions `\n` | runs over the whole file and reports the line where the match starts | needs `-U` | not supported | not supported |
 | Case-insensitive folding | Unicode simple case folding: `Σ`, `σ` and `ς` are the same letter, so are `s` and the long `ſ`, `k` and the Kelvin sign `K`, the micro sign `µ` and `μ`; `ß` is not `ss` and `İ` is not `i` | the same | depends on the locale | depends on the locale |
 | Hidden files (`.github/`, `.env.example`) | searched | skipped unless `--hidden` | searched | searched if tracked |

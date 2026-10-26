@@ -98,6 +98,8 @@ pub(crate) struct StampRecorder {
     /// Folders that could not be stamped (too recent, unreadable): their
     /// parents must be read again on restart.
     untrusted: Vec<PathBuf>,
+    /// Eligible files the walk found, by folder (see [`DirStamp::files`]).
+    files: FxHashMap<PathBuf, u32>,
 }
 
 impl StampRecorder {
@@ -106,6 +108,15 @@ impl StampRecorder {
             started_ns: now_ns() + TEST_WALK_DELAY_NS.load(std::sync::atomic::Ordering::Relaxed),
             stamps: FxHashMap::default(),
             untrusted: Vec::new(),
+            files: FxHashMap::default(),
+        }
+    }
+
+    /// An eligible file the walk found (yielded, or skipped only for its
+    /// size).
+    pub(crate) fn count_file(&mut self, file: &Path) {
+        if let Some(dir) = file.parent() {
+            *self.files.entry(dir.to_path_buf()).or_default() += 1;
         }
     }
 
@@ -128,6 +139,7 @@ impl StampRecorder {
                 path: dir.to_path_buf(),
                 mtime_ns: mtime,
                 ignores,
+                files: 0,
             },
         );
     }
@@ -140,7 +152,10 @@ impl StampRecorder {
     /// The stamps, merged over `kept` (stamps still valid from before a
     /// restart walk). An untrusted folder is dropped, and every folder above
     /// it is marked to be read again, so a restart walk reaches it.
-    pub(crate) fn finish(self, kept: FxHashMap<PathBuf, DirStamp>) -> DirStamps {
+    pub(crate) fn finish(mut self, kept: FxHashMap<PathBuf, DirStamp>) -> DirStamps {
+        for (dir, stamp) in &mut self.stamps {
+            stamp.files = self.files.get(dir).copied().unwrap_or(0);
+        }
         let mut stamps = kept;
         stamps.extend(self.stamps);
         for path in &self.untrusted {
@@ -179,8 +194,14 @@ pub(crate) struct RestartPlan {
 
 /// The restart walk for `roots` from `saved`, or `None` when a full walk is
 /// needed: a root without a stamp (never walked completely), or a changed
-/// global excludes file.
-pub(crate) fn plan_restart(saved: &DirStamps, roots: &[PathBuf]) -> Option<RestartPlan> {
+/// global excludes file. `indexed` is how many files the index holds in
+/// each folder: a folder holding a different number than its stamp's
+/// eligible files is read again (see [`DirStamp::files`]).
+pub(crate) fn plan_restart(
+    saved: &DirStamps,
+    roots: &[PathBuf],
+    indexed: &FxHashMap<PathBuf, u32>,
+) -> Option<RestartPlan> {
     if saved.global != global_stamp() {
         tracing::info!("Global git excludes changed since the last walk; walking every folder");
         return None;
@@ -205,7 +226,10 @@ pub(crate) fn plan_restart(saved: &DirStamps, roots: &[PathBuf]) -> Option<Resta
             Ok(meta) if meta.is_dir() => {
                 if ignore_stamp(&d.path).0 != d.ignores {
                     State::Ignores
-                } else if d.mtime_ns == 0 || mtime_ns(&meta) != d.mtime_ns {
+                } else if d.mtime_ns == 0
+                    || mtime_ns(&meta) != d.mtime_ns
+                    || indexed.get(&d.path).copied().unwrap_or(0) != d.files
+                {
                     State::Changed
                 } else {
                     State::Same
@@ -263,8 +287,9 @@ pub fn restart_walk_for_bench(
     config: &crate::search::FileDiscoveryConfig,
     saved: &DirStamps,
     roots: &[PathBuf],
+    indexed: &FxHashMap<PathBuf, u32>,
 ) -> Option<usize> {
-    let plan = plan_restart(saved, roots)?;
+    let plan = plan_restart(saved, roots, indexed)?;
     Some(crate::search::FileDiscoveryIterator::for_restart(config, plan).count())
 }
 
@@ -298,8 +323,20 @@ mod tests {
         (files, walk.take_stamps().unwrap())
     }
 
+    /// Files per folder of an index holding every file `root`'s walk
+    /// yields now.
+    fn indexed(root: &Path) -> FxHashMap<PathBuf, u32> {
+        let mut counts = FxHashMap::default();
+        for file in FileDiscoveryIterator::new(&config(root)) {
+            *counts
+                .entry(file.parent().unwrap().to_path_buf())
+                .or_default() += 1;
+        }
+        counts
+    }
+
     fn restart_walk(root: &Path, saved: &DirStamps) -> (BTreeSet<PathBuf>, DirStamps) {
-        let plan = plan_restart(saved, &[root.to_path_buf()]).expect("a plan");
+        let plan = plan_restart(saved, &[root.to_path_buf()], &indexed(root)).expect("a plan");
         let mut walk = FileDiscoveryIterator::for_restart(&config(root), plan);
         walk.set_recorder(settled());
         let files = (&mut walk).collect();
@@ -363,7 +400,7 @@ mod tests {
         std::fs::write(root.join("a/b/new.rs"), "x\n").unwrap();
         std::fs::create_dir_all(root.join("c/d/e")).unwrap();
         std::fs::write(root.join("c/d/e/deep.rs"), "x\n").unwrap();
-        let plan = plan_restart(&saved, std::slice::from_ref(&root)).unwrap();
+        let plan = plan_restart(&saved, std::slice::from_ref(&root), &indexed(&root)).unwrap();
         let mut changed = plan.changed.clone();
         changed.sort();
         assert_eq!(changed, vec![root.join("a/b"), root.join("c")]);
@@ -398,7 +435,7 @@ mod tests {
         // Edited in place: a/'s own time may not move, its ignore file's does.
         tick();
         std::fs::write(root.join("a/.gitignore"), "nothing\n").unwrap();
-        let plan = plan_restart(&saved, std::slice::from_ref(&root)).unwrap();
+        let plan = plan_restart(&saved, std::slice::from_ref(&root), &indexed(&root)).unwrap();
         assert_eq!(plan.subtrees, vec![root.join("a")]);
         let (files, _) = restart_walk(&root, &saved);
         assert!(files.contains(&root.join("a/b/y.rs")), "{files:?}");
@@ -413,7 +450,7 @@ mod tests {
         let stamps = walk.take_stamps().unwrap();
         assert!(stamps.dirs.is_empty(), "{:?}", stamps.dirs);
         // No root stamp: the next start walks everything.
-        assert!(plan_restart(&stamps, std::slice::from_ref(&root)).is_none());
+        assert!(plan_restart(&stamps, std::slice::from_ref(&root), &indexed(&root)).is_none());
 
         // One recent folder below settled ones: it is dropped and the
         // folders above it are marked to be read again.
@@ -427,19 +464,56 @@ mod tests {
         assert_eq!(time(root.clone()), Some(0));
         assert_eq!(time(root.join("a")), Some(0));
         assert!(time(root.join("c")).unwrap() > 0);
-        let plan = plan_restart(&stamps, std::slice::from_ref(&root)).unwrap();
+        // (The recorder saw no files, so neither does this index.)
+        let plan =
+            plan_restart(&stamps, std::slice::from_ref(&root), &FxHashMap::default()).unwrap();
         let mut changed = plan.changed.clone();
         changed.sort();
         assert_eq!(changed, vec![root.clone(), root.join("a")]);
+    }
+
+    /// A file skipped for its size is not indexed, so the load's stat pass
+    /// never checks it, and cutting it down rewrites the file, not its
+    /// folder. Its folder must be read again on restart all the same.
+    #[test]
+    fn a_folder_with_a_file_too_large_to_index_is_read_again() {
+        let (_t, root) = tree();
+        std::fs::write(root.join("a/big.rs"), "x".repeat(100)).unwrap();
+        let cfg = FileDiscoveryConfig {
+            max_file_size: Some(64),
+            ..config(&root)
+        };
+        let mut walk = FileDiscoveryIterator::new(&cfg);
+        walk.set_recorder(settled());
+        let files: BTreeSet<PathBuf> = (&mut walk).collect();
+        let saved = walk.take_stamps().unwrap();
+        assert!(!files.contains(&root.join("a/big.rs")));
+        let stamp = |p: PathBuf| saved.dirs.iter().find(|d| d.path == p).unwrap().files;
+        assert_eq!(stamp(root.join("a")), 2, "the skipped file is counted");
+        assert_eq!(stamp(root.join("c")), 1);
+
+        // The index holds what the walk yielded: a/ holds one file fewer.
+        let mut held = FxHashMap::default();
+        for file in &files {
+            *held
+                .entry(file.parent().unwrap().to_path_buf())
+                .or_default() += 1;
+        }
+        std::fs::write(root.join("a/big.rs"), "fn big() {}\n").unwrap();
+        let plan = plan_restart(&saved, std::slice::from_ref(&root), &held).unwrap();
+        assert_eq!(plan.changed, vec![root.join("a")]);
+        let mut walk = FileDiscoveryIterator::for_restart(&cfg, plan);
+        let files: BTreeSet<PathBuf> = (&mut walk).collect();
+        assert!(files.contains(&root.join("a/big.rs")), "{files:?}");
     }
 
     #[test]
     fn a_full_walk_is_needed_when_the_global_excludes_change() {
         let (_t, root) = tree();
         let (_, mut saved) = full_walk(&root);
-        assert!(plan_restart(&saved, std::slice::from_ref(&root)).is_some());
+        assert!(plan_restart(&saved, std::slice::from_ref(&root), &indexed(&root)).is_some());
         saved.global ^= 1;
-        assert!(plan_restart(&saved, std::slice::from_ref(&root)).is_none());
+        assert!(plan_restart(&saved, std::slice::from_ref(&root), &indexed(&root)).is_none());
     }
 
     #[test]
