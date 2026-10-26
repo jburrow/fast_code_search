@@ -1,18 +1,18 @@
 {
  "schema": 1,
- "generated_at": "2026-10-26T17:02:00Z",
- "commit": "3387c8171377bb4b03d834f4cd9498df2f81d0bb",
- "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40359066349",
+ "generated_at": "2026-10-26T20:18:21Z",
+ "commit": "603b4e5a2010e76263cb6bec99634bb42677b649",
+ "run_url": "https://github.com/jburrow/fast_code_search/actions/runs/40390956578",
  "corpus": {
   "build": {
-   "build_ns": 4975212094,
-   "discovery_ns": 68047663,
-   "files_per_second": 1259.845787792459,
-   "index_bytes": 25951629,
-   "load_ns": 145006244,
-   "rss_after_bytes": 102248448,
-   "rss_before_bytes": 9179136,
-   "save_ns": 158241356
+   "build_ns": 5265070881,
+   "discovery_ns": 117992046,
+   "files_per_second": 1190.4872966894443,
+   "index_bytes": 25951637,
+   "load_ns": 92841831,
+   "rss_after_bytes": 101822464,
+   "rss_before_bytes": 8986624,
+   "save_ns": 227712888
   },
   "corpus": {
    "bytes": 41382284,
@@ -30,17 +30,18 @@
   "machine": {
    "arch": "x86_64",
    "ci": true,
-   "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+   "cpu_model": "AMD EPYC 7763 64-Core Processor",
    "fast_code_search": "0.19.0",
-   "git_sha": "3387c81713",
+   "git_sha": "603b4e5a20",
    "logical_cpus": 4,
-   "mem_total_bytes": 16765378560,
+   "mem_total_bytes": 16766414848,
    "os": "Ubuntu 24.04.5 LTS",
-   "runner": "GitHub Actions 1000011260",
+   "runner": "GitHub Actions 1000011322",
    "rustc": "1.89",
-   "timestamp_utc": "2026-10-26T16:56:19Z"
+   "timestamp_utc": "2026-10-26T20:13:42Z"
   },
   "memory": {
+   "mapped_postings_bytes": 0,
    "parts": [
     {
      "bytes": 26060724,
@@ -94,80 +95,80 @@
    {
     "detail": "50 results",
     "name": "text/common",
-    "p50_ns": 22994602,
-    "p95_ns": 24473517
+    "p50_ns": 25924768,
+    "p95_ns": 28647080
    },
    {
     "detail": "50 results",
     "name": "text/identifier",
-    "p50_ns": 6845372,
-    "p95_ns": 7327983
+    "p50_ns": 7798105,
+    "p95_ns": 8247429
    },
    {
     "detail": "0 results",
     "name": "text/no_match",
-    "p50_ns": 523,
-    "p95_ns": 602
+    "p50_ns": 581,
+    "p95_ns": 761
    },
    {
     "detail": "50 results",
     "name": "text/short",
-    "p50_ns": 24130130,
-    "p95_ns": 24678920
+    "p50_ns": 30518174,
+    "p95_ns": 31177442
    },
    {
     "detail": "50 results",
     "name": "text/full_rank",
-    "p50_ns": 22569622,
-    "p95_ns": 23559802
+    "p50_ns": 26429576,
+    "p95_ns": 30049243
    },
    {
     "detail": "50 results",
     "name": "text/filtered",
-    "p50_ns": 10263739,
-    "p95_ns": 10772788
+    "p50_ns": 11266766,
+    "p95_ns": 12323113
    },
    {
     "detail": "50 results",
     "name": "regex/literal",
-    "p50_ns": 20475980,
-    "p95_ns": 20988837
+    "p50_ns": 26138013,
+    "p95_ns": 27660848
    },
    {
     "detail": "50 results",
     "name": "regex/case_insensitive",
-    "p50_ns": 2997311,
-    "p95_ns": 3132620
+    "p50_ns": 3293416,
+    "p95_ns": 3445672
    },
    {
     "detail": "50 results (budget)",
     "name": "regex/no_literal",
-    "p50_ns": 35599230,
-    "p95_ns": 37046817
+    "p50_ns": 40988702,
+    "p95_ns": 43166910
    },
    {
     "detail": "50 results",
     "name": "symbol/exact",
-    "p50_ns": 3235479,
-    "p95_ns": 3455695
+    "p50_ns": 3935945,
+    "p95_ns": 4274372
    },
    {
     "detail": "50 results",
     "name": "symbol/prefix",
-    "p50_ns": 2078562,
-    "p95_ns": 2181807
+    "p50_ns": 2377874,
+    "p95_ns": 2544507
    },
    {
     "detail": "50 results",
     "name": "symbol/references",
-    "p50_ns": 2063479,
-    "p95_ns": 2403582
+    "p50_ns": 2427510,
+    "p95_ns": 2546431
    },
    {
     "detail": "20 files",
     "name": "incremental/modify_file",
-    "p50_ns": 5825367,
-    "p95_ns": 49843338
+    "p50_ns": 6976576,
+    "p95_ns": 56182656
    }
   ],
   "schema": 1
@@ -509,7 +510,7 @@
  "comparison": {
   "schema": 1,
   "machine": {
-   "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+   "cpu_model": "AMD EPYC 7763 64-Core Processor",
    "logical_cpus": 4
   },
   "tree": "tokio+django",
@@ -525,64 +526,64 @@
     "label": "common word",
     "query": "return",
     "kind": "literal",
-    "ripgrep_ms": 50.123,
-    "ugrep_ms": 61.2649,
-    "fcs_client_ms": 27.7681,
-    "fcs_engine_ms": 27.704448
+    "ripgrep_ms": 98.9351,
+    "ugrep_ms": 101.234,
+    "fcs_client_ms": 44.126,
+    "fcs_engine_ms": 32.576871
    },
    {
     "label": "identifier",
     "query": "Config",
     "kind": "literal",
-    "ripgrep_ms": 44.6821,
-    "ugrep_ms": 58.3789,
-    "fcs_client_ms": 11.5808,
-    "fcs_engine_ms": 9.59979
+    "ripgrep_ms": 63.6611,
+    "ugrep_ms": 88.344,
+    "fcs_client_ms": 13.5588,
+    "fcs_engine_ms": 11.109894
    },
    {
     "label": "rare identifier",
     "query": "xq9zv_nothing_here",
     "kind": "literal",
-    "ripgrep_ms": 40.8101,
-    "ugrep_ms": 58.4099,
-    "fcs_client_ms": 3.90088,
-    "fcs_engine_ms": 0.010003000000000001
+    "ripgrep_ms": 59.5679,
+    "ugrep_ms": 92.646,
+    "fcs_client_ms": 5.03101,
+    "fcs_engine_ms": 0.012173
    },
    {
     "label": "two words",
     "query": "fn main",
     "kind": "literal",
-    "ripgrep_ms": 41.9519,
-    "ugrep_ms": 58.543,
-    "fcs_client_ms": 6.24609,
-    "fcs_engine_ms": 2.6400400000000004
+    "ripgrep_ms": 60.3352,
+    "ugrep_ms": 87.854,
+    "fcs_client_ms": 7.33984,
+    "fcs_engine_ms": 3.098328
    },
    {
     "label": "regex with literal",
     "query": "fn\\s+\\w+\\(",
     "kind": "regex",
-    "ripgrep_ms": 48.145,
-    "ugrep_ms": 86.9099,
-    "fcs_client_ms": 25.6089,
-    "fcs_engine_ms": 25.255951
+    "ripgrep_ms": 68.5972,
+    "ugrep_ms": 120.921,
+    "fcs_client_ms": 33.3489,
+    "fcs_engine_ms": 31.786513000000003
    },
    {
     "label": "regex, no literal",
     "query": "[a-z]+_[a-z]+_[a-z]+\\(",
     "kind": "regex",
-    "ripgrep_ms": 60.928,
-    "ugrep_ms": 105.347,
-    "fcs_client_ms": 41.3149,
-    "fcs_engine_ms": 40.708800000000004
+    "ripgrep_ms": 84.561,
+    "ugrep_ms": 137.858,
+    "fcs_client_ms": 45.0291,
+    "fcs_engine_ms": 44.586303
    },
    {
     "label": "case-insensitive",
     "query": "(?i)unwrap\\(",
     "kind": "regex",
-    "ripgrep_ms": 42.6938,
-    "ugrep_ms": 57.804,
-    "fcs_client_ms": 7.5249,
-    "fcs_engine_ms": 4.29638
+    "ripgrep_ms": 60.865,
+    "ugrep_ms": 87.7021,
+    "fcs_client_ms": 8.95679,
+    "fcs_engine_ms": 5.131305
    }
   ]
  }
