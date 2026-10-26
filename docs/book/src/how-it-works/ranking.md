@@ -93,7 +93,9 @@ and example paths, ×5 when the query matches the file's name. It stops
 when it has collected enough matches to rank the page (the match budget,
 see [Search limits](../benchmarks/search-limits.md)), so for a word with a
 million hits page 1 is the best of the best-looking files, not of the
-first folders on disk. `rank=auto` and `rank=fast` also stop after
+first folders on disk. The order is settled only as far as the search
+reads (a partial selection, then a sort of that part), so a search that
+stops a thousand files in does not sort the other 300,000. `rank=auto` and `rank=fast` also stop after
 `search.fast_rank_files` files when the server sets one (no limit by
 default; a request may ask for more with `max_files`, up to
 `search.max_fast_rank_files`); `rank=full` never stops at a file limit.
