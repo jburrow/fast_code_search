@@ -4603,6 +4603,7 @@ fn walkdir_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out.sort();
     out
+}
 
 /// The path diet: metadata names are slices of the file store's one path,
 /// and match exactly what the owned copies did (`make_display_path`, the
@@ -4620,7 +4621,10 @@ fn file_metadata_slices_the_stored_path() {
         ".hidden",
         "a.b.c.txt",
         "deep/dir/README",
+        "a_Stem_Longer_Than_Twenty_Three_Bytes.rs",
+        "Ünïcödé_Stem_Longer_Than_Twenty_Three.rs",
     ];
+    assert_eq!(std::mem::size_of::<FileMetadata>(), 64);
     for n in names {
         let p = root.join(n);
         fs::create_dir_all(p.parent().unwrap()).unwrap();

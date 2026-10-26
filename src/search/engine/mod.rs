@@ -1122,11 +1122,13 @@ impl RankMode {
 /// Pre-computed file metadata for fast ranking without file reads.
 /// Populated once during finalize(), used during search.
 ///
-/// The root-qualified path and the lowercase stem are slices of the file's
-/// one interned path (shared with the file store), not copies of it: on
-/// 300,000 files the copies cost two allocations per file. Only names that
-/// are not spelled inside the path (Windows separators, a path that is not
-/// UTF-8, a stem with non-ASCII letters) are kept as owned text.
+/// The root-qualified path is a slice of the file's one interned path
+/// (shared with the file store), not a copy: on 300,000 files the copies
+/// cost an allocation per file. Only a path not spelled inside it (Windows
+/// separators, a path that is not UTF-8) is kept as owned text. The
+/// lowercase stem is kept inline: every candidate of a search reads it, and
+/// reading it through the path cost a cache miss per file (text/short
+/// +48% on 302,000 files).
 #[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
     /// The file's canonical path, the same allocation as the file store's.
@@ -1142,10 +1144,10 @@ pub struct FileMetadata {
     /// results starts: 0, or past `<root name>/` when the root folder's
     /// name is hidden.
     pub display_start: u32,
-    /// Byte range in `path` of the file name's stem (ASCII only; any other
-    /// stem is lowercased into `spelled`).
-    stem_start: u32,
-    stem_len: u32,
+    /// The file name's stem, lowercased, when it fits (85% of the 302,000
+    /// files of the real corpus); a longer one is in `spelled`.
+    stem: [u8; STEM_INLINE],
+    stem_len: u8,
     /// Number of symbol definitions in this file
     pub symbol_count: u16,
     /// Whether file is in src/ or lib/ directory
@@ -1154,7 +1156,11 @@ pub struct FileMetadata {
     pub is_test_path: bool,
 }
 
-/// [`FileMetadata`] names that are not a slice of the file's path.
+/// Bytes of lowercase stem kept inside [`FileMetadata`] (with its length
+/// byte, the struct stays 64 bytes).
+const STEM_INLINE: usize = 23;
+
+/// [`FileMetadata`] names that are not a slice of the file's path or inline.
 #[derive(Debug, Clone, Default)]
 struct SpelledNames {
     qualified: Option<Box<str>>,
@@ -1228,23 +1234,19 @@ impl FileMetadata {
                 0
             }
         };
-        // The stem, matched case-insensitively at search time: an ASCII
-        // stem is matched in place, any other is lowercased once here.
-        let stem = path
+        // Pre-compute lowercase stem for efficient filename matching during search
+        let lowercase_stem = path
             .file_stem()
             .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
             .unwrap_or_default();
-        let (mut stem_start, mut stem_len) = (0, 0);
-        match text {
-            Some(t) if !stem.is_empty() && stem.is_ascii() && t.len() <= u32::MAX as usize => {
-                // `file_stem` borrows from the path, so this is its offset.
-                let offset = stem.as_ptr() as usize - t.as_ptr() as usize;
-                debug_assert_eq!(&t[offset..offset + stem.len()], stem);
-                stem_start = offset as u32;
-                stem_len = stem.len() as u32;
-            }
-            _ if !stem.is_empty() => spelled.lowercase_stem = Some(stem.to_lowercase().into()),
-            _ => {}
+        let mut stem = [0u8; STEM_INLINE];
+        let mut stem_len = 0;
+        if lowercase_stem.len() <= STEM_INLINE {
+            stem[..lowercase_stem.len()].copy_from_slice(lowercase_stem.as_bytes());
+            stem_len = lowercase_stem.len() as u8;
+        } else {
+            spelled.lowercase_stem = Some(lowercase_stem.into_boxed_str());
         }
         let spelled = (spelled.qualified.is_some() || spelled.lowercase_stem.is_some())
             .then(|| Box::new(spelled));
@@ -1255,7 +1257,7 @@ impl FileMetadata {
             base_score,
             qualified_start,
             display_start: display_start as u32,
-            stem_start,
+            stem,
             stem_len,
             symbol_count: symbol_count.min(u16::MAX as usize) as u16,
             is_src_lib,
@@ -1313,15 +1315,10 @@ impl FileMetadata {
         {
             return stem.contains(query_lower);
         }
-        let Some(p) = self.path.as_deref() else {
-            return false;
-        };
-        let start = self.stem_start as usize;
-        let stem = &p.as_os_str().as_encoded_bytes()[start..start + self.stem_len as usize];
-        // ASCII: lowercasing byte by byte is what `to_lowercase` does.
+        // Bytes of UTF-8: a byte substring is a `str` substring.
+        let stem = &self.stem[..self.stem_len as usize];
         let q = query_lower.as_bytes();
-        q.is_empty()
-            || (q.len() <= stem.len() && stem.windows(q.len()).any(|w| w.eq_ignore_ascii_case(q)))
+        q.is_empty() || (q.len() <= stem.len() && stem.windows(q.len()).any(|w| w == q))
     }
 
     /// Heap bytes this entry owns (its path is the file store's).
