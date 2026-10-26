@@ -299,8 +299,8 @@ impl SearchEngine {
                 continue;
             };
             let (qualified, start) = match self.file_metadata.get(id as usize) {
-                Some(m) if !m.display_path.is_empty() => {
-                    (m.display_path.clone(), m.display_start as usize)
+                Some(m) if m.is_computed() => {
+                    (m.qualified_path().to_string(), m.display_start as usize)
                 }
                 _ => self.qualified_display_path(&file.path),
             };

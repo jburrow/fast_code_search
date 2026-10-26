@@ -1425,8 +1425,8 @@ fn test_filename_content_separator_prevents_trigram_bleed() {
     // not for result content.
 }
 
-/// Fix #12: FileMetadata should pre-compute lowercase_stem at index time
-/// and use it for query matching, avoiding per-query path allocation.
+/// Fix #12: FileMetadata matches the lowercase stem without a per-query
+/// path allocation.
 #[test]
 fn test_file_metadata_precomputed_lowercase_stem() {
     let temp_dir = TempDir::new().unwrap();
@@ -1439,10 +1439,9 @@ fn test_file_metadata_precomputed_lowercase_stem() {
 
     // Verify the metadata was computed with the correct lowercase stem
     let metadata = engine.get_file_metadata(0);
-    assert_eq!(
-        metadata.lowercase_stem, "mymodule",
-        "lowercase_stem should be pre-computed at index time"
-    );
+    assert!(metadata.stem_contains("mymodule"));
+    assert!(metadata.stem_contains("modu"));
+    assert!(!metadata.stem_contains("mymodule.rs"));
 
     // Query score should boost when query matches the filename stem
     let score_match = metadata.query_score("mymodule");
@@ -4604,4 +4603,60 @@ fn walkdir_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out.sort();
     out
+
+/// The path diet: metadata names are slices of the file store's one path,
+/// and match exactly what the owned copies did (`make_display_path`, the
+/// root-qualified path, `stem.to_lowercase().contains(q)`).
+#[test]
+fn file_metadata_slices_the_stored_path() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("proj");
+    let names = [
+        "src/MyModule.rs",
+        "src/lower.py",
+        "Ärger.rs",
+        "docs/ÉCOLE.md",
+        "Makefile",
+        ".hidden",
+        "a.b.c.txt",
+        "deep/dir/README",
+    ];
+    for n in names {
+        let p = root.join(n);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, "x\n").unwrap();
+    }
+    for show_root in [true, false] {
+        let mut engine = SearchEngine::new();
+        engine.show_root_name = show_root;
+        engine.add_root_path(&root);
+        for n in names {
+            engine.index_file(root.join(n)).unwrap();
+        }
+        engine.finalize();
+        for id in 0..names.len() as u32 {
+            let file = engine.file_store.get(id).unwrap();
+            let meta = engine.get_file_metadata(id);
+            assert!(std::sync::Arc::ptr_eq(
+                meta.path.as_ref().unwrap(),
+                &file.path
+            ));
+            let qualified = engine.root_qualified_path(&file.path);
+            assert_eq!(meta.qualified_path(), qualified);
+            assert_eq!(meta.qualified_bytes(), qualified.as_bytes());
+            assert_eq!(meta.shown_path(), engine.make_display_path(&file.path));
+            let stem = file
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_lowercase();
+            for q in [
+                "", "my", "mymodule", "module", "lower", "ärger", "école", "makefile", "hidden",
+                "a.b", "readme", "x",
+            ] {
+                assert_eq!(meta.stem_contains(q), stem.contains(q), "{stem} / {q}");
+            }
+        }
+    }
 }

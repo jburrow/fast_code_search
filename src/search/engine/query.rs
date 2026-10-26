@@ -333,8 +333,8 @@ impl SearchEngine {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| {
                     self.get_file_metadata(a.1)
-                        .display_path
-                        .cmp(&self.get_file_metadata(b.1).display_path)
+                        .qualified_bytes()
+                        .cmp(self.get_file_metadata(b.1).qualified_bytes())
                 })
                 .then_with(|| a.1.cmp(&b.1))
         });
@@ -750,9 +750,7 @@ impl SearchEngine {
         let mut result = roaring::RoaringBitmap::new();
         for doc_id in candidates.iter() {
             let keep = match self.file_metadata.get(doc_id as usize) {
-                Some(meta) if !meta.display_path.is_empty() => {
-                    path_filter.matches(&meta.display_path)
-                }
+                Some(meta) if meta.is_computed() => path_filter.matches(meta.qualified_path()),
                 _ => self
                     .file_store
                     .get(doc_id)
@@ -772,16 +770,14 @@ impl SearchEngine {
     /// candidate file per search.
     pub(super) fn path_signals_for(&self, doc_id: u32, path: &Path) -> (bool, bool) {
         match self.file_metadata.get(doc_id as usize) {
-            Some(meta) if !meta.display_path.is_empty() => (meta.is_src_lib, meta.is_test_path),
+            Some(meta) if meta.is_computed() => (meta.is_src_lib, meta.is_test_path),
             _ => crate::search::ranking::path_signals(&self.root_relative_path(path)),
         }
     }
 
     pub(super) fn display_path_for(&self, doc_id: u32, path: &Path) -> String {
         match self.file_metadata.get(doc_id as usize) {
-            Some(meta) if !meta.display_path.is_empty() => {
-                meta.display_path[meta.display_start as usize..].to_string()
-            }
+            Some(meta) if meta.is_computed() => meta.shown_path().to_string(),
             _ => self.make_display_path(path),
         }
     }

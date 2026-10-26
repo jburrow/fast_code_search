@@ -50,7 +50,7 @@ impl SearchEngine {
             + self
                 .file_metadata
                 .iter()
-                .map(|m| h::string(&m.lowercase_stem) + h::string(&m.display_path))
+                .map(FileMetadata::spelled_heap_bytes)
                 .sum::<u64>()
             + h::vec(&self.indexed_meta)
             + h::bitmap(&self.racy_files);
@@ -67,8 +67,9 @@ impl SearchEngine {
             + self.ref_names.iter().map(h::string).sum::<u64>()
             + h::map(&self.ref_name_ids)
             + self.ref_name_ids.keys().map(h::string).sum::<u64>();
-        let spec = |(p, v): &(std::path::PathBuf, Vec<String>)| {
-            h::path_buf(p) + h::vec(v) + v.iter().map(h::string).sum::<u64>()
+        // Import paths are the file store's (counted there).
+        let spec = |(_, v): &(std::sync::Arc<std::path::Path>, Vec<String>)| {
+            h::vec(v) + v.iter().map(h::string).sum::<u64>()
         };
         let imports = h::map(&self.import_specs)
             + self.import_specs.values().map(spec).sum::<u64>()
@@ -82,14 +83,14 @@ impl SearchEngine {
             + self
                 .pending_imports
                 .iter()
-                .map(|(_, p, v)| h::path_buf(p) + h::vec(v) + v.iter().map(h::string).sum::<u64>())
+                .map(|(_, _, v)| h::vec(v) + v.iter().map(h::string).sum::<u64>())
                 .sum::<u64>()
             + h::vec(&self.waiting_imports)
             + self
                 .waiting_imports
                 .iter()
                 .flatten()
-                .map(|(_, p, s)| h::path_buf(p) + h::string(s))
+                .map(|(_, _, s)| h::string(s))
                 .sum::<u64>()
             + h::map(&self.waiting_keys)
             + self

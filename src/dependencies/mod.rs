@@ -10,6 +10,7 @@ pub mod scope;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Tracks import/dependency relationships between files in the index.
 ///
@@ -25,12 +26,14 @@ pub struct DependencyIndex {
     /// Cached import counts for fast scoring lookups
     import_counts: FxHashMap<u32, u32>,
     /// Map from normalized path to file_id for import resolution
-    path_to_id: HashMap<PathBuf, u32>,
+    /// The three path tables share one allocation per file, normally the
+    /// file store's own.
+    path_to_id: HashMap<Arc<Path>, u32>,
     /// Inverted index: filename -> list of full paths (for fast non-relative import lookup)
-    filename_to_paths: HashMap<String, Vec<PathBuf>>,
+    filename_to_paths: HashMap<String, Vec<Arc<Path>>>,
     /// Reverse of `path_to_id`, so removal and re-registration are O(1)
     /// instead of a full scan (and so `filename_to_paths` can be pruned).
-    id_to_path: FxHashMap<u32, PathBuf>,
+    id_to_path: FxHashMap<u32, Arc<Path>>,
     /// Directory -> how many indexed files sit directly in it. A directory
     /// missing here holds no indexed file of its own (it is outside the
     /// index, or only holds folders).
@@ -272,16 +275,15 @@ impl DependencyIndex {
             + h::map(&self.imported_by)
             + self.imported_by.values().map(h::set).sum::<u64>()
             + h::map(&self.import_counts);
+        // The paths themselves are the file store's (counted there).
         let paths = h::map(&self.path_to_id)
-            + self.path_to_id.keys().map(h::path_buf).sum::<u64>()
             + h::map(&self.filename_to_paths)
             + self
                 .filename_to_paths
                 .iter()
-                .map(|(k, v)| h::string(k) + h::vec(v) + v.iter().map(h::path_buf).sum::<u64>())
+                .map(|(k, v)| h::string(k) + h::vec(v))
                 .sum::<u64>()
             + h::map(&self.id_to_path)
-            + self.id_to_path.values().map(h::path_buf).sum::<u64>()
             + h::map(&self.files_per_dir)
             + self.files_per_dir.keys().map(h::path_buf).sum::<u64>()
             + h::map(&self.files_below)
@@ -308,13 +310,14 @@ impl DependencyIndex {
             // Fallback to the path as-is if canonicalization fails
             Err(_) => path.to_path_buf(),
         };
-        self.register_canonical_file(file_id, stored_path);
+        self.register_canonical_file(file_id, stored_path.into());
     }
 
     /// [`Self::register_file`] for a path that is already canonical (the
     /// file store's key, a persisted path): no file-system access at all.
-    /// Restoring a 61k-file index spent 16 s in realpath walks here.
-    pub fn register_canonical_file(&mut self, file_id: u32, stored_path: PathBuf) {
+    /// Restoring a 61k-file index spent 16 s in realpath walks here. Pass
+    /// the file store's interned path so the tables hold no copy of it.
+    pub fn register_canonical_file(&mut self, file_id: u32, stored_path: Arc<Path>) {
         if self.path_to_id.get(&stored_path) == Some(&file_id) {
             return;
         }
@@ -424,7 +427,7 @@ impl DependencyIndex {
         import_path: &str,
     ) -> Option<u32> {
         let resolved = self.resolve_import_path(from_file_path, import_path)?;
-        let to_file_id = self.path_to_id.get(&resolved).copied()?;
+        let to_file_id = self.path_to_id.get(resolved.as_path()).copied()?;
         self.add_import(from_file_id, to_file_id);
         Some(to_file_id)
     }
@@ -509,7 +512,7 @@ impl DependencyIndex {
             return None;
         }
         let normalized = normalize_lexically(candidate);
-        if normalized != candidate && self.path_to_id.contains_key(&normalized) {
+        if normalized != candidate && self.path_to_id.contains_key(normalized.as_path()) {
             return Some(normalized);
         }
         None
@@ -553,7 +556,7 @@ impl DependencyIndex {
         let root = file
             .ancestors()
             .skip(1)
-            .find(|d| self.path_to_id.contains_key(&d.join("Cargo.toml")))?;
+            .find(|d| self.path_to_id.contains_key(d.join("Cargo.toml").as_path()))?;
         if let Some(cached) = self
             .rust_crate_names
             .read()
@@ -1294,7 +1297,7 @@ impl DependencyIndex {
 
     /// Canonical path a file id is registered under.
     pub fn path_of(&self, file_id: u32) -> Option<&Path> {
-        self.id_to_path.get(&file_id).map(PathBuf::as_path)
+        self.id_to_path.get(&file_id).map(|p| &**p)
     }
 
     /// Ids of every registered file.
@@ -1320,7 +1323,7 @@ impl DependencyIndex {
         if from.file_name().is_some_and(|n| n == "main.rs")
             && from
                 .parent()
-                .is_some_and(|d| self.path_to_id.contains_key(&d.join("lib.rs")))
+                .is_some_and(|d| self.path_to_id.contains_key(d.join("lib.rs").as_path()))
         {
             return false;
         }

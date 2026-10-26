@@ -748,7 +748,7 @@ struct ImportResolutionResult {
     /// ID of the file that has the imports
     file_id: u32,
     /// Path to the file
-    file_path: PathBuf,
+    file_path: std::sync::Arc<Path>,
     /// Import paths that could not be resolved (target not indexed yet)
     unresolved_paths: Vec<String>,
     /// Successfully resolved edges (from_id, to_id)
@@ -1121,34 +1121,54 @@ impl RankMode {
 
 /// Pre-computed file metadata for fast ranking without file reads.
 /// Populated once during finalize(), used during search.
+///
+/// The root-qualified path and the lowercase stem are slices of the file's
+/// one interned path (shared with the file store), not copies of it: on
+/// 300,000 files the copies cost two allocations per file. Only names that
+/// are not spelled inside the path (Windows separators, a path that is not
+/// UTF-8, a stem with non-ASCII letters) are kept as owned text.
 #[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
+    /// The file's canonical path, the same allocation as the file store's.
+    /// `None` until computed.
+    path: Option<std::sync::Arc<Path>>,
+    /// The names that could not be sliced from `path`.
+    spelled: Option<Box<SpelledNames>>,
+    /// Pre-computed base score for ranking
+    pub base_score: f32,
+    /// Byte offset in `path` where the root-qualified path starts.
+    qualified_start: u32,
+    /// Byte offset in the root-qualified path where the path shown in
+    /// results starts: 0, or past `<root name>/` when the root folder's
+    /// name is hidden.
+    pub display_start: u32,
+    /// Byte range in `path` of the file name's stem (ASCII only; any other
+    /// stem is lowercased into `spelled`).
+    stem_start: u32,
+    stem_len: u32,
     /// Number of symbol definitions in this file
     pub symbol_count: u16,
     /// Whether file is in src/ or lib/ directory
     pub is_src_lib: bool,
     /// Whether the file is under a test, example, mock or fixture folder.
     pub is_test_path: bool,
-    /// Pre-computed base score for ranking
-    pub base_score: f32,
-    /// Lowercase filename stem for efficient query matching (avoids per-query allocation)
-    pub lowercase_stem: String,
-    /// Root-qualified path (`<root name>/<relative>`), precomputed so path
-    /// filters and result construction never allocate per candidate. Path
-    /// filters always match this form.
-    pub display_path: String,
-    /// Byte offset in `display_path` where the path shown in results starts:
-    /// 0, or past `<root name>/` when the root folder's name is hidden.
-    pub display_start: u32,
+}
+
+/// [`FileMetadata`] names that are not a slice of the file's path.
+#[derive(Debug, Clone, Default)]
+struct SpelledNames {
+    qualified: Option<Box<str>>,
+    lowercase_stem: Option<Box<str>>,
 }
 
 impl FileMetadata {
     /// Compute metadata for a file at index time
     ///
-    /// `relative` is the path under its indexed root: the folders above the
-    /// root must not change a file's score.
+    /// `path` is the file store's interned path. `relative` is the path
+    /// under its indexed root: the folders above the root must not change a
+    /// file's score.
     fn compute(
-        path: &Path,
+        path: &std::sync::Arc<Path>,
         relative: &str,
         (display_path, display_start): (String, usize),
         symbol_count: usize,
@@ -1195,22 +1215,122 @@ impl FileMetadata {
             base_score *= w.test_example_penalty;
         }
 
-        // Pre-compute lowercase stem for efficient filename matching during search
-        let lowercase_stem = path
+        let text = path.to_str();
+        let mut spelled = SpelledNames::default();
+        // The qualified path is the end of the canonical path whenever the
+        // separators are `/` and the path is UTF-8.
+        let qualified_start = match text {
+            Some(t) if t.ends_with(display_path.as_str()) && t.len() <= u32::MAX as usize => {
+                (t.len() - display_path.len()) as u32
+            }
+            _ => {
+                spelled.qualified = Some(display_path.into_boxed_str());
+                0
+            }
+        };
+        // The stem, matched case-insensitively at search time: an ASCII
+        // stem is matched in place, any other is lowercased once here.
+        let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .map(|s| s.to_lowercase())
             .unwrap_or_default();
+        let (mut stem_start, mut stem_len) = (0, 0);
+        match text {
+            Some(t) if !stem.is_empty() && stem.is_ascii() && t.len() <= u32::MAX as usize => {
+                // `file_stem` borrows from the path, so this is its offset.
+                let offset = stem.as_ptr() as usize - t.as_ptr() as usize;
+                debug_assert_eq!(&t[offset..offset + stem.len()], stem);
+                stem_start = offset as u32;
+                stem_len = stem.len() as u32;
+            }
+            _ if !stem.is_empty() => spelled.lowercase_stem = Some(stem.to_lowercase().into()),
+            _ => {}
+        }
+        let spelled = (spelled.qualified.is_some() || spelled.lowercase_stem.is_some())
+            .then(|| Box::new(spelled));
 
         FileMetadata {
+            path: Some(path.clone()),
+            spelled,
+            base_score,
+            qualified_start,
+            display_start: display_start as u32,
+            stem_start,
+            stem_len,
             symbol_count: symbol_count.min(u16::MAX as usize) as u16,
             is_src_lib,
             is_test_path: is_test,
-            base_score,
-            lowercase_stem,
-            display_path,
-            display_start: display_start as u32,
         }
+    }
+
+    /// Whether this file's metadata has been computed (a default entry
+    /// stands for a file not yet finalized, or removed).
+    #[inline]
+    pub fn is_computed(&self) -> bool {
+        self.path.is_some()
+    }
+
+    /// Root-qualified path (`<root name>/<relative>`), what path filters
+    /// match. Empty when not computed.
+    pub fn qualified_path(&self) -> &str {
+        if let Some(q) = self.spelled.as_ref().and_then(|s| s.qualified.as_deref()) {
+            return q;
+        }
+        match self.path.as_deref().and_then(Path::to_str) {
+            Some(t) => &t[self.qualified_start as usize..],
+            None => "",
+        }
+    }
+
+    /// [`Self::qualified_path`] as bytes, without checking the path is
+    /// UTF-8 again: for ordering files by path (byte order is `str` order).
+    #[inline]
+    pub fn qualified_bytes(&self) -> &[u8] {
+        if let Some(q) = self.spelled.as_ref().and_then(|s| s.qualified.as_deref()) {
+            return q.as_bytes();
+        }
+        match self.path.as_deref() {
+            Some(p) => &p.as_os_str().as_encoded_bytes()[self.qualified_start as usize..],
+            None => &[],
+        }
+    }
+
+    /// The path shown in results (the qualified path, less the root's name
+    /// when it is hidden).
+    pub fn shown_path(&self) -> &str {
+        let q = self.qualified_path();
+        q.get(self.display_start as usize..).unwrap_or(q)
+    }
+
+    /// Whether the file name's stem, lowercased, contains `query_lower`
+    /// (which must be lowercase).
+    #[inline]
+    fn stem_contains(&self, query_lower: &str) -> bool {
+        if let Some(stem) = self
+            .spelled
+            .as_ref()
+            .and_then(|s| s.lowercase_stem.as_deref())
+        {
+            return stem.contains(query_lower);
+        }
+        let Some(p) = self.path.as_deref() else {
+            return false;
+        };
+        let start = self.stem_start as usize;
+        let stem = &p.as_os_str().as_encoded_bytes()[start..start + self.stem_len as usize];
+        // ASCII: lowercasing byte by byte is what `to_lowercase` does.
+        let q = query_lower.as_bytes();
+        q.is_empty()
+            || (q.len() <= stem.len() && stem.windows(q.len()).any(|w| w.eq_ignore_ascii_case(q)))
+    }
+
+    /// Heap bytes this entry owns (its path is the file store's).
+    fn spelled_heap_bytes(&self) -> u64 {
+        self.spelled.as_ref().map_or(0, |s| {
+            (std::mem::size_of::<SpelledNames>()
+                + s.qualified.as_ref().map_or(0, |q| q.len())
+                + s.lowercase_stem.as_ref().map_or(0, |q| q.len())) as u64
+        })
     }
 
     /// Compute ranking score for a specific query
@@ -1220,7 +1340,7 @@ impl FileMetadata {
         let mut score = self.base_score;
 
         // Big boost if query matches filename (using pre-computed lowercase stem)
-        if !query_lower.is_empty() && self.lowercase_stem.contains(query_lower) {
+        if !query_lower.is_empty() && self.stem_contains(query_lower) {
             score *= FileScoreWeights::DEFAULT.filename_match;
         }
 
@@ -1270,13 +1390,13 @@ pub struct SearchEngine {
     /// Pre-computed file metadata for fast ranking
     file_metadata: Vec<FileMetadata>,
     /// Pending imports to resolve after all files are indexed
-    pending_imports: Vec<(u32, std::path::PathBuf, Vec<String>)>,
+    pending_imports: Vec<(u32, std::sync::Arc<Path>, Vec<String>)>,
     /// Imports that could not be resolved yet (target not indexed, or an
     /// external package). Retried only when a file whose stem matches one of
     /// the import's path segments is indexed, instead of on every batch.
     /// Entries are `None` once resolved; `waiting_keys` maps a lowercase
     /// segment to indices into this Vec.
-    waiting_imports: Vec<Option<(u32, std::path::PathBuf, String)>>,
+    waiting_imports: Vec<Option<(u32, std::sync::Arc<Path>, String)>>,
     waiting_keys: FxHashMap<String, Vec<usize>>,
     /// Indices into `waiting_imports` of imports written as project paths
     /// (`./x`, `crate::x`): the few that point at a broken import, counted
@@ -1289,7 +1409,7 @@ pub struct SearchEngine {
     /// import that fell back to a package, `from . import m` reaching
     /// `__init__.py`, moves to `m.py` when that file appears, and back when
     /// it goes).
-    import_specs: FxHashMap<u32, (std::path::PathBuf, Vec<String>)>,
+    import_specs: FxHashMap<u32, (std::sync::Arc<Path>, Vec<String>)>,
     /// Lowercase path segment of an import -> files with such an import.
     /// May hold ids of files since removed or re-indexed; checked on use.
     spec_keys: FxHashMap<String, FxHashSet<u32>>,
@@ -1613,7 +1733,7 @@ impl SearchEngine {
 
             // Register file in dependency index under the store's canonical
             // path (no realpath walk per file).
-            if let Some(canonical) = self.file_store.get_path(file_id).map(Path::to_path_buf) {
+            if let Some(canonical) = self.file_store.shared_path(file_id).cloned() {
                 self.dependency_index
                     .register_canonical_file(file_id, canonical);
             }
@@ -1636,10 +1756,11 @@ impl SearchEngine {
             self.store_references(file_id, pre_indexed.references);
 
             // Store imports for later resolution
-            self.record_import_specs(file_id, &pre_indexed.path, &pre_indexed.imports);
+            let path = self.interned_path(file_id, &pre_indexed.path);
+            self.record_import_specs(file_id, &path, &pre_indexed.imports);
             if !pre_indexed.imports.is_empty() {
                 self.pending_imports
-                    .push((file_id, pre_indexed.path, pre_indexed.imports));
+                    .push((file_id, path, pre_indexed.imports));
             }
 
             count += 1;
@@ -1727,8 +1848,17 @@ impl SearchEngine {
         false
     }
 
+    /// `path` as one shared allocation: the file store's own when `id` is
+    /// stored under exactly this path (the usual case), else a new one.
+    fn interned_path(&self, id: u32, path: &Path) -> std::sync::Arc<Path> {
+        match self.file_store.shared_path(id) {
+            Some(p) if **p == *path => p.clone(),
+            _ => std::sync::Arc::from(path),
+        }
+    }
+
     /// Remember `imports` as `id`'s complete import list.
-    fn record_import_specs(&mut self, id: u32, path: &Path, imports: &[String]) {
+    fn record_import_specs(&mut self, id: u32, path: &std::sync::Arc<Path>, imports: &[String]) {
         if imports.is_empty() {
             self.import_specs.remove(&id);
             return;
@@ -1739,7 +1869,7 @@ impl SearchEngine {
             }
         }
         self.import_specs
-            .insert(id, (path.to_path_buf(), imports.to_vec()));
+            .insert(id, (path.clone(), imports.to_vec()));
     }
 
     /// Resolve the imports of `ids` from scratch: drop their out-edges and
@@ -1802,11 +1932,11 @@ impl SearchEngine {
     }
 
     /// Parse `id`'s imports from its indexed content.
-    fn extract_import_specs(&self, id: u32) -> Option<(std::path::PathBuf, Vec<String>)> {
+    fn extract_import_specs(&self, id: u32) -> Option<(std::sync::Arc<Path>, Vec<String>)> {
         if !self.enable_symbols {
             return None;
         }
-        let path = self.file_store.get_path(id)?.to_path_buf();
+        let path = self.file_store.shared_path(id)?.clone();
         let file = self.file_store.get(id)?;
         let content = file.as_str().ok()?;
         let specs = crate::symbols::SymbolExtractor::new_for_source(&path, Some(&content))
@@ -1970,7 +2100,7 @@ impl SearchEngine {
     }
 
     /// Park an unresolved import until a file it might refer to appears.
-    fn park_import(&mut self, file_id: u32, path: std::path::PathBuf, import: String) {
+    fn park_import(&mut self, file_id: u32, path: std::sync::Arc<Path>, import: String) {
         let keys = Self::import_keys(&import);
         let idx = self.waiting_imports.len();
         if crate::dependencies::is_local_spec(&import) {
@@ -2006,7 +2136,7 @@ impl SearchEngine {
         if indices.is_empty() {
             return 0;
         }
-        let attempts: Vec<(usize, u32, std::path::PathBuf, String)> = indices
+        let attempts: Vec<(usize, u32, std::sync::Arc<Path>, String)> = indices
             .into_iter()
             .filter_map(|i| {
                 self.waiting_imports[i]
@@ -2049,7 +2179,7 @@ impl SearchEngine {
         if self.waiting_imports.iter().all(Option::is_some) {
             return;
         }
-        let live: Vec<(u32, std::path::PathBuf, String)> =
+        let live: Vec<(u32, std::sync::Arc<Path>, String)> =
             self.waiting_imports.drain(..).flatten().collect();
         self.waiting_keys.clear();
         self.waiting_local.clear();
@@ -2064,14 +2194,14 @@ impl SearchEngine {
         for (id, path, import) in self.waiting_imports.iter().flatten() {
             by_id
                 .entry(*id)
-                .or_insert_with(|| (path.clone(), Vec::new()))
+                .or_insert_with(|| (path.to_path_buf(), Vec::new()))
                 .1
                 .push(import.clone());
         }
         for (id, path, imports) in &self.pending_imports {
             by_id
                 .entry(*id)
-                .or_insert_with(|| (path.clone(), Vec::new()))
+                .or_insert_with(|| (path.to_path_buf(), Vec::new()))
                 .1
                 .extend(imports.iter().cloned());
         }
@@ -2165,9 +2295,7 @@ impl SearchEngine {
     pub fn display_path(&self, file_id: u32) -> Option<std::borrow::Cow<'_, str>> {
         let file = self.file_store.get(file_id)?;
         Some(match self.file_metadata.get(file_id as usize) {
-            Some(m) if !m.display_path.is_empty() => {
-                std::borrow::Cow::Borrowed(&m.display_path[m.display_start as usize..])
-            }
+            Some(m) if m.is_computed() => std::borrow::Cow::Borrowed(m.shown_path()),
             _ => std::borrow::Cow::Owned(self.make_display_path(&file.path)),
         })
     }
@@ -2436,7 +2564,7 @@ impl SearchEngine {
     ) {
         self.set_indexed_meta(id, pre.mtime, pre.size, pre.racy);
         self.note_added_file(path);
-        if let Some(canonical) = self.file_store.get_path(id).map(Path::to_path_buf) {
+        if let Some(canonical) = self.file_store.shared_path(id).cloned() {
             self.dependency_index.register_canonical_file(id, canonical);
         }
         if !dependents.is_empty() {
@@ -2451,10 +2579,10 @@ impl SearchEngine {
         // Resolved by the caller once every file of the batch is back in
         // the index: resolving here, mid-batch, would resolve importers
         // that are stripped and not yet installed.
-        self.record_import_specs(id, path, &pre.imports);
+        let path = self.interned_path(id, path);
+        self.record_import_specs(id, &path, &pre.imports);
         if !pre.imports.is_empty() {
-            self.pending_imports
-                .push((id, path.to_path_buf(), pre.imports));
+            self.pending_imports.push((id, path, pre.imports));
         }
 
         // Keep fast-mode ranking signals current for the touched file.
@@ -2688,7 +2816,7 @@ impl SearchEngine {
         }
         let import = target_path.to_string_lossy().into_owned();
         for &from in dependents {
-            let Some(from_path) = self.file_store.get_path(from).map(Path::to_path_buf) else {
+            let Some(from_path) = self.file_store.shared_path(from).cloned() else {
                 continue;
             };
             self.park_import(from, from_path, import.clone());
