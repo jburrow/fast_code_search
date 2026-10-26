@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-693936a0.js";
+            window.path_to_searchindex_js = "searchindex-4b62dba9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5320,8 +5320,10 @@ without the cost of spreading it, and each query is counted five times
 (median). Run-to-run noise on one commit, measured on 2026-10-25 over eight
 runs: 0.5% or less for every operation except symbol/exact and
 symbol/prefix, which moved by up to 4.2% for a reason not yet found; those
-two fail only at 10%. A run takes about 17 minutes on 4 cores, about 7 more
-than the Criterion suites it replaced.</p>
+two fail only at 10%. On the GitHub runner the count takes about 10
+minutes, about what the Criterion suites it replaced took: the first run
+(<a href="https://github.com/jburrow/fast_code_search/actions/runs/40246218157">40246218157</a>)
+finished the whole job in 18 minutes, against 20 for the run before it.</p>
 <h2 id="how-queries-are-timed"><a class="header" href="#how-queries-are-timed">How queries are timed</a></h2>
 <ul>
 <li>The index is built once; queries run against it warm, 50 results per
@@ -6341,11 +6343,20 @@ Counts barely move between runners, unlike wall time, so added work
 shows the day it lands. Counts are published only from a passing run,
 so the run stays red until the work is removed, or accepted with an
 <code>Accept-instructions:</code> line in the commit message. The Criterion suites
-no longer run in CI (they still run with <code>cargo bench</code>); the job takes
-about 7 minutes longer.</li>
+no longer run in CI (they still run with <code>cargo bench</code>), and the job
+takes about as long as before (18 minutes on its first run, 20 before).</li>
 </ul>
 <h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
 <ul>
+<li><strong>The symbol-search benchmark timed a search no front end runs.</strong> The
+library’s <code>search_symbols</code> (used by the corpus benchmark, the validator
+and tests) ran an older single-pass search; the web API, gRPC, MCP and
+<code>fcs</code> run the two-phase one. <code>search_symbols</code> now runs that one too, so
+the published symbol numbers are what a user waits for: on the
+302,000-file corpus about 510 ms for an exact name and 580 ms for a
+prefix, not the 350 ms the benchmark showed (tokio + Django: 19 and
+13 ms, not 13 and 8). Nothing a user runs got slower; the benchmark now
+measures it. Making these faster is the next item (a symbol name index).</li>
 <li><strong><code>fcs check --live --all-content</code> was cut off on a large index.</strong> The
 server’s whole-request timeout (<code>request_timeout_secs</code>, 30 s) applied to
 <code>/api/check</code>, so a check that read every file of a large tree answered

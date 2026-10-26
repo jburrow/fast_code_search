@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-693936a0.js";
+            window.path_to_searchindex_js = "../searchindex-4b62dba9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -228,8 +228,10 @@ without the cost of spreading it, and each query is counted five times
 (median). Run-to-run noise on one commit, measured on 2026-10-25 over eight
 runs: 0.5% or less for every operation except symbol/exact and
 symbol/prefix, which moved by up to 4.2% for a reason not yet found; those
-two fail only at 10%. A run takes about 17 minutes on 4 cores, about 7 more
-than the Criterion suites it replaced.</p>
+two fail only at 10%. On the GitHub runner the count takes about 10
+minutes, about what the Criterion suites it replaced took: the first run
+(<a href="https://github.com/jburrow/fast_code_search/actions/runs/40246218157">40246218157</a>)
+finished the whole job in 18 minutes, against 20 for the run before it.</p>
 <h2 id="how-queries-are-timed"><a class="header" href="#how-queries-are-timed">How queries are timed</a></h2>
 <ul>
 <li>The index is built once; queries run against it warm, 50 results per
