@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **About 10% less memory on large trees: each file's path is held once.**
+  The ranking metadata, the import resolver's path tables and the import
+  lists kept their own copies of every path (five to eight per file); they
+  now share the file store's one copy. On 4 cores the 302,000-file real
+  corpus (Linux, LLVM, Rust, Kubernetes) sits at 1,504 MB resident after a
+  build instead of 1,665 MB, and a loaded Linux kernel index holds 35 MB
+  less heap (468 to 433 MB, counted by allocation). Results are identical. One slowdown, named:
+  a search with a path filter (`file:`, include/exclude globs) on an index
+  that was just built measured 19% slower on the large corpus (95 to
+  113 ms), because the paths it reads are spread through the heap; on an
+  index loaded from disk it is as fast as before. Other searches measured
+  2 to 12% faster.
 - **Searches with many candidate files sort only what they read.** Every
   search reads its candidates best first and usually stops at its match
   budget a thousand or two files in, but it sorted all of them first: at

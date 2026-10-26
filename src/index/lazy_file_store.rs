@@ -284,6 +284,15 @@ impl LazyFileStore {
         self.files.get(id as usize).map(|f| &*f.path)
     }
 
+    /// The interned path of a live file, for other tables to share instead
+    /// of copying (None if tombstoned).
+    pub fn shared_path(&self, id: u32) -> Option<&Arc<Path>> {
+        if self.tombstoned.contains(&id) {
+            return None;
+        }
+        self.files.get(id as usize).map(|f| &f.path)
+    }
+
     /// Find a file ID by exact path match (O(1)).
     pub fn find_by_exact_path(&self, path: &Path) -> Option<u32> {
         self.path_to_id.get(path).copied()

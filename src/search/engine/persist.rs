@@ -189,10 +189,9 @@ impl SearchEngine {
             if (new_id as usize) >= total_new_files {
                 continue;
             }
-            if let Some(path) = self.file_store.get_path(new_id) {
-                let canonical = path.to_path_buf();
+            if let Some(path) = self.file_store.shared_path(new_id) {
                 self.dependency_index
-                    .register_canonical_file(new_id, canonical);
+                    .register_canonical_file(new_id, path.clone());
             }
             if let Some(syms) = persisted.symbols.get(orig_idx as usize) {
                 self.symbol_cache[new_id as usize] = syms.clone();
@@ -219,6 +218,7 @@ impl SearchEngine {
         // were not restored are stale and will be re-extracted anyway).
         for (orig_idx, path, imports) in &persisted.pending_imports {
             if let Some(&new_id) = orig_to_new.get(orig_idx) {
+                let path = self.interned_path(new_id, path);
                 for import in imports {
                     self.park_import(new_id, path.clone(), import.clone());
                 }
@@ -254,10 +254,9 @@ impl SearchEngine {
 
         // Re-register all files for import resolution
         for file_id in 0..total_files as u32 {
-            if let Some(path) = self.file_store.get_path(file_id) {
-                let canonical = path.to_path_buf();
+            if let Some(path) = self.file_store.shared_path(file_id) {
                 self.dependency_index
-                    .register_canonical_file(file_id, canonical);
+                    .register_canonical_file(file_id, path.clone());
             }
         }
 
@@ -361,10 +360,11 @@ impl SearchEngine {
             self.symbol_cache[entry.file_id as usize] = entry.symbols;
             self.store_references(entry.file_id, entry.references);
 
-            self.record_import_specs(entry.file_id, &entry.path, &entry.imports);
+            let path = self.interned_path(entry.file_id, &entry.path);
+            self.record_import_specs(entry.file_id, &path, &entry.imports);
             if !entry.imports.is_empty() {
                 self.pending_imports
-                    .push((entry.file_id, entry.path, entry.imports));
+                    .push((entry.file_id, path, entry.imports));
             }
         }
 

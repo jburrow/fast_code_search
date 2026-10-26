@@ -95,8 +95,8 @@ impl SearchEngine {
             };
             // The root-qualified path (what globs match) and the part shown.
             let (qualified, start) = match self.file_metadata.get(id as usize) {
-                Some(m) if !m.display_path.is_empty() => (
-                    std::borrow::Cow::Borrowed(m.display_path.as_str()),
+                Some(m) if m.is_computed() => (
+                    std::borrow::Cow::Borrowed(m.qualified_path()),
                     m.display_start as usize,
                 ),
                 _ => {

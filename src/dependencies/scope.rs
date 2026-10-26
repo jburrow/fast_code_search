@@ -167,7 +167,7 @@ mod tests {
     fn index(files: &[&str], edges: &[(usize, usize)]) -> DependencyIndex {
         let mut idx = DependencyIndex::new();
         for (i, f) in files.iter().enumerate() {
-            idx.register_canonical_file(i as u32, PathBuf::from(f));
+            idx.register_canonical_file(i as u32, PathBuf::from(f).into());
         }
         for &(a, b) in edges {
             idx.add_import(a as u32, b as u32);

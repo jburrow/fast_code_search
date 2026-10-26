@@ -233,7 +233,11 @@ cargo +nightly udeps
 - `DependencyIndex`: bidirectional import graph with cached dependent counts and
   per-language resolution (Rust module paths, Python packages, JS/TS extensions
   and `index.*`).
-- `FileMetadata`: per-file fast-ranking score, lowercase stem, display path.
+- `FileMetadata`: per-file fast-ranking score, and the root-qualified path
+  and stem as offsets into the file's path.
+- One path per file: the file store interns each canonical path once as an
+  `Arc<Path>`; `FileMetadata`, the dependency index's path tables and the
+  import lists hold that same allocation, never a copy.
 
 ### Scoring
 

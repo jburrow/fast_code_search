@@ -221,7 +221,7 @@ mod tests {
     fn sample() -> DependencyIndex {
         let mut idx = DependencyIndex::new();
         for i in 0..5u32 {
-            idx.register_canonical_file(i, format!("/r/f{i}.py").into());
+            idx.register_canonical_file(i, std::path::Path::new(&format!("/r/f{i}.py")).into());
         }
         idx.add_imports_batch(vec![(0, 1), (1, 2), (2, 0), (3, 1)]);
         idx
@@ -280,7 +280,7 @@ mod tests {
             "/r/src/search/engine/mod.rs",
         ];
         for (i, f) in files.iter().enumerate() {
-            idx.register_canonical_file(i as u32, (*f).into());
+            idx.register_canonical_file(i as u32, std::path::Path::new(*f).into());
         }
         assert!(idx.is_containment(0, 1), "lib.rs -> search/mod.rs");
         assert!(idx.is_containment(0, 3), "lib.rs -> util.rs");
@@ -298,7 +298,7 @@ mod tests {
             !idx.is_containment(0, 2),
             "grandchild is not a direct child"
         );
-        idx.register_canonical_file(5, "/r/src/main.rs".into());
+        idx.register_canonical_file(5, std::path::Path::new("/r/src/main.rs").into());
         assert!(
             !idx.is_containment(5, 3),
             "main.rs beside lib.rs uses the library's modules"
