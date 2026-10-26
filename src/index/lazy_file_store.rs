@@ -6,8 +6,8 @@
 //! holds no file content between requests.
 
 use anyhow::{Context, Result};
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -118,7 +118,7 @@ pub struct LazyFileStore {
     files: Vec<LazyMappedFile>,
     /// Map from path to file ID. Keys share their allocation with the
     /// entry's `path`, so each path is stored once.
-    path_to_id: HashMap<Arc<Path>, u32>,
+    path_to_id: FxHashMap<Arc<Path>, u32>,
     /// Live files by directory, so the watcher's "everything under this
     /// directory" and "the files in this directory" lookups cost the size of
     /// the answer rather than a scan of every indexed path (a scan per
@@ -155,7 +155,7 @@ impl LazyFileStore {
     pub fn new() -> Self {
         Self {
             files: Vec::new(),
-            path_to_id: HashMap::new(),
+            path_to_id: FxHashMap::default(),
             dirs: DirIndex::default(),
             tombstoned: std::collections::HashSet::new(),
             total_content_bytes: AtomicU64::new(0),
@@ -442,7 +442,7 @@ impl LazyFileStore {
 /// so a subtree is walked without visiting unrelated paths.
 #[derive(Default)]
 struct DirIndex {
-    nodes: HashMap<Arc<Path>, DirNode>,
+    nodes: FxHashMap<Arc<Path>, DirNode>,
 }
 
 #[derive(Default)]
