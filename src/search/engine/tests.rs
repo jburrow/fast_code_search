@@ -4845,3 +4845,163 @@ fn test_load_tombstones_changed_and_deleted_files() {
         assert_eq!(text(&reloaded, q), want, "{q}");
     }
 }
+
+/// C1.2: after a load the posting lists are read in place from the mapped
+/// file (not decoded onto the heap), and every query, removal, change and
+/// addition gives the same answers as an index built in memory. A
+/// checkpoint keeps every id (removed files are empty slots), moves the
+/// lists to the file it wrote, and loads back the same; a full save
+/// compacts the slots away.
+#[test]
+fn test_posting_lists_read_in_place_match_a_built_index() {
+    use crate::config::IndexerConfig;
+    use crate::index::PersistedIndex;
+
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().canonicalize().unwrap();
+    let paths: Vec<_> = (0..8).map(|i| root.join(format!("g{i}.rs"))).collect();
+    for (i, p) in paths.iter().enumerate() {
+        fs::write(
+            p,
+            format!(
+                "pub fn widget_{i}() {{ shared_helper({i}); }}\n// marker_{}\n",
+                i % 3
+            ),
+        )
+        .unwrap();
+    }
+    age_files(&root);
+    let config = IndexerConfig {
+        paths: vec![root.to_string_lossy().to_string()],
+        ..Default::default()
+    };
+    let build = |files: &[PathBuf]| {
+        let mut e = SearchEngine::new();
+        for p in files {
+            e.index_file(p).unwrap();
+        }
+        e.finalize();
+        e
+    };
+    let text = |e: &SearchEngine, q: &str| -> Vec<(String, usize)> {
+        let mut v: Vec<_> = e
+            .search(q, 100)
+            .into_iter()
+            .map(|m| (m.file_path, m.line_number))
+            .collect();
+        v.sort();
+        v
+    };
+    let queries = [
+        "widget_",
+        "shared_helper",
+        "marker_1",
+        "widget_3",
+        "widget_9",
+        "fn",
+        "no_such_text",
+        "rewritten_body",
+    ];
+    let same = |a: &SearchEngine, b: &SearchEngine, when: &str| {
+        for q in queries {
+            assert_eq!(text(a, q), text(b, q), "{when}: {q}");
+        }
+        let report = a.check_invariants();
+        assert!(report.is_clean(), "{when}: {:?}", report.examples);
+    };
+
+    let built = build(&paths);
+    let index_path = temp_dir.path().join("index.bin");
+    built.save_index(&index_path, &config).unwrap();
+
+    let mut loaded = SearchEngine::new();
+    assert!(loaded.load_index(&index_path).unwrap().is_empty());
+    let mapped = cfg!(not(windows));
+    assert_eq!(loaded.trigram_index.has_base(), mapped);
+    let memory = loaded.memory_breakdown();
+    if mapped {
+        assert!(memory.mapped_postings_bytes > 0);
+        assert!(
+            loaded.trigram_index.lists().next().is_none(),
+            "nothing decoded onto the heap at load"
+        );
+    }
+    same(&loaded, &built, "after load");
+
+    // Remove one file, change one, add one: the watcher's three moves.
+    let new_file = root.join("g8.rs");
+    fs::write(&new_file, "pub fn widget_8() { shared_helper(8); }\n").unwrap();
+    fs::write(&paths[3], "pub fn rewritten_body() {}\n").unwrap();
+    fs::remove_file(&paths[5]).unwrap();
+    // Aged (so nothing counts as possibly still being written), leaving the
+    // other files' times as saved.
+    for p in [&paths[3], &new_file] {
+        fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(30))
+            .unwrap();
+    }
+    assert!(loaded.remove_file(&paths[5]));
+    loaded.update_files(&[paths[3].clone(), new_file.clone()]);
+    loaded.finalize();
+    let mut now: Vec<PathBuf> = paths.clone();
+    now.remove(5);
+    now.push(new_file.clone());
+    let fresh = build(&now);
+    same(&loaded, &fresh, "after changes");
+    assert!(text(&loaded, "widget_5").is_empty());
+    assert!(text(&loaded, "widget_3").is_empty());
+
+    // A checkpoint keeps the ids: the removed file is an empty slot. (The
+    // changed file kept its id; its old trigrams, still in the mapped
+    // lists, must not come back: "widget_3" above.)
+    let checkpoint = temp_dir.path().join("checkpoint.bin");
+    loaded.checkpoint_index(&checkpoint, &config).unwrap();
+    let saved = PersistedIndex::load(&checkpoint).unwrap();
+    assert_eq!(saved.dead_slots, vec![5]);
+    assert_eq!(saved.files.len(), loaded.file_store.len());
+    drop(saved);
+    // The lists are now read from the checkpoint; the heap copies go at
+    // the next change.
+    loaded.trigram_index.settle();
+    if mapped {
+        assert!(loaded.trigram_index.lists().next().is_none());
+    }
+    same(&loaded, &fresh, "after checkpoint");
+
+    let mut from_checkpoint = SearchEngine::new();
+    let stale = from_checkpoint.load_index(&checkpoint).unwrap();
+    assert!(stale.is_empty(), "{stale:?}");
+    assert_eq!(from_checkpoint.file_store.len(), loaded.file_store.len());
+    for p in &now {
+        assert_eq!(
+            from_checkpoint.find_file_id(&p.to_string_lossy()),
+            loaded.find_file_id(&p.to_string_lossy()),
+            "{}",
+            p.display()
+        );
+    }
+    same(&from_checkpoint, &fresh, "loaded from checkpoint");
+    // Changes after a checkpoint load work as after any load.
+    assert!(from_checkpoint.remove_file(&paths[0]));
+    let mut fewer = now.clone();
+    fewer.retain(|p| p != &paths[0]);
+    same(
+        &from_checkpoint,
+        &build(&fewer),
+        "removal after checkpoint load",
+    );
+
+    // A full save compacts the slots away.
+    let full = temp_dir.path().join("full.bin");
+    from_checkpoint.save_index(&full, &config).unwrap();
+    let saved = PersistedIndex::load(&full).unwrap();
+    assert!(saved.dead_slots.is_empty());
+    assert_eq!(saved.files.len(), fewer.len());
+    drop(saved);
+    let mut compacted = SearchEngine::new();
+    assert!(compacted.load_index(&full).unwrap().is_empty());
+    same(&compacted, &build(&fewer), "after a full save");
+}

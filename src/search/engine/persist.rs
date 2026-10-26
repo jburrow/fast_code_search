@@ -123,8 +123,8 @@ impl SearchEngine {
 
     /// Every posting list with each doc id translated through
     /// `orig_to_new`, dropping ids with no mapping and lists left empty.
-    /// Used both on load (persisted position -> live id) and on save (live
-    /// id -> position).
+    /// Used on load (persisted position -> live id) when files had to be
+    /// renumbered.
     pub(super) fn remap_lists<'a, C>(
         lists: impl rayon::iter::ParallelIterator<Item = (&'a Trigram, &'a roaring::RoaringBitmap)>,
         orig_to_new: &rustc_hash::FxHashMap<u32, u32>,
@@ -133,40 +133,9 @@ impl SearchEngine {
         C: rayon::iter::FromParallelIterator<(Trigram, roaring::RoaringBitmap)>,
     {
         use rayon::prelude::*;
-
-        // A dense table instead of a hash lookup per posting, and, when the
-        // mapping keeps ids in order (it does unless registration deduped
-        // paths), each list is rebuilt in one sorted pass rather than by
-        // inserting ids one at a time. One stale file on load takes this
-        // path for every posting list, so it is worth keeping cheap.
-        let len = orig_to_new.keys().max().map_or(0, |&m| m as usize + 1);
-        let mut dense = vec![u32::MAX; len];
-        for (&o, &n) in orig_to_new {
-            dense[o as usize] = n;
-        }
-        let mut last = None;
-        let in_order = dense.iter().filter(|&&n| n != u32::MAX).all(|&n| {
-            let ok = last.is_none_or(|l| n > l);
-            last = Some(n);
-            ok
-        });
-        let dense = &dense;
+        let remap = IdRemap::new(orig_to_new);
         lists
-            .filter_map(|(trigram, bitmap)| {
-                let ids = bitmap.iter().filter_map(|old_id| {
-                    dense
-                        .get(old_id as usize)
-                        .copied()
-                        .filter(|&n| n != u32::MAX)
-                });
-                let remapped = if in_order {
-                    roaring::RoaringBitmap::from_sorted_iter(ids)
-                        .expect("an in-order id mapping keeps postings sorted")
-                } else {
-                    ids.collect()
-                };
-                (!remapped.is_empty()).then_some((*trigram, remapped))
-            })
+            .filter_map(|(trigram, bitmap)| remap.list(*trigram, bitmap))
             .collect()
     }
 
@@ -388,22 +357,50 @@ impl SearchEngine {
         stats
     }
 
-    /// Save the index to a file for persistence
+    /// Save the index to a file for persistence. Removed files are dropped
+    /// and the rest renumbered by position, so the file has no gaps; use
+    /// it when the server stops (and for tools). While the server runs,
+    /// [`Self::checkpoint_index`] is cheaper.
     pub fn save_index(
         &self,
         path: &std::path::Path,
         config: &crate::config::IndexerConfig,
+    ) -> anyhow::Result<()> {
+        self.write_index(path, config, false)
+    }
+
+    /// Save the index keeping every file's id: removed files are written
+    /// as empty slots (`PersistedIndex::dead_slots`). No posting list is
+    /// renumbered, a mapped list no change touched is copied as its bytes,
+    /// and afterwards the posting lists are read in place from the file
+    /// just written (except on Windows), so the previous file is released.
+    /// The slots go at the next [`Self::save_index`].
+    pub fn checkpoint_index(
+        &self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+    ) -> anyhow::Result<()> {
+        self.write_index(path, config, true)
+    }
+
+    fn write_index(
+        &self,
+        path: &std::path::Path,
+        config: &crate::config::IndexerConfig,
+        keep_ids: bool,
     ) -> anyhow::Result<()> {
         use crate::index::persistence::get_mtime;
         use crate::index::{PersistedFileMetadata, PersistedIndex};
 
         // Collect file metadata with source base path tracking.
         //
-        // `files` is *compacted*: tombstoned (removed) ids are skipped, so a
-        // file's position in `files` is not its live id once anything has been
-        // removed. Everything else persisted (trigram bitmaps, symbols, edges)
-        // must therefore be remapped from live id -> position, otherwise reload
-        // attributes every file after a tombstone to the wrong path.
+        // Unless `keep_ids`, `files` is *compacted*: tombstoned (removed) ids
+        // are skipped, so a file's position in `files` is not its live id
+        // once anything has been removed. Everything else persisted (trigram
+        // bitmaps, symbols, edges) must therefore be remapped from live id ->
+        // position, otherwise reload attributes every file after a tombstone
+        // to the wrong path. With `keep_ids` a tombstone is an empty slot and
+        // position = id.
         // Configured roots in the form the store keys files by (canonical,
         // forward slashes, lowercased), computed once: a root written as a
         // symlinked or non-verbatim path (`/var/...` on macOS, `C:\...` on
@@ -426,9 +423,22 @@ impl SearchEngine {
         let total_ids = self.file_store.len() as u32;
         let mut files = Vec::new();
         let mut live_ids: Vec<u32> = Vec::new();
+        let mut dead_slots: Vec<u32> = Vec::new();
         let mut id_to_pos: FxHashMap<u32, u32> = FxHashMap::default();
         for id in 0..total_ids {
-            if let Some(mapped_file) = self.file_store.get(id) {
+            let Some(mapped_file) = self.file_store.get(id) else {
+                if keep_ids {
+                    dead_slots.push(id);
+                    files.push(PersistedFileMetadata {
+                        path: std::path::PathBuf::new(),
+                        mtime: 0,
+                        size: 0,
+                        source_base_path: None,
+                    });
+                }
+                continue;
+            };
+            {
                 id_to_pos.insert(id, files.len() as u32);
                 live_ids.push(id);
                 // Prefer the identity recorded when the content was read; only
@@ -477,22 +487,35 @@ impl SearchEngine {
             }
         }
 
-        // Collect per-file symbol caches (parallel to the compacted files Vec)
-        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = live_ids
+        // The live id at each position of `files` (`None` for an empty slot).
+        let slots: Vec<Option<u32>> = if keep_ids {
+            let mut slots: Vec<Option<u32>> = (0..total_ids).map(Some).collect();
+            for &id in &dead_slots {
+                slots[id as usize] = None;
+            }
+            slots
+        } else {
+            live_ids.iter().copied().map(Some).collect()
+        };
+
+        // Collect per-file symbol caches (parallel to the files Vec)
+        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = slots
             .iter()
-            .map(|&id| {
-                self.symbol_cache
-                    .get(id as usize)
-                    .cloned()
+            .map(|slot| {
+                slot.and_then(|id| self.symbol_cache.get(id as usize).cloned())
                     .unwrap_or_default()
             })
             .collect();
 
         // Per-file references, by position; the name table is global.
-        let references: Vec<Vec<crate::symbols::extractor::PackedRef>> = live_ids
+        let references: Vec<Vec<crate::symbols::extractor::PackedRef>> = slots
             .iter()
-            .map(|&id| self.references_of(id).to_vec())
+            .map(|slot| {
+                slot.map(|id| self.references_of(id).to_vec())
+                    .unwrap_or_default()
+            })
             .collect();
+        drop(slots);
 
         // Collect resolved dependency edges, remapped onto positions; edges that
         // touch a removed file are dropped.
@@ -503,13 +526,15 @@ impl SearchEngine {
             .filter_map(|(from, to)| Some((*id_to_pos.get(&from)?, *id_to_pos.get(&to)?)))
             .collect();
 
-        // Trigram bitmaps: borrow as-is when ids are already dense (no
-        // tombstones), otherwise build a remapped copy keyed by position.
-        let is_identity = live_ids.len() as u32 == total_ids;
-        let remapped_trigrams =
-            (!is_identity).then(|| -> Vec<(Trigram, roaring::RoaringBitmap)> {
-                Self::remap_lists(self.trigram_index.par_lists(), &id_to_pos)
-            });
+        // Trigram bitmaps: written as they are when every id is its
+        // position (ids kept, or no tombstones), otherwise remapped onto
+        // positions.
+        let same_ids = keep_ids || live_ids.len() as u32 == total_ids;
+        let remapped_trigrams = (!same_ids).then(|| -> Vec<(Trigram, roaring::RoaringBitmap)> {
+            let remap = IdRemap::new(&id_to_pos);
+            self.trigram_index
+                .map_postings(|t, docs| remap.list(t, &docs))
+        });
 
         // Imports still waiting for their target, keyed by position, so a
         // checkpoint restore can still gain the edge when the target lands.
@@ -522,8 +547,8 @@ impl SearchEngine {
         // The symbol name dictionary, by position, so the load need not
         // rebuild it.
         let mut position = vec![u32::MAX; total_ids as usize];
-        for (pos, &id) in live_ids.iter().enumerate() {
-            position[id as usize] = pos as u32;
+        for (&id, &pos) in &id_to_pos {
+            position[id as usize] = pos;
         }
         let symbol_names = self
             .symbol_names
@@ -543,9 +568,20 @@ impl SearchEngine {
         )?;
         persisted.symbol_names = symbol_names;
         persisted.dir_stamps = self.dir_stamps.clone();
-        match &remapped_trigrams {
-            Some(remapped) => persisted.save(path, remapped.iter().map(|(t, docs)| (t, docs)))?,
-            None => persisted.save(path, self.trigram_index.lists())?,
+        persisted.dead_slots = dead_slots;
+        match remapped_trigrams {
+            Some(remapped) => persisted.save(path, remapped)?,
+            None => {
+                // The file has every list under the ids held in memory, so
+                // queries can read it in place from now on, and the file
+                // mapped before (if any) is released.
+                let mapped = self
+                    .trigram_index
+                    .with_postings_to_save(|postings| persisted.save_and_map(path, postings))?;
+                if let Some(mapped) = mapped {
+                    self.trigram_index.rebase(mapped, total_ids);
+                }
+            }
         }
 
         tracing::info!(
@@ -683,7 +719,16 @@ impl SearchEngine {
         // Folder stamps describe the walk under the configuration they
         // were taken with.
         self.dir_stamps = persisted.dir_stamps.take().filter(|_| config_compatible);
+        // Empty slots a checkpoint kept for removed files: never checked,
+        // registered as tombstones so every later id comes back as saved.
+        let mut dead_slot = vec![false; persisted.files.len()];
+        for &pos in &persisted.dead_slots {
+            if let Some(d) = dead_slot.get_mut(pos as usize) {
+                *d = true;
+            }
+        }
         let mut file_statuses = batch_check_files(&persisted.files, &removed_paths);
+        file_statuses.retain(|(idx, _)| !dead_slot[*idx]);
         mark("check_files");
 
         // The stat pass only sees "changed on disk". A file that is unchanged
@@ -766,7 +811,17 @@ impl SearchEngine {
             // Lazy registration: no I/O, the persisted size stands in for the
             // content until a file is first read.
             self.file_store.reserve(paths_to_register.len());
-            let all_ids = self.file_store.register_files_bulk(&paths_to_register);
+            let all_ids: Vec<u32> = paths_to_register
+                .iter()
+                .zip(&dead_slot)
+                .map(|(path, &dead)| {
+                    if dead {
+                        self.file_store.push_dead_slot()
+                    } else {
+                        self.file_store.register_file(path)
+                    }
+                })
+                .collect();
             let new_ids: Vec<u32> = valid_file_indices.iter().map(|&i| all_ids[i]).collect();
             orig_to_new = Self::build_orig_to_new_map(&valid_file_indices, &new_ids);
             let mut doomed = roaring::RoaringBitmap::new();
@@ -801,13 +856,27 @@ impl SearchEngine {
                 None,
                 "Restoring search index...",
             );
-            let lists = persisted.restore_posting_lists()?;
-            let lists = if in_place {
-                lists
+            // With the saved ids, the posting lists are read in place from
+            // the mapped file: nothing is decoded now, and the lists stay
+            // page cache rather than heap. The files that did not survive
+            // are voided in them (one bit each). Windows cannot
+            // replace a mapped file, which the next save does, so there
+            // (and when files had to be renumbered) they are decoded.
+            let mapped = in_place && cfg!(not(windows));
+            self.trigram_index = if mapped {
+                crate::index::TrigramIndex::with_base(
+                    std::mem::take(&mut persisted.trigram_index),
+                    all_ids.len() as u32,
+                )
             } else {
-                Self::remap_trigram_bitmaps(lists, &orig_to_new, persisted.files.len())
+                let lists = persisted.restore_posting_lists()?;
+                let lists = if in_place {
+                    lists
+                } else {
+                    Self::remap_trigram_bitmaps(lists, &orig_to_new, persisted.files.len())
+                };
+                crate::index::TrigramIndex::from_trigram_map(lists)
             };
-            self.trigram_index = crate::index::TrigramIndex::from_trigram_map(lists);
             for id in &doomed {
                 self.file_store.remove_file_by_id(id);
             }
@@ -940,5 +1009,55 @@ impl SearchEngine {
             already_indexed_files,
             symbols_reextracted,
         })
+    }
+}
+
+/// A translation of document ids (`orig_to_new`) applied to posting lists:
+/// a dense table instead of a hash lookup per posting, and, when the
+/// mapping keeps ids in order (it does unless registration deduped paths),
+/// each list is rebuilt in one sorted pass rather than by inserting ids
+/// one at a time. A save after a removal takes this path for every
+/// posting list, so it is worth keeping cheap.
+pub(super) struct IdRemap {
+    dense: Vec<u32>,
+    in_order: bool,
+}
+
+impl IdRemap {
+    pub(super) fn new(orig_to_new: &rustc_hash::FxHashMap<u32, u32>) -> Self {
+        let len = orig_to_new.keys().max().map_or(0, |&m| m as usize + 1);
+        let mut dense = vec![u32::MAX; len];
+        for (&o, &n) in orig_to_new {
+            dense[o as usize] = n;
+        }
+        let mut last = None;
+        let in_order = dense.iter().filter(|&&n| n != u32::MAX).all(|&n| {
+            let ok = last.is_none_or(|l| n > l);
+            last = Some(n);
+            ok
+        });
+        Self { dense, in_order }
+    }
+
+    /// `bitmap` with every id translated, ids with no mapping dropped;
+    /// `None` when nothing is left.
+    pub(super) fn list(
+        &self,
+        trigram: Trigram,
+        bitmap: &roaring::RoaringBitmap,
+    ) -> Option<(Trigram, roaring::RoaringBitmap)> {
+        let ids = bitmap.iter().filter_map(|old_id| {
+            self.dense
+                .get(old_id as usize)
+                .copied()
+                .filter(|&n| n != u32::MAX)
+        });
+        let remapped = if self.in_order {
+            roaring::RoaringBitmap::from_sorted_iter(ids)
+                .expect("an in-order id mapping keeps postings sorted")
+        } else {
+            ids.collect()
+        };
+        (!remapped.is_empty()).then_some((trigram, remapped))
     }
 }

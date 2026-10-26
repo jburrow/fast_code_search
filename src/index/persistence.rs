@@ -91,6 +91,41 @@ pub fn remove_stale_temp_files(path: &Path) -> (usize, u64) {
     (count, bytes)
 }
 
+/// One posting list to save: bytes already in the saved form (copied
+/// from the mapped index file without decoding), or a bitmap.
+pub enum Posting<'a> {
+    Bytes(&'a [u8]),
+    List(std::borrow::Cow<'a, RoaringBitmap>),
+}
+
+impl Posting<'_> {
+    fn serialized_size(&self) -> usize {
+        match self {
+            Posting::Bytes(b) => b.len(),
+            Posting::List(bm) => bm.serialized_size(),
+        }
+    }
+
+    fn write_to(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        match self {
+            Posting::Bytes(b) => w.write_all(b),
+            Posting::List(bm) => bm.serialize_into(w),
+        }
+    }
+}
+
+impl<'a> From<&'a RoaringBitmap> for Posting<'a> {
+    fn from(bm: &'a RoaringBitmap) -> Self {
+        Posting::List(std::borrow::Cow::Borrowed(bm))
+    }
+}
+
+impl From<RoaringBitmap> for Posting<'_> {
+    fn from(bm: RoaringBitmap) -> Self {
+        Posting::List(std::borrow::Cow::Owned(bm))
+    }
+}
+
 /// The posting lists of a *loaded* index: the directory plus the mapped
 /// bitmap region they point into. Bitmaps are deserialized straight from
 /// the mapping by [`PersistedIndex::restore_trigram_index`]; nothing is
@@ -131,7 +166,42 @@ impl PersistedTrigramIndex {
         Some(self.bitmap_bytes(&self.dir[i]))
     }
 
-    fn bitmap_bytes(&self, e: &DirEntry) -> &[u8] {
+    /// The directory entry of `trigram`, if the index has one.
+    pub fn find(&self, trigram: Trigram) -> Option<&DirEntry> {
+        let key = trigram.as_bytes();
+        self.dir
+            .binary_search_by_key(&key, |e| e.trigram.as_bytes())
+            .ok()
+            .map(|i| &self.dir[i])
+    }
+
+    /// Decode one posting list from the mapping. The file's checksum was
+    /// verified when it was mapped, so a list that fails to decode means
+    /// the file changed underneath us; it is logged and read as empty.
+    pub fn decode(&self, e: &DirEntry) -> RoaringBitmap {
+        RoaringBitmap::deserialize_from(self.bitmap_bytes(e)).unwrap_or_else(|err| {
+            tracing::error!(
+                trigram = ?e.trigram,
+                error = %err,
+                "A posting list in the mapped index file does not decode; \
+                 the file was changed on disk while the server ran"
+            );
+            RoaringBitmap::new()
+        })
+    }
+
+    /// Bytes of posting lists in the mapping (what the page cache may
+    /// hold of them).
+    pub fn mapped_bytes(&self) -> u64 {
+        self.dir.last().map_or(0, |e| e.offset + e.len as u64)
+    }
+
+    /// Heap bytes of the directory.
+    pub fn heap_bytes(&self) -> u64 {
+        crate::heap_size::vec(&self.dir)
+    }
+
+    pub(crate) fn bitmap_bytes(&self, e: &DirEntry) -> &[u8] {
         let region = self
             .region
             .as_deref()
@@ -288,6 +358,13 @@ pub struct PersistedIndex {
     /// `None` when no complete walk has run since the index was built
     /// (a checkpoint, an interrupted build). (Format v10 / magic FCSIDX07.)
     pub dir_stamps: Option<DirStamps>,
+    /// Positions in `files` that hold no file: ids removed while the
+    /// server ran, kept as empty slots by a checkpoint so every other file
+    /// keeps its id and the posting lists can be written and read in place
+    /// (`SearchEngine::checkpoint_index`). A load tombstones them. A full
+    /// save (`SearchEngine::save_index`) leaves none. (Format v11 / magic
+    /// FCSIDX08.)
+    pub dead_slots: Vec<u32>,
 }
 
 /// Each walked folder's modification time and a fingerprint of its ignore
@@ -346,7 +423,7 @@ const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 4 + 8;
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX07";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX08";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -363,7 +440,8 @@ impl PersistedIndex {
     /// 8: trigrams are Unicode simple case folded (`search::fold`).
     /// 9: the symbol name dictionary is saved (`symbol_names`).
     /// 10: folder stamps are saved (`dir_stamps`).
-    pub const CURRENT_VERSION: u32 = 10;
+    /// 11: checkpoints keep removed ids as empty slots (`dead_slots`).
+    pub const CURRENT_VERSION: u32 = 11;
 
     /// Create a new persisted index from the current state
     #[allow(clippy::too_many_arguments)]
@@ -390,6 +468,7 @@ impl PersistedIndex {
             references,
             symbol_names: None,
             dir_stamps: None,
+            dead_slots: Vec::new(),
         })
     }
 
@@ -400,11 +479,45 @@ impl PersistedIndex {
     /// exclusive lock), flushes and fsyncs it, then renames over the target,
     /// so a reader holding a shared lock never observes a truncated file and
     /// a crash mid-write leaves the previous index intact.
-    pub fn save<'a>(
+    pub fn save<'a, T, P>(
         &self,
         path: &Path,
-        trigrams: impl IntoIterator<Item = (&'a Trigram, &'a RoaringBitmap)>,
-    ) -> Result<()> {
+        trigrams: impl IntoIterator<Item = (T, P)>,
+    ) -> Result<()>
+    where
+        T: std::borrow::Borrow<Trigram>,
+        P: Into<Posting<'a>>,
+    {
+        self.save_inner(path, trigrams, false).map(drop)
+    }
+
+    /// [`Self::save`], and map the written file's posting lists so the
+    /// caller can read them in place from now on. The mapping is made
+    /// before the rename, so it is of the file just written whatever
+    /// happens to the path later. `None` on Windows, which cannot replace
+    /// a mapped file: nothing is mapped there.
+    pub fn save_and_map<'a, T, P>(
+        &self,
+        path: &Path,
+        trigrams: impl IntoIterator<Item = (T, P)>,
+    ) -> Result<Option<PersistedTrigramIndex>>
+    where
+        T: std::borrow::Borrow<Trigram>,
+        P: Into<Posting<'a>>,
+    {
+        self.save_inner(path, trigrams, cfg!(not(windows)))
+    }
+
+    fn save_inner<'a, T, P>(
+        &self,
+        path: &Path,
+        trigrams: impl IntoIterator<Item = (T, P)>,
+        map: bool,
+    ) -> Result<Option<PersistedTrigramIndex>>
+    where
+        T: std::borrow::Borrow<Trigram>,
+        P: Into<Posting<'a>>,
+    {
         // Saves are serialized process-wide. The watcher's shutdown save, the
         // indexer's final save and periodic checkpoints can all fire at once;
         // letting them race meant two writers sharing a temp file, and the
@@ -428,7 +541,8 @@ impl PersistedIndex {
         ));
         let tmp_path = std::path::PathBuf::from(tmp_path);
 
-        let result = self.write_then_rename(path, &tmp_path, trigrams);
+        let trigrams = trigrams.into_iter().map(|(t, p)| (*t.borrow(), p.into()));
+        let result = self.write_then_rename(path, &tmp_path, trigrams, map);
         if result.is_err() {
             let _ = std::fs::remove_file(&tmp_path);
         }
@@ -439,14 +553,22 @@ impl PersistedIndex {
         &self,
         path: &Path,
         tmp_path: &Path,
-        trigrams: impl IntoIterator<Item = (&'a Trigram, &'a RoaringBitmap)>,
-    ) -> Result<()> {
+        trigrams: impl Iterator<Item = (Trigram, Posting<'a>)>,
+        map: bool,
+    ) -> Result<Option<PersistedTrigramIndex>> {
         use std::io::{Seek, SeekFrom, Write};
 
-        {
-            let file = std::fs::File::create(tmp_path).with_context(|| {
-                format!("Failed to create temp index file: {}", tmp_path.display())
-            })?;
+        let mapped = {
+            // Readable too: the written file may be mapped below.
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(tmp_path)
+                .with_context(|| {
+                    format!("Failed to create temp index file: {}", tmp_path.display())
+                })?;
 
             // Acquire exclusive lock for writing
             file.lock_exclusive().with_context(|| {
@@ -457,14 +579,14 @@ impl PersistedIndex {
             })?;
 
             // Directory: sorted, with each bitmap's offset in the region.
-            let mut entries: Vec<(&Trigram, &RoaringBitmap)> = trigrams.into_iter().collect();
-            entries.sort_by_key(|(t, _)| t.as_bytes());
+            let mut entries: Vec<(Trigram, Posting<'a>)> = trigrams.collect();
+            entries.sort_unstable_by_key(|(t, _)| t.as_bytes());
             let mut dir = Vec::with_capacity(entries.len());
             let mut offset = 0u64;
             for (t, bm) in &entries {
                 let len = bm.serialized_size();
                 dir.push(DirEntry {
-                    trigram: **t,
+                    trigram: *t,
                     offset,
                     len: u32::try_from(len).context("posting list too large")?,
                 });
@@ -495,10 +617,12 @@ impl PersistedIndex {
                 body.write_all(&e.len.to_le_bytes())
                     .with_context(|| err("directory"))?;
             }
-            for (_, bm) in &entries {
-                bm.serialize_into(&mut body)
+            for (_, posting) in &entries {
+                posting
+                    .write_to(&mut body)
                     .with_context(|| err("posting lists"))?;
             }
+            drop(entries);
             let crc = body.crc();
             let mut writer = body.inner;
 
@@ -520,8 +644,26 @@ impl PersistedIndex {
             f.write_all(&header).with_context(|| err("header"))?;
             file.sync_all()
                 .with_context(|| format!("Failed to fsync index: {}", tmp_path.display()))?;
+            if map {
+                // SAFETY: as in `load`: fcs replaces index files by rename
+                // and never rewrites one in place.
+                let mmap = unsafe { memmap2::Mmap::map(&file) }
+                    .with_context(|| format!("Failed to map index file: {}", tmp_path.display()))?;
+                // A mapping keeps the open file, and with it the lock,
+                // alive: release the lock now, or every later load of the
+                // index waits for it.
+                FileExt::unlock(&file)
+                    .with_context(|| format!("Failed to unlock: {}", tmp_path.display()))?;
+                Some(PersistedTrigramIndex {
+                    region_start: HEADER_LEN + meta_len as usize + dir.len() * DIR_ENTRY_LEN,
+                    dir,
+                    region: Some(Arc::new(mmap)),
+                })
+            } else {
+                None
+            }
             // Exclusive lock released as `file` drops at end of scope.
-        }
+        };
 
         // Atomic replace. On Windows, rename onto an existing file can fail
         // (the file is open elsewhere), so the old index is moved aside and
@@ -563,7 +705,7 @@ impl PersistedIndex {
             }
         }
 
-        Ok(())
+        Ok(mapped)
     }
 
     /// Load an index from a file with shared lock (allows multiple readers).
@@ -669,7 +811,9 @@ impl PersistedIndex {
             region_start: HEADER_LEN + meta_len + dir_count * DIR_ENTRY_LEN,
         };
 
-        // Lock is released when `file` drops; the mapping outlives it.
+        // The mapping outlives `file` and would keep the lock with it (the
+        // posting lists stay mapped while the server runs): release it.
+        let _ = FileExt::unlock(&file);
         Ok(index)
     }
 
@@ -1154,6 +1298,7 @@ mod tests {
         let mut idx = idx;
         idx.symbol_names = Some(golden_symbol_names());
         idx.dir_stamps = Some(golden_dir_stamps());
+        idx.dead_slots = vec![5, 9];
         (idx, map)
     }
 
@@ -1180,7 +1325,7 @@ mod tests {
     }
 
     fn golden_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v10.fcsidx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v11.fcsidx")
     }
 
     /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
@@ -1197,7 +1342,7 @@ mod tests {
         if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
             std::fs::write(golden_path(), &bytes).unwrap();
         }
-        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v10.fcsidx");
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v11.fcsidx");
         assert_eq!(&bytes[..8], INDEX_MAGIC);
         assert!(
             bytes == golden,
@@ -1222,6 +1367,7 @@ mod tests {
         assert_eq!(loaded.references[1][0].line, 5);
         assert_eq!(loaded.symbol_names, Some(golden_symbol_names()));
         assert_eq!(loaded.dir_stamps, Some(golden_dir_stamps()));
+        assert_eq!(loaded.dead_slots, vec![5, 9]);
         let dir = loaded.trigram_index.entries();
         assert_eq!(dir.len(), 3);
         assert!(dir

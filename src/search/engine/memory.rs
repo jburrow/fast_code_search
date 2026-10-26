@@ -27,6 +27,13 @@ pub struct MemoryBreakdown {
     pub parts: Vec<MemoryPart>,
     /// The sum of `parts`.
     pub total_bytes: u64,
+    /// Posting lists read in place from the mapped index file: not heap,
+    /// and not in `parts`. The OS keeps as much of it in the page cache as
+    /// memory allows and can evict it; resident memory counts the pages
+    /// queries have touched. 0 before the index is first saved or loaded,
+    /// and on Windows.
+    #[serde(default)]
+    pub mapped_postings_bytes: u64,
 }
 
 impl MemoryBreakdown {
@@ -139,7 +146,11 @@ impl SearchEngine {
         .collect();
         parts.sort_by_key(|p| std::cmp::Reverse(p.bytes));
         let total_bytes = parts.iter().map(|p| p.bytes).sum();
-        MemoryBreakdown { parts, total_bytes }
+        MemoryBreakdown {
+            parts,
+            total_bytes,
+            mapped_postings_bytes: self.trigram_index.mapped_bytes(),
+        }
     }
 }
 

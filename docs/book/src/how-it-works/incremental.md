@@ -62,8 +62,10 @@ lock, so searches keep being answered while a batch is read from disk:
    parsed in parallel on the watcher's own threads (half the cores), so
    the searches running on the shared thread pool are not queued behind
    a burst.
-3. **Install** (write lock, in steps). The removals go first, with a
-   single pass over every posting list; then the parsed files, 512 at a
+3. **Install** (write lock, in steps). The removals go first: one bit
+   each for the posting lists read from the mapped index file (see
+   [Persistence](persistence.md#load)), and a single pass over the lists
+   held on the heap (all of them before the index is first saved); then the parsed files, 512 at a
    time, each step under its own write lock with a short pause between
    steps for the searches that arrived meanwhile. A step that had to wait
    for searches to get the lock keeps installing for about as long as it

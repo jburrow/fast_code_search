@@ -1,5 +1,10 @@
 use roaring::RoaringBitmap;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+
+use super::persistence::{DirEntry, PersistedTrigramIndex, Posting};
 
 /// Maximum initial capacity for trigram sets.
 /// Limits memory pre-allocation for very large files.
@@ -120,10 +125,20 @@ fn shard_of(trigram: &Trigram) -> usize {
     (u32::from_le_bytes([a, b, c, 0]).wrapping_mul(0x9E37_79B9) >> 26) as usize
 }
 
-/// Inverted index mapping trigrams to document IDs using roaring bitmaps
+/// Inverted index mapping trigrams to document IDs using roaring bitmaps.
+///
+/// After a load or a checkpoint the posting lists live in the index file,
+/// mapped (the base), and a query decodes only the lists it needs: they are
+/// page cache the OS can evict, not heap (C1 of the scale plan). Lists for
+/// documents indexed since are held on the heap (`shards`) and united with
+/// the mapped ones. A document removed or re-indexed since the file was
+/// written goes into the base's `void` set, and every mapped list is read
+/// without it, so removing a document costs one bit, not a pass over every
+/// list.
 pub struct TrigramIndex {
     // Trigram -> documents containing it, split by `shard_of`. FxHashMap is
-    // faster than std HashMap for small keys like Trigram.
+    // faster than std HashMap for small keys like Trigram. With a base,
+    // only the documents indexed since it was written.
     shards: Vec<FxHashMap<Trigram, RoaringBitmap>>,
     // Every document added and not removed, whether or not it has any
     // trigram: the candidates for a query with no trigram of its own (a
@@ -131,6 +146,37 @@ pub struct TrigramIndex {
     // posting lists, so a file shorter than three bytes with a short name
     // (`x.py` holding `ab`) was never searched by such a query.
     all_docs: RoaringBitmap,
+    // The posting lists in the mapped index file. Behind a lock only so a
+    // checkpoint, which runs under the engine's read lock, can move it to
+    // the file it just wrote (`rebase`); a query clones the `Arc` and
+    // releases the lock at once.
+    base: RwLock<Option<Arc<Base>>>,
+    // Set by `rebase`: every list in `shards` is also in the new base, so
+    // the shards are dropped at the next change (`settle`).
+    shards_in_base: AtomicBool,
+}
+
+/// The mapped posting lists and what no longer holds of them.
+#[derive(Clone)]
+struct Base {
+    postings: Arc<PersistedTrigramIndex>,
+    /// Ids the file knows (every id below this was assigned when it was
+    /// written). Only these can be voided.
+    ids: u32,
+    /// Documents removed or re-indexed since the file was written: their
+    /// entries in the mapped lists are stale.
+    void: RoaringBitmap,
+}
+
+impl Base {
+    /// `entry`'s documents, without the void ones.
+    fn decode(&self, entry: &DirEntry) -> RoaringBitmap {
+        let mut docs = self.postings.decode(entry);
+        if !self.void.is_empty() {
+            docs -= &self.void;
+        }
+        docs
+    }
 }
 
 impl Default for TrigramIndex {
@@ -138,6 +184,8 @@ impl Default for TrigramIndex {
         Self {
             shards: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
             all_docs: RoaringBitmap::new(),
+            base: RwLock::new(None),
+            shards_in_base: AtomicBool::new(false),
         }
     }
 }
@@ -153,10 +201,79 @@ impl TrigramIndex {
             .sum::<u64>()
             + h::vec(&self.shards)
             + h::bitmap(&self.all_docs)
+            + self
+                .base()
+                .map_or(0, |b| b.postings.heap_bytes() + h::bitmap(&b.void))
+    }
+
+    /// Bytes of posting lists read in place from the mapped index file:
+    /// page cache, not heap. 0 when there is no mapped file.
+    pub fn mapped_bytes(&self) -> u64 {
+        self.base().map_or(0, |b| b.postings.mapped_bytes())
     }
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An index whose posting lists are read in place from a loaded index
+    /// file that assigned ids below `ids`. Call [`Self::set_documents`]
+    /// with the live documents, and [`Self::remove_documents`] with those
+    /// that did not survive.
+    pub fn with_base(postings: PersistedTrigramIndex, ids: u32) -> Self {
+        let index = Self::default();
+        index.set_base(postings, ids);
+        index
+    }
+
+    /// Read the posting lists in place from `postings`, a file just
+    /// written from this index with the same document ids, below `ids`,
+    /// and with no stale entries ([`Self::with_postings_to_save`]). The lists
+    /// held on the heap are all in it, and are dropped at the next change
+    /// or [`Self::settle`]. Takes `&self` because the checkpoint runs under
+    /// the engine's read lock, while queries run: a query reads either
+    /// version, and both give the same answers.
+    pub fn rebase(&self, postings: PersistedTrigramIndex, ids: u32) {
+        self.set_base(postings, ids);
+        self.shards_in_base.store(true, Ordering::Release);
+    }
+
+    fn set_base(&self, postings: PersistedTrigramIndex, ids: u32) {
+        *self.base.write().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(Base {
+            postings: Arc::new(postings),
+            ids,
+            void: RoaringBitmap::new(),
+        }));
+    }
+
+    /// Whether posting lists are read from a mapped file.
+    pub fn has_base(&self) -> bool {
+        self.base().is_some()
+    }
+
+    fn base(&self) -> Option<Arc<Base>> {
+        self.base.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Mark the mapped entries of `docs` stale (removed or re-indexed).
+    fn void(&mut self, docs: impl IntoIterator<Item = u32>) {
+        let base = self.base.get_mut().unwrap_or_else(|p| p.into_inner());
+        if let Some(base) = base {
+            let ids = base.ids;
+            let mut known = docs.into_iter().filter(|&d| d < ids).peekable();
+            if known.peek().is_some() {
+                Arc::make_mut(base).void.extend(known);
+            }
+        }
+    }
+
+    /// Drop the heap lists that a [`Self::rebase`] made redundant.
+    pub fn settle(&mut self) {
+        if std::mem::take(self.shards_in_base.get_mut()) {
+            for map in &mut self.shards {
+                *map = FxHashMap::default();
+            }
+        }
     }
 
     fn list_mut(&mut self, trigram: Trigram) -> &mut RoaringBitmap {
@@ -165,6 +282,8 @@ impl TrigramIndex {
 
     /// Add a document to the index
     pub fn add_document(&mut self, doc_id: u32, content: &str) {
+        self.settle();
+        self.void([doc_id]);
         // Use extract_unique_trigrams for efficiency - avoids Vec allocation + HashSet conversion
         for trigram in extract_unique_trigrams(content) {
             self.list_mut(trigram).insert(doc_id);
@@ -174,6 +293,8 @@ impl TrigramIndex {
 
     /// Add a document using pre-computed trigrams (for parallel indexing)
     pub fn add_document_trigrams(&mut self, doc_id: u32, trigrams: FxHashSet<Trigram>) {
+        self.settle();
+        self.void([doc_id]);
         for trigram in trigrams {
             self.list_mut(trigram).insert(doc_id);
         }
@@ -190,6 +311,8 @@ impl TrigramIndex {
         if docs.is_empty() {
             return;
         }
+        self.settle();
+        self.void(docs.iter().map(|(id, _)| *id));
         // A few chunks per thread, so a chunk of large files doesn't hold
         // up the rest. Chunks keep documents in order, so each list gets
         // its ids in the order given (ascending for new files: the fast
@@ -229,9 +352,12 @@ impl TrigramIndex {
     /// per-document trigram list, so this is one pass over every posting
     /// list; the pass is parallel and each list only pays a membership test
     /// (the update path of one 7 KB file went from 13 ms to well under 1 ms
-    /// on a 134k-trigram index).
+    /// on a 134k-trigram index). With a mapped base only the lists indexed
+    /// since are scanned: the document is voided in the base's.
     pub fn remove_document(&mut self, doc_id: u32) {
         use rayon::prelude::*;
+        self.settle();
+        self.void([doc_id]);
         self.shards.par_iter_mut().for_each(|map| {
             for docs in map.values_mut() {
                 if docs.contains(doc_id) {
@@ -254,6 +380,8 @@ impl TrigramIndex {
         if doomed.is_empty() {
             return;
         }
+        self.settle();
+        self.void(doomed.iter());
         if doomed.len() == 1 {
             if let Some(id) = doomed.min() {
                 self.remove_document(id);
@@ -273,6 +401,7 @@ impl TrigramIndex {
     /// Release over-allocated bucket memory from incremental inserts.
     /// Complements `finalize()` — safe to call at any time between batches.
     pub fn shrink_to_fit(&mut self) {
+        self.settle();
         for map in &mut self.shards {
             map.shrink_to_fit();
         }
@@ -283,6 +412,7 @@ impl TrigramIndex {
     /// Also shrinks the internal HashMap to release over-allocated bucket memory.
     pub fn finalize(&mut self) {
         use rayon::prelude::*;
+        self.settle();
         self.all_docs.optimize();
         // Run-length encode dense posting lists: ubiquitous trigrams (spaces,
         // "the", newline+indent) cover nearly every document and shrink from
@@ -314,13 +444,13 @@ impl TrigramIndex {
         }
 
         // Find all matching bitmaps and check for missing trigrams
-        let mut bitmaps: Vec<&RoaringBitmap> = Vec::with_capacity(unique_trigrams.len());
+        let base = self.base();
+        let mut bitmaps: Vec<Cow<'_, RoaringBitmap>> = Vec::with_capacity(unique_trigrams.len());
         for trigram in &unique_trigrams {
-            if let Some(docs) = self.shards[shard_of(trigram)].get(trigram) {
-                bitmaps.push(docs);
-            } else {
+            match self.list(base.as_deref(), trigram) {
+                Some(docs) => bitmaps.push(docs),
                 // If any trigram is not in the index, no documents match
-                return RoaringBitmap::new();
+                None => return RoaringBitmap::new(),
             }
         }
 
@@ -328,9 +458,10 @@ impl TrigramIndex {
         bitmaps.sort_by_key(|b| b.len());
 
         // Start with smallest bitmap and intersect with others
-        let mut result = bitmaps[0].clone();
-        for bitmap in &bitmaps[1..] {
-            result &= *bitmap;
+        let mut bitmaps = bitmaps.into_iter();
+        let mut result = bitmaps.next().unwrap_or_default().into_owned();
+        for bitmap in bitmaps {
+            result &= &*bitmap;
             // Early exit if result becomes empty
             if result.is_empty() {
                 return result;
@@ -340,14 +471,46 @@ impl TrigramIndex {
         result
     }
 
+    /// `trigram`'s documents: the mapped list (decoded, without the void
+    /// documents) united with the heap list. `None` when neither has it.
+    fn list<'s>(
+        &'s self,
+        base: Option<&Base>,
+        trigram: &Trigram,
+    ) -> Option<Cow<'s, RoaringBitmap>> {
+        let heap = self.shards[shard_of(trigram)].get(trigram);
+        let mapped = base.and_then(|b| b.postings.find(*trigram).map(|e| b.decode(e)));
+        match (mapped, heap) {
+            (None, None) => None,
+            (None, Some(docs)) => Some(Cow::Borrowed(docs)),
+            (Some(mut docs), heap) => {
+                if let Some(heap) = heap {
+                    docs |= heap;
+                }
+                Some(Cow::Owned(docs))
+            }
+        }
+    }
+
     /// Get total number of trigrams in the index
     pub fn num_trigrams(&self) -> usize {
-        self.shards.iter().map(|m| m.len()).sum()
+        match self.base() {
+            None => self.shards.iter().map(|m| m.len()).sum(),
+            Some(base) => {
+                base.postings.len()
+                    + self
+                        .shards
+                        .iter()
+                        .flat_map(|m| m.keys())
+                        .filter(|t| base.postings.find(**t).is_none())
+                        .count()
+            }
+        }
     }
 
     /// All document IDs in the index, with or without trigrams.
-    pub fn all_documents(&self) -> std::borrow::Cow<'_, RoaringBitmap> {
-        std::borrow::Cow::Borrowed(&self.all_docs)
+    pub fn all_documents(&self) -> Cow<'_, RoaringBitmap> {
+        Cow::Borrowed(&self.all_docs)
     }
 
     /// Set the documents the index holds (after [`Self::from_trigram_map`],
@@ -356,38 +519,126 @@ impl TrigramIndex {
         self.all_docs = docs;
     }
 
-    /// Every posting list, in no particular order. A list may be decoded
-    /// on the way (`Cow::Owned`) once posting lists can live in the saved
-    /// file instead of on the heap; callers must not assume a borrow.
-    pub fn postings(&self) -> impl Iterator<Item = (Trigram, std::borrow::Cow<'_, RoaringBitmap>)> {
-        self.lists()
-            .map(|(t, docs)| (*t, std::borrow::Cow::Borrowed(docs)))
+    /// Every posting list, in no particular order, as queries see it
+    /// (mapped lists are decoded, `Cow::Owned`; callers must not assume a
+    /// borrow).
+    pub fn postings(&self) -> Box<dyn Iterator<Item = (Trigram, Cow<'_, RoaringBitmap>)> + '_> {
+        let heap = self.shards.iter().flat_map(|m| m.iter());
+        let Some(base) = self.base() else {
+            return Box::new(heap.map(|(t, docs)| (*t, Cow::Borrowed(docs))));
+        };
+        let in_base = {
+            let base = base.clone();
+            move |t: &Trigram| base.postings.find(*t).is_some()
+        };
+        let mapped = (0..base.postings.len()).map(move |i| {
+            let t = base.postings.entries()[i].trigram;
+            (t, self.list(Some(&base), &t).expect("listed"))
+        });
+        Box::new(
+            mapped.chain(
+                heap.filter(move |(t, _)| !in_base(t))
+                    .map(|(t, docs)| (*t, Cow::Borrowed(docs))),
+            ),
+        )
+    }
+
+    /// Run `f` on every posting list in parallel, as queries see it. For
+    /// a save that renumbers.
+    pub fn map_postings<R, C>(
+        &self,
+        f: impl Fn(Trigram, Cow<'_, RoaringBitmap>) -> Option<R> + Sync,
+    ) -> C
+    where
+        R: Send,
+        C: rayon::iter::FromParallelIterator<R>,
+    {
+        use rayon::prelude::*;
+        let heap = self.shards.par_iter().flat_map(|m| m.par_iter());
+        let Some(base) = self.base() else {
+            return heap
+                .filter_map(|(t, docs)| f(*t, Cow::Borrowed(docs)))
+                .collect();
+        };
+        let mapped = base.postings.entries().par_iter().map(|e| {
+            let docs = self.list(Some(&base), &e.trigram).expect("listed");
+            (e.trigram, docs)
+        });
+        mapped
+            .chain(
+                heap.filter(|(t, _)| base.postings.find(**t).is_none())
+                    .map(|(t, docs)| (*t, Cow::Borrowed(docs))),
+            )
+            .filter_map(|(t, docs)| f(t, docs))
+            .collect()
+    }
+
+    /// Call `save` with the posting lists to write to a file that keeps
+    /// every document id (a checkpoint), as queries see them. A mapped list
+    /// that neither a void document nor a heap list changes is passed as
+    /// its bytes, without being written out again.
+    pub fn with_postings_to_save<R>(
+        &self,
+        save: impl FnOnce(Vec<(Trigram, Posting<'_>)>) -> R,
+    ) -> R {
+        use rayon::prelude::*;
+        let heap = self.shards.par_iter().flat_map(|m| m.par_iter());
+        let Some(base) = self.base() else {
+            return save(heap.map(|(t, docs)| (*t, Posting::from(docs))).collect());
+        };
+        let mapped = base.postings.entries().par_iter().map(|e| {
+            let heap = self.shards[shard_of(&e.trigram)].get(&e.trigram);
+            let posting = if heap.is_none() && base.void.is_empty() {
+                Posting::Bytes(base.postings.bitmap_bytes(e))
+            } else {
+                let raw = base.postings.decode(e);
+                if heap.is_none() && raw.is_disjoint(&base.void) {
+                    Posting::Bytes(base.postings.bitmap_bytes(e))
+                } else {
+                    let mut docs = raw - &base.void;
+                    if let Some(heap) = heap {
+                        docs |= heap;
+                    }
+                    Posting::from(docs)
+                }
+            };
+            (e.trigram, posting)
+        });
+        let postings = mapped
+            .chain(
+                heap.filter(|(t, _)| base.postings.find(**t).is_none())
+                    .map(|(t, docs)| (*t, Posting::from(docs))),
+            )
+            .collect();
+        save(postings)
     }
 
     /// Whether `trigram`'s posting list names `doc_id`.
     pub fn contains(&self, trigram: &Trigram, doc_id: u32) -> bool {
-        self.shards[shard_of(trigram)]
+        if self.shards[shard_of(trigram)]
             .get(trigram)
             .is_some_and(|docs| docs.contains(doc_id))
+        {
+            return true;
+        }
+        self.base().is_some_and(|b| {
+            !b.void.contains(doc_id)
+                && b.postings
+                    .find(*trigram)
+                    .is_some_and(|e| b.postings.decode(e).contains(doc_id))
+        })
     }
 
-    /// The posting lists as they are held, for saving.
+    /// The posting lists held on the heap (all of them when there is no
+    /// mapped file).
     pub fn lists(&self) -> impl Iterator<Item = (&Trigram, &RoaringBitmap)> {
         self.shards.iter().flat_map(|m| m.iter())
     }
 
-    /// [`Self::lists`], in parallel.
-    pub fn par_lists(
-        &self,
-    ) -> impl rayon::iter::ParallelIterator<Item = (&Trigram, &RoaringBitmap)> {
-        use rayon::prelude::*;
-        self.shards.par_iter().flat_map(|m| m.par_iter())
-    }
-
-    /// One posting list, for tests.
+    /// One posting list as queries see it, for tests.
     #[cfg(test)]
-    pub(crate) fn posting(&self, trigram: &Trigram) -> Option<&RoaringBitmap> {
-        self.shards[shard_of(trigram)].get(trigram)
+    pub(crate) fn posting(&self, trigram: &Trigram) -> Option<Cow<'_, RoaringBitmap>> {
+        self.list(self.base().as_deref(), trigram)
     }
 
     /// One posting list, to corrupt on purpose in tests of the self-check.
@@ -423,7 +674,11 @@ impl TrigramIndex {
                 all
             })
             .reduce(RoaringBitmap::new, |a, b| a | b);
-        Self { shards, all_docs }
+        Self {
+            shards,
+            all_docs,
+            ..Self::default()
+        }
     }
 }
 
@@ -533,7 +788,7 @@ mod tests {
         batch.add_documents(&docs[250..]);
         assert_eq!(one.num_trigrams(), batch.num_trigrams());
         for (t, docs) in one.lists() {
-            assert_eq!(batch.posting(t), Some(docs), "{t:?}");
+            assert_eq!(batch.posting(t), Some(Cow::Borrowed(docs)), "{t:?}");
         }
         assert_eq!(one.all_documents(), batch.all_documents());
     }

@@ -10,7 +10,19 @@ Saves are atomic and serialized: the engine's read lock is held while the
 metadata, trigram directory and bitmaps are streamed into a uniquely
 named temporary file next to the target, fsynced, and renamed into place.
 Two saves cannot interleave, and a crash at any point leaves the previous
-file intact. Checkpoints during a long build use the same path.
+file intact.
+
+There are two kinds of save:
+
+- **Checkpoints**, while the server runs (during a long build, after it,
+  and every `save_after_updates` changes), keep every file's id: a file
+  removed since the load is written as an empty slot. Nothing is
+  renumbered, and a posting list no change touched is copied from the
+  mapped file as its bytes. Afterwards the server reads the posting lists
+  from the file it just wrote and frees the copies it held, so the file it
+  loaded at startup is released.
+- **The save at shutdown** compacts: the empty slots go and every file
+  after them is renumbered, so the file on disk has no gaps.
 
 - **A save that is killed** (`kill -9`, a power cut, the out-of-memory
   killer) leaves its temporary file (`<index_path>` with `.tmp.<pid>.<n>`
@@ -54,15 +66,28 @@ exits, however it exits.
 3. **Eligibility pass**: every surviving file is checked against the
    current configuration and `.gitignore` rules (gitignore matchers cached
    per directory), so a rule change takes effect without a rebuild.
-4. Register files lazily (no reads), restore the posting lists from the
-   mapping in parallel, restore symbols, references and edges — or
-   re-extract them from content if the file was written by an older
-   extractor — and rebuild the fast-ranking metadata. Every saved file
-   gets its saved position back as its id, and the stale and removed ones
-   are then tombstoned, as a removal at runtime is, so the posting lists
-   are used as saved. (Renumbering the survivors instead rebuilt every
-   posting list whenever a single file had changed, the largest cost of
-   a load.) The gaps go at the next save.
+4. Register files lazily (no reads), restore symbols, references and
+   edges — or re-extract them from content if the file was written by an
+   older extractor — and rebuild the fast-ranking metadata. Every saved
+   file gets its saved position back as its id, and the stale and removed
+   ones (and a checkpoint's empty slots) are then tombstoned, as a removal
+   at runtime is, so the posting lists are used as saved. (Renumbering the
+   survivors instead rebuilt every posting list whenever a single file had
+   changed, the largest cost of a load.) The gaps go at the save at
+   shutdown.
+
+   **The posting lists are not decoded.** The file stays mapped, and a
+   query decodes only the lists for its own trigrams, about 13 µs per
+   query at 302,000 files (a first page takes 2 to 86 ms). The lists stay
+   in the page cache, which the OS can evict and share, instead of on the
+   heap: at 302,000 files a loaded server holds 6 MB of posting data on
+   the heap instead of about 479 MB, with 350 MB of the file mapped. The mapped lists still name the files removed or
+   re-indexed since the save; those ids are kept in a small set the mapped
+   lists are read without, so a removal costs one bit instead of a pass
+   over every list. Files indexed after the load are held on the heap and
+   united with the mapped lists until the next checkpoint writes them
+   out. On Windows, which cannot replace a file that is mapped, the lists are decoded at load as before. If the
+   lists had to be renumbered (a path saved twice), they are decoded too.
 5. Re-index the stale files that the current configuration and ignore
    files still allow, then discover anything new under the roots.
    **Only the folders that changed are read.** The last complete walk
