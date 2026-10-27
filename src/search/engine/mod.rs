@@ -2458,10 +2458,16 @@ impl SearchEngine {
 
         let mut indexed = 0;
         let mut removed = 0;
+        // The re-indexed files' trigrams go in after the loop, all at once
+        // and in parallel ([`TrigramIndex::add_documents`]), as a build's
+        // batches do: one file at a time this was three quarters of a
+        // batch's time under the write lock.
+        let mut trigrams: Vec<(u32, FxHashSet<Trigram>)> = Vec::new();
         for ((id, path, pre), dependents) in known.into_iter().zip(dependents_of) {
             match pre {
-                Some(pre) => {
+                Some(mut pre) => {
                     self.file_store.refresh_file_by_id(id);
+                    trigrams.push((id, std::mem::take(&mut pre.trigrams)));
                     self.install_reindexed(id, &path, pre, &dependents);
                     indexed += 1;
                 }
@@ -2476,6 +2482,7 @@ impl SearchEngine {
                 }
             }
         }
+        self.trigram_index.add_documents(&trigrams);
 
         if !fresh.is_empty() {
             indexed += self.index_batch(fresh);
@@ -2521,11 +2528,13 @@ impl SearchEngine {
                     return Ok(());
                 }
             };
-        let pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
+        let mut pre = PreIndexedFile::from_partial(partial, self.enable_symbols);
 
         // Refresh the store entry so the stale mapping + caches are discarded,
         // then re-register and re-index under the same id.
         self.file_store.refresh_file_by_id(id);
+        self.trigram_index
+            .add_document_trigrams(id, std::mem::take(&mut pre.trigrams));
         self.install_reindexed(id, path, pre, &dependents);
         self.resolve_imports_incremental();
         Ok(())
@@ -2574,7 +2583,7 @@ impl SearchEngine {
                 .add_imports_batch(dependents.iter().map(|&from| (from, id)).collect());
         }
 
-        self.trigram_index.add_document_trigrams(id, pre.trigrams);
+        // The caller adds `pre.trigrams` (see [`Self::install_parsed`]).
         self.set_symbols(id, pre.symbols);
         self.store_references(id, pre.references);
 
