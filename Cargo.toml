@@ -36,6 +36,7 @@ encoding_rs = "0.8"
 chardetng = "0.1"
 roaring = { version = "0.11", features = ["serde"] }
 rustc-hash = "2.1"
+hashbrown = { version = "0.15", default-features = false }
 tree-sitter = "0.26"
 tree-sitter-language = "0.1"
 # Language grammars - core programming languages

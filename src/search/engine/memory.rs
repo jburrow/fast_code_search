@@ -61,13 +61,7 @@ impl SearchEngine {
                 .sum::<u64>()
             + h::vec(&self.indexed_meta)
             + h::bitmap(&self.racy_files);
-        let symbols = h::vec(&self.symbol_cache)
-            + self
-                .symbol_cache
-                .iter()
-                .map(|v| h::vec(v) + v.iter().map(|s| h::string(&s.name)).sum::<u64>())
-                .sum::<u64>()
-            + self.symbol_names.heap_bytes();
+        let symbols = self.symbol_cache.heap_bytes() + self.symbol_names.heap_bytes();
         let references = h::vec(&self.reference_cache)
             + self.reference_cache.iter().map(h::vec).sum::<u64>()
             + h::vec(&self.ref_names)

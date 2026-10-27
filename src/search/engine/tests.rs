@@ -677,7 +677,7 @@ fn test_symbol_search_ranking_and_line_dedupe() {
         column: 3,
         is_definition: true,
     };
-    engine.symbol_cache[id as usize].push(dup);
+    engine.symbol_cache.push(id, dup);
     let hits = engine.search_symbols("calc", "", "", 10).unwrap();
     assert_eq!(
         hits.iter().filter(|m| m.line_number == 2).count(),
@@ -1225,7 +1225,7 @@ fn test_long_line_file_is_searchable_without_symbols() {
     assert!(results[0].file_path.ends_with("fixture.json"));
 
     // Only the synthetic FileName symbol exists; nothing was extracted.
-    let syms = engine.symbol_cache.first().cloned().unwrap_or_default();
+    let syms = engine.symbol_cache.of(0).to_vec();
     assert!(
         syms.iter()
             .all(|s| s.symbol_type == crate::symbols::SymbolType::FileName),
@@ -2475,7 +2475,7 @@ fn test_regex_search_tolerates_missing_symbol_slot() {
     engine.finalize();
     assert_eq!(engine.search_regex(r"bet\w", "", "", 10).unwrap().len(), 1);
 
-    engine.symbol_cache.clear();
+    engine.symbol_cache = Default::default();
     assert_eq!(engine.search("beta", 10).len(), 1, "text path");
     let hits = engine.search_regex(r"bet\w", "", "", 10).unwrap();
     assert_eq!(hits.len(), 1, "regex path: {hits:?}");

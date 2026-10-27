@@ -283,7 +283,7 @@ pub(super) struct SymbolLineMaps<'a> {
 }
 
 impl<'a> SymbolLineMaps<'a> {
-    pub(super) fn build(symbols: &'a [Symbol]) -> Self {
+    pub(super) fn build(symbols: crate::symbols::FileSymbols<'a>) -> Self {
         // The synthetic FileName symbol lives at line 0 and must NOT count as
         // a definition line, otherwise every match on the first line of every
         // file gets the definition boost.
@@ -304,7 +304,7 @@ impl<'a> SymbolLineMaps<'a> {
             .iter()
             .filter(|s| s.symbol_type != SymbolType::FileName)
             .fold(FxHashMap::default(), |mut map, s| {
-                map.entry(s.line).or_default().push(s.name.as_str());
+                map.entry(s.line).or_default().push(s.name);
                 map
             });
         Self {

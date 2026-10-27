@@ -40,7 +40,8 @@ The figures are estimates from lengths and capacities, not allocator
 measurements (`src/heap_size.rs`). `tests/heap_estimates.rs` keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (at `b1f9287`). A loaded index reads
+Checked the same way on public code (tokio + Django at `b1f9287`, the
+Linux kernel re-measured after symbols were packed, C1.6). A loaded index reads
 its posting lists in place from the mapped index file, so they are not
 heap; the mapped bytes are reported apart (`mapped_postings_bytes`) and
 are page cache the system can evict and share:
@@ -49,20 +50,30 @@ are page cache the system can evict and share:
 |---|---|---|---|---|
 | tokio + Django (6,200 files) | just built | 75.2 MB | 46.4 MB (62%) | none |
 | tokio + Django | loaded from disk | 19.4 MB | 18.7 MB (96%) | 12.6 MB |
-| Linux kernel (85,700 files, 1.23 GB) | just built | 547.9 MB | 505.3 MB (92%) | none |
-| Linux kernel | loaded from disk | 286.3 MB | 282.3 MB (99%) | 149.3 MB |
+| Linux kernel (85,700 files, 1.23 GB) | just built | 422.6 MB | 379.4 MB (90%) | none |
+| Linux kernel | loaded from disk | 161.9 MB | 157.2 MB (97%) | 149.3 MB |
 
 The Linux kernel, loaded from disk:
 
 | Part | Estimated |
 |---|---|
-| symbols | 239.0 MB |
+| symbols | 113.9 MB |
 | graph_paths | 14.0 MB |
 | file_table | 12.7 MB |
 | file_metadata | 7.8 MB |
 | postings (on the heap: the table and lists indexed since the load) | 4.0 MB |
 | references | 3.2 MB |
 | everything else | 1.7 MB |
+
+**Each symbol name is held once.** A symbol is 16 bytes (its name's
+number, line, column, kind and whether it defines the name), and the
+distinct names sit back to back in one string with a hash table over them.
+Before, a symbol was 48 bytes plus its own copy of its name: the Linux
+kernel's loaded symbols took 239.0 MB, and on the 302,000-file corpus
+symbols took 405 MB and resident memory after a build was 1,490 MB, now
+212 MB and 1,152 MB (same machine, 3 rounds). Names no symbol uses any
+more (after edits) are kept until they outnumber the used ones, then the
+table is rebuilt without them.
 
 **Each path is held once.** The file store interns every file's canonical
 path; the ranking metadata (its root-qualified path is an offset into that

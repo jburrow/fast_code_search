@@ -1,7 +1,8 @@
 # C1: immutable segments and lock-free readers
 
 Status: accepted 2026-10-25; C1.0, C1.1 and C1.2 built (`examples/posting_decode.rs`,
-`TrigramIndex::postings`, mapped posting lists), C1.3 re-scoped in 3.10, the rest to follow. Plan item C1 of the
+`TrigramIndex::postings`, mapped posting lists), C1.3 re-scoped in 3.10, C1.6 packed symbols
+built (`symbols::store`, format v13; reading them in place not yet), the rest to follow. Plan item C1 of the
 2026-10-25 scale and performance plan.
 
 ## 1. The problem in one paragraph
@@ -331,7 +332,7 @@ the scoreboard green, and names any slowdown.
 | C1.3 | Delta segments with local ids, built off the lock; per-segment symbols, refs and metadata (re-scoped in 3.10) | batch install off the lock; removal one bit for an in-memory index too |
 | C1.4 | Snapshots published by pointer; searches lock-free; `engine_lock.rs` hold-back deleted; `lock_sim` rewritten | no waiting, no 503 |
 | C1.5 | Tiered background merges; deltas written as segment files with a manifest; base merge as the save; generation files; Windows deletion | save off the lock, crash loses seconds |
-| C1.6 | Packed base symbols read in place (with B3) | load, memory |
+| C1.6 | Packed base symbols read in place (with B3). First half built: symbols packed to 16 bytes, each name stored once, saved packed (v13); 302k resident after a build 1,490 to 1,152 MB. Not yet read in place | load, memory |
 
 C1.2 alone delivers most of the load and memory win, so if the later steps
 stall, the work still pays.

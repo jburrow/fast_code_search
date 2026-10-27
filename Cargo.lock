@@ -897,6 +897,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "globset",
+ "hashbrown 0.15.5",
  "hnsw_rs",
  "ignore",
  "indicatif",

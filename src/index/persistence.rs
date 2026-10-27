@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::trigram::Trigram;
-use crate::symbols::extractor::{PackedRef, Symbol};
+use crate::symbols::extractor::PackedRef;
+use crate::symbols::PersistedSymbols;
 use crate::utils::normalize_path_for_comparison;
 
 /// One entry of the on-disk trigram directory: where a posting list lives
@@ -332,9 +333,10 @@ pub struct PersistedIndex {
     /// Posting lists of a loaded index (not part of the metadata section).
     #[serde(skip)]
     pub trigram_index: PersistedTrigramIndex,
-    /// Per-file symbol caches (parallel to `files`, indexed by position)
+    /// Per-file symbols (by position in `files`), each name stored once.
+    /// (Format v13 / magic FCSIDX10.)
     #[serde(default)]
-    pub symbols: Vec<Vec<Symbol>>,
+    pub symbols: PersistedSymbols,
     /// Resolved dependency edges as (from_file_idx, to_file_idx) pairs
     /// where indices are positions in the `files` Vec
     #[serde(default)]
@@ -430,7 +432,7 @@ const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 4 + 8;
 /// foreign file is rejected immediately — never letting a bogus length prefix
 /// drive a multi-gigabyte allocation. The trailing digits are a format version;
 /// bump them on any incompatible on-disk change.
-const INDEX_MAGIC: &[u8; 8] = b"FCSIDX09";
+const INDEX_MAGIC: &[u8; 8] = b"FCSIDX10";
 
 /// Build the bincode options used for *both* save and load.
 ///
@@ -448,7 +450,9 @@ impl PersistedIndex {
     /// 9: the symbol name dictionary is saved (`symbol_names`).
     /// 10: folder stamps are saved (`dir_stamps`).
     /// 11: checkpoints keep removed ids as empty slots (`dead_slots`).
-    pub const CURRENT_VERSION: u32 = 12;
+    /// 12: folder stamps count each folder's eligible files.
+    /// 13: symbols are packed, each name stored once (`symbols`).
+    pub const CURRENT_VERSION: u32 = 13;
 
     /// Create a new persisted index from the current state
     #[allow(clippy::too_many_arguments)]
@@ -456,7 +460,7 @@ impl PersistedIndex {
         config_fingerprint: String,
         indexed_paths: Vec<String>,
         files: Vec<PersistedFileMetadata>,
-        symbols: Vec<Vec<Symbol>>,
+        symbols: PersistedSymbols,
         dependency_edges: Vec<(u32, u32)>,
         pending_imports: Vec<(u32, PathBuf, Vec<String>)>,
         reference_names: Vec<String>,
@@ -797,6 +801,9 @@ impl PersistedIndex {
                 "Index version mismatch between header and body".into(),
             ));
         }
+        if !index.symbols.validate() {
+            return Err(rebuilt("Index symbols are corrupt".into()));
+        }
 
         let dir_bytes = &body[meta_len..meta_len + dir_count * DIR_ENTRY_LEN];
         let mut dir = Vec::with_capacity(dir_count);
@@ -1119,7 +1126,7 @@ mod tests {
                 size: 3,
                 source_base_path: None,
             }],
-            vec![vec![]],
+            PersistedSymbols::from_files(&[vec![]]),
             vec![],
             vec![],
             Vec::new(),
@@ -1159,7 +1166,7 @@ mod tests {
             "test_fingerprint".to_string(),
             vec!["/test".to_string()],
             files,
-            Vec::new(),
+            PersistedSymbols::default(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1202,7 +1209,7 @@ mod tests {
             "fp".to_string(),
             vec!["/test".to_string()],
             Vec::new(),
-            Vec::new(),
+            PersistedSymbols::default(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1235,7 +1242,7 @@ mod tests {
                 size: 1,
                 source_base_path: Some("/test".to_string()),
             }],
-            Vec::new(),
+            PersistedSymbols::default(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1272,8 +1279,8 @@ mod tests {
                 source_base_path: Some("/fixture".to_string()),
             },
         ];
-        let symbols = vec![
-            vec![Symbol {
+        let symbols = PersistedSymbols::from_files(&[
+            vec![crate::symbols::Symbol {
                 name: "hello".into(),
                 symbol_type: SymbolType::Function,
                 line: 3,
@@ -1281,7 +1288,7 @@ mod tests {
                 is_definition: true,
             }],
             vec![],
-        ];
+        ]);
         let references = vec![
             vec![],
             vec![PackedRef::new(
@@ -1337,7 +1344,7 @@ mod tests {
     }
 
     fn golden_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v12.fcsidx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/index-v13.fcsidx")
     }
 
     /// Roadmap 6.1: the on-disk format is pinned by a committed fixture.
@@ -1354,7 +1361,7 @@ mod tests {
         if std::env::var_os("FCS_WRITE_GOLDEN").is_some() {
             std::fs::write(golden_path(), &bytes).unwrap();
         }
-        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v12.fcsidx");
+        let golden = std::fs::read(golden_path()).expect("fixture tests/fixtures/index-v13.fcsidx");
         assert_eq!(&bytes[..8], INDEX_MAGIC);
         assert!(
             bytes == golden,
@@ -1372,7 +1379,8 @@ mod tests {
         assert_eq!(loaded.files.len(), 2);
         assert_eq!(loaded.files[1].path, PathBuf::from("/fixture/src/main.rs"));
         assert_eq!(loaded.files[0].mtime, 1_700_000_000_000_000_001);
-        assert_eq!(loaded.symbols[0][0].name, "hello");
+        assert_eq!(loaded.symbols.file(0)[0].name, "hello");
+        assert!(loaded.symbols.file(1).is_empty());
         assert_eq!(loaded.dependency_edges, vec![(1, 0)]);
         assert_eq!(loaded.pending_imports.len(), 1);
         assert_eq!(loaded.reference_names, vec!["hello".to_string()]);
