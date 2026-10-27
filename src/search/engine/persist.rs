@@ -186,6 +186,7 @@ impl SearchEngine {
         );
         self.symbol_cache = symbol_cache;
         self.symbol_names = Default::default();
+        self.note_symbol_names_replaced();
         self.install_references(
             std::mem::take(&mut persisted.reference_names),
             total_new_files,
@@ -239,6 +240,7 @@ impl SearchEngine {
         // Reset derived state
         self.symbol_cache = crate::symbols::SymbolStore::with_slots(total_files);
         self.symbol_names = Default::default();
+        self.note_symbol_names_replaced();
         self.install_references(Vec::new(), total_files);
         self.pending_imports.clear();
         self.waiting_imports.clear();
@@ -934,6 +936,7 @@ impl SearchEngine {
                         &id,
                         self.symbol_cache.len(),
                     );
+                    self.note_symbol_names_replaced();
                 }
                 tracing::info!(
                     files_restored = valid_count,

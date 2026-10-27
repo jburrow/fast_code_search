@@ -1362,6 +1362,14 @@ impl ImportSettling {
     }
 }
 
+/// See [`SearchEngine::rebuild_symbol_names_if_due`].
+#[derive(Default)]
+struct SymbolNamesRebuild {
+    running: bool,
+    changed: Vec<u32>,
+    replaced: bool,
+}
+
 pub struct SearchEngine {
     pub file_store: LazyFileStore,
     pub trigram_index: TrigramIndex,
@@ -1371,6 +1379,16 @@ pub struct SearchEngine {
     /// filter that keeps symbol search from testing every symbol of every
     /// candidate file. Rebuilt with the file metadata.
     symbol_names: symbol_names::SymbolNameIndex,
+    /// Build the name dictionary off the write lock: [`Self::finalize`]
+    /// and enough symbol changes only mark it due, and the server calls
+    /// [`Self::rebuild_symbol_names_if_due`] after releasing the lock. Off
+    /// (the default) they rebuild it in place, as a library caller expects.
+    defer_symbol_names: bool,
+    /// The dictionary should be rebuilt (only with `defer_symbol_names`).
+    symbol_names_due: bool,
+    /// The off-lock rebuild in progress, if any, and the symbol changes
+    /// made while it ran.
+    symbol_names_rebuild: std::sync::Mutex<SymbolNamesRebuild>,
     /// What the last complete walk saw of each folder (see
     /// `search::dir_stamps`), saved with the index so a restart re-reads
     /// only the folders that changed. `None` until a complete walk ran.
@@ -1467,6 +1485,9 @@ impl SearchEngine {
             dependency_index: DependencyIndex::new(),
             symbol_cache: Default::default(),
             symbol_names: Default::default(),
+            defer_symbol_names: false,
+            symbol_names_due: false,
+            symbol_names_rebuild: Default::default(),
             dir_stamps: None,
             reference_cache: Vec::new(),
             ref_names: Vec::new(),
@@ -2234,20 +2255,144 @@ impl SearchEngine {
         // Shrinking here can save tens to hundreds of MB on large codebases.
         self.pending_imports.shrink_to_fit();
         self.symbol_cache.shrink_to_fit();
-        self.rebuild_symbol_names();
+        self.symbol_names_due_or_rebuild();
     }
 
     /// Store the symbols of file `id`, keeping the name dictionary honest:
     /// the file is checked symbol by symbol until the next rebuild.
     fn set_symbols(&mut self, id: u32, symbols: Vec<Symbol>) {
         self.symbol_cache.set(id, symbols);
+        self.note_symbol_change(id);
         if self.symbol_names.mark_stale(id) {
-            self.rebuild_symbol_names();
+            self.symbol_names_due_or_rebuild();
         }
+    }
+
+    /// Drop the symbols of file `id`.
+    fn clear_symbols(&mut self, id: u32) {
+        self.symbol_cache.clear(id);
+        self.note_symbol_change(id);
     }
 
     fn rebuild_symbol_names(&mut self) {
         self.symbol_names = symbol_names::SymbolNameIndex::build(&self.symbol_cache);
+        self.symbol_names_due = false;
+        self.note_symbol_names_replaced();
+    }
+
+    fn symbol_names_due_or_rebuild(&mut self) {
+        if self.defer_symbol_names {
+            self.symbol_names_due = true;
+        } else {
+            self.rebuild_symbol_names();
+        }
+    }
+
+    /// Keep the name dictionary's rebuild off the write lock (see
+    /// [`Self::rebuild_symbol_names_if_due`]). The server turns this on;
+    /// at about 2 s for 300,000 files the rebuild under the write lock
+    /// kept every search out that long at the end of each build.
+    pub fn set_defer_symbol_names(&mut self, defer: bool) {
+        self.defer_symbol_names = defer;
+    }
+
+    /// Whether the name dictionary waits to be rebuilt.
+    pub fn symbol_names_due(&self) -> bool {
+        self.symbol_names_due
+    }
+
+    /// Record a symbol change for an off-lock rebuild that is running.
+    fn note_symbol_change(&mut self, id: u32) {
+        let rebuild = self
+            .symbol_names_rebuild
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner());
+        if rebuild.running {
+            rebuild.changed.push(id);
+        }
+    }
+
+    /// The dictionary was replaced while an off-lock rebuild ran (a load,
+    /// a clear): that rebuild's result is dropped.
+    fn note_symbol_names_replaced(&mut self) {
+        let rebuild = self
+            .symbol_names_rebuild
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner());
+        if rebuild.running {
+            rebuild.replaced = true;
+        }
+    }
+
+    /// Rebuild the symbol name dictionary if it is due, holding only the
+    /// read lock while it is built: searches go on, writers wait. The
+    /// write lock is taken just to install it, with the symbol changes
+    /// made in between marked stale in it, as any change after a build
+    /// is. Returns whether a new dictionary was installed.
+    pub fn rebuild_symbol_names_if_due(engine: &std::sync::RwLock<SearchEngine>) -> bool {
+        let built = {
+            let e = engine.read().unwrap_or_else(|p| p.into_inner());
+            if !e.begin_symbol_names_rebuild() {
+                return false;
+            }
+            let started = std::time::Instant::now();
+            let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol_names::SymbolNameIndex::build(&e.symbol_cache)
+            }))
+            .ok();
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Symbol name dictionary built off the write lock"
+            );
+            built
+        };
+        crate::search::engine_lock::write(engine).finish_symbol_names_rebuild(built)
+    }
+
+    /// Start an off-lock rebuild, if one is due and none is running.
+    fn begin_symbol_names_rebuild(&self) -> bool {
+        if !self.symbol_names_due {
+            return false;
+        }
+        let mut rebuild = self
+            .symbol_names_rebuild
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if rebuild.running {
+            return false;
+        }
+        *rebuild = SymbolNamesRebuild {
+            running: true,
+            ..Default::default()
+        };
+        true
+    }
+
+    /// Install what an off-lock rebuild built (`None`: it panicked), with
+    /// the symbol changes made meanwhile marked stale in it.
+    fn finish_symbol_names_rebuild(
+        &mut self,
+        built: Option<symbol_names::SymbolNameIndex>,
+    ) -> bool {
+        let rebuild = std::mem::take(
+            self.symbol_names_rebuild
+                .get_mut()
+                .unwrap_or_else(|p| p.into_inner()),
+        );
+        let Some(mut built) = built else {
+            tracing::error!("Building the symbol name dictionary panicked; it stays as it was");
+            return false;
+        };
+        if rebuild.replaced {
+            return false;
+        }
+        let mut due = false;
+        for id in rebuild.changed {
+            due |= built.mark_stale(id);
+        }
+        self.symbol_names = built;
+        self.symbol_names_due = due;
+        true
     }
 
     /// Size on disk of file `id` as indexed (0 when unknown).
@@ -2552,7 +2697,7 @@ impl SearchEngine {
     /// [`Self::strip_for_reindex`] without the posting-list pass, for callers
     /// that removed several ids from the trigram index in one pass.
     fn strip_caches_and_edges(&mut self, id: u32) -> Vec<u32> {
-        self.symbol_cache.clear(id);
+        self.clear_symbols(id);
         if let Some(slot) = self.reference_cache.get_mut(id as usize) {
             slot.clear();
         }
@@ -2803,7 +2948,7 @@ impl SearchEngine {
     /// recreated regains its dependents when it is indexed again.
     fn forget_id(&mut self, id: u32) {
         self.generation += 1;
-        self.symbol_cache.clear(id);
+        self.clear_symbols(id);
         if let Some(slot) = self.reference_cache.get_mut(id as usize) {
             slot.clear();
         }

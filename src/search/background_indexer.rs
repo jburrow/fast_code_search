@@ -1138,6 +1138,7 @@ fn finalize_imports(
 
     let stats = engine.get_stats();
     drop(engine);
+    SearchEngine::rebuild_symbol_names_if_due(index_engine);
     crate::heap_size::return_freed_memory();
     info!(
         dependency_edges = stats.dependency_edges,
