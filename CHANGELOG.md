@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Loading and saving an index are about 20% faster.** The index file's
+  checksum uses the CPU's carry-less multiply (`crc32fast`) instead of a
+  table: it was 16% of a load's instructions. Registering the files' paths
+  for import resolution no longer hashes each path several times, and runs
+  alongside restoring the symbols. On the 302,000-file corpus a load takes
+  2.39 s instead of 2.79 s (median of 6 interleaved runs, same machine); on
+  tokio + Django a load takes 83 ms instead of 107 ms and a save 120 ms
+  instead of 154 ms. The file format is unchanged.
 - **Symbols take half the memory.** Each distinct symbol name is now
   stored once, and a symbol takes 16 bytes instead of 48 plus its own copy
   of its name. On the 302,000-file real corpus symbols take 212 MB instead

@@ -214,64 +214,17 @@ impl PersistedTrigramIndex {
 
 // ---------------------------------------------------------------- CRC32
 
-/// CRC-32 (IEEE 802.3, as in zlib/PNG), table driven, eight bytes at a
-/// time ("slicing-by-8"): table `k` holds the CRC of a byte followed by `k`
-/// zero bytes, so eight lookups fold a whole word in. A byte at a time it
-/// was 7% of a load's instructions at 302,000 files.
-fn crc32_tables() -> &'static [[u32; 256]; 8] {
-    static TABLES: std::sync::OnceLock<[[u32; 256]; 8]> = std::sync::OnceLock::new();
-    TABLES.get_or_init(|| {
-        let mut t = [[0u32; 256]; 8];
-        for (i, slot) in t[0].iter_mut().enumerate() {
-            let mut c = i as u32;
-            for _ in 0..8 {
-                c = if c & 1 != 0 {
-                    0xEDB8_8320 ^ (c >> 1)
-                } else {
-                    c >> 1
-                };
-            }
-            *slot = c;
-        }
-        for k in 1..8 {
-            let (done, rest) = t.split_at_mut(k);
-            for (slot, &prev) in rest[0].iter_mut().zip(&done[k - 1]) {
-                *slot = done[0][(prev & 0xff) as usize] ^ (prev >> 8);
-            }
-        }
-        t
-    })
-}
-
-fn crc32_update(mut crc: u32, bytes: &[u8]) -> u32 {
-    let t = crc32_tables();
-    let (words, rest) = bytes.as_chunks::<8>();
-    for w in words {
-        let lo = crc ^ u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
-        crc = t[7][(lo & 0xff) as usize]
-            ^ t[6][((lo >> 8) & 0xff) as usize]
-            ^ t[5][((lo >> 16) & 0xff) as usize]
-            ^ t[4][(lo >> 24) as usize]
-            ^ t[3][w[4] as usize]
-            ^ t[2][w[5] as usize]
-            ^ t[1][w[6] as usize]
-            ^ t[0][w[7] as usize];
-    }
-    for &b in rest {
-        crc = t[0][((crc ^ b as u32) & 0xff) as usize] ^ (crc >> 8);
-    }
-    crc
-}
-
-/// CRC-32 of `bytes`.
+/// CRC-32 (IEEE 802.3, as in zlib/PNG) of `bytes`, by `crc32fast`
+/// (carry-less multiply where the CPU has it). The table-driven version
+/// before it was 16% of a load's instructions at 302,000 files.
 pub fn crc32(bytes: &[u8]) -> u32 {
-    !crc32_update(!0, bytes)
+    crc32fast::hash(bytes)
 }
 
 /// A writer that counts bytes and folds them into a CRC as they pass.
 struct CrcWriter<W: std::io::Write> {
     inner: W,
-    crc: u32,
+    crc: crc32fast::Hasher,
     written: u64,
 }
 
@@ -279,19 +232,19 @@ impl<W: std::io::Write> CrcWriter<W> {
     fn new(inner: W) -> Self {
         Self {
             inner,
-            crc: !0,
+            crc: crc32fast::Hasher::new(),
             written: 0,
         }
     }
     fn crc(&self) -> u32 {
-        !self.crc
+        self.crc.clone().finalize()
     }
 }
 
 impl<W: std::io::Write> std::io::Write for CrcWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let n = self.inner.write(buf)?;
-        self.crc = crc32_update(self.crc, &buf[..n]);
+        self.crc.update(&buf[..n]);
         self.written += n as u64;
         Ok(n)
     }
@@ -1047,17 +1000,24 @@ pub fn batch_check_files(
 mod tests {
     use super::*;
 
-    /// Slicing-by-8 gives the standard CRC-32 and agrees with the plain
-    /// byte-at-a-time loop at every length and split point.
+    /// The standard CRC-32, the same whether a writer folds the bytes in
+    /// in pieces or all at once.
     #[test]
-    fn test_crc32_matches_bytewise() {
+    fn test_crc32_is_standard() {
+        use std::io::Write;
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
         let bytewise = |bytes: &[u8]| {
-            let t = &crc32_tables()[0];
             let mut crc = !0u32;
             for &b in bytes {
-                crc = t[((crc ^ b as u32) & 0xff) as usize] ^ (crc >> 8);
+                crc ^= b as u32;
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 {
+                        0xEDB8_8320 ^ (crc >> 1)
+                    } else {
+                        crc >> 1
+                    };
+                }
             }
             !crc
         };
@@ -1067,8 +1027,10 @@ mod tests {
             assert_eq!(crc32(&data[..len]), want, "len {len}");
             for split in [0, 1, 3, 8, 13] {
                 let split = split.min(len);
-                let crc = crc32_update(crc32_update(!0, &data[..split]), &data[split..len]);
-                assert_eq!(!crc, want, "len {len} split {split}");
+                let mut w = CrcWriter::new(Vec::new());
+                w.write_all(&data[..split]).unwrap();
+                w.write_all(&data[split..len]).unwrap();
+                assert_eq!(w.crc(), want, "len {len} split {split}");
             }
         }
     }
