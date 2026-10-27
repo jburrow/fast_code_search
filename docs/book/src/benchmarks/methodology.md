@@ -64,7 +64,14 @@ finished the whole job in 18 minutes, against 20 for the run before it.
 - Regex cases: a pattern with a required literal, a case-insensitive one,
   and one with no literal (a full scan).
 - The incremental case rewrites one file and applies the change through
-  the same path the watcher uses.
+  the same path the watcher uses, after saving a checkpoint of the built
+  index as a server does once a build is done (`save_after_build`, on by
+  default). From then on the posting lists are read from that file and an
+  update changes only the small in-memory lists, as in a running server.
+  Before 27 October 2026 the update ran on the just-built index and passed
+  over every posting list, which a server never does (about 9 ms against
+  about 2 ms on tokio + Django). The index save that follows is then of
+  the checkpointed index, as a server's later saves are.
 
 ## What the machine is
 
