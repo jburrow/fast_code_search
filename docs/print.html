@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-da129dc7.js";
+            window.path_to_searchindex_js = "searchindex-d33097e7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5502,7 +5502,14 @@ candidate rejection alone).</li>
 <li>Regex cases: a pattern with a required literal, a case-insensitive one,
 and one with no literal (a full scan).</li>
 <li>The incremental case rewrites one file and applies the change through
-the same path the watcher uses.</li>
+the same path the watcher uses, after saving a checkpoint of the built
+index as a server does once a build is done (<code>save_after_build</code>, on by
+default). From then on the posting lists are read from that file and an
+update changes only the small in-memory lists, as in a running server.
+Before 27 October 2026 the update ran on the just-built index and passed
+over every posting list, which a server never does (about 9 ms against
+about 2 ms on tokio + Django). The index save that follows is then of
+the checkpointed index, as a server’s later saves are.</li>
 </ul>
 <h2 id="what-the-machine-is"><a class="header" href="#what-the-machine-is">What the machine is</a></h2>
 <p>GitHub-hosted <code>ubuntu-latest</code> runners: 4 vCPU, 16 GB RAM, SSD, shared
