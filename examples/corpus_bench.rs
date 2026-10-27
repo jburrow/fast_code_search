@@ -493,6 +493,15 @@ fn main() -> Result<()> {
 
     metrics.extend(query_metrics(&engine, n, page, ""));
 
+    // A server that keeps its index saves a checkpoint once the build is
+    // done (`save_after_build`, on by default) and from then on reads the
+    // posting lists from that file, so the watcher's updates change only
+    // the small heap lists. Do the same before timing updates: without it
+    // each update passed over every posting list of the just-built index
+    // (85% of its instructions on tokio + Django), which a server never does.
+    let tmp = tempfile::tempdir()?;
+    engine.checkpoint_index(&tmp.path().join("checkpoint.bin"), &config)?;
+
     // Incremental update: rewrite a spread of small files and apply each
     // change as the watcher would; restore afterwards.
     let mut incremental: Vec<Duration> = Vec::new();
@@ -533,7 +542,6 @@ fn main() -> Result<()> {
     });
 
     // Persistence.
-    let tmp = tempfile::tempdir()?;
     let index_path = tmp.path().join("index.bin");
     let (_, save_took) = counted("index_save", || engine.save_index(&index_path, &config));
     let index_bytes = std::fs::metadata(&index_path).map(|m| m.len()).unwrap_or(0);

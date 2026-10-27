@@ -29,7 +29,7 @@ use fast_code_search::config::{DiagnosticsConfig, IndexerConfig};
 use fast_code_search::diagnostics::capture;
 use fast_code_search::search::{
     create_progress_broadcaster, engine_lock, run_background_indexer, watch_loop,
-    BackgroundIndexerConfig, IndexingProgress, SearchEngine, WatchLoopConfig,
+    BackgroundIndexerConfig, FileCheck, IndexingProgress, SearchEngine, WatchLoopConfig,
 };
 use load_tree::{generate, path_of, script, MIXED};
 use std::path::{Path, PathBuf};
@@ -119,6 +119,10 @@ fn stale_files(engine: &RwLock<SearchEngine>, root: &Path) -> (usize, usize) {
     let stale: Vec<&PathBuf> = on_disk
         .iter()
         .filter(|p| match engine.find_file_id_exact(p) {
+            // The watcher reads a change within a second of the write, so
+            // nearly every file it indexes is racy, and a racy file is never
+            // "unchanged" by size and time: compare its content instead.
+            Some(id) if engine.is_racy(id) => engine.check_file(id) != Some(FileCheck::Current),
             Some(id) => !engine.is_unchanged_on_disk(id, p),
             None => true,
         })
@@ -227,7 +231,7 @@ fn main() {
         let t = Instant::now();
         let current = ids
             .iter()
-            .filter(|&&id| e.check_file(id) == Some(fast_code_search::search::FileCheck::Current))
+            .filter(|&&id| e.check_file(id) == Some(FileCheck::Current))
             .count();
         let took = t.elapsed();
         eprintln!(
