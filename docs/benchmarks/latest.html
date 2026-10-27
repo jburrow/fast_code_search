@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4b3a1fe8.js";
+            window.path_to_searchindex_js = "../searchindex-25b20ddf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -216,8 +216,8 @@
 </script>
 <h2 id="pinned-run"><a class="header" href="#pinned-run">Pinned run</a></h2>
 <!-- bench:latest-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40431801064">run 40431801064</a>
-on commit <code>4d9a7a6</code> (2026-10-27, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40476203033">run 40476203033</a>
+on commit <code>3e05273</code> (2026-10-27, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
 <!-- /bench:latest-run -->
 <p>The <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
 same numbers; the per-commit trend is at
@@ -236,11 +236,11 @@ measurements and the cost on small repositories.</p>
 <tr><th>Build</th><th>Value</th></tr>
 </thead>
 <tbody>
-<tr><td>Discovery</td><td>105 ms</td></tr>
-<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.24 s, 1,479 files/s, 9.8 MB/s</td></tr>
-<tr><td>Resident memory after build</td><td>119 MB (process before build: 11.3 MB)</td></tr>
-<tr><td>Index save</td><td>109 ms (26.0 MB on disk)</td></tr>
-<tr><td>Index load, reconciling</td><td>77.9 ms</td></tr>
+<tr><td>Discovery</td><td>107 ms</td></tr>
+<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.33 s, 1,447 files/s, 9.6 MB/s</td></tr>
+<tr><td>Resident memory after build</td><td>111 MB (process before build: 11.1 MB)</td></tr>
+<tr><td>Index save</td><td>58.6 ms (24.9 MB on disk)</td></tr>
+<tr><td>Index load, reconciling</td><td>64.8 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -250,19 +250,19 @@ measurements and the cost on small repositories.</p>
 <tr><th>Query</th><th>p50</th><th>p95</th></tr>
 </thead>
 <tbody>
-<tr><td>text, common word</td><td>21.2 ms</td><td>21.9 ms</td></tr>
-<tr><td>text, identifier</td><td>6.79 ms</td><td>7.32 ms</td></tr>
-<tr><td>text, no match</td><td>761 ns</td><td>1.01 µs</td></tr>
-<tr><td>text, short (two characters)</td><td>27.8 ms</td><td>28.6 ms</td></tr>
-<tr><td>text, full ranking</td><td>21.6 ms</td><td>22.1 ms</td></tr>
-<tr><td>text, path-filtered</td><td>9.22 ms</td><td>9.55 ms</td></tr>
-<tr><td>regex with literal</td><td>23.9 ms</td><td>24.6 ms</td></tr>
-<tr><td>regex, case-insensitive</td><td>2.68 ms</td><td>2.90 ms</td></tr>
-<tr><td>regex, no literal (full scan)</td><td>33.9 ms</td><td>35.2 ms</td></tr>
-<tr><td>symbol, exact</td><td>3.44 ms</td><td>3.57 ms</td></tr>
-<tr><td>symbol, prefix</td><td>2.18 ms</td><td>2.30 ms</td></tr>
-<tr><td>references</td><td>1.97 ms</td><td>2.13 ms</td></tr>
-<tr><td>incremental: modify one file</td><td>5.80 ms</td><td>34.4 ms</td></tr>
+<tr><td>text, common word</td><td>21.0 ms</td><td>21.5 ms</td></tr>
+<tr><td>text, identifier</td><td>6.93 ms</td><td>7.28 ms</td></tr>
+<tr><td>text, no match</td><td>792 ns</td><td>1.13 µs</td></tr>
+<tr><td>text, short (two characters)</td><td>27.9 ms</td><td>29.1 ms</td></tr>
+<tr><td>text, full ranking</td><td>20.3 ms</td><td>20.6 ms</td></tr>
+<tr><td>text, path-filtered</td><td>9.99 ms</td><td>11.0 ms</td></tr>
+<tr><td>regex with literal</td><td>24.4 ms</td><td>25.2 ms</td></tr>
+<tr><td>regex, case-insensitive</td><td>2.79 ms</td><td>2.97 ms</td></tr>
+<tr><td>regex, no literal (full scan)</td><td>34.3 ms</td><td>36.1 ms</td></tr>
+<tr><td>symbol, exact</td><td>3.55 ms</td><td>3.90 ms</td></tr>
+<tr><td>symbol, prefix</td><td>2.15 ms</td><td>2.28 ms</td></tr>
+<tr><td>references</td><td>1.99 ms</td><td>2.27 ms</td></tr>
+<tr><td>incremental: modify one file</td><td>1.64 ms</td><td>30.8 ms</td></tr>
 </tbody>
 </table>
 </div>

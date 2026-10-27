@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-4b3a1fe8.js";
+            window.path_to_searchindex_js = "../searchindex-25b20ddf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -185,7 +185,30 @@
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.20.0...HEAD">Unreleased</a></a></h2>
+<h2 id="0200---2026-10-27"><a class="header" href="#0200---2026-10-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...v0.20.0">0.20.0</a> - 2026-10-27</a></h2>
+<p>Large trees build, load and update much faster on less memory. On a
+302,000-file corpus (Linux, LLVM, Rust, Kubernetes, same machine against
+v0.19.0) a build takes about 185 s instead of 464 s, a load 2.4 s instead
+of 24 s, resident memory after a build is 1,152 MB instead of 1,590 MB,
+symbol search is about 10 times faster, and a restart reads only the
+folders that changed. A one-file update takes about 3 ms at any size.
+Search results are unchanged.</p>
+<p>Slowdowns, named: a path-filtered search on an index that was just built
+measured 19% slower on the large corpus (fine once loaded from disk); the
+sharded build left searches 0 to 13% slower in same-machine runs; mimalloc
+adds 17 MB of resident memory on a small tree. Each entry below says what
+it buys.</p>
+<p>Known limits (#234): on a 4-core machine with searches that take 1 to 3 s,
+a change waiting for the index lock can still keep new searches waiting
+about 2 s, and peak resident memory now counts the mapped index file’s
+page-cache pages, which the OS can evict.</p>
+<p><strong>Upgrading:</strong> the index format is now v13 (magic <code>FCSIDX10</code>): the first
+start after the upgrade rebuilds the index once, with no config change.
+A loaded index maps its file, so resident memory includes page-cache pages
+of the index that the OS can evict and share; <code>/api/diagnostics</code> reports
+them as <code>mapped_postings_bytes</code>. Windows still decodes posting lists onto
+the heap.</p>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
 <li><strong>Loading and saving an index are about 20% faster.</strong> The index file’s

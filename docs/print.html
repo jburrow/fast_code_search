@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4b3a1fe8.js";
+            window.path_to_searchindex_js = "searchindex-25b20ddf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -286,12 +286,12 @@ identity.
 The checksum proves the file is intact; the signature proves it was built
 by this repository’s release workflow for this tag, and not merely
 uploaded by someone holding the account.</p>
-<pre><code class="language-bash">sha256sum -c fast_code_search-v0.19.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+<pre><code class="language-bash">sha256sum -c fast_code_search-v0.20.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 cosign verify-blob \
-  --bundle fast_code_search-v0.19.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --bundle fast_code_search-v0.20.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  fast_code_search-v0.19.0-x86_64-unknown-linux-gnu.tar.gz
+  fast_code_search-v0.20.0-x86_64-unknown-linux-gnu.tar.gz
 </code></pre>
 <p><a href="https://docs.sigstore.dev/cosign/installation/"><code>cosign</code></a> is a single
 binary; no key management is involved because the signing is keyless.</p>
@@ -310,7 +310,7 @@ its repository exists; until then use the archive, <code>cargo binstall</code> o
 container image.</p>
 <h2 id="container-image"><a class="header" href="#container-image">Container image</a></h2>
 <p>Every release from v0.13.0 is also published as
-<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.19</code>, <code>0.19.0</code>). The
+<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.20</code>, <code>0.20.0</code>). The
 image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
 serves the web UI and REST API on port 8080 and gRPC on 50051:</p>
 <pre><code class="language-bash">docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search
@@ -5609,8 +5609,8 @@ large the tree is, and ranks. Results are on the
 </script>
 <h2 id="pinned-run"><a class="header" href="#pinned-run">Pinned run</a></h2>
 <!-- bench:latest-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40431801064">run 40431801064</a>
-on commit <code>4d9a7a6</code> (2026-10-27, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40476203033">run 40476203033</a>
+on commit <code>3e05273</code> (2026-10-27, version 0.19.0), GitHub-hosted <code>ubuntu-latest</code> (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04).</p>
 <!-- /bench:latest-run -->
 <p>The <a href="https://github.com/jburrow/fast_code_search#benchmarks">README</a> carries the
 same numbers; the per-commit trend is at
@@ -5629,11 +5629,11 @@ measurements and the cost on small repositories.</p>
 <tr><th>Build</th><th>Value</th></tr>
 </thead>
 <tbody>
-<tr><td>Discovery</td><td>105 ms</td></tr>
-<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.24 s, 1,479 files/s, 9.8 MB/s</td></tr>
-<tr><td>Resident memory after build</td><td>119 MB (process before build: 11.3 MB)</td></tr>
-<tr><td>Index save</td><td>109 ms (26.0 MB on disk)</td></tr>
-<tr><td>Index load, reconciling</td><td>77.9 ms</td></tr>
+<tr><td>Discovery</td><td>107 ms</td></tr>
+<tr><td>Build (read, trigrams, symbols, imports, merge)</td><td>4.33 s, 1,447 files/s, 9.6 MB/s</td></tr>
+<tr><td>Resident memory after build</td><td>111 MB (process before build: 11.1 MB)</td></tr>
+<tr><td>Index save</td><td>58.6 ms (24.9 MB on disk)</td></tr>
+<tr><td>Index load, reconciling</td><td>64.8 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5643,19 +5643,19 @@ measurements and the cost on small repositories.</p>
 <tr><th>Query</th><th>p50</th><th>p95</th></tr>
 </thead>
 <tbody>
-<tr><td>text, common word</td><td>21.2 ms</td><td>21.9 ms</td></tr>
-<tr><td>text, identifier</td><td>6.79 ms</td><td>7.32 ms</td></tr>
-<tr><td>text, no match</td><td>761 ns</td><td>1.01 µs</td></tr>
-<tr><td>text, short (two characters)</td><td>27.8 ms</td><td>28.6 ms</td></tr>
-<tr><td>text, full ranking</td><td>21.6 ms</td><td>22.1 ms</td></tr>
-<tr><td>text, path-filtered</td><td>9.22 ms</td><td>9.55 ms</td></tr>
-<tr><td>regex with literal</td><td>23.9 ms</td><td>24.6 ms</td></tr>
-<tr><td>regex, case-insensitive</td><td>2.68 ms</td><td>2.90 ms</td></tr>
-<tr><td>regex, no literal (full scan)</td><td>33.9 ms</td><td>35.2 ms</td></tr>
-<tr><td>symbol, exact</td><td>3.44 ms</td><td>3.57 ms</td></tr>
-<tr><td>symbol, prefix</td><td>2.18 ms</td><td>2.30 ms</td></tr>
-<tr><td>references</td><td>1.97 ms</td><td>2.13 ms</td></tr>
-<tr><td>incremental: modify one file</td><td>5.80 ms</td><td>34.4 ms</td></tr>
+<tr><td>text, common word</td><td>21.0 ms</td><td>21.5 ms</td></tr>
+<tr><td>text, identifier</td><td>6.93 ms</td><td>7.28 ms</td></tr>
+<tr><td>text, no match</td><td>792 ns</td><td>1.13 µs</td></tr>
+<tr><td>text, short (two characters)</td><td>27.9 ms</td><td>29.1 ms</td></tr>
+<tr><td>text, full ranking</td><td>20.3 ms</td><td>20.6 ms</td></tr>
+<tr><td>text, path-filtered</td><td>9.99 ms</td><td>11.0 ms</td></tr>
+<tr><td>regex with literal</td><td>24.4 ms</td><td>25.2 ms</td></tr>
+<tr><td>regex, case-insensitive</td><td>2.79 ms</td><td>2.97 ms</td></tr>
+<tr><td>regex, no literal (full scan)</td><td>34.3 ms</td><td>36.1 ms</td></tr>
+<tr><td>symbol, exact</td><td>3.55 ms</td><td>3.90 ms</td></tr>
+<tr><td>symbol, prefix</td><td>2.15 ms</td><td>2.28 ms</td></tr>
+<tr><td>references</td><td>1.99 ms</td><td>2.27 ms</td></tr>
+<tr><td>incremental: modify one file</td><td>1.64 ms</td><td>30.8 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -5720,8 +5720,8 @@ forty milliseconds, and publishing that would have been dishonest.</li>
 </ul>
 <h2 id="results-on-the-ci-runner"><a class="header" href="#results-on-the-ci-runner">Results on the CI runner</a></h2>
 <!-- bench:comparison-run -->
-<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40431801064">run 40431801064</a>
-on commit <code>4d9a7a6</code> (2026-10-27, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
+<p>From <a href="https://github.com/jburrow/fast_code_search/actions/runs/40476203033">run 40476203033</a>
+on commit <code>3e05273</code> (2026-10-27, version 0.19.0): GitHub-hosted <code>ubuntu-latest</code>,
 AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <!-- /bench:comparison-run -->
 <!-- bench:comparison-table -->
@@ -5732,13 +5732,13 @@ AMD EPYC 7763, 4 vCPU, ripgrep 14.1.0, ugrep 5.0.0.</p>
 <tr><th>Query</th><th>ripgrep</th><th>ugrep</th><th>fcs (client)</th><th>fcs (engine)</th></tr>
 </thead>
 <tbody>
-<tr><td>common word <code>return</code></td><td>70.2 ms</td><td>95.7 ms</td><td>35.2 ms</td><td>33.63 ms</td></tr>
-<tr><td>identifier <code>Config</code></td><td>76.5 ms</td><td>85.2 ms</td><td>12.6 ms</td><td>9.11 ms</td></tr>
-<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>56.5 ms</td><td>87.7 ms</td><td>5.5 ms</td><td>0.01 ms</td></tr>
-<tr><td>two words <code>fn main</code></td><td>57.4 ms</td><td>88.2 ms</td><td>7.6 ms</td><td>2.52 ms</td></tr>
-<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>65.1 ms</td><td>116.9 ms</td><td>30.5 ms</td><td>29.64 ms</td></tr>
-<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>82.0 ms</td><td>131.3 ms</td><td>41.9 ms</td><td>39.21 ms</td></tr>
-<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>57.5 ms</td><td>83.5 ms</td><td>8.9 ms</td><td>3.89 ms</td></tr>
+<tr><td>common word <code>return</code></td><td>71.0 ms</td><td>87.5 ms</td><td>30.6 ms</td><td>28.61 ms</td></tr>
+<tr><td>identifier <code>Config</code></td><td>61.7 ms</td><td>89.3 ms</td><td>14.6 ms</td><td>10.22 ms</td></tr>
+<tr><td>rare identifier <code>xq9zv_nothing_here</code></td><td>57.4 ms</td><td>84.0 ms</td><td>5.8 ms</td><td>0.03 ms</td></tr>
+<tr><td>two words <code>fn main</code></td><td>58.4 ms</td><td>84.8 ms</td><td>7.9 ms</td><td>3.17 ms</td></tr>
+<tr><td>regex with literal <code>fn\s+\w+\(</code></td><td>66.0 ms</td><td>117.0 ms</td><td>32.6 ms</td><td>30.37 ms</td></tr>
+<tr><td>regex, no literal <code>[a-z]+_[a-z]+_[a-z]+\(</code></td><td>82.8 ms</td><td>131.1 ms</td><td>43.5 ms</td><td>42.27 ms</td></tr>
+<tr><td>case-insensitive <code>(?i)unwrap\(</code></td><td>59.8 ms</td><td>89.4 ms</td><td>10.7 ms</td><td>4.88 ms</td></tr>
 </tbody>
 </table>
 </div>
@@ -6478,7 +6478,30 @@ targets and records its numbers for comparison with the previous release.</li>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.20.0...HEAD">Unreleased</a></a></h2>
+<h2 id="0200---2026-10-27"><a class="header" href="#0200---2026-10-27"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...v0.20.0">0.20.0</a> - 2026-10-27</a></h2>
+<p>Large trees build, load and update much faster on less memory. On a
+302,000-file corpus (Linux, LLVM, Rust, Kubernetes, same machine against
+v0.19.0) a build takes about 185 s instead of 464 s, a load 2.4 s instead
+of 24 s, resident memory after a build is 1,152 MB instead of 1,590 MB,
+symbol search is about 10 times faster, and a restart reads only the
+folders that changed. A one-file update takes about 3 ms at any size.
+Search results are unchanged.</p>
+<p>Slowdowns, named: a path-filtered search on an index that was just built
+measured 19% slower on the large corpus (fine once loaded from disk); the
+sharded build left searches 0 to 13% slower in same-machine runs; mimalloc
+adds 17 MB of resident memory on a small tree. Each entry below says what
+it buys.</p>
+<p>Known limits (#234): on a 4-core machine with searches that take 1 to 3 s,
+a change waiting for the index lock can still keep new searches waiting
+about 2 s, and peak resident memory now counts the mapped index file’s
+page-cache pages, which the OS can evict.</p>
+<p><strong>Upgrading:</strong> the index format is now v13 (magic <code>FCSIDX10</code>): the first
+start after the upgrade rebuilds the index once, with no config change.
+A loaded index maps its file, so resident memory includes page-cache pages
+of the index that the OS can evict and share; <code>/api/diagnostics</code> reports
+them as <code>mapped_postings_bytes</code>. Windows still decodes posting lists onto
+the heap.</p>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
 <li><strong>Loading and saving an index are about 20% faster.</strong> The index file’s
