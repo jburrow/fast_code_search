@@ -2785,25 +2785,35 @@ async fn test_concurrent_search_during_updates() -> Result<()> {
         })
     };
 
-    // The point is overlap, so wait for the searcher to be live before the
-    // first update (a slow runner can otherwise finish every update before
-    // the thread has even started), and keep updating until it has searched
-    // a few more times during the writes.
-    let start = std::time::Instant::now();
-    while searches.load(Ordering::Relaxed) == 0 {
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "search thread never got the lock"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    // The point is overlap: searches between the writes of one round, with
+    // some files at the new version and some at the old. The searcher only
+    // gets in while no write lock is held, and the writer takes it again at
+    // once, so how often it gets in depends on the scheduler (on a macOS
+    // runner, sometimes fewer than 3 times in 40 rounds). So after each file
+    // the writer waits, briefly, for one more search: the overlap is made,
+    // not hoped for.
+    let wait_for_search = |after: usize| {
+        let start = std::time::Instant::now();
+        // A searcher that panicked stops counting; leave the wait so the
+        // join below reports its panic.
+        while searches.load(Ordering::Relaxed) <= after && !searcher.is_finished() {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "search thread never got the lock"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    wait_for_search(0);
     let searched_before = searches.load(Ordering::Relaxed);
-    let mut round = 0usize;
-    while round < 5 || (searches.load(Ordering::Relaxed) < searched_before + 3 && round < 40) {
-        round += 1;
+    let rounds = 5;
+    for round in 1..=rounds {
         for (i, p) in files.iter().enumerate() {
             std::fs::write(p, format!("fn conc_token_{i}_v{round}() {{}}\n"))?;
             engine.write().unwrap().update_file(p)?;
+            if i % 7 == 3 {
+                wait_for_search(searches.load(Ordering::Relaxed));
+            }
         }
     }
     stop.store(true, Ordering::Relaxed);
@@ -2815,7 +2825,7 @@ async fn test_concurrent_search_during_updates() -> Result<()> {
 
     let e = engine.read().unwrap();
     for i in 0..20 {
-        let hits = e.search(&format!("conc_token_{i}_v{round}"), 10);
+        let hits = e.search(&format!("conc_token_{i}_v{rounds}"), 10);
         assert_eq!(hits.len(), 1, "final content for {i}");
         assert!(e.search(&format!("conc_token_{i}_v0"), 10).is_empty());
     }
