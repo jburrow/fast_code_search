@@ -92,9 +92,29 @@ which is why they cover only 62% there. A restart gives the memory back.
 
 Resident memory is higher again. A build allocates and frees far more
 than the index it leaves behind (file contents, per-batch trigram sets,
-merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
-the server hands them back to the system once a build or a load is done
-(`malloc_trim`), outside the write lock:
+merge buffers), and the allocator keeps some of the freed pages.
+
+**The allocator.** The server, `fcs` and the benchmarks use
+[mimalloc](https://github.com/microsoft/mimalloc) (its v2 line) instead of
+the system allocator, on every platform. Queries allocate a lot (result
+lists, decoded posting lists, file contents), and with glibc's allocator a
+server that had just built its index answered about 2x slower than the
+same server after a restart: on the 302,000-file corpus a common word took
+161 ms in the building process and 77 ms in a fresh one, for the same
+instructions. It was the allocator's state after the build, not the
+index's layout: a copy of the index loaded into the building process was
+just as slow. With mimalloc, same machine, base `a708ca2`:
+
+| Corpus | Common word | Identifier | Regex with literal | Build | Resident after build |
+|---|---|---|---|---|---|
+| tokio + Django (5 rounds) | 47.4 → 38.2 ms | 15.2 → 10.7 ms | 40.1 → 36.6 ms | 5.30 → 4.79 s | 100 → 117 MB |
+| 302,000 files (1 round) | 181 → 87 ms | 78 → 44 ms | 110 → 75 ms | 189 → 176 s | 1,534 → 1,487 MB |
+
+jemalloc was as fast but does not build for Windows; mimalloc's v3 line
+held 50% more memory on tokio + Django. Once a build or a load is done the
+server has the allocator hand unused memory back (mimalloc's `mi_collect`,
+and `malloc_trim` for glibc), outside the write lock. Before the switch,
+`malloc_trim` alone measured:
 
 | Corpus | Resident before | After | Took |
 |---|---|---|---|
@@ -109,9 +129,10 @@ memory and made finalize about 200 ms slower on tokio + Django, so it is
 not done. `corpus_bench` shows everything outside the estimates as "not
 estimated".
 
-**Known limitation:** on macOS, Windows and musl builds the freed memory
-is not handed back, so resident memory after a build stays higher there
-than after a restart. The breakdown leaves out the allocator, thread stacks,
+**Known limitations:** on a small index mimalloc holds a little more
+resident memory than glibc did (17 MB more on tokio + Django); on a large
+one it holds less. Resident memory after a build stays higher than after a
+restart. The breakdown leaves out the allocator, thread stacks,
 mapped content, the regex cache and spare capacity inside posting lists, so
 it reads low, most of all just after a build. Use it to see which part grew
 between two runs, not as an exact total.

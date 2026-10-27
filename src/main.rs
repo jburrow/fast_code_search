@@ -15,6 +15,10 @@ use tonic::transport::Server;
 use tracing::{info, Level};
 
 /// Fast Code Search Server - High-performance code search service
+// mimalloc, not the system allocator: see `fast_code_search::heap_size`.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser, Debug)]
 #[command(name = "fast_code_search")]
 #[command(author, version, about, long_about = None)]

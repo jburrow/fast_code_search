@@ -163,6 +163,10 @@ struct Score {
     backlog: Vec<(f64, usize)>,
 }
 
+// The allocator the binaries use, so the figures are the server's: see `fast_code_search::heap_size`.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let scenarios: Vec<String> = if args.scenarios.is_empty() {

@@ -143,6 +143,10 @@ const DEFAULT_QUERIES: &[&str] = &[
     "fn main",
 ];
 
+// The allocator the binaries use, so the figures are the server's: see `fast_code_search::heap_size`.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let roots: Vec<String> = args

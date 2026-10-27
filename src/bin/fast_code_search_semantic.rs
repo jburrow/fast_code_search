@@ -53,6 +53,10 @@ struct Args {
     static_dir: Option<PathBuf>,
 }
 
+// mimalloc, not the system allocator: see `fast_code_search::heap_size`.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
