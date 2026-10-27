@@ -2482,7 +2482,16 @@ impl SearchEngine {
                 }
             }
         }
-        self.trigram_index.add_documents(&trigrams);
+        // Up to 4 files the parallel pass gains nothing (measured on
+        // generated files of about 9 KB: equal at 4, a third of the time at
+        // 16), and one file at a time spares a one-file edit its setup.
+        if trigrams.len() <= 4 {
+            for (id, t) in trigrams {
+                self.trigram_index.add_document_trigrams(id, t);
+            }
+        } else {
+            self.trigram_index.add_documents(&trigrams);
+        }
 
         if !fresh.is_empty() {
             indexed += self.index_batch(fresh);
