@@ -6,7 +6,7 @@ use crate::search::query_syntax::{ParsedQuery, SearchOptions};
 use crate::search::ranking::{FileScoreWeights, RankingWeights};
 use crate::search::regex_search::RegexAnalysis;
 use crate::symbols::extractor::{PackedRef, SymbolRef};
-use crate::symbols::{Symbol, SymbolExtractor, SymbolType};
+use crate::symbols::{Symbol, SymbolExtractor, SymbolType, SymbolView};
 use anyhow::Result;
 use memchr::memmem;
 use rayon::prelude::*;
@@ -1366,7 +1366,7 @@ pub struct SearchEngine {
     pub file_store: LazyFileStore,
     pub trigram_index: TrigramIndex,
     pub dependency_index: DependencyIndex,
-    symbol_cache: Vec<Vec<Symbol>>,
+    symbol_cache: crate::symbols::SymbolStore,
     /// Distinct folded symbol names and the files defining each: the
     /// filter that keeps symbol search from testing every symbol of every
     /// candidate file. Rebuilt with the file metadata.
@@ -1465,7 +1465,7 @@ impl SearchEngine {
             file_store: LazyFileStore::new(),
             trigram_index: TrigramIndex::new(),
             dependency_index: DependencyIndex::new(),
-            symbol_cache: Vec::new(),
+            symbol_cache: Default::default(),
             symbol_names: Default::default(),
             dir_stamps: None,
             reference_cache: Vec::new(),
@@ -2233,12 +2233,6 @@ impl SearchEngine {
         // Vec doubles on growth; after indexing N files the backing store may be 2N slots.
         // Shrinking here can save tens to hundreds of MB on large codebases.
         self.pending_imports.shrink_to_fit();
-        // Shrink the outer symbol_cache Vec and every inner Vec<Symbol>.
-        // Inner Vecs are built by tree-sitter extraction which also uses push(),
-        // so each may carry up to 2× over-allocation.
-        for syms in &mut self.symbol_cache {
-            syms.shrink_to_fit();
-        }
         self.symbol_cache.shrink_to_fit();
         self.rebuild_symbol_names();
     }
@@ -2246,10 +2240,7 @@ impl SearchEngine {
     /// Store the symbols of file `id`, keeping the name dictionary honest:
     /// the file is checked symbol by symbol until the next rebuild.
     fn set_symbols(&mut self, id: u32, symbols: Vec<Symbol>) {
-        if self.symbol_cache.len() <= id as usize {
-            self.symbol_cache.resize(id as usize + 1, Vec::new());
-        }
-        self.symbol_cache[id as usize] = symbols;
+        self.symbol_cache.set(id, symbols);
         if self.symbol_names.mark_stale(id) {
             self.rebuild_symbol_names();
         }
@@ -2561,9 +2552,7 @@ impl SearchEngine {
     /// [`Self::strip_for_reindex`] without the posting-list pass, for callers
     /// that removed several ids from the trigram index in one pass.
     fn strip_caches_and_edges(&mut self, id: u32) -> Vec<u32> {
-        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
-            slot.clear();
-        }
+        self.symbol_cache.clear(id);
         if let Some(slot) = self.reference_cache.get_mut(id as usize) {
             slot.clear();
         }
@@ -2814,9 +2803,7 @@ impl SearchEngine {
     /// recreated regains its dependents when it is indexed again.
     fn forget_id(&mut self, id: u32) {
         self.generation += 1;
-        if let Some(slot) = self.symbol_cache.get_mut(id as usize) {
-            slot.clear();
-        }
+        self.symbol_cache.clear(id);
         if let Some(slot) = self.reference_cache.get_mut(id as usize) {
             slot.clear();
         }
@@ -2867,7 +2854,7 @@ impl SearchEngine {
         let idx = id as usize;
         let meta = match self.file_store.get(id) {
             Some(file) => {
-                let symbol_count = self.symbol_cache.get(idx).map(|s| s.len()).unwrap_or(0);
+                let symbol_count = self.symbol_cache.count(id);
                 let dep_count = self.dependency_index.get_import_count(id);
                 let display = self.qualified_display_path(&file.path);
                 let relative = self.root_relative_path(&file.path);
@@ -2897,11 +2884,7 @@ impl SearchEngine {
                 let Some(file) = this.file_store.get(file_id) else {
                     return FileMetadata::default();
                 };
-                let symbol_count = this
-                    .symbol_cache
-                    .get(file_id as usize)
-                    .map(|s| s.len())
-                    .unwrap_or(0);
+                let symbol_count = this.symbol_cache.count(file_id);
                 let dep_count = this.dependency_index.get_import_count(file_id);
                 let display = this.qualified_display_path(&file.path);
                 let relative = this.root_relative_path(&file.path);

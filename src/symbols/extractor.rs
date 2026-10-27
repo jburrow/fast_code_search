@@ -4,7 +4,7 @@ use std::path::Path;
 use tree_sitter::Parser;
 use tree_sitter_language::LanguageFn;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolType {
     Function,
     Class,
@@ -26,6 +26,42 @@ pub enum SymbolType {
     Field,
     /// C# / TS property accessor pair
     Property,
+}
+
+impl SymbolType {
+    /// Every kind, in [`Self::index`] order.
+    const ALL: [SymbolType; 15] = [
+        Self::Function,
+        Self::Class,
+        Self::Method,
+        Self::Variable,
+        Self::Constant,
+        Self::Interface,
+        Self::Type,
+        Self::Enum,
+        Self::Trait,
+        Self::Struct,
+        Self::FileName,
+        Self::Module,
+        Self::Macro,
+        Self::Field,
+        Self::Property,
+    ];
+
+    /// The kind as a number, for packed storage (`symbols::store`).
+    pub fn index(self) -> u8 {
+        self as u8
+    }
+
+    /// The kind numbered `i` by [`Self::index`]; `Function` when out of
+    /// range (see [`Self::valid_index`]).
+    pub fn from_index(i: u8) -> Self {
+        Self::ALL.get(i as usize).copied().unwrap_or(Self::Function)
+    }
+
+    pub fn valid_index(i: u8) -> bool {
+        (i as usize) < Self::ALL.len()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

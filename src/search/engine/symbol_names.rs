@@ -21,7 +21,7 @@
 
 use crate::index::PersistedSymbolNames;
 use crate::search::fold::fold_char;
-use crate::symbols::{Symbol, SymbolType};
+use crate::symbols::{SymbolStore, SymbolType};
 use memchr::memmem;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
@@ -37,7 +37,7 @@ pub(super) const KIND_VALUE: u8 = 2;
 /// The file's own name.
 pub(super) const KIND_FILE_NAME: u8 = 4;
 
-fn kind_bit(kind: &SymbolType) -> u8 {
+fn kind_bit(kind: SymbolType) -> u8 {
     match kind {
         SymbolType::Variable | SymbolType::Constant => KIND_VALUE,
         SymbolType::FileName => KIND_FILE_NAME,
@@ -117,7 +117,7 @@ impl SymbolNameIndex {
     /// 2.2 s at 302,000 files) the temporaries fragmented those threads'
     /// allocator arenas, and resident memory grew by 160 MB for a 63 MB
     /// dictionary.
-    pub(super) fn build(cache: &[Vec<Symbol>]) -> Self {
+    pub(super) fn build(cache: &SymbolStore) -> Self {
         const NONE: u32 = u32::MAX;
         // Names by their 64-bit hash; the rare name whose hash another name
         // already holds goes to `collisions`.
@@ -125,43 +125,48 @@ impl SymbolNameIndex {
         let mut collisions: FxHashMap<String, u32> = FxHashMap::default();
         let mut text = String::new();
         let mut starts: Vec<u32> = Vec::new();
-        // Each symbol's name id, in cache order (NONE: not in the dictionary).
-        let mut symbol_ids: Vec<u32> = Vec::with_capacity(cache.iter().map(Vec::len).sum());
+        // The dictionary id of each of the store's names, folded once
+        // however many symbols share it (UNSEEN: not folded yet).
+        const UNSEEN: u32 = u32::MAX - 1;
+        let mut folded_id = vec![UNSEEN; cache.name_count()];
         let mut stale = RoaringBitmap::new();
         let mut buf = String::new();
-        for (file, symbols) in cache.iter().enumerate() {
-            for symbol in symbols {
-                if symbol.name.contains(SEP) {
-                    stale.insert(file as u32);
-                    symbol_ids.push(NONE);
-                    continue;
-                }
-                buf.clear();
-                fold_into(&symbol.name, &mut buf);
-                let add = |text: &mut String, starts: &mut Vec<u32>| {
-                    starts.push(text.len() as u32);
-                    text.push_str(&buf);
-                    text.push(SEP);
-                    starts.len() as u32 - 1
-                };
-                let hash = name_hash(&buf);
-                let id = match ids.get(&hash) {
-                    None => {
-                        let id = add(&mut text, &mut starts);
-                        ids.insert(hash, id);
-                        id
-                    }
-                    Some(&id) if name_at(&text, &starts, id as usize) == buf => id,
-                    Some(_) => match collisions.get(buf.as_str()) {
-                        Some(&id) => id,
+        for (file, symbol) in cache.symbols() {
+            let slot = &mut folded_id[symbol.name as usize];
+            if *slot == UNSEEN {
+                let name = cache.name(symbol.name);
+                *slot = if name.contains(SEP) {
+                    NONE
+                } else {
+                    buf.clear();
+                    fold_into(name, &mut buf);
+                    let add = |text: &mut String, starts: &mut Vec<u32>| {
+                        starts.push(text.len() as u32);
+                        text.push_str(&buf);
+                        text.push(SEP);
+                        starts.len() as u32 - 1
+                    };
+                    let hash = name_hash(&buf);
+                    match ids.get(&hash) {
                         None => {
                             let id = add(&mut text, &mut starts);
-                            collisions.insert(buf.clone(), id);
+                            ids.insert(hash, id);
                             id
                         }
-                    },
+                        Some(&id) if name_at(&text, &starts, id as usize) == buf => id,
+                        Some(_) => match collisions.get(buf.as_str()) {
+                            Some(&id) => id,
+                            None => {
+                                let id = add(&mut text, &mut starts);
+                                collisions.insert(buf.clone(), id);
+                                id
+                            }
+                        },
+                    }
                 };
-                symbol_ids.push(id);
+            }
+            if *slot == NONE {
+                stale.insert(file);
             }
         }
         drop((ids, collisions));
@@ -171,15 +176,17 @@ impl SymbolNameIndex {
         // name's files arrive ascending and a repeat of a (name, file) pair
         // is always that name's last entry so far. Count, then fill.
         let pairs = || {
-            cache.iter().enumerate().flat_map(|(file, symbols)| {
-                symbols
-                    .iter()
-                    .map(move |s| (file as u32, kind_bit(&s.symbol_type)))
+            cache.symbols().map(|(file, s)| {
+                (
+                    folded_id[s.name as usize],
+                    file,
+                    kind_bit(SymbolType::from_index(s.kind)),
+                )
             })
         };
         let mut last_file = vec![NONE; names];
         let mut counts = vec![0u32; names];
-        for (&id, (file, _)) in symbol_ids.iter().zip(pairs()) {
+        for (id, file, _) in pairs() {
             if id != NONE && last_file[id as usize] != file {
                 last_file[id as usize] = file;
                 counts[id as usize] += 1;
@@ -198,7 +205,7 @@ impl SymbolNameIndex {
         // The next free slot of each name's list.
         let mut fill: Vec<u32> = file_ranges[..names].to_vec();
         last_file.fill(NONE);
-        for (&id, (file, kind)) in symbol_ids.iter().zip(pairs()) {
+        for (id, file, kind) in pairs() {
             if id == NONE {
                 continue;
             }
@@ -390,6 +397,7 @@ impl SymbolNameIndex {
 mod tests {
     use super::*;
     use crate::search::fold::fold_str;
+    use crate::symbols::Symbol;
 
     thread_local! {
         /// Every name hashes alike, to test the collision path.
@@ -400,7 +408,7 @@ mod tests {
     fn names_with_one_hash_stay_apart() {
         let cache = vec![file(&["alpha", "beta", "alpha"]), file(&["gamma", "beta"])];
         COLLIDE.with(|c| c.set(true));
-        let idx = SymbolNameIndex::build(&cache);
+        let idx = SymbolNameIndex::build(&store(&cache));
         COLLIDE.with(|c| c.set(false));
         assert_eq!(idx.starts.len(), 3, "alpha, beta, gamma once each");
         assert_eq!(ids(idx.files_matching("beta", 2)), vec![0, 1]);
@@ -421,6 +429,14 @@ mod tests {
             .collect()
     }
 
+    fn store(files: &[Vec<Symbol>]) -> SymbolStore {
+        let mut store = SymbolStore::default();
+        for (id, symbols) in files.iter().enumerate() {
+            store.set(id as u32, symbols.clone());
+        }
+        store
+    }
+
     fn ids(b: Option<RoaringBitmap>) -> Vec<u32> {
         b.expect("filtered").iter().collect()
     }
@@ -433,7 +449,7 @@ mod tests {
             file(&["Ünïcode", "REQ"]),
             file(&[]),
         ];
-        let idx = SymbolNameIndex::build(&cache);
+        let idx = SymbolNameIndex::build(&store(&cache));
         assert_eq!(ids(idx.files_matching("req", 4)), vec![0, 1, 2]);
         assert_eq!(ids(idx.files_matching("error", 4)), vec![1]);
         assert_eq!(ids(idx.files_matching(&fold_str("ÜNÏ"), 4)), vec![2]);
@@ -446,7 +462,7 @@ mod tests {
     #[test]
     fn stale_and_new_files_are_always_returned() {
         let cache = vec![file(&["alpha"]), file(&["beta"]), file(&["bad\nname"])];
-        let mut idx = SymbolNameIndex::build(&cache);
+        let mut idx = SymbolNameIndex::build(&store(&cache));
         assert_eq!(ids(idx.files_matching("zzz", 3)), vec![2]);
         assert!(!idx.mark_stale(1));
         let mut empty = SymbolNameIndex::default();
@@ -479,7 +495,7 @@ mod tests {
             "MiXeD_Case",
         ];
         let cache: Vec<Vec<Symbol>> = names.iter().map(|n| file(&[n])).collect();
-        let idx = SymbolNameIndex::build(&cache);
+        let idx = SymbolNameIndex::build(&store(&cache));
         let queries = [
             "k", "K", "s", "ST", "state", "ß", "ss", "σ", "Σ", "ς", "ίσυ", "ain", "i", "İ", "ǆ",
             "ǅ", "fi", "ﬁ", "ω", "Ω", "mixed_c", "x",
@@ -501,7 +517,7 @@ mod tests {
     fn kinds_are_merged_per_name_and_file() {
         let mut syms = file(&["value", "value", "thing"]);
         syms[0].symbol_type = SymbolType::Constant;
-        let idx = SymbolNameIndex::build(&[syms]);
+        let idx = SymbolNameIndex::build(&store(&[syms]));
         let hits = idx.matching_names("value").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "value");
@@ -526,7 +542,7 @@ mod tests {
             file(&["beta"]),
             file(&["alpha"]),
         ];
-        let mut idx = SymbolNameIndex::build(&cache);
+        let mut idx = SymbolNameIndex::build(&store(&cache));
         idx.mark_stale(3);
         idx.mark_stale(4);
         let position = [0, u32::MAX, 1, 2, 3];

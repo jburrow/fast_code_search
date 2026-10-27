@@ -112,7 +112,7 @@ struct SymbolLines<'a> {
 }
 
 impl<'a> SymbolLines<'a> {
-    fn new(content: &'a str, symbols: &[&Symbol]) -> Self {
+    fn new(content: &'a str, symbols: &[SymbolView<'_>]) -> Self {
         let mut wanted: Vec<usize> = symbols
             .iter()
             .filter(|s| s.symbol_type != SymbolType::FileName)
@@ -334,12 +334,12 @@ impl SearchEngine {
         let score_file = |id: u32| -> Option<(f32, u32)> {
             let best = self
                 .symbol_cache
-                .get(id as usize)?
+                .get(id)?
                 .iter()
-                .filter(|s| name_matches(&s.name))
+                .filter(|s| name_matches(s.name))
                 .map(|s| {
                     score(
-                        name_factor(&fold_str(&s.name)),
+                        name_factor(&fold_str(s.name)),
                         kind_factor(&s.symbol_type),
                         id,
                     )
@@ -1157,7 +1157,7 @@ impl SearchEngine {
     ) -> Option<Vec<SearchMatch>> {
         // Consult the symbol cache BEFORE touching file content: most
         // candidates have no matching symbol and must cost no I/O.
-        let symbols = self.symbol_cache.get(doc_id as usize)?;
+        let symbols = self.symbol_cache.get(doc_id)?;
         let name_matches = |name: &str| -> bool {
             match (opts.case_sensitive, opts.whole_word) {
                 (true, true) => name == original_query,
@@ -1168,8 +1168,8 @@ impl SearchEngine {
                 (false, false) => contains_case_insensitive(name, query_lower),
             }
         };
-        let matching_symbols: Vec<&Symbol> =
-            symbols.iter().filter(|s| name_matches(&s.name)).collect();
+        let matching_symbols: Vec<SymbolView<'_>> =
+            symbols.iter().filter(|s| name_matches(s.name)).collect();
         if matching_symbols.is_empty() {
             return None;
         }
@@ -1234,7 +1234,7 @@ impl SearchEngine {
             // disk since (watching off, or not caught up), the recorded line
             // may now hold something else: report the definition only while
             // its name is still on that line, never an unrelated line.
-            if !line.contains(symbol.name.as_str()) {
+            if !line.contains(symbol.name) {
                 continue;
             }
 
@@ -1244,7 +1244,7 @@ impl SearchEngine {
                     Some(pos) => pos,
                     None => {
                         // Try to find the symbol name instead
-                        let name_lower = fold_str(&symbol.name).into_owned();
+                        let name_lower = fold_str(symbol.name).into_owned();
                         find_match_position_case_insensitive(line, &name_lower).unwrap_or((0, 0))
                     }
                 };
@@ -1264,7 +1264,7 @@ impl SearchEngine {
             // exact > prefix > substring, and definitions of types/functions
             // slightly above variables/constants with the same match quality.
             let w = &RankingWeights::DEFAULT;
-            let name_lower = fold_str(&symbol.name).into_owned();
+            let name_lower = fold_str(symbol.name).into_owned();
             let name_factor = if name_lower == query_lower {
                 w.symbol_exact_name
             } else if name_lower.starts_with(query_lower) {
@@ -1346,11 +1346,7 @@ impl SearchEngine {
         // without symbols, or a file added before its symbols were stored);
         // the text path treats that as "no symbols" and so must this one,
         // otherwise every regex hit in such a file is silently dropped.
-        let symbols = self
-            .symbol_cache
-            .get(doc_id as usize)
-            .map(|s| s.as_slice())
-            .unwrap_or(&[]);
+        let symbols = self.symbol_cache.of(doc_id);
 
         // Get dependency count for this file (cached lookup - done once per document)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
@@ -1546,7 +1542,7 @@ impl SearchEngine {
         if matches.is_empty() {
             let has_filename_match = symbols
                 .iter()
-                .any(|s| s.symbol_type == SymbolType::FileName && regex.is_match(&s.name));
+                .any(|s| s.symbol_type == SymbolType::FileName && regex.is_match(s.name));
             if has_filename_match {
                 let path_ref =
                     display_path.get_or_insert_with(|| self.make_display_path(&file.path));
@@ -1613,11 +1609,7 @@ impl SearchEngine {
         // 1. The index was loaded from persistence (symbols aren't persisted for space efficiency)
         // 2. The file was just added and symbols haven't been extracted yet
         // When empty, search still works but without symbol-based ranking boosts.
-        let symbols = self
-            .symbol_cache
-            .get(doc_id as usize)
-            .map(|s| s.as_slice())
-            .unwrap_or(&[]);
+        let symbols = self.symbol_cache.of(doc_id);
 
         // Get dependency count for this file (cached lookup - done once per document)
         let dependency_count = self.dependency_index.get_import_count(doc_id);
@@ -1698,7 +1690,7 @@ impl SearchEngine {
         if matches.is_empty() {
             let has_filename_match = symbols
                 .iter()
-                .any(|s| s.symbol_type == SymbolType::FileName && terms.matches_file_name(&s.name));
+                .any(|s| s.symbol_type == SymbolType::FileName && terms.matches_file_name(s.name));
             if has_filename_match {
                 let path_ref =
                     display_path.get_or_insert_with(|| self.display_path_for(doc_id, &file.path));
@@ -1740,9 +1732,9 @@ impl SearchEngine {
 mod symbol_lines_tests {
     use super::*;
 
-    fn sym(line: usize) -> Symbol {
-        Symbol {
-            name: "x".into(),
+    fn sym(line: usize) -> SymbolView<'static> {
+        SymbolView {
+            name: "x",
             symbol_type: SymbolType::Function,
             line,
             column: 0,
@@ -1766,8 +1758,8 @@ mod symbol_lines_tests {
             "é\nü\r\n",
         ];
         for text in texts {
-            let syms: Vec<Symbol> = (0..7).rev().chain([2, 0, 2]).map(sym).collect();
-            let refs: Vec<&Symbol> = syms.iter().collect();
+            let syms: Vec<SymbolView<'_>> = (0..7).rev().chain([2, 0, 2]).map(sym).collect();
+            let refs = syms;
             let lines = SymbolLines::new(text, &refs);
             for n in 0..7 {
                 assert_eq!(lines.get(n), text.lines().nth(n), "line {n} of {text:?}");
@@ -1777,8 +1769,7 @@ mod symbol_lines_tests {
 
     #[test]
     fn symbol_lines_holds_only_wanted_lines() {
-        let syms = [sym(1)];
-        let refs: Vec<&Symbol> = syms.iter().collect();
+        let refs = [sym(1)];
         let lines = SymbolLines::new("a\nb\nc\n", &refs);
         assert_eq!(lines.get(1), Some("b"));
         assert_eq!(lines.get(0), None);

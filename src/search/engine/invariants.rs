@@ -162,11 +162,12 @@ impl SearchEngine {
 
         // Per-file caches hold nothing for removed files.
         let is_live = |id: u32| live.contains(id);
-        for (id, symbols) in self.symbol_cache.iter().enumerate() {
-            if !symbols.is_empty() && !is_live(id as u32) {
+        for id in 0..self.symbol_cache.len() as u32 {
+            let symbols = self.symbol_cache.count(id);
+            if symbols != 0 && !is_live(id) {
                 report.push(
                     "cache_for_removed_file",
-                    format!("removed file #{id} keeps {} symbols", symbols.len()),
+                    format!("removed file #{id} keeps {symbols} symbols"),
                 );
             }
         }

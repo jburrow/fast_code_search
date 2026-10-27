@@ -159,9 +159,8 @@ impl SearchEngine {
         use crate::symbols::SymbolType as T;
         let names: Vec<&str> = self
             .symbol_cache
-            .get(definer as usize)
-            .into_iter()
-            .flatten()
+            .of(definer)
+            .iter()
             .filter(|s| {
                 s.is_definition
                     && !matches!(
@@ -169,7 +168,7 @@ impl SearchEngine {
                         T::FileName | T::Method | T::Field | T::Property | T::Variable
                     )
             })
-            .map(|s| s.name.as_str())
+            .map(|s| s.name)
             .filter(|n| n.len() >= 2)
             .collect();
         let stem = self

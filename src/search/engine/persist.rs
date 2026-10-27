@@ -149,7 +149,20 @@ impl SearchEngine {
     ) {
         // Size the symbol cache to the number of files actually registered.
         let total_new_files = self.file_store.len();
-        self.symbol_cache = vec![Vec::new(); total_new_files];
+        // Each saved position's symbols go to the file now holding it.
+        let mut place: Vec<Option<u32>> = Vec::new();
+        for (&orig_idx, &new_id) in orig_to_new {
+            let orig_idx = orig_idx as usize;
+            if place.len() <= orig_idx {
+                place.resize(orig_idx + 1, None);
+            }
+            place[orig_idx] = Some(new_id);
+        }
+        self.symbol_cache = crate::symbols::SymbolStore::from_persisted(
+            std::mem::take(&mut persisted.symbols),
+            total_new_files,
+            |pos| place.get(pos).copied().flatten(),
+        );
         self.symbol_names = Default::default();
         self.install_references(
             std::mem::take(&mut persisted.reference_names),
@@ -173,9 +186,6 @@ impl SearchEngine {
         for (&orig_idx, &new_id) in orig_to_new {
             if (new_id as usize) >= total_new_files {
                 continue;
-            }
-            if let Some(syms) = persisted.symbols.get_mut(orig_idx as usize) {
-                self.symbol_cache[new_id as usize] = std::mem::take(syms);
             }
             if let Some(refs) = persisted.references.get_mut(orig_idx as usize) {
                 self.set_packed_references(new_id, std::mem::take(refs));
@@ -220,7 +230,7 @@ impl SearchEngine {
         }
 
         // Reset derived state
-        self.symbol_cache = vec![Vec::new(); total_files];
+        self.symbol_cache = crate::symbols::SymbolStore::with_slots(total_files);
         self.symbol_names = Default::default();
         self.install_references(Vec::new(), total_files);
         self.pending_imports.clear();
@@ -334,11 +344,7 @@ impl SearchEngine {
                 stats.files_skipped += 1;
             }
 
-            if entry.file_id as usize >= self.symbol_cache.len() {
-                self.symbol_cache
-                    .resize(entry.file_id as usize + 1, Vec::new());
-            }
-            self.symbol_cache[entry.file_id as usize] = entry.symbols;
+            self.symbol_cache.set(entry.file_id, entry.symbols);
             self.store_references(entry.file_id, entry.references);
 
             let path = self.interned_path(entry.file_id, &entry.path);
@@ -499,13 +505,7 @@ impl SearchEngine {
         };
 
         // Collect per-file symbol caches (parallel to the files Vec)
-        let symbols: Vec<Vec<crate::symbols::extractor::Symbol>> = slots
-            .iter()
-            .map(|slot| {
-                slot.and_then(|id| self.symbol_cache.get(id as usize).cloned())
-                    .unwrap_or_default()
-            })
-            .collect();
+        let symbols = self.symbol_cache.to_persisted(&slots);
 
         // Per-file references, by position; the name table is global.
         let references: Vec<Vec<crate::symbols::extractor::PackedRef>> = slots

@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Symbols take half the memory.** Each distinct symbol name is now
+  stored once, and a symbol takes 16 bytes instead of 48 plus its own copy
+  of its name. On the 302,000-file real corpus symbols take 212 MB instead
+  of 405 MB and resident memory after a build is 1,152 MB instead of
+  1,490 MB (same machine, median of 3 against `c718f73`); a loaded Linux
+  kernel index holds 162 MB of heap instead of 286 MB. Saves are 9 to 12%
+  faster, a one-file update about 20% faster, searches unchanged. The
+  index format is now v13 (magic `FCSIDX10`): the first start after the
+  upgrade rebuilds the index once.
 - **Bulk changes reach the index about twice as fast.** When many files
   change at once (a branch switch, a formatter run), the watcher now adds
   the new trigrams of the changed files in one parallel pass, as a build
