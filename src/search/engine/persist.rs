@@ -158,19 +158,7 @@ impl SearchEngine {
             }
             place[orig_idx] = Some(new_id);
         }
-        self.symbol_cache = crate::symbols::SymbolStore::from_persisted(
-            std::mem::take(&mut persisted.symbols),
-            total_new_files,
-            |pos| place.get(pos).copied().flatten(),
-        );
-        self.symbol_names = Default::default();
-        self.install_references(
-            std::mem::take(&mut persisted.reference_names),
-            total_new_files,
-        );
-
-        // Register files in dependency_index for future import resolution
-        // and restore per-file symbol caches, keyed by the real new ids.
+        // Register files in dependency_index for future import resolution.
         let mut ids: Vec<u32> = orig_to_new
             .values()
             .copied()
@@ -178,10 +166,29 @@ impl SearchEngine {
             .collect();
         ids.sort_unstable();
         ids.dedup();
+        // The symbols and the import graph's path tables are independent and
+        // each about a fifth of a load at 302,000 files: build them at once.
+        let symbols = std::mem::take(&mut persisted.symbols);
         let file_store = &self.file_store;
-        self.dependency_index.register_canonical_files(
-            ids.iter()
-                .filter_map(|&id| Some((id, file_store.shared_path(id)?.clone()))),
+        let dependency_index = &mut self.dependency_index;
+        let (symbol_cache, ()) = rayon::join(
+            || {
+                crate::symbols::SymbolStore::from_persisted(symbols, total_new_files, |pos| {
+                    place.get(pos).copied().flatten()
+                })
+            },
+            || {
+                dependency_index.register_canonical_files(
+                    ids.iter()
+                        .filter_map(|&id| Some((id, file_store.shared_path(id)?.clone()))),
+                )
+            },
+        );
+        self.symbol_cache = symbol_cache;
+        self.symbol_names = Default::default();
+        self.install_references(
+            std::mem::take(&mut persisted.reference_names),
+            total_new_files,
         );
         for (&orig_idx, &new_id) in orig_to_new {
             if (new_id as usize) >= total_new_files {

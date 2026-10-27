@@ -11,6 +11,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Whether two paths are in the same folder, compared as bytes (paths are
+/// canonical, so equal folders are spelled alike).
+fn same_parent(a: &Path, b: &Path) -> bool {
+    a.parent().map(Path::as_os_str) == b.parent().map(Path::as_os_str)
+}
+
 /// Tracks import/dependency relationships between files in the index.
 ///
 /// Maintains bidirectional mappings:
@@ -317,7 +323,7 @@ impl DependencyIndex {
     /// Restoring a 61k-file index spent 16 s in realpath walks here. Pass
     /// the file store's interned path so the tables hold no copy of it.
     pub fn register_canonical_file(&mut self, file_id: u32, stored_path: Arc<Path>) {
-        self.register_canonical(file_id, stored_path, None);
+        self.register_canonical(file_id, stored_path, None, true);
     }
 
     /// [`Self::register_canonical_file`] for many files at once (a load).
@@ -325,10 +331,44 @@ impl DependencyIndex {
     /// rather than once per file: hashing every ancestor of every file was
     /// most of this at 302,000 files.
     pub fn register_canonical_files(&mut self, files: impl IntoIterator<Item = (u32, Arc<Path>)>) {
+        let files = files.into_iter();
+        let expected = match files.size_hint() {
+            (_, Some(most)) => most,
+            (least, None) => least,
+        };
+        self.path_to_id.reserve(expected);
+        self.id_to_path.reserve(expected);
         let mut per_dir: FxHashMap<PathBuf, u32> = FxHashMap::default();
+        // Files come in id order, which is walk order, so neighbours share a
+        // folder: count each run of one folder's files with one lookup
+        // instead of hashing the folder for every file (a third of
+        // registering 302,000 files at load).
+        let mut run: Option<(Arc<Path>, u32)> = None;
+        let mut flush = |this: &mut Self, run: Option<(Arc<Path>, u32)>| {
+            let Some((path, n)) = run else { return };
+            let Some(dir) = path.parent() else { return };
+            for counts in [&mut this.files_per_dir, &mut per_dir] {
+                match counts.get_mut(dir) {
+                    Some(count) => *count += n,
+                    None => {
+                        counts.insert(dir.to_path_buf(), n);
+                    }
+                }
+            }
+        };
         for (file_id, stored_path) in files {
-            self.register_canonical(file_id, stored_path, Some(&mut per_dir));
+            if !self.register_canonical(file_id, stored_path.clone(), None, false) {
+                continue;
+            }
+            match &mut run {
+                Some((path, n)) if same_parent(path, &stored_path) => *n += 1,
+                _ => {
+                    let done = run.replace((stored_path, 1));
+                    flush(self, done);
+                }
+            }
         }
+        flush(self, run.take());
         for (dir, n) in per_dir {
             for above in dir.ancestors() {
                 match self.files_below.get_mut(above) {
@@ -341,26 +381,32 @@ impl DependencyIndex {
         }
     }
 
-    /// Registers one file. With `per_dir`, the `files_below` counts are left
-    /// to the caller: the file is counted in its directory's entry there.
+    /// Registers one file; false when it already was. With `per_dir`, the
+    /// `files_below` counts are left to the caller: the file is counted in
+    /// its directory's entry there. Without `count_dir`, the caller counts
+    /// the file in `files_per_dir` and `per_dir` too.
     fn register_canonical(
         &mut self,
         file_id: u32,
         stored_path: Arc<Path>,
         per_dir: Option<&mut FxHashMap<PathBuf, u32>>,
-    ) {
-        if self.path_to_id.get(&stored_path) == Some(&file_id) {
-            return;
-        }
+        count_dir: bool,
+    ) -> bool {
+        // `path_to_id` maps the path to `file_id` exactly when `id_to_path`
+        // maps `file_id` to the path, so one lookup by id (not by path,
+        // whose hash walks every component) tells whether it is registered.
         if let Some(previous) = self.id_to_path.get(&file_id) {
             if *previous == stored_path {
-                return; // already registered under exactly this path
+                return false; // already registered under exactly this path
             }
             self.unregister_path_lookups(file_id);
         }
 
+        // Parsing the name walks the path's components: once, not per check.
+        let name = stored_path.file_name().and_then(|s| s.to_str());
+
         // Add to filename inverted index for fast non-relative lookups
-        if let Some(filename) = stored_path.file_name().and_then(|s| s.to_str()) {
+        if let Some(filename) = name {
             match self.filename_to_paths.get_mut(filename) {
                 Some(paths) => paths.push(stored_path.clone()),
                 None => {
@@ -370,7 +416,7 @@ impl DependencyIndex {
             }
         }
 
-        if stored_path.file_name().is_some_and(|n| n == "Cargo.toml") {
+        if name == Some("Cargo.toml") {
             if let Some(root) = stored_path.parent() {
                 self.rust_crate_names
                     .write()
@@ -378,19 +424,15 @@ impl DependencyIndex {
                     .remove(root);
             }
         }
-        if stored_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(is_js_config_name)
-        {
+        if name.is_some_and(is_js_config_name) {
             // An edited config can change any directory's resolution
             // (through `extends`), so start over.
             *self.js_configs.write().unwrap_or_else(|e| e.into_inner()) = JsConfigCache::default();
         }
-        if stored_path.file_name().is_some_and(|n| n == "package.json") {
+        if name == Some("package.json") {
             *self.js_packages.write().unwrap_or_else(|e| e.into_inner()) = None;
         }
-        if let Some(dir) = stored_path.parent() {
+        if let Some(dir) = stored_path.parent().filter(|_| count_dir) {
             match self.files_per_dir.get_mut(dir) {
                 Some(n) => *n += 1,
                 None => {
@@ -418,6 +460,7 @@ impl DependencyIndex {
         }
         self.path_to_id.insert(stored_path.clone(), file_id);
         self.id_to_path.insert(file_id, stored_path);
+        true
     }
 
     /// Drop `file_id` from `path_to_id`, `id_to_path` and `filename_to_paths`.
@@ -1419,6 +1462,9 @@ mod tests {
             "/r/c/x.rs",
             "/r/top.py",
             "/other/Cargo.toml",
+            // A folder seen again after others (files are counted per run
+            // of one folder).
+            "/r/a/w.rs",
         ]
         .iter()
         .map(|p| Arc::from(Path::new(p)))
@@ -1437,8 +1483,12 @@ mod tests {
         };
         assert_eq!(sorted(&batch.files_below), sorted(&one.files_below));
         assert_eq!(sorted(&batch.files_per_dir), sorted(&one.files_per_dir));
-        assert_eq!(batch.files_below[Path::new("/r")], 5);
-        assert_eq!(batch.files_below[Path::new("/r/a")], 3);
+        assert_eq!(batch.files_below[Path::new("/r")], 6);
+        assert_eq!(batch.files_below[Path::new("/r/a")], 4);
+        assert_eq!(batch.files_per_dir[Path::new("/r/a")], 3);
+        // Registering a file again under the same id and path counts nothing.
+        batch.register_canonical_files([(0, paths[0].clone())]);
+        assert_eq!(sorted(&batch.files_below), sorted(&one.files_below));
         for (i, p) in paths.iter().enumerate() {
             assert_eq!(batch.get_file_id(p), Some(i as u32));
         }
