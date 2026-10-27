@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-9c443253.js";
+            window.path_to_searchindex_js = "searchindex-2e0e1ecd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -6481,6 +6481,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Loading and saving an index are about 20% faster.</strong> The index file’s
+checksum uses the CPU’s carry-less multiply (<code>crc32fast</code>) instead of a
+table: it was 16% of a load’s instructions. Registering the files’ paths
+for import resolution no longer hashes each path several times, and runs
+alongside restoring the symbols. On the 302,000-file corpus a load takes
+2.39 s instead of 2.79 s (median of 6 interleaved runs, same machine); on
+tokio + Django a load takes 83 ms instead of 107 ms and a save 120 ms
+instead of 154 ms. The file format is unchanged.</li>
 <li><strong>Symbols take half the memory.</strong> Each distinct symbol name is now
 stored once, and a symbol takes 16 bytes instead of 48 plus its own copy
 of its name. On the 302,000-file real corpus symbols take 212 MB instead
