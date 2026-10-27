@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-27
+
+Large trees build, load and update much faster on less memory. On a
+302,000-file corpus (Linux, LLVM, Rust, Kubernetes, same machine against
+v0.19.0) a build takes about 185 s instead of 464 s, a load 2.4 s instead
+of 24 s, resident memory after a build is 1,152 MB instead of 1,590 MB,
+symbol search is about 10 times faster, and a restart reads only the
+folders that changed. A one-file update takes about 3 ms at any size.
+Search results are unchanged.
+
+Slowdowns, named: a path-filtered search on an index that was just built
+measured 19% slower on the large corpus (fine once loaded from disk); the
+sharded build left searches 0 to 13% slower in same-machine runs; mimalloc
+adds 17 MB of resident memory on a small tree. Each entry below says what
+it buys.
+
+**Upgrading:** the index format is now v13 (magic `FCSIDX10`): the first
+start after the upgrade rebuilds the index once, with no config change.
+A loaded index maps its file, so resident memory includes page-cache pages
+of the index that the OS can evict and share; `/api/diagnostics` reports
+them as `mapped_postings_bytes`. Windows still decodes posting lists onto
+the heap.
+
 ### Changed
 - **Loading and saving an index are about 20% faster.** The index file's
   checksum uses the CPU's carry-less multiply (`crc32fast`) instead of a
@@ -2208,7 +2231,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/jburrow/fast_code_search/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jburrow/fast_code_search/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/jburrow/fast_code_search/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/jburrow/fast_code_search/compare/v0.17.0...v0.18.0
