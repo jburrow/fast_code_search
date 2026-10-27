@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-08c9cee8.js";
+            window.path_to_searchindex_js = "../searchindex-9c443253.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -230,7 +230,8 @@ records it per scenario.</p>
 measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (at <code>b1f9287</code>). A loaded index reads
+Checked the same way on public code (tokio + Django at <code>b1f9287</code>, the
+Linux kernel re-measured after symbols were packed, C1.6). A loaded index reads
 its posting lists in place from the mapped index file, so they are not
 heap; the mapped bytes are reported apart (<code>mapped_postings_bytes</code>) and
 are page cache the system can evict and share:</p>
@@ -242,8 +243,8 @@ are page cache the system can evict and share:</p>
 <tbody>
 <tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>75.2 MB</td><td>46.4 MB (62%)</td><td>none</td></tr>
 <tr><td>tokio + Django</td><td>loaded from disk</td><td>19.4 MB</td><td>18.7 MB (96%)</td><td>12.6 MB</td></tr>
-<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>547.9 MB</td><td>505.3 MB (92%)</td><td>none</td></tr>
-<tr><td>Linux kernel</td><td>loaded from disk</td><td>286.3 MB</td><td>282.3 MB (99%)</td><td>149.3 MB</td></tr>
+<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>422.6 MB</td><td>379.4 MB (90%)</td><td>none</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>161.9 MB</td><td>157.2 MB (97%)</td><td>149.3 MB</td></tr>
 </tbody>
 </table>
 </div>
@@ -254,7 +255,7 @@ are page cache the system can evict and share:</p>
 <tr><th>Part</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>symbols</td><td>239.0 MB</td></tr>
+<tr><td>symbols</td><td>113.9 MB</td></tr>
 <tr><td>graph_paths</td><td>14.0 MB</td></tr>
 <tr><td>file_table</td><td>12.7 MB</td></tr>
 <tr><td>file_metadata</td><td>7.8 MB</td></tr>
@@ -264,6 +265,15 @@ are page cache the system can evict and share:</p>
 </tbody>
 </table>
 </div>
+<p><strong>Each symbol name is held once.</strong> A symbol is 16 bytes (its name’s
+number, line, column, kind and whether it defines the name), and the
+distinct names sit back to back in one string with a hash table over them.
+Before, a symbol was 48 bytes plus its own copy of its name: the Linux
+kernel’s loaded symbols took 239.0 MB, and on the 302,000-file corpus
+symbols took 405 MB and resident memory after a build was 1,490 MB, now
+212 MB and 1,152 MB (same machine, 3 rounds). Names no symbol uses any
+more (after edits) are kept until they outnumber the used ones, then the
+table is rebuilt without them.</p>
 <p><strong>Each path is held once.</strong> The file store interns every file’s canonical
 path; the ranking metadata (its root-qualified path is an offset into that
 path), the import resolver’s path tables and the import lists all share

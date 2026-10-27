@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-08c9cee8.js";
+            window.path_to_searchindex_js = "searchindex-9c443253.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -4004,8 +4004,8 @@ scrub_invariants_minutes = 60.0
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-file-format"><a class="header" href="#index-file-format">Index file format</a></h1>
-<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v12</strong>, magic
-<code>FCSIDX09</code>. Everything is little-endian.</p>
+<p>The persisted index (<code>index_path</code>) is a single file, format <strong>v13</strong>, magic
+<code>FCSIDX10</code>. Everything is little-endian.</p>
 <pre><code class="language-text">magic[8]  version:u32  crc:u32  meta_len:u64  dir_count:u32  bitmaps_len:u64   (36-byte header)
 META     bincode-encoded metadata (see below)
 DIR      dir_count × { trigram[3], pad[1], offset:u64, len:u32 }, sorted by trigram
@@ -4026,7 +4026,8 @@ cannot replace a mapped file, they are decoded at load).</p>
 <a href="#upgrading">Upgrading</a>) and the indexed root paths;</li>
 <li>the file table: path (raw bytes, so non-UTF-8 names survive), mtime in
 nanoseconds, size, and which configured root the file belongs to;</li>
-<li>per-file symbols and references (reference names interned in one table);</li>
+<li>per-file symbols, each distinct name stored once and each symbol packed
+to 14 bytes (v13), and references (reference names interned in one table);</li>
 <li>resolved dependency edges and imports still waiting for their target;</li>
 <li>the symbol name dictionary symbol search filters by (see
 <a href="#verification-and-modes">Candidates</a>): the
@@ -4059,7 +4060,7 @@ process. A crash leaves the previous index intact, and the next start
 removes the temporary file a killed save left.</li>
 <li><strong>Detects drift.</strong> Each file’s mtime and size at read time are stored;
 on load a file whose stat differs is re-read.</li>
-<li><strong>Pinned.</strong> <code>tests/fixtures/index-v12.fcsidx</code> is compared byte for byte
+<li><strong>Pinned.</strong> <code>tests/fixtures/index-v13.fcsidx</code> is compared byte for byte
 in the test suite; a deliberate format change bumps the magic and
 regenerates the fixture (<code>FCS_WRITE_GOLDEN=1 cargo test golden</code>).</li>
 <li><strong>Older formats</strong> are rejected with a message asking for a rebuild;
@@ -5113,7 +5114,8 @@ records it per scenario.</p>
 measurements (<code>src/heap_size.rs</code>). <code>tests/heap_estimates.rs</code> keeps them
 honest: it counts every allocation and fails if the estimates for a loaded
 index fall outside 75% to 105% of the heap it really holds.
-Checked the same way on public code (at <code>b1f9287</code>). A loaded index reads
+Checked the same way on public code (tokio + Django at <code>b1f9287</code>, the
+Linux kernel re-measured after symbols were packed, C1.6). A loaded index reads
 its posting lists in place from the mapped index file, so they are not
 heap; the mapped bytes are reported apart (<code>mapped_postings_bytes</code>) and
 are page cache the system can evict and share:</p>
@@ -5125,8 +5127,8 @@ are page cache the system can evict and share:</p>
 <tbody>
 <tr><td>tokio + Django (6,200 files)</td><td>just built</td><td>75.2 MB</td><td>46.4 MB (62%)</td><td>none</td></tr>
 <tr><td>tokio + Django</td><td>loaded from disk</td><td>19.4 MB</td><td>18.7 MB (96%)</td><td>12.6 MB</td></tr>
-<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>547.9 MB</td><td>505.3 MB (92%)</td><td>none</td></tr>
-<tr><td>Linux kernel</td><td>loaded from disk</td><td>286.3 MB</td><td>282.3 MB (99%)</td><td>149.3 MB</td></tr>
+<tr><td>Linux kernel (85,700 files, 1.23 GB)</td><td>just built</td><td>422.6 MB</td><td>379.4 MB (90%)</td><td>none</td></tr>
+<tr><td>Linux kernel</td><td>loaded from disk</td><td>161.9 MB</td><td>157.2 MB (97%)</td><td>149.3 MB</td></tr>
 </tbody>
 </table>
 </div>
@@ -5137,7 +5139,7 @@ are page cache the system can evict and share:</p>
 <tr><th>Part</th><th>Estimated</th></tr>
 </thead>
 <tbody>
-<tr><td>symbols</td><td>239.0 MB</td></tr>
+<tr><td>symbols</td><td>113.9 MB</td></tr>
 <tr><td>graph_paths</td><td>14.0 MB</td></tr>
 <tr><td>file_table</td><td>12.7 MB</td></tr>
 <tr><td>file_metadata</td><td>7.8 MB</td></tr>
@@ -5147,6 +5149,15 @@ are page cache the system can evict and share:</p>
 </tbody>
 </table>
 </div>
+<p><strong>Each symbol name is held once.</strong> A symbol is 16 bytes (its name’s
+number, line, column, kind and whether it defines the name), and the
+distinct names sit back to back in one string with a hash table over them.
+Before, a symbol was 48 bytes plus its own copy of its name: the Linux
+kernel’s loaded symbols took 239.0 MB, and on the 302,000-file corpus
+symbols took 405 MB and resident memory after a build was 1,490 MB, now
+212 MB and 1,152 MB (same machine, 3 rounds). Names no symbol uses any
+more (after edits) are kept until they outnumber the used ones, then the
+table is rebuilt without them.</p>
 <p><strong>Each path is held once.</strong> The file store interns every file’s canonical
 path; the ranking metadata (its root-qualified path is an offset into that
 path), the import resolver’s path tables and the import lists all share
@@ -6470,6 +6481,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Symbols take half the memory.</strong> Each distinct symbol name is now
+stored once, and a symbol takes 16 bytes instead of 48 plus its own copy
+of its name. On the 302,000-file real corpus symbols take 212 MB instead
+of 405 MB and resident memory after a build is 1,152 MB instead of
+1,490 MB (same machine, median of 3 against <code>c718f73</code>); a loaded Linux
+kernel index holds 162 MB of heap instead of 286 MB. Saves are 9 to 12%
+faster, a one-file update about 20% faster, searches unchanged. The
+index format is now v13 (magic <code>FCSIDX10</code>): the first start after the
+upgrade rebuilds the index once.</li>
 <li><strong>Bulk changes reach the index about twice as fast.</strong> When many files
 change at once (a branch switch, a formatter run), the watcher now adds
 the new trigrams of the changed files in one parallel pass, as a build
@@ -9170,14 +9190,14 @@ query + walker) under <code>catch_unwind</code>.</li>
 <li><strong>Merge, under the engine write lock</strong>: <code>index_batch</code> registers files,
 inserts postings, stores symbols, queues imports; unresolved imports are
 parked and retried only when a file with a matching name appears.</li>
-<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v12
-(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX09</code>, version,
+<li><strong>Checkpoints and final save</strong>: atomic temp+fsync+rename, format v13
+(<code>src/index/persistence.rs</code>): a 36-byte header (magic <code>FCSIDX10</code>, version,
 CRC-32, section lengths), then a bincode metadata section (file table,
 symbols, edges, parked imports, reference names and per-file references),
 a fixed-width trigram directory sorted by trigram, and the roaring bitmaps
 back to back. Save streams bitmaps from the live map; load memory-maps the
 file, checks bounds and checksum, and deserializes bitmaps in parallel from
-the mapping. <code>tests/fixtures/index-v12.fcsidx</code> pins the format byte for
+the mapping. <code>tests/fixtures/index-v13.fcsidx</code> pins the format byte for
 byte; regenerate it with <code>FCS_WRITE_GOLDEN=1 cargo test golden</code> after a
 deliberate format change (and bump the version).</li>
 </ol>

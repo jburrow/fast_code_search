@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-08c9cee8.js";
+            window.path_to_searchindex_js = "../searchindex-9c443253.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -188,6 +188,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Symbols take half the memory.</strong> Each distinct symbol name is now
+stored once, and a symbol takes 16 bytes instead of 48 plus its own copy
+of its name. On the 302,000-file real corpus symbols take 212 MB instead
+of 405 MB and resident memory after a build is 1,152 MB instead of
+1,490 MB (same machine, median of 3 against <code>c718f73</code>); a loaded Linux
+kernel index holds 162 MB of heap instead of 286 MB. Saves are 9 to 12%
+faster, a one-file update about 20% faster, searches unchanged. The
+index format is now v13 (magic <code>FCSIDX10</code>): the first start after the
+upgrade rebuilds the index once.</li>
 <li><strong>Bulk changes reach the index about twice as fast.</strong> When many files
 change at once (a branch switch, a formatter run), the watcher now adds
 the new trigrams of the changed files in one parallel pass, as a build
