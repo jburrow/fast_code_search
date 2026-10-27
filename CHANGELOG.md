@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Bulk changes reach the index about twice as fast.** When many files
+  change at once (a branch switch, a formatter run), the watcher now adds
+  the new trigrams of the changed files in one parallel pass, as a build
+  does, instead of one file at a time under the write lock. Installing 512
+  changed files takes 24 to 37 ms instead of 75 to 241 ms. In
+  `watch_load` on 100,000 files, with 2,000 files rewritten a second while
+  four people search, the index caught up 41 to 43 s after the stream
+  stopped instead of 99 to 106 s, and search p50 fell from 2.0 s to 1.6 s
+  (same machine). A one-file edit takes the same time as before.
 - **Searches are up to twice as fast: the binaries use mimalloc.** The
   server, `fcs` and the benchmarks use mimalloc (v2) instead of the system
   allocator. With glibc's allocator a server that had just built its index
