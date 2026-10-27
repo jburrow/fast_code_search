@@ -175,6 +175,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes about as long as before (18 minutes on its first run, 20 before).
 
 ### Fixed
+- **The background integrity check held the index lock for seconds.**
+  Since posting lists are read from the mapped index file, checking a
+  file's trigrams decoded each whole posting list to test one file in it,
+  so one step of the scrub (`[diagnostics] scrub`, on by default) held the
+  read lock for 2.3 to 3.1 s on the 302,000-file corpus. A build's last
+  step, the watcher and the searches queued behind it waited that long; the
+  nightly scale scoreboard caught it as lock-stall captures after a build
+  and a restart. The check now looks up the one container that would hold
+  the file, without decoding the list: a step holds the lock 0.13 to 0.6 s
+  (same machine, 256 files). `/api/check` and `fcs check` use the same
+  check and gain the same.
+- **The end of a build kept searches out for about 2 s on large trees.**
+  The symbol name dictionary (which made symbol search about 12 times
+  faster) was rebuilt under the write lock at the end of every build and
+  after every large batch of symbol changes: about 2 to 2.8 s at 200,000
+  files on 4 cores, longer than the 2 s a lock-stall capture allows. The
+  server now builds it under the read lock, so searches go on, and takes
+  the write lock only to swap it in, marking the symbols that changed
+  meanwhile for a direct check as any later change is. Library callers
+  (`SearchEngine::finalize`) still rebuild it in place.
 - **A restart missed a file that had been too large or binary.** The
   restart walk (above) skipped folders whose time had not changed, but a
   file skipped for its size or contents is not in the load's checks, and

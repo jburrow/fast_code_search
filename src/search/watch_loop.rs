@@ -207,6 +207,7 @@ pub fn run(mut watcher: FileWatcher, cfg: WatchLoopConfig) {
                 removed = outcome.removed,
                 "File changes applied"
             );
+            SearchEngine::rebuild_symbol_names_if_due(&cfg.engine);
             updates_since_save += outcome.indexed + outcome.removed;
             if save_on_watcher_update(&cfg.indexer, &cfg.engine, updates_since_save) {
                 updates_since_save = 0;

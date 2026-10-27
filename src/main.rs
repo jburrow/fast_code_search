@@ -163,9 +163,12 @@ async fn main() -> Result<()> {
 
     // Create shared engine (empty initially, will be indexed in background)
     // Using RwLock allows concurrent read access during searches while only blocking for writes (indexing)
-    let shared_engine = std::sync::Arc::new(std::sync::RwLock::new(
-        fast_code_search::search::SearchEngine::new(),
-    ));
+    let shared_engine = std::sync::Arc::new(std::sync::RwLock::new({
+        let mut engine = fast_code_search::search::SearchEngine::new();
+        // Searches go on while the symbol name dictionary is rebuilt.
+        engine.set_defer_symbol_names(true);
+        engine
+    }));
 
     // Create shared indexing progress state for UI visibility
     let shared_progress: SharedIndexingProgress =

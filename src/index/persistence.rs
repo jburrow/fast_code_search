@@ -191,6 +191,15 @@ impl PersistedTrigramIndex {
         })
     }
 
+    /// Whether the posting list of `e` holds `doc_id`, read from the
+    /// mapping without decoding the list: only the container that would
+    /// hold it is looked at. A list that does not parse is decoded instead,
+    /// which logs it.
+    pub fn list_contains(&self, e: &DirEntry, doc_id: u32) -> bool {
+        serialized_contains(self.bitmap_bytes(e), doc_id)
+            .unwrap_or_else(|| self.decode(e).contains(doc_id))
+    }
+
     /// Bytes of posting lists in the mapping (what the page cache may
     /// hold of them).
     pub fn mapped_bytes(&self) -> u64 {
@@ -210,6 +219,114 @@ impl PersistedTrigramIndex {
             .unwrap_or(&[]);
         &region[e.offset as usize..e.offset as usize + e.len as usize]
     }
+}
+
+/// Whether a bitmap in the standard Roaring format (as
+/// `RoaringBitmap::serialize_into` writes it) holds `value`, found by a
+/// binary search of its container keys and of that one container, without
+/// decoding the bitmap. `None` when the bytes are not a well-formed bitmap.
+///
+/// The integrity check asks this for every trigram of a file; decoding a
+/// whole list per question made a scrub step hold the read lock for
+/// seconds on a large loaded index.
+pub(crate) fn serialized_contains(bytes: &[u8], value: u32) -> Option<bool> {
+    const COOKIE_NO_RUN: u32 = 12346;
+    const COOKIE_RUN: u32 = 12347;
+    let u16_at = |at: usize| -> Option<u16> {
+        Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+    };
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    };
+    let cookie = u32_at(0)?;
+    let (size, run_flags, header_end, has_offsets) = if cookie == COOKIE_NO_RUN {
+        (u32_at(4)? as usize, None, 8, true)
+    } else if cookie & 0xFFFF == COOKIE_RUN {
+        let size = (cookie >> 16) as usize + 1;
+        let flags = bytes.get(4..4 + size.div_ceil(8))?;
+        (size, Some(flags), 4 + size.div_ceil(8), size >= 4)
+    } else {
+        return None;
+    };
+    let descriptions = header_end;
+    let key_of = |i: usize| u16_at(descriptions + 4 * i);
+    let card_of = |i: usize| u16_at(descriptions + 4 * i + 2).map(|c| c as usize + 1);
+    let high = (value >> 16) as u16;
+    let low = value as u16;
+    // Container keys are sorted.
+    let (mut lo, mut hi) = (0usize, size);
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if key_of(mid)? < high {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo == size || key_of(lo)? != high {
+        return Some(false);
+    }
+    let i = lo;
+    let is_run = |i: usize| run_flags.is_some_and(|f| f[i / 8] & (1 << (i % 8)) != 0);
+    let offsets = descriptions + 4 * size;
+    // Where a container starts, and how many bytes one takes.
+    let container_len = |i: usize, at: usize| -> Option<usize> {
+        Some(if is_run(i) {
+            2 + 4 * u16_at(at)? as usize
+        } else if card_of(i)? > 4096 {
+            8 * 1024
+        } else {
+            2 * card_of(i)?
+        })
+    };
+    let start = if has_offsets {
+        u32_at(offsets + 4 * i)? as usize
+    } else {
+        // Fewer than four containers and no offsets: walk them.
+        let mut at = offsets;
+        for j in 0..i {
+            at += container_len(j, at)?;
+        }
+        at
+    };
+    let len = container_len(i, start)?;
+    let body = bytes.get(start..start + len)?;
+    let word = |k: usize| u16::from_le_bytes([body[2 * k], body[2 * k + 1]]);
+    Some(if is_run(i) {
+        let runs = word(0) as usize;
+        // Runs are (start, length - 1), sorted by start: the last run
+        // starting at or before `low`.
+        let (mut lo, mut hi) = (0usize, runs);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if word(1 + 2 * mid) <= low {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo > 0 && {
+            let run = lo - 1;
+            let first = word(1 + 2 * run) as u32;
+            (low as u32) <= first + word(2 + 2 * run) as u32
+        }
+    } else if card_of(i)? > 4096 {
+        let w = low as usize / 64;
+        let bits = u64::from_le_bytes(body[8 * w..8 * w + 8].try_into().ok()?);
+        bits & (1 << (low % 64)) != 0
+    } else {
+        let n = body.len() / 2;
+        let (mut lo, mut hi) = (0usize, n);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if word(mid) < low {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo < n && word(lo) == low
+    })
 }
 
 // ---------------------------------------------------------------- CRC32
@@ -998,6 +1115,60 @@ pub fn batch_check_files(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn serialized_contains_matches_decoding() {
+        use roaring::RoaringBitmap;
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut shapes: Vec<RoaringBitmap> = vec![
+            RoaringBitmap::new(),
+            (0..3).collect(),
+            (65_530..65_545).collect(),
+            (0..200_000).step_by(3).collect(),
+            (1_000..90_000).collect(),
+            [5u32, 70_000, 140_000, 210_000, 280_000, 350_000]
+                .into_iter()
+                .collect(),
+        ];
+        for n in [10usize, 5_000, 60_000] {
+            shapes.push((0..n).map(|_| (next() % 400_000) as u32).collect());
+        }
+        // Run containers, in both header forms (fewer than four
+        // containers: no offsets; four or more: offsets).
+        for bm in shapes.clone() {
+            let mut runs = bm;
+            runs.insert_range(66_000..66_500);
+            runs.optimize();
+            shapes.push(runs);
+        }
+        let mut few_runs: RoaringBitmap = (10..900).collect();
+        few_runs.insert_range(70_000..71_000);
+        few_runs.insert(140_001);
+        few_runs.optimize();
+        shapes.push(few_runs);
+        for bm in &shapes {
+            let mut bytes = Vec::new();
+            bm.serialize_into(&mut bytes).unwrap();
+            let mut probes: Vec<u32> = bm.iter().step_by(97).collect();
+            probes.extend((0..500).map(|_| (next() % 420_000) as u32));
+            probes.extend([0, 1, 65_535, 65_536, 66_499, 66_500, u32::MAX]);
+            for v in probes {
+                assert_eq!(
+                    super::serialized_contains(&bytes, v),
+                    Some(bm.contains(v)),
+                    "value {v} in a bitmap of {} values",
+                    bm.len()
+                );
+            }
+        }
+        assert_eq!(super::serialized_contains(&[1, 2, 3], 1), None);
+    }
+
     use super::*;
 
     /// The standard CRC-32, the same whether a writer folds the bytes in

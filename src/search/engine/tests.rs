@@ -5009,3 +5009,69 @@ fn test_posting_lists_read_in_place_match_a_built_index() {
     assert!(compacted.load_index(&full).unwrap().is_empty());
     same(&compacted, &build(&fewer), "after a full save");
 }
+
+/// With the dictionary's rebuild deferred (the server), a build only marks
+/// it due; symbol search stays right meanwhile, the off-lock rebuild
+/// installs it, and a change made while that rebuild ran is not lost.
+#[test]
+fn test_symbol_names_rebuilt_off_the_write_lock() {
+    let temp_dir = TempDir::new().unwrap();
+    let a = temp_dir.path().join("a.rs");
+    let b = temp_dir.path().join("b.rs");
+    fs::write(&a, "pub fn alphabet() {}\n").unwrap();
+    fs::write(&b, "pub struct Beta;\n").unwrap();
+    let mut engine = SearchEngine::new();
+    engine.set_defer_symbol_names(true);
+    engine.index_file(&a).unwrap();
+    engine.index_file(&b).unwrap();
+    engine.finalize();
+    assert!(engine.symbol_names_due());
+    let names = |e: &SearchEngine, q: &str| -> Vec<String> {
+        let mut v: Vec<String> = e
+            .search_symbols(q, "", "", 50)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(&engine, "alpha"), vec!["pub fn alphabet() {}"]);
+
+    let lock = std::sync::RwLock::new(engine);
+    assert!(SearchEngine::rebuild_symbol_names_if_due(&lock));
+    assert!(
+        !SearchEngine::rebuild_symbol_names_if_due(&lock),
+        "not due again"
+    );
+    let mut engine = lock.into_inner().unwrap();
+    assert!(!engine.symbol_names_due());
+    assert_eq!(engine.symbol_names.built_files(), 2);
+
+    // A rebuild runs; meanwhile `a` changes and `c` is added.
+    engine.symbol_names_due = true;
+    assert!(engine.begin_symbol_names_rebuild());
+    assert!(
+        !engine.begin_symbol_names_rebuild(),
+        "one rebuild at a time"
+    );
+    let built = symbol_names::SymbolNameIndex::build(&engine.symbol_cache);
+    fs::write(&a, "pub fn zebra() {}\n").unwrap();
+    engine.update_file(&a).unwrap();
+    let c = temp_dir.path().join("c.rs");
+    fs::write(&c, "pub fn zebra_two() {}\n").unwrap();
+    engine.update_file(&c).unwrap();
+    assert!(engine.finish_symbol_names_rebuild(Some(built)));
+    assert!(names(&engine, "alpha").is_empty());
+    assert_eq!(
+        names(&engine, "zebra"),
+        vec!["pub fn zebra() {}", "pub fn zebra_two() {}"]
+    );
+
+    // A dictionary replaced meanwhile (a load) wins over the rebuild's.
+    engine.symbol_names_due = true;
+    assert!(engine.begin_symbol_names_rebuild());
+    let built = symbol_names::SymbolNameIndex::build(&engine.symbol_cache);
+    engine.rebuild_symbol_names();
+    assert!(!engine.finish_symbol_names_rebuild(Some(built)));
+}
