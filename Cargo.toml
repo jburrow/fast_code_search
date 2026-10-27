@@ -102,6 +102,12 @@ reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
 ] } # HTTP client: the fcs CLI talks to the server; semantic model downloads (rustls: no system OpenSSL needed)
 
+# The binaries' allocator: queries are allocation-heavy, and with glibc's
+# allocator they answered about 2x slower in a process that had built a
+# large index (see src/heap_size.rs).
+mimalloc = { version = "0.1", default-features = false, features = ["v2"] }
+libmimalloc-sys = { version = "0.1", default-features = false, features = ["extended", "v2"] } # mi_collect
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2" # statvfs: free inodes for the storage health check
 

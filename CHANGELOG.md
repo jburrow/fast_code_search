@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Searches are up to twice as fast: the binaries use mimalloc.** The
+  server, `fcs` and the benchmarks use mimalloc (v2) instead of the system
+  allocator. With glibc's allocator a server that had just built its index
+  answered about 2x slower than after a restart (the allocator's state
+  after the build, not the index). Same machine against `a708ca2`: on the
+  302,000-file corpus a common word takes 87 ms instead of 181 ms, an
+  identifier 44 ms instead of 78 ms, a regex with a literal 75 ms instead of
+  110 ms, symbol searches about 25% less, a build 7% less and a save 43%
+  less, and resident memory after a build is 3% lower. On tokio + Django
+  queries take 7 to 38% less and a build 10% less. The cost: resident
+  memory after a build there is 17 MB higher (100 to 117 MB).
 - **A loaded index keeps its posting lists in the index file.** The
   server maps the file and a query decodes only the lists for its own
   trigrams, so the lists sit in the page cache, which the OS can evict and

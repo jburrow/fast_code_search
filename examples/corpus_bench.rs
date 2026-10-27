@@ -439,6 +439,10 @@ fn query_metrics(engine: &SearchEngine, n: usize, page: usize, prefix: &str) -> 
     out
 }
 
+// The allocator the binaries use, so the figures are the server's: see `fast_code_search::heap_size`.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> Result<()> {
     let args = Args::parse();
     ICOUNT.store(args.icount, std::sync::atomic::Ordering::Relaxed);

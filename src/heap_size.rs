@@ -22,8 +22,27 @@ use std::sync::Arc;
 /// tokio + Django went from 135 MB to 107 MB resident in 8 ms, and the
 /// Linux kernel tree (85,000 files) from 793 MB to 709 MB in 36 ms. It
 /// does not touch live allocations, so callers need no lock; run it after
-/// the write lock is released. A no-op on other platforms.
+/// the write lock is released. glibc only.
+///
+/// The binaries do not use the system allocator: each declares mimalloc
+/// (its v2 line) as the global allocator. Queries allocate heavily (result
+/// lists, decoded posting lists, file contents, per-thread buffers), and
+/// with glibc a process that had built the 302,000-file real corpus
+/// answered a common word in 161 ms against 77 ms in a fresh process with
+/// the same index loaded, for the same instructions. A copy of the index
+/// loaded into the building process was just as slow, so it was the
+/// allocator's state, not the index's layout. With mimalloc the building
+/// process answers in 72 to 87 ms (jemalloc measured the same, but does not
+/// build for Windows; mimalloc v3 held 50% more memory on tokio + Django).
+/// This call then also has mimalloc return the calling thread's unused
+/// memory, and glibc trim what it still holds for the library's users who
+/// keep the system allocator.
 pub fn return_freed_memory() {
+    // SAFETY: mi_collect only frees mimalloc's unused memory (a no-op
+    // when it is not the global allocator); safe from any thread.
+    unsafe {
+        libmimalloc_sys::mi_collect(true);
+    }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         // SAFETY: malloc_trim only releases free memory; it is safe to call
