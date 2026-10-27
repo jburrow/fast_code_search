@@ -213,23 +213,23 @@ measurement per commit with an explanation of what each chart means. The
 page says what is deliberately not claimed.
 
 <!-- bench:readme-run -->
-The numbers below are from [run 40411254740](https://github.com/jburrow/fast_code_search/actions/runs/40411254740)
-on commit `b1f9287` (2026-10-26, version 0.19.0), GitHub-hosted `ubuntu-latest` (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04):
+The numbers below are from [run 40431801064](https://github.com/jburrow/fast_code_search/actions/runs/40431801064)
+on commit `4d9a7a6` (2026-10-27, version 0.19.0), GitHub-hosted `ubuntu-latest` (AMD EPYC 7763, 4 vCPU, Ubuntu 24.04):
 6,268 files, 41.4 MB of text, 385k symbol references.
 <!-- /bench:readme-run -->
 
 <!-- bench:readme-table -->
 | Measure | Value |
 |---------|-------|
-| Full build (read, trigrams, symbols, imports, merge) | 4.76 s (1,318 files/s) |
-| Resident memory after build | 103 MB |
-| Index save / reconciling load | 113 ms / 84.3 ms (26.0 MB on disk) |
-| Text search, common word, p50 / p95 | 23.7 ms / 25.3 ms |
-| Text search, identifier, p50 | 7.18 ms |
-| Regex with literal / case-insensitive / no literal, p50 | 25.0 ms / 3.12 ms / 36.8 ms |
-| Symbol search, p50 | 3.63 ms |
-| Reference search, p50 | 2.26 ms |
-| Incremental update of one file, p50 / p95 | 5.65 ms / 45.4 ms |
+| Full build (read, trigrams, symbols, imports, merge) | 4.24 s (1,479 files/s) |
+| Resident memory after build | 119 MB |
+| Index save / reconciling load | 109 ms / 77.9 ms (26.0 MB on disk) |
+| Text search, common word, p50 / p95 | 21.2 ms / 21.9 ms |
+| Text search, identifier, p50 | 6.79 ms |
+| Regex with literal / case-insensitive / no literal, p50 | 23.9 ms / 2.68 ms / 33.9 ms |
+| Symbol search, p50 | 3.44 ms |
+| Reference search, p50 | 1.97 ms |
+| Incremental update of one file, p50 / p95 | 5.80 ms / 34.4 ms |
 <!-- /bench:readme-table -->
 
 A common word costs tens of milliseconds because fcs ranks the matches it
