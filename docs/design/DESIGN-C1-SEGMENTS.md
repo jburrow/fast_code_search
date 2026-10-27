@@ -1,7 +1,7 @@
 # C1: immutable segments and lock-free readers
 
-Status: accepted 2026-10-25; C1.0 and C1.1 built (`examples/posting_decode.rs`,
-`TrigramIndex::postings`), the rest to follow. Plan item C1 of the
+Status: accepted 2026-10-25; C1.0, C1.1 and C1.2 built (`examples/posting_decode.rs`,
+`TrigramIndex::postings`, mapped posting lists), C1.3 re-scoped in 3.10, the rest to follow. Plan item C1 of the
 2026-10-25 scale and performance plan.
 
 ## 1. The problem in one paragraph
@@ -254,6 +254,54 @@ but only about 3 s of load. The load win is in symbols and imports: C1.6
 (packed symbols read in place, with B3) and B6 (profile the load) matter
 more for load than C1.2 does. The table below is corrected for this.
 
+## 3.10 Measured after C1.2 (2026-10-27)
+
+C1.2 and the checkpoint a server saves after its build (`save_after_build`)
+already changed what a watcher batch costs. Before writing C1.3, it was
+measured again (4 vCPU VM, mimalloc):
+
+* **One file's update no longer depends on the index's size.** After the
+  checkpoint, a one-file update takes 2.8 ms p50 on tokio + Django (6,300
+  files) and 2.95 ms p50 at 302,433 files (`corpus_bench`, #232). That was
+  goal 3 of section 2 for the trigram index. Before #232 the benchmark
+  timed the update on the just-built index, where it passed over every
+  posting list (85% of its instructions); a server never does that.
+* **A light stream does not slow searches.** `watch_load --mixed` on
+  100,000 generated files, four threads searching on four cores: with no
+  changes, search p50 0.96 to 1.0 s and p99 2.0 to 2.2 s. With 20 files
+  rewritten a second, p50 1.0 s and p99 1.9 s.
+* **A heavy stream does.** With 2,000 files rewritten a second (a branch
+  switch, a formatter), search p50 rose to 1.6 to 2.0 s and p99 to 3.6 to
+  4.2 s. The watcher's install steps held the write lock 1.3 to 2.8 s
+  each, and 16,000 changed files took 92 s to install. Most of that hold
+  is the lock protocol, not the work. A step stays in about as long as it
+  waited to get in, up to `MAX_HOLD` (1 s), because a writer only gets in
+  between searches. That is the trade `engine_lock.rs` makes between drain
+  speed and search waits.
+* **The work under the lock is building posting lists.** Installing 512
+  changed files (about 5 MB) takes 120 to 310 ms on an idle machine, at
+  20,000 and at 100,000 files alike. Callgrind on that step: 76% is
+  `TrigramIndex::add_document_trigrams`, which does one roaring insert per
+  trigram per file. Then 16% is `refresh_file_metadata`, inflated here because the
+  probe indexed 20 roots and each path is matched against every root.
+  The graph and path tables come to about 10%. About 0.46 M instructions per file.
+
+So C1.3 is re-scoped. The per-batch removal cost it was meant to remove is
+gone already. What is left is that the batch's posting lists, symbols and
+metadata are built *under* the write lock, and that searches and the
+writer take turns. C1.3 builds each batch as a delta segment off the lock,
+and its lock-held work becomes "publish the delta". C1.4 then removes the
+turn-taking altogether. Together they make the heavy-stream case behave
+like the light one: searches stop waiting for install steps, and a
+backlog drains at the speed of parsing, not of the gaps between searches.
+The goal in section 3.8 is unchanged: under a stream, search p99 equals
+p99 with no stream, measured with `watch_load --mixed --burst 200
+--interval-ms 100`.
+
+An index kept in memory only (no `index_path`) never checkpoints, so its
+watcher batches still pass over every posting list until C1.3 makes
+removal one bit there too.
+
 ## 4. What it should buy (expected; the PRs measure it)
 
 | Today at 302k (1M, inferred) | With C1 (expected) |
@@ -280,7 +328,7 @@ the scoreboard green, and names any slowdown.
 | C1.0 | Spike and measurements: decode cost per query on the real corpus, graph clone cost, snapshot build cost per batch. A short report, no product code | none |
 | C1.1 | Postings behind an API. Checked: outside the engine, search code touches only `file_store.get/len` and a few graph calls, and inside it posting lists are reached from the search, the self-check and the save. So the self-check goes through `postings()` / `contains()` now, and the save is rewritten in C1.2. Shipped with C1.0 in one PR | none |
 | C1.2 | Base segment read in place, plus the dead bitmap. Load stops deserializing postings; removal stops scanning. Still under today's lock. Format v9, one rebuild on upgrade | load, memory, remove cost |
-| C1.3 | Delta segments with local ids; per-segment symbols, refs and metadata | watcher batch cost |
+| C1.3 | Delta segments with local ids, built off the lock; per-segment symbols, refs and metadata (re-scoped in 3.10) | batch install off the lock; removal one bit for an in-memory index too |
 | C1.4 | Snapshots published by pointer; searches lock-free; `engine_lock.rs` hold-back deleted; `lock_sim` rewritten | no waiting, no 503 |
 | C1.5 | Tiered background merges; deltas written as segment files with a manifest; base merge as the save; generation files; Windows deletion | save off the lock, crash loses seconds |
 | C1.6 | Packed base symbols read in place (with B3) | load, memory |
