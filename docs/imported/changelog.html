@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-1921b447.js";
+            window.path_to_searchindex_js = "../searchindex-ef66210b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -188,6 +188,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Searches are up to twice as fast: the binaries use mimalloc.</strong> The
+server, <code>fcs</code> and the benchmarks use mimalloc (v2) instead of the system
+allocator. With glibc’s allocator a server that had just built its index
+answered about 2x slower than after a restart (the allocator’s state
+after the build, not the index). Same machine against <code>a708ca2</code>: on the
+302,000-file corpus a common word takes 87 ms instead of 181 ms, an
+identifier 44 ms instead of 78 ms, a regex with a literal 75 ms instead of
+110 ms, symbol searches about 25% less, a build 7% less and a save 43%
+less, and resident memory after a build is 3% lower. On tokio + Django
+queries take 7 to 38% less and a build 10% less. The cost: resident
+memory after a build there is 17 MB higher (100 to 117 MB).</li>
 <li><strong>A loaded index keeps its posting lists in the index file.</strong> The
 server maps the file and a query decodes only the lists for its own
 trigrams, so the lists sit in the page cache, which the OS can evict and

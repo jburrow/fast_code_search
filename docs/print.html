@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-1921b447.js";
+            window.path_to_searchindex_js = "searchindex-ef66210b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -5172,9 +5172,33 @@ container costs 168 bytes instead of 42), and the estimates cannot see it,
 which is why they cover only 62% there. A restart gives the memory back.</p>
 <p>Resident memory is higher again. A build allocates and frees far more
 than the index it leaves behind (file contents, per-batch trigram sets,
-merge buffers), and the allocator keeps the freed pages. On Linux (glibc)
-the server hands them back to the system once a build or a load is done
-(<code>malloc_trim</code>), outside the write lock:</p>
+merge buffers), and the allocator keeps some of the freed pages.</p>
+<p><strong>The allocator.</strong> The server, <code>fcs</code> and the benchmarks use
+<a href="https://github.com/microsoft/mimalloc">mimalloc</a> (its v2 line) instead of
+the system allocator, on every platform. Queries allocate a lot (result
+lists, decoded posting lists, file contents), and with glibc’s allocator a
+server that had just built its index answered about 2x slower than the
+same server after a restart: on the 302,000-file corpus a common word took
+161 ms in the building process and 77 ms in a fresh one, for the same
+instructions. It was the allocator’s state after the build, not the
+index’s layout: a copy of the index loaded into the building process was
+just as slow. With mimalloc, same machine, base <code>a708ca2</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Corpus</th><th>Common word</th><th>Identifier</th><th>Regex with literal</th><th>Build</th><th>Resident after build</th></tr>
+</thead>
+<tbody>
+<tr><td>tokio + Django (5 rounds)</td><td>47.4 → 38.2 ms</td><td>15.2 → 10.7 ms</td><td>40.1 → 36.6 ms</td><td>5.30 → 4.79 s</td><td>100 → 117 MB</td></tr>
+<tr><td>302,000 files (1 round)</td><td>181 → 87 ms</td><td>78 → 44 ms</td><td>110 → 75 ms</td><td>189 → 176 s</td><td>1,534 → 1,487 MB</td></tr>
+</tbody>
+</table>
+</div>
+<p>jemalloc was as fast but does not build for Windows; mimalloc’s v3 line
+held 50% more memory on tokio + Django. Once a build or a load is done the
+server has the allocator hand unused memory back (mimalloc’s <code>mi_collect</code>,
+and <code>malloc_trim</code> for glibc), outside the write lock. Before the switch,
+<code>malloc_trim</code> alone measured:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -5193,9 +5217,10 @@ shares pages with live data. Compacting the posting lists after a build
 memory and made finalize about 200 ms slower on tokio + Django, so it is
 not done. <code>corpus_bench</code> shows everything outside the estimates as “not
 estimated”.</p>
-<p><strong>Known limitation:</strong> on macOS, Windows and musl builds the freed memory
-is not handed back, so resident memory after a build stays higher there
-than after a restart. The breakdown leaves out the allocator, thread stacks,
+<p><strong>Known limitations:</strong> on a small index mimalloc holds a little more
+resident memory than glibc did (17 MB more on tokio + Django); on a large
+one it holds less. Resident memory after a build stays higher than after a
+restart. The breakdown leaves out the allocator, thread stacks,
 mapped content, the regex cache and spare capacity inside posting lists, so
 it reads low, most of all just after a build. Use it to see which part grew
 between two runs, not as an exact total.</p>
@@ -6438,6 +6463,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.19.0...HEAD">Unreleased</a></a></h2>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
+<li><strong>Searches are up to twice as fast: the binaries use mimalloc.</strong> The
+server, <code>fcs</code> and the benchmarks use mimalloc (v2) instead of the system
+allocator. With glibc’s allocator a server that had just built its index
+answered about 2x slower than after a restart (the allocator’s state
+after the build, not the index). Same machine against <code>a708ca2</code>: on the
+302,000-file corpus a common word takes 87 ms instead of 181 ms, an
+identifier 44 ms instead of 78 ms, a regex with a literal 75 ms instead of
+110 ms, symbol searches about 25% less, a build 7% less and a save 43%
+less, and resident memory after a build is 3% lower. On tokio + Django
+queries take 7 to 38% less and a build 10% less. The cost: resident
+memory after a build there is 17 MB higher (100 to 117 MB).</li>
 <li><strong>A loaded index keeps its posting lists in the index file.</strong> The
 server maps the file and a query decodes only the lists for its own
 trigrams, so the lists sit in the page cache, which the OS can evict and
