@@ -625,7 +625,7 @@ impl TrigramIndex {
             !b.void.contains(doc_id)
                 && b.postings
                     .find(*trigram)
-                    .is_some_and(|e| b.postings.decode(e).contains(doc_id))
+                    .is_some_and(|e| b.postings.list_contains(e, doc_id))
         })
     }
 
