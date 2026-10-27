@@ -23,6 +23,11 @@ sharded build left searches 0 to 13% slower in same-machine runs; mimalloc
 adds 17 MB of resident memory on a small tree. Each entry below says what
 it buys.
 
+Known limits (#234): on a 4-core machine with searches that take 1 to 3 s,
+a change waiting for the index lock can still keep new searches waiting
+about 2 s, and peak resident memory now counts the mapped index file's
+page-cache pages, which the OS can evict.
+
 **Upgrading:** the index format is now v13 (magic `FCSIDX10`): the first
 start after the upgrade rebuilds the index once, with no config change.
 A loaded index maps its file, so resident memory includes page-cache pages
