@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The scale scoreboard reports the server's own memory (`peak_anon_mb`:
+  heap and stacks, without the mapped index file's page cache) next to
+  peak RSS, and its memory targets apply to the server's own memory.
+  Since v0.20.0 RSS also counts mapped index pages the kernel can drop,
+  which failed the nightly's branch-switch target without the server
+  holding more memory (#234).
+
 ## [0.20.0] - 2026-10-27
 
 Large trees build, load and update much faster on less memory. On a
