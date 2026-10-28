@@ -138,8 +138,15 @@ struct Score {
     max_pending: Option<usize>,
     /// "The watched paths will be rescanned" lines in the server log.
     rescans: u64,
+    /// Peak resident memory, including pages of the mapped index file that
+    /// the OS can evict and share (Linux `VmHWM`).
     #[serde(skip_serializing_if = "Option::is_none")]
     peak_rss_mb: Option<f64>,
+    /// Peak of the server's own memory: resident anonymous pages (heap,
+    /// stacks), without the mapped index file's page cache (Linux
+    /// `RssAnon`, sampled every 500 ms). The memory targets apply to this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peak_anon_mb: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cpu_secs: Option<f64>,
     /// The index's estimated heap by structure at the end (MB, largest
@@ -389,6 +396,7 @@ impl Run<'_> {
         }
         let resources = sampler.stop();
         score.peak_rss_mb = resources.peak_rss_mb;
+        score.peak_anon_mb = resources.peak_anon_mb;
         score.cpu_secs = resources.cpu_secs;
         let crashed = server.crashed();
         score.crashes = u64::from(crashed);
@@ -719,6 +727,7 @@ struct Sampler {
 #[derive(Default)]
 struct Resources {
     peak_rss_mb: Option<f64>,
+    peak_anon_mb: Option<f64>,
     cpu_secs: Option<f64>,
 }
 
@@ -727,14 +736,25 @@ impl Sampler {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let thread = std::thread::spawn(move || {
+            // VmHWM is a peak already; RssAnon is not, so keep its highest.
             let mut last = Resources::default();
-            while !stop2.load(Ordering::Relaxed) {
+            let mut anon = None::<f64>;
+            let mut sample = |last: &mut Resources| {
                 if let Some(r) = read_resources(pid) {
-                    last = r;
+                    anon = match (anon, r.peak_anon_mb) {
+                        (Some(a), Some(b)) => Some(a.max(b)),
+                        (a, b) => a.or(b),
+                    };
+                    *last = r;
                 }
+                last.peak_anon_mb = anon;
+            };
+            while !stop2.load(Ordering::Relaxed) {
+                sample(&mut last);
                 std::thread::sleep(Duration::from_millis(500));
             }
-            read_resources(pid).unwrap_or(last)
+            sample(&mut last);
+            last
         });
         Self { stop, thread }
     }
@@ -748,13 +768,16 @@ impl Sampler {
 #[cfg(target_os = "linux")]
 fn read_resources(pid: u32) -> Option<Resources> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    let hwm_kb: f64 = status
-        .lines()
-        .find(|l| l.starts_with("VmHWM:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()?;
+    let kb = |key: &str| -> Option<f64> {
+        status
+            .lines()
+            .find(|l| l.starts_with(key))?
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()
+    };
+    let hwm_kb = kb("VmHWM:")?;
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // Fields after the command name (which may hold spaces): utime and
     // stime are the 12th and 13th.
@@ -764,6 +787,7 @@ fn read_resources(pid: u32) -> Option<Resources> {
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
     Some(Resources {
         peak_rss_mb: Some(hwm_kb / 1024.0),
+        peak_anon_mb: kb("RssAnon:").map(|k| k / 1024.0),
         cpu_secs: Some(ticks / hz),
     })
 }
@@ -791,10 +815,10 @@ fn render_markdown(scores: &[Score]) -> String {
     let files = scores.first().map(|s| s.files).unwrap_or(0);
     let _ = writeln!(out, "Scoreboard, {files} files\n");
     out.push_str(
-        "| Scenario | Searches | Incomplete | Turned away | Busy | Refused | Errors | p50 | p99 | Max | Listening | Ready | Changed | Fresh after | Max pending | Rescans | Peak RSS | CPU | Captures | Crashes | Check problems |\n",
+        "| Scenario | Searches | Incomplete | Turned away | Busy | Refused | Errors | p50 | p99 | Max | Listening | Ready | Changed | Fresh after | Max pending | Rescans | Peak own memory | Peak RSS | CPU | Captures | Crashes | Check problems |\n",
     );
     out.push_str(
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     );
     for s in scores {
         let fresh = match (s.changed, s.fresh_secs) {
@@ -803,7 +827,7 @@ fn render_markdown(scores: &[Score]) -> String {
         };
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             s.scenario,
             s.searches,
             s.incomplete,
@@ -820,6 +844,7 @@ fn render_markdown(scores: &[Score]) -> String {
             fresh,
             s.max_pending.map(|c| c.to_string()).unwrap_or_else(|| "–".into()),
             s.rescans,
+            s.peak_anon_mb.map(|m| format!("{m:.0} MB")).unwrap_or_else(|| "–".into()),
             s.peak_rss_mb.map(|m| format!("{m:.0} MB")).unwrap_or_else(|| "–".into()),
             opt_secs(s.cpu_secs),
             s.captures,

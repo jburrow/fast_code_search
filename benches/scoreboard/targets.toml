@@ -11,6 +11,14 @@
 # tree, and they are tightened as the fixes land (plan items B1, B2, C1).
 # The measurements are on the book's "Scale scoreboard" page; change a
 # target only with a new measurement there.
+#
+# The memory targets (`peak_anon_mb`) count the server's own memory: its
+# resident anonymous pages (heap, stacks). Since v0.20.0 the loaded index
+# reads posting lists from the mapped index file, and those page-cache
+# pages show in RSS but belong to the kernel's file cache, which the
+# kernel drops under pressure. The run still reports `peak_rss_mb`. The
+# values below were measured when all memory was heap, so they bound the
+# server's own memory as they did before.
 
 files = 200000
 
@@ -29,7 +37,7 @@ stall_captures = 0
 ready_secs = 800
 p99_ms = 3200
 max_ms = 5400
-peak_rss_mb = 1360
+peak_anon_mb = 1360
 
 # Measured: listening 0.05 / 0.05 s, ready 4.3 / 4.6 s, p99 1.95 / 1.78 s,
 # max 2.40 / 2.16 s, 1,268 / 1,267 MB.
@@ -38,7 +46,7 @@ listen_secs = 1
 ready_secs = 6
 p99_ms = 2500
 max_ms = 3100
-peak_rss_mb = 1460
+peak_anon_mb = 1460
 
 # 40,000 files rewritten at once. Measured: fresh 149 / 169 s,
 # p99 4.19 / 4.46 s, max 5.72 / 4.60 s, 1,268 / 1,268 MB.
@@ -46,7 +54,7 @@ peak_rss_mb = 1460
 fresh_secs = 220
 p99_ms = 5800
 max_ms = 7400
-peak_rss_mb = 1460
+peak_anon_mb = 1460
 
 # 200 files a second for ten minutes. Measured: fresh 26.9 / 30.7 s,
 # p99 4.38 / 4.43 s, max 5.26 / 4.87 s, 1,494 / 1,556 MB.
@@ -54,7 +62,7 @@ peak_rss_mb = 1460
 fresh_secs = 40
 p99_ms = 5800
 max_ms = 6800
-peak_rss_mb = 1790
+peak_anon_mb = 1790
 
 # Eight searchers and a regex that reads every file, on four CPUs: slow
 # searches are expected here. Measured: fresh 21.2 / 14.5 s,
@@ -63,7 +71,7 @@ peak_rss_mb = 1790
 fresh_secs = 28
 p99_ms = 14900
 max_ms = 19800
-peak_rss_mb = 1670
+peak_anon_mb = 1670
 
 # Saves every 5,000 applied changes. Measured: fresh 157 / 163 s,
 # p99 4.50 / 4.38 s, max 5.97 / 5.44 s, 1,986 / 2,037 MB.
@@ -71,7 +79,7 @@ peak_rss_mb = 1670
 fresh_secs = 210
 p99_ms = 5900
 max_ms = 7800
-peak_rss_mb = 2340
+peak_anon_mb = 2340
 
 # 100,000 files rewritten at once: the event queue fills and the tree is
 # rescanned. Measured: fresh 530 / 496 s, p99 4.77 / 4.65 s,
@@ -83,4 +91,4 @@ peak_rss_mb = 2340
 fresh_secs = 690
 p99_ms = 6200
 max_ms = 8500
-peak_rss_mb = 3240
+peak_anon_mb = 3240

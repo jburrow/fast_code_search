@@ -62,7 +62,8 @@ The searchers cycle through cheap and expensive queries (`task_17_`,
 | `not_settled` | The index never matched the disk within `--settle-seconds` | 0 |
 | `max_pending` | The largest backlog the server reported (sampled every second; the JSON has the curve) | reported |
 | `rescans` | "The watched paths will be rescanned" in the server log | reported |
-| `peak_rss_mb`, `cpu_secs` | The server process's peak memory and CPU time (Linux) | memory per scenario |
+| `peak_anon_mb` | The server's own peak memory: resident anonymous pages (heap, stacks), sampled every 500 ms (Linux `RssAnon`) | per scenario |
+| `peak_rss_mb`, `cpu_secs` | The server process's peak resident memory, including the mapped index file's page cache, and CPU time (Linux) | reported |
 | `memory_mb` | The index's [estimated heap by structure](../how-it-works/memory.md#where-it-goes) at the end of the scenario, largest first, so a memory change names the part that grew | reported |
 | `captures`, `stall_captures` | [Diagnostic captures](../guides/diagnostic-captures.md) written; the second leaves out `slow_search`, which an overloaded CPU alone can cause | stalls 0 |
 | `crashes` | The server exited before it was told to stop | 0 |
@@ -73,6 +74,14 @@ The zero targets hold at any size. The others are in
 (memory: 1.15 times), and apply only to runs with the same number of
 files. They are today's numbers, not goals: they are tightened as the
 indexing-throughput fixes land.
+
+The memory targets apply to `peak_anon_mb`, not to `peak_rss_mb`. Since
+v0.20.0 a loaded index reads its posting lists from the mapped index
+file. Those pages count in RSS, but they are the kernel's file cache: the
+kernel shares them and drops them under memory pressure, and how many are
+resident depends on what was read recently, not on what the server holds.
+The targets were set when all of the server's memory was heap (the Peak
+RSS column below), so they bound the server's own memory as before.
 
 ## Measured
 
