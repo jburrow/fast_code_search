@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-25b20ddf.js";
+            window.path_to_searchindex_js = "../searchindex-4bd178e7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -245,7 +245,8 @@ finished (see <a href="#known-gaps">Known gaps</a>).</p>
 <tr><td><code>not_settled</code></td><td>The index never matched the disk within <code>--settle-seconds</code></td><td>0</td></tr>
 <tr><td><code>max_pending</code></td><td>The largest backlog the server reported (sampled every second; the JSON has the curve)</td><td>reported</td></tr>
 <tr><td><code>rescans</code></td><td>“The watched paths will be rescanned” in the server log</td><td>reported</td></tr>
-<tr><td><code>peak_rss_mb</code>, <code>cpu_secs</code></td><td>The server process’s peak memory and CPU time (Linux)</td><td>memory per scenario</td></tr>
+<tr><td><code>peak_anon_mb</code></td><td>The server’s own peak memory: resident anonymous pages (heap, stacks), sampled every 500 ms (Linux <code>RssAnon</code>)</td><td>per scenario</td></tr>
+<tr><td><code>peak_rss_mb</code>, <code>cpu_secs</code></td><td>The server process’s peak resident memory, including the mapped index file’s page cache, and CPU time (Linux)</td><td>reported</td></tr>
 <tr><td><code>memory_mb</code></td><td>The index’s <a href="../how-it-works/memory.html#where-it-goes">estimated heap by structure</a> at the end of the scenario, largest first, so a memory change names the part that grew</td><td>reported</td></tr>
 <tr><td><code>captures</code>, <code>stall_captures</code></td><td><a href="../guides/diagnostic-captures.html">Diagnostic captures</a> written; the second leaves out <code>slow_search</code>, which an overloaded CPU alone can cause</td><td>stalls 0</td></tr>
 <tr><td><code>crashes</code></td><td>The server exited before it was told to stop</td><td>0</td></tr>
@@ -258,6 +259,13 @@ finished (see <a href="#known-gaps">Known gaps</a>).</p>
 (memory: 1.15 times), and apply only to runs with the same number of
 files. They are today’s numbers, not goals: they are tightened as the
 indexing-throughput fixes land.</p>
+<p>The memory targets apply to <code>peak_anon_mb</code>, not to <code>peak_rss_mb</code>. Since
+v0.20.0 a loaded index reads its posting lists from the mapped index
+file. Those pages count in RSS, but they are the kernel’s file cache: the
+kernel shares them and drops them under memory pressure, and how many are
+resident depends on what was read recently, not on what the server holds.
+The targets were set when all of the server’s memory was heap (the Peak
+RSS column below), so they bound the server’s own memory as before.</p>
 <h2 id="measured"><a class="header" href="#measured">Measured</a></h2>
 <p>200,000 files of the realistic tree on a 4 vCPU, 16 GB Linux VM,
 2026-10-25 (commit d943516). These are the second of the two runs behind
