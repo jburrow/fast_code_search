@@ -56,6 +56,9 @@ pub struct WebState {
     /// Last file count observed by `/api/ready`, used while the engine's
     /// write lock is briefly held.
     pub last_known_files: Arc<std::sync::atomic::AtomicUsize>,
+    /// Last indexing status observed by `/api/ready`, used while the
+    /// indexer briefly holds the progress lock.
+    pub last_known_status: Arc<std::sync::Mutex<Option<crate::search::IndexingStatus>>>,
     /// Import cycles and the folder map, cached per engine state.
     pub graph_cache: Arc<std::sync::Mutex<graph::GraphCache>>,
     /// Cross-origin callers allowed by configuration; `/mcp` also accepts
@@ -233,6 +236,7 @@ pub fn create_router_with_options(
         indexer_config: opts.indexer_config.clone().map(Arc::new),
         diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
         last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        last_known_status: Arc::default(),
         graph_cache: Arc::default(),
         cors_origins: Arc::new(opts.cors_origins.clone()),
         search_settings: opts.search_settings,
@@ -530,13 +534,8 @@ fn hex_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    /// The whole-request timeout answers with the JSON error envelope and a
-    /// `Retry-After` header (not an empty 408), so clients can treat it like
-    /// any other API error, and leaves `/api/check` alone. Uses a deliberately slow route so the outcome
-    /// does not depend on how fast a real search happens to be.
-    #[tokio::test]
-    async fn request_timeout_answers_with_json_504() {
-        let state = WebState {
+    fn test_state() -> WebState {
+        WebState {
             engine: Arc::new(RwLock::new(SearchEngine::new())),
             progress: Arc::new(RwLock::new(crate::search::IndexingProgress::default())),
             progress_tx: crate::search::create_progress_broadcaster(),
@@ -547,12 +546,58 @@ mod tests {
             indexer_config: None,
             diagnostics_cache: Arc::new(std::sync::Mutex::new(None)),
             last_known_files: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            last_known_status: Arc::default(),
             graph_cache: Arc::default(),
             cors_origins: Arc::default(),
             search_settings: crate::search::SearchSettings::default(),
             mcp_settings: crate::config::McpConfig::default(),
             ui_settings: UiSettings::default(),
-        };
+        }
+    }
+
+    /// `/api/ready` stays not ready through a first build even when the
+    /// indexer holds the progress lock at the moment it asks (it used to
+    /// read that as `Idle` and answer ready once some files were indexed).
+    #[test]
+    fn ready_survives_a_held_progress_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.rs");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+        let state = test_state();
+        state.engine.write().unwrap().index_file(&file).unwrap();
+
+        // Never seen a status: not ready.
+        {
+            let _held = state.progress.write().unwrap();
+            assert!(!api::readiness(&state).0);
+        }
+        state.progress.write().unwrap().status = crate::search::IndexingStatus::Indexing;
+        assert!(!api::readiness(&state).0);
+        {
+            let _held = state.progress.write().unwrap();
+            assert!(
+                !api::readiness(&state).0,
+                "held lock read as ready mid-build"
+            );
+        }
+        state.progress.write().unwrap().status = crate::search::IndexingStatus::Completed;
+        assert!(api::readiness(&state).0);
+        {
+            let _held = state.progress.write().unwrap();
+            assert!(
+                api::readiness(&state).0,
+                "held lock read as not ready after the build"
+            );
+        }
+    }
+
+    /// The whole-request timeout answers with the JSON error envelope and a
+    /// `Retry-After` header (not an empty 408), so clients can treat it like
+    /// any other API error, and leaves `/api/check` alone. Uses a deliberately slow route so the outcome
+    /// does not depend on how fast a real search happens to be.
+    #[tokio::test]
+    async fn request_timeout_answers_with_json_504() {
+        let state = test_state();
         let router = Router::new()
             .route(
                 "/slow",

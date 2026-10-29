@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `/api/ready` no longer answers ready in the middle of a first build.
+  When the indexer held the progress lock at the moment of the request,
+  readiness read the status as idle and answered ready as soon as some
+  files were indexed; it now uses the last status it saw. The nightly
+  scale scoreboard caught it: ready after 23 s of a 200,000-file build,
+  with 145,201 files still to index (#234).
+
 ### Changed
 
 - The scale scoreboard reports the server's own memory (`peak_anon_mb`:

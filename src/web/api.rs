@@ -464,12 +464,21 @@ pub struct ReadyResponse {
 }
 
 /// (ready, status name, live file count) without blocking a worker thread.
-fn readiness(state: &WebState) -> (bool, String, usize) {
-    let status = state
-        .progress
-        .try_read()
-        .map(|p| p.status)
-        .unwrap_or_default();
+pub(super) fn readiness(state: &WebState) -> (bool, String, usize) {
+    // While the indexer holds the progress lock, use the last status seen,
+    // and before any was seen, not ready. Falling back to the default
+    // (`Idle`) read as ready in the middle of a first build, as soon as it
+    // had indexed some files.
+    let status = {
+        let mut last = state
+            .last_known_status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Ok(p) = state.progress.try_read() {
+            *last = Some(p.status);
+        }
+        *last
+    };
     // A momentarily held write lock (a watcher batch, a checkpoint) must not
     // read as "no files": fall back to the last count we saw.
     let num_files = match state.engine.try_read() {
@@ -488,13 +497,17 @@ fn readiness(state: &WebState) -> (bool, String, usize) {
     // reconciled or imports are resolved, so those states are ready too
     // once there is something to search.
     let ready = match status {
-        IndexingStatus::Completed => true,
-        IndexingStatus::Idle | IndexingStatus::Reconciling | IndexingStatus::ResolvingImports => {
-            num_files > 0
-        }
+        Some(IndexingStatus::Completed) => true,
+        Some(
+            IndexingStatus::Idle | IndexingStatus::Reconciling | IndexingStatus::ResolvingImports,
+        ) => num_files > 0,
         _ => false,
     };
-    (ready, format!("{status:?}").to_lowercase(), num_files)
+    let status = status.map_or_else(
+        || "unknown".to_string(),
+        |s| format!("{s:?}").to_lowercase(),
+    );
+    (ready, status, num_files)
 }
 
 /// Prometheus text exposition of request counters and index gauges.
