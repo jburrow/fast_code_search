@@ -46,7 +46,7 @@ jobs:
             org.opencontainers.image.description=Code search that ranks like code: definitions above usages, served from an in-memory trigram index.
             org.opencontainers.image.documentation=https://jburrow.github.io/fast_code_search/docs/
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push
         uses: docker/build-push-action@v6
