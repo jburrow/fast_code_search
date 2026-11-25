@@ -214,7 +214,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check with MSRV
-        run: cargo +1.89 check --all-targets
+        run: cargo +1.91 check --all-targets
 
   coverage:
     name: Coverage
