@@ -10,7 +10,7 @@ Please be respectful and constructive in all interactions. We aim to maintain a 
 
 ### Prerequisites
 
-- Rust 1.89 or later (the pinned toolchain in `rust-toolchain.toml` is used by CI)
+- Rust 1.91 or later (the pinned toolchain in `rust-toolchain.toml` is used by CI)
 - Protocol Buffers compiler (`protoc`)
 - Git
 

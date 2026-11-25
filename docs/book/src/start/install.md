@@ -90,7 +90,7 @@ The `fcs` client is in the image too: `docker exec <container> fcs 'fn main'`.
 
 ## From source
 
-Requires Rust 1.89 or newer and the Protocol Buffers compiler (`protoc`,
+Requires Rust 1.91 or newer and the Protocol Buffers compiler (`protoc`,
 from your package manager or
 [the releases page](https://github.com/protocolbuffers/protobuf/releases)).
 

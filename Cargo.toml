@@ -2,7 +2,7 @@
 name = "fast_code_search"
 version = "0.20.0"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.91"
 authors = ["James Burrow"]
 description = "High-performance, in-memory code search service with trigram indexing and symbol awareness"
 license = "MIT"
@@ -38,21 +38,21 @@ chardetng = "0.1"
 roaring = { version = "0.11", features = ["serde"] }
 rustc-hash = "2.1"
 hashbrown = { version = "0.15", default-features = false }
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-language = "0.1"
 # Language grammars - core programming languages
 tree-sitter-rust = "0.24"
 tree-sitter-python = "0.25"
 tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
-tree-sitter-go = "0.23"
-tree-sitter-c = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 tree-sitter-java = "0.23"
-tree-sitter-c-sharp = "0.23"
+tree-sitter-c-sharp = "0.24"
 tree-sitter-ruby = "0.23"
-tree-sitter-php = "0.24"
-tree-sitter-bash = "0.23"
+tree-sitter-php = "0.25"
+tree-sitter-bash = "0.25"
 tonic = "0.14"
 tonic-prost = "0.14"
 tonic-health = "0.14" # standard gRPC health service
@@ -86,7 +86,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"
 mime_guess = "2"
-notify = "8.2"
+notify = "9"
 ndarray = { version = "0.15", optional = true } # semantic: vector operations
 hnsw_rs = { version = "0.3", optional = true }  # semantic: approximate nearest neighbour search
 fs2 = "0.4"
@@ -95,7 +95,7 @@ rand = "0.9"                                                                    
 tempfile = "3"                                                                  # For validator temporary corpus
 indicatif = "0.18"                                                              # Terminal progress bars
 # Semantic search ML model dependencies (optional - enable with 'ml-models' feature)
-ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
+ort = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = [
     "load-dynamic",
 ] } # ONNX Runtime for ML model inference (rc.10 works with ONNX Runtime 1.18-1.22)
 tokenizers = { version = "0.22", optional = true } # HuggingFace tokenizers for text encoding
