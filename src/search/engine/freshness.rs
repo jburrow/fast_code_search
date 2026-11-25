@@ -582,9 +582,9 @@ fn format_age(ms: u64) -> String {
 }
 
 fn format_utc(ms: u64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms as i64)
-        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown time".to_string())
+    jiff::Timestamp::from_millisecond(ms as i64)
+        .map(|t| t.strftime("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|_| "unknown time".to_string())
 }
 
 #[cfg(test)]

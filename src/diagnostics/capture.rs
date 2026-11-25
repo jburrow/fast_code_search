@@ -846,7 +846,7 @@ impl Recorder {
         Capture {
             format: FORMAT,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            captured_at: chrono::Utc::now().to_rfc3339(),
+            captured_at: jiff::Timestamp::now().to_string(),
             unix_ms: unix_ms(),
             trigger,
             search,
@@ -991,7 +991,7 @@ fn looks_like_file_name(w: &str) -> bool {
 
 fn write_capture(settings: &Settings, capture: &Capture) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(&settings.dir)?;
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%S%.3fZ");
     let mut path = settings.dir.join(format!(
         "{FILE_PREFIX}{stamp}-{}.json",
         capture.trigger.kind
@@ -1252,7 +1252,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogRingLayer {
         let meta = event.metadata();
         let line = format!(
             "{} {} {}{}",
-            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+            jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ"),
             meta.level(),
             fields.message,
             fields.rest
@@ -1471,10 +1471,11 @@ fn thread_summary(t: &ThreadsReport) -> Vec<String> {
 }
 
 fn short_time(rfc3339: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(rfc3339)
+    rfc3339
+        .parse::<jiff::Timestamp>()
         .map(|t| {
-            t.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M:%S")
+            t.to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string()
         })
         .unwrap_or_else(|_| rfc3339.to_string())

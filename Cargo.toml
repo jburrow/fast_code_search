@@ -79,7 +79,9 @@ opentelemetry_sdk = { version = "0.32", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace"] }
 tracing-opentelemetry = "0.33"
 sysinfo = "0.37"
-axum = { version = "0.8", features = ["ws"] }
+# http2: gRPC shares the web port in single-port mode (server.single_port).
+axum = { version = "0.8", features = ["ws", "http2"] }
+tower = { version = "0.5", features = ["util"] }
 futures-util = { version = "0.3", features = ["sink"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"
@@ -88,7 +90,7 @@ notify = "8.2"
 ndarray = { version = "0.15", optional = true } # semantic: vector operations
 hnsw_rs = { version = "0.3", optional = true }  # semantic: approximate nearest neighbour search
 fs2 = "0.4"
-chrono = "0.4"                                                                  # For timestamp formatting in diagnostics
+jiff = "0.2"                                                                  # Timestamp formatting in diagnostics (chrono is unmaintained: RUSTSEC-2026-0543)
 rand = "0.9"                                                                    # For random file sampling in self-tests
 tempfile = "3"                                                                  # For validator temporary corpus
 indicatif = "0.18"                                                              # Terminal progress bars

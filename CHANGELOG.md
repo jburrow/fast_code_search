@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Single-port mode: `single_port = true` under `[server]` (or
+  `--single-port`) serves the gRPC API on `web_address`, next to the web
+  UI, REST API and MCP, so a deployment exposes and proxies one port.
+  Off by default; the two-port setup is unchanged. gRPC calls are told
+  apart by their `application/grpc` content type. Setting `address` and
+  `web_address` to the same value without it is still an error, now one
+  that names the setting. The web port also accepts cleartext HTTP/2 in
+  either mode (needed for gRPC on the shared port).
+
 ### Fixed
 
 - `/api/ready` no longer answers ready in the middle of a first build.
@@ -17,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with 145,201 files still to index (#234).
 
 ### Changed
+
+- Timestamps in diagnostics are formatted with `jiff` instead of the
+  unmaintained `chrono` (RUSTSEC-2026-0543). A capture's `captured_at` now
+  ends in `Z` rather than `+00:00`; `fcs diagnose` reads both.
 
 - The scale scoreboard reports the server's own memory (`peak_anon_mb`:
   heap and stacks, without the mapped index file's page cache) next to

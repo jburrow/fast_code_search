@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm install --no-save --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          npm install --no-save --prefix "$RUNNER_TEMP/pw" playwright@1.65.1
           "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
           status=0
           NODE_PATH="$RUNNER_TEMP/pw/node_modules" FCS_REQUIRE_BROWSER=1 \

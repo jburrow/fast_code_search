@@ -2,7 +2,8 @@
 
 Everything the server exposes: the REST API served on `web_address`
 (default `127.0.0.1:8080`), the gRPC service on `address` (default
-`127.0.0.1:50051`), the server's command line, and the configuration file.
+`127.0.0.1:50051`, or on `web_address` too with `single_port = true`), the
+server's command line, and the configuration file.
 The web UI's own `/docs.html` page carries the same REST reference with
 live examples.
 
@@ -311,6 +312,7 @@ fast_code_search_server [OPTIONS]
   -i, --index <PATH>        Additional path to index (repeatable)
       --no-auto-index       Skip indexing on startup
       --no-grpc             Do not start the gRPC API (same as enable_grpc = false)
+      --single-port         Serve gRPC on the web port too (same as single_port = true)
       --init <FILE>         Write a documented template configuration and exit
       --static-dir <DIR>    Serve the UI from disk (development)
   -v, --verbose             Debug logging
@@ -334,6 +336,7 @@ template. The keys that matter most:
 [server]
 address = "127.0.0.1:50051"       # gRPC
 enable_grpc = true                # false (or --no-grpc) for web UI / REST / fcs only
+single_port = false               # true (or --single-port): gRPC on web_address too, one port
 web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED

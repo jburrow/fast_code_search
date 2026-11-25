@@ -5,6 +5,8 @@ mod graph;
 pub use graph::DiffImpactRequest;
 mod mcp;
 pub mod metrics;
+mod single_port;
+pub use single_port::{is_grpc_request, with_grpc};
 
 pub use api::{
     file_matches_to_json, results_to_json, split_graph_param, ErrorResponse, FileMatchJson,

@@ -14,6 +14,7 @@ Options:
   -i, --index <PATH>        Additional paths to index (can be repeated, adds to config file paths)
       --no-auto-index       Skip automatic indexing on startup
       --no-grpc             Do not start the gRPC API (same as `enable_grpc = false` in the config)
+      --single-port         Serve the gRPC API on the web port, so the web UI, REST API, MCP and gRPC share one port (same as `single_port = true` in the config)
   -v, --verbose             Enable verbose logging
       --init <FILE>         Generate a template configuration file and exit
       --static-dir <DIR>    Serve static UI files from this directory instead of the embedded assets. Useful during development: UI changes are visible without recompiling. Example: --static-dir static
