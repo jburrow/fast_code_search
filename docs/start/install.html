@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
+            window.path_to_searchindex_js = "../searchindex-fbdcb059.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -216,12 +216,12 @@ identity.
 The checksum proves the file is intact; the signature proves it was built
 by this repository’s release workflow for this tag, and not merely
 uploaded by someone holding the account.</p>
-<pre><code class="language-bash">sha256sum -c fast_code_search-v0.20.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+<pre><code class="language-bash">sha256sum -c fast_code_search-v0.21.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 cosign verify-blob \
-  --bundle fast_code_search-v0.20.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --bundle fast_code_search-v0.21.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  fast_code_search-v0.20.0-x86_64-unknown-linux-gnu.tar.gz
+  fast_code_search-v0.21.0-x86_64-unknown-linux-gnu.tar.gz
 </code></pre>
 <p><a href="https://docs.sigstore.dev/cosign/installation/"><code>cosign</code></a> is a single
 binary; no key management is involved because the signing is keyless.</p>
@@ -240,7 +240,7 @@ its repository exists; until then use the archive, <code>cargo binstall</code> o
 container image.</p>
 <h2 id="container-image"><a class="header" href="#container-image">Container image</a></h2>
 <p>Every release from v0.13.0 is also published as
-<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.20</code>, <code>0.20.0</code>). The
+<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.21</code>, <code>0.21.0</code>). The
 image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
 serves the web UI and REST API on port 8080 and gRPC on 50051 (add
 <code>--single-port</code> to the command, or <code>single_port = true</code> in its config, to
@@ -253,7 +253,7 @@ serve gRPC on 8080 as well):</p>
 <a href="https://github.com/jburrow/fast_code_search/blob/main/deploy/docker/config.toml"><code>deploy/docker/config.toml</code></a>).
 The <code>fcs</code> client is in the image too: <code>docker exec &lt;container&gt; fcs 'fn main'</code>.</p>
 <h2 id="from-source"><a class="header" href="#from-source">From source</a></h2>
-<p>Requires Rust 1.89 or newer and the Protocol Buffers compiler (<code>protoc</code>,
+<p>Requires Rust 1.91 or newer and the Protocol Buffers compiler (<code>protoc</code>,
 from your package manager or
 <a href="https://github.com/protocolbuffers/protobuf/releases">the releases page</a>).</p>
 <pre><code class="language-bash">cargo install --git https://github.com/jburrow/fast_code_search --bins
