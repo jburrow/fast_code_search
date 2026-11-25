@@ -946,6 +946,7 @@ dependencies = [
  "tonic-health",
  "tonic-prost",
  "tonic-prost-build",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-opentelemetry",

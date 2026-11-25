@@ -4583,3 +4583,102 @@ async fn test_mcp_rejects_foreign_browser_origins() -> Result<()> {
     assert_eq!(get.status(), 405);
     Ok(())
 }
+
+// =============================================================================
+// Single-port mode (server.single_port): gRPC on the web port
+// =============================================================================
+
+/// gRPC (search and health), the web UI, REST and MCP all answer on one
+/// port, each from its own handler, when the web router is wrapped with
+/// `web::with_grpc` as `server.single_port` does.
+#[tokio::test]
+async fn test_single_port_serves_grpc_ui_rest_and_mcp() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    std::fs::write(temp_dir.path().join("test_file.rs"), RUST_TEST_FILE)?;
+    let engine: AppState = Arc::new(RwLock::new(SearchEngine::new()));
+    engine
+        .write()
+        .unwrap()
+        .index_file(temp_dir.path().join("test_file.rs"))?;
+    let progress = Arc::new(RwLock::new(IndexingProgress::default()));
+
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<fast_code_search::server::search_proto::code_search_server::CodeSearchServer<
+            fast_code_search::server::CodeSearchService,
+        >>()
+        .await;
+    let grpc = tonic::service::Routes::new(health_service)
+        .add_service(create_server_with_engine(engine.clone()));
+    let web = create_router(engine, progress, create_progress_broadcaster(), None);
+    let router = fast_code_search::web::with_grpc(web, grpc, Duration::from_secs(30));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    // gRPC search, over HTTP/2 on the shared port.
+    let mut client = CodeSearchClient::connect(url.clone()).await?;
+    let request = SearchRequest {
+        query: "find_me_in_search".to_string(),
+        max_results: 10,
+        ..Default::default()
+    };
+    let mut stream = client.search(request).await?.into_inner();
+    let mut results = vec![];
+    while let Some(r) = stream.message().await? {
+        results.push(r);
+    }
+    assert!(
+        results.iter().any(|r| r.file_path.contains("test_file.rs")),
+        "gRPC search on the shared port: {results:?}"
+    );
+
+    // Standard gRPC health check.
+    let channel = tonic::transport::Channel::from_shared(url.clone())?
+        .connect()
+        .await?;
+    let mut health = tonic_health::pb::health_client::HealthClient::new(channel);
+    let status = health
+        .check(tonic_health::pb::HealthCheckRequest {
+            service: String::new(),
+        })
+        .await?
+        .into_inner()
+        .status;
+    assert_eq!(
+        status,
+        tonic_health::pb::health_check_response::ServingStatus::Serving as i32
+    );
+
+    // Web UI, REST and MCP on the same port, over HTTP/1.1.
+    let http = reqwest::Client::new();
+    let page = http.get(format!("{url}/")).send().await?;
+    assert!(page.status().is_success());
+    assert!(page.text().await?.contains("<html"), "web UI page");
+    let body: serde_json::Value = http
+        .get(format!("{url}/api/search"))
+        .query(&[("q", "find_me_in_search")])
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(body["total_results"].as_u64().unwrap_or(0) > 0, "{body}");
+    let mcp: serde_json::Value = http
+        .post(format!("{url}/mcp"))
+        .header("accept", "application/json, text/event-stream")
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "test", "version": "0"}}
+        }))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(
+        mcp["result"]["serverInfo"].is_object(),
+        "MCP initialize: {mcp}"
+    );
+    Ok(())
+}

@@ -20,6 +20,12 @@ address = "127.0.0.1:50051"
 # an error and keeps running without gRPC rather than exiting.
 enable_grpc = true
 
+# Serve the gRPC API on web_address too, so the web UI, REST API, MCP and
+# gRPC all share one port (one port to expose, proxy or publish from a
+# container). `address` is then ignored. gRPC needs HTTP/2 end to end, so a
+# reverse proxy in front must pass HTTP/2 through (default: false).
+single_port = false
+
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"
 

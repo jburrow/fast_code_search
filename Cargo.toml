@@ -79,7 +79,9 @@ opentelemetry_sdk = { version = "0.32", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace"] }
 tracing-opentelemetry = "0.33"
 sysinfo = "0.37"
-axum = { version = "0.8", features = ["ws"] }
+# http2: gRPC shares the web port in single-port mode (server.single_port).
+axum = { version = "0.8", features = ["ws", "http2"] }
+tower = { version = "0.5", features = ["util"] }
 futures-util = { version = "0.3", features = ["sink"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "limit"] }
 rust-embed = "8"

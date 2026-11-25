@@ -28,7 +28,8 @@ the indexed trees, and serves two listeners:
 
 Both bind to loopback by default because the server has no authentication
 and returns file contents. Turn gRPC off with `enable_grpc = false` (or
-`--no-grpc`) if nothing uses it. If one port cannot be bound the server
+`--no-grpc`) if nothing uses it, or serve it on the web port with
+`single_port = true` (see [One port](#one-port)). If one port cannot be bound the server
 logs which one and keeps running on the other; it exits only when neither
 could start.
 
@@ -169,6 +170,42 @@ server {
 }
 ```
 
+## One port
+
+The web UI, the REST API, `/metrics` and MCP (`/mcp`) always share
+`web_address`. Only gRPC has a port of its own. To expose a single port,
+serve gRPC there too:
+
+```toml
+[server]
+web_address = "0.0.0.0:8080"
+single_port = true   # or --single-port; `address` is then ignored
+```
+
+The startup log then says
+`grpc=grpc://0.0.0.0:8080 (single port, shared with the web UI)`, and gRPC
+clients connect to `http://host:8080` (`grpcurl -plaintext ... host:8080
+search.CodeSearch/Search`). Requests are told apart by their
+`content-type`: a gRPC call always sends `application/grpc`, which no
+browser, REST or MCP client does.
+
+Things to know:
+
+- gRPC is HTTP/2. Without TLS the server takes it as cleartext HTTP/2
+  ("prior knowledge"), which is what gRPC clients send; browsers and `fcs`
+  keep using HTTP/1.1 on the same port. A proxy in front must pass HTTP/2
+  through for gRPC: with nginx, keep the `grpc_pass` location above but point
+  it at the same upstream as `proxy_pass` (`grpc://127.0.0.1:8080`).
+- gRPC-Web (`application/grpc-web`) is not served, on either port.
+- `request_timeout_secs` applies to gRPC as on its own port (a call past it
+  ends with `CANCELLED: Timeout expired`), and searches from both APIs share
+  `max_concurrent_searches`. The separate gRPC port also caps calls per
+  connection at `max_concurrent_searches`; the shared port does not, since
+  the shared search cap already bounds the work.
+- Turning `single_port` on with `enable_web_ui = false` is a config error,
+  since there is no web port to share. With `enable_grpc = false` it does
+  nothing (a startup warning says so).
+
 ## Container
 
 Every release publishes an image built from the repository's `Dockerfile`.
@@ -283,6 +320,8 @@ spec:
 `/api/ready` answers 503 until there is an index to search, so a pod
 receives traffic only once it can answer. A gRPC-native probe
 (`grpc: {port: 50051}`) works too: the standard health service is served.
+With `single_port = true` drop the `grpc` ports from both objects; the
+gRPC probe then uses `port: 8080`.
 
 ## Configuration
 
@@ -310,7 +349,8 @@ export RAYON_NUM_THREADS=4
 
 Listen addresses are `server.address` / `server.web_address` in the config or
 `--address` / `--web-address` on the command line; `server.enable_grpc` (or
-`--no-grpc`) turns gRPC off; the search concurrency cap is
+`--no-grpc`) turns gRPC off and `server.single_port` (or `--single-port`)
+serves it on the web port; the search concurrency cap is
 `server.max_concurrent_searches` and the request timeout
 `server.request_timeout_secs`. The configuration is validated at startup:
 unknown keys, unparseable addresses and zero limits are errors; a missing
@@ -341,7 +381,8 @@ covers the common symptoms. Deployment-specific ones:
 The log says `gRPC API NOT started` or `Web UI ... NOT started` with the
 port, and the server keeps running on the other API. Find the holder with
 `ss -ltnp | grep :8080` (or `lsof -i :8080`), then stop it, change the
-address, or set `enable_grpc = false`.
+address, or set `enable_grpc = false`. With `single_port = true` there is
+only the web port: if it is busy, gRPC does not start either.
 
 ### "another fast_code_search server is already using this index"
 

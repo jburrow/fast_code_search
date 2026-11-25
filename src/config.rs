@@ -412,6 +412,12 @@ pub struct ServerConfig {
     #[serde(default = "default_true")]
     pub enable_grpc: bool,
 
+    /// Serve the gRPC API on `web_address`, next to the web UI, REST API and
+    /// MCP, so a deployment exposes one port. `address` is then ignored.
+    /// Requests are told apart by their `content-type` (`application/grpc`).
+    #[serde(default)]
+    pub single_port: bool,
+
     /// Address to bind the HTTP/Web UI server to
     #[serde(default = "default_web_address")]
     pub web_address: String,
@@ -643,6 +649,7 @@ impl Default for ServerConfig {
         Self {
             address: default_address(),
             enable_grpc: true,
+            single_port: false,
             web_address: default_web_address(),
             enable_web_ui: default_enable_web_ui(),
             cors_origins: Vec::new(),
@@ -914,7 +921,20 @@ impl Config {
         use std::net::SocketAddr;
         let mut warnings = Vec::new();
 
-        if self.server.enable_grpc {
+        if self.server.single_port && !self.server.enable_web_ui {
+            anyhow::bail!(
+                "server.single_port serves gRPC on the web port, so it needs \
+                 server.enable_web_ui = true"
+            );
+        }
+        if self.server.single_port && !self.server.enable_grpc {
+            warnings.push(
+                "server.single_port has no effect: the gRPC API is disabled, and the web UI, \
+                 REST API and MCP already share web_address"
+                    .to_string(),
+            );
+        }
+        if self.server.enable_grpc && !self.server.single_port {
             self.server.address.parse::<SocketAddr>().with_context(|| {
                 format!("server.address is not host:port: {}", self.server.address)
             })?;
@@ -936,9 +956,14 @@ impl Config {
                         self.server.web_address
                     )
                 })?;
-            if self.server.enable_grpc && self.server.web_address == self.server.address {
+            if self.server.enable_grpc
+                && !self.server.single_port
+                && self.server.web_address == self.server.address
+            {
                 anyhow::bail!(
-                    "server.address and server.web_address are both {}",
+                    "server.address and server.web_address are both {}. To serve gRPC \
+                     and the web UI on one port, set server.single_port = true \
+                     (or pass --single-port)",
                     self.server.address
                 );
             }
@@ -1102,6 +1127,12 @@ address = "127.0.0.1:50051"
 # REST API and fcs CLI. If the gRPC port is busy at startup the server logs
 # an error and keeps running without gRPC rather than exiting.
 enable_grpc = true
+
+# Serve the gRPC API on web_address too, so the web UI, REST API, MCP and
+# gRPC all share one port (one port to expose, proxy or publish from a
+# container). `address` is then ignored. gRPC needs HTTP/2 end to end, so a
+# reverse proxy in front must pass HTTP/2 through (default: false).
+single_port = false
 
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"
@@ -1473,6 +1504,29 @@ mod tests {
         cfg.server.enable_web_ui = false;
         let warnings = cfg.validate().unwrap();
         assert!(warnings.iter().any(|w| w.contains("nothing can search it")));
+    }
+
+    #[test]
+    fn test_validate_single_port() {
+        let mut cfg = Config::default();
+        cfg.server.address = cfg.server.web_address.clone();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("single_port"), "clash names the fix: {err}");
+        cfg.server.single_port = true;
+        assert!(cfg.validate().is_ok(), "one port is the point");
+        cfg.server.address = "not-an-address".to_string();
+        assert!(cfg.validate().is_ok(), "address is ignored on one port");
+        cfg.server.enable_web_ui = false;
+        assert!(cfg.validate().is_err(), "nothing to share a port with");
+        cfg.server.enable_web_ui = true;
+        cfg.server.enable_grpc = false;
+        let warnings = cfg.validate().unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("single_port has no effect")));
+        let parsed: Config = toml::from_str("[server]\nsingle_port = true\n").unwrap();
+        assert!(parsed.server.single_port);
+        assert!(!Config::default().server.single_port, "off by default");
     }
 
     #[test]

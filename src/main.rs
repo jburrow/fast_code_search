@@ -47,6 +47,11 @@ struct Args {
     #[arg(long)]
     no_grpc: bool,
 
+    /// Serve the gRPC API on the web port, so the web UI, REST API, MCP and
+    /// gRPC share one port (same as `single_port = true` in the config)
+    #[arg(long)]
+    single_port: bool,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -218,6 +223,27 @@ async fn main() -> Result<()> {
             .map(std::path::PathBuf::from)
     });
 
+    // Create gRPC service with shared engine
+    let search_service = server::create_server_with_engine_config_limits(
+        shared_engine.clone(),
+        &config.indexer,
+        search_permits.clone(),
+        request_timeout,
+        fast_code_search::search::SearchSettings::from_config(&config),
+    );
+    // Standard gRPC health service (grpc.health.v1) so load balancers and
+    // grpcurl can probe liveness the usual way.
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<fast_code_search::server::search_proto::code_search_server::CodeSearchServer<
+            fast_code_search::server::CodeSearchService,
+        >>()
+        .await;
+    // Single-port mode: gRPC is served by the web server, on web_address.
+    let single_port =
+        config.server.single_port && config.server.enable_grpc && config.server.enable_web_ui;
+    let mut grpc_services = Some((health_service, search_service));
+
     // Start web server first if enabled (so UI is available during indexing)
     let mut web_listener: Option<tokio::net::TcpListener> = None;
     let mut web_status = "disabled".to_string();
@@ -261,6 +287,11 @@ async fn main() -> Result<()> {
         let mut router_options = web::RouterOptions::from(&config);
         router_options.indexer_config = Some(config.indexer.clone());
         router_options.search_permits = Some(search_permits.clone());
+        let shared_grpc = if single_port {
+            grpc_services.take()
+        } else {
+            None
+        };
         web_handle = Some(tokio::spawn(async move {
             let router = web::create_router_with_options(
                 web_engine,
@@ -269,6 +300,14 @@ async fn main() -> Result<()> {
                 static_dir,
                 &router_options,
             );
+            let router = match shared_grpc {
+                Some((health, search)) => web::with_grpc(
+                    router,
+                    tonic::service::Routes::new(health).add_service(search),
+                    request_timeout,
+                ),
+                None => router,
+            };
             if let Err(e) = axum::serve(listener, router)
                 .with_graceful_shutdown(wait_for_shutdown(web_shutdown_rx))
                 .await
@@ -285,6 +324,14 @@ async fn main() -> Result<()> {
     let grpc_status = if !config.server.enable_grpc {
         info!("gRPC API disabled (enable_grpc = false or --no-grpc)");
         "disabled".to_string()
+    } else if single_port {
+        let web_addr = &config.server.web_address;
+        if web_handle.is_some() {
+            info!(address = %web_addr, "gRPC API shares the web UI port (single_port)");
+            format!("grpc://{web_addr} (single port, shared with the web UI)")
+        } else {
+            format!("NOT running (single port: the web UI port {web_addr} is unavailable)")
+        }
     } else {
         let grpc_addr = &config.server.address;
         match tokio::net::TcpListener::bind(grpc_addr).await {
@@ -400,15 +447,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Create gRPC service with shared engine
-    let search_service = server::create_server_with_engine_config_limits(
-        shared_engine.clone(),
-        &config.indexer,
-        search_permits.clone(),
-        request_timeout,
-        fast_code_search::search::SearchSettings::from_config(&config),
-    );
-
     let persistence = match config.indexer.index_path.as_deref() {
         Some(p) if config.indexer.index_read_only => {
             format!("{p} (read-only: another server holds its lock)")
@@ -425,17 +463,8 @@ async fn main() -> Result<()> {
         "Fast Code Search Server ready"
     );
 
-    // Standard gRPC health service (grpc.health.v1) so load balancers and
-    // grpcurl can probe liveness the usual way.
-    let (health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter
-        .set_serving::<fast_code_search::server::search_proto::code_search_server::CodeSearchServer<
-            fast_code_search::server::CodeSearchService,
-        >>()
-        .await;
-
-    let serve_result = match grpc_listener {
-        Some(listener) => Server::builder()
+    let serve_result = match grpc_listener.zip(grpc_services) {
+        Some((listener, (health_service, search_service))) => Server::builder()
             .timeout(request_timeout)
             .concurrency_limit_per_connection(config.server.max_concurrent_searches.max(1))
             .trace_fn(|req| tracing::info_span!("grpc", path = %req.uri().path()))
@@ -571,6 +600,9 @@ fn load_config(args: &Args) -> Result<(Config, String, Vec<String>)> {
     if args.no_grpc {
         config.server.enable_grpc = false;
     }
+    if args.single_port {
+        config.server.single_port = true;
+    }
     let warnings = config.validate()?;
     Ok((config, source, warnings))
 }
@@ -591,7 +623,14 @@ fn lock_index(
         }
     };
     let owner = describe_owner(
-        &enabled(config.server.enable_grpc, &config.server.address),
+        &enabled(
+            config.server.enable_grpc,
+            if config.server.single_port {
+                &config.server.web_address
+            } else {
+                &config.server.address
+            },
+        ),
         &enabled(config.server.enable_web_ui, &config.server.web_address),
     );
     match IndexLock::acquire(std::path::Path::new(&index_path), &owner) {

@@ -74,7 +74,9 @@ container image.
 Every release from v0.13.0 is also published as
 `ghcr.io/jburrow/fast_code_search` (tags `latest`, `0.20`, `0.20.0`). The
 image indexes whatever is mounted at `/src`, watches it for changes, and
-serves the web UI and REST API on port 8080 and gRPC on 50051:
+serves the web UI and REST API on port 8080 and gRPC on 50051 (add
+`--single-port` to the command, or `single_port = true` in its config, to
+serve gRPC on 8080 as well):
 
 ```bash
 docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search

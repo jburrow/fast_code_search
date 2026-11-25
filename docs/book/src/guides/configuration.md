@@ -100,6 +100,23 @@ yours speaks gRPC, turn it off (or pass `--no-grpc`):
 enable_grpc = false
 ```
 
+## One port for everything
+
+The web UI, REST API, `fcs` and MCP already share the web port. To put gRPC
+on it too, so a container or proxy exposes one port:
+
+```toml
+[server]
+web_address = "127.0.0.1:8080"
+single_port = true   # or --single-port; `address` is ignored
+```
+
+gRPC clients then connect to the web address. A reverse proxy in front has
+to pass HTTP/2 through for gRPC; see
+[One port](../imported/deployment.md#one-port) for that and the other
+details. Setting `address` and `web_address` to the same value without
+`single_port` is an error that points here.
+
 ## Change a rule on a running index
 
 Edit the file and restart the server. Files that are no longer eligible

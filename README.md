@@ -89,7 +89,8 @@ vim -q <(fcs --format vimgrep TODO)   # quickfix list; exit codes follow grep (0
 
 The web UI is at http://127.0.0.1:8080, the JSON API under `/api/`
 (`curl "localhost:8080/api/search?q=fn%20main"`), gRPC on `:50051`
-(`--no-grpc` if you don't need it). To keep the
+(`--no-grpc` if you don't need it, `--single-port` to serve it on `:8080`
+too). To keep the
 server running on a developer machine, start it at login:
 [docs/RUN-AT-STARTUP.md](docs/RUN-AT-STARTUP.md) (systemd, launchd, Task Scheduler).
 
