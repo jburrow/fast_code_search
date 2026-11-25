@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Timestamps in diagnostics are formatted with `jiff` instead of the
+  unmaintained `chrono` (RUSTSEC-2026-0543). A capture's `captured_at` now
+  ends in `Z` rather than `+00:00`; `fcs diagnose` reads both.
+
 - The scale scoreboard reports the server's own memory (`peak_anon_mb`:
   heap and stacks, without the mapped index file's page cache) next to
   peak RSS, and its memory targets apply to the server's own memory.
