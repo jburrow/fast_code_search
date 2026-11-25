@@ -197,7 +197,7 @@ jobs:
         run: git diff --exit-code static/tailwind.css
 
   msrv:
-    name: MSRV (1.89)
+    name: MSRV (1.91)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -205,16 +205,16 @@ jobs:
       - name: Install Protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Setup Rust 1.89
+      - name: Setup Rust 1.91
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.89"
+          toolchain: "1.91"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Check with MSRV
-        run: cargo +1.89 check --all-targets
+        run: cargo +1.91 check --all-targets
 
   coverage:
     name: Coverage

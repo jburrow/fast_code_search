@@ -659,7 +659,7 @@ impl SymbolExtractor {
             let mut name_node: Option<tree_sitter::Node> = None;
             let mut def: Option<(&str, tree_sitter::Node)> = None;
             let mut ref_kind: Option<RefKind> = None;
-            for cap in m.captures {
+            for cap in m.captures() {
                 let cap_name = names[cap.index as usize];
                 if cap_name == "name" {
                     name_node = Some(cap.node);

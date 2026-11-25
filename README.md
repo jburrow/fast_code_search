@@ -52,7 +52,7 @@ and type mention of an identifier, across languages. The weights live in one fil
 put `fast_code_search_server` and `fcs` on your `PATH`. Each archive includes a
 config template, the startup unit files and the guides.
 
-**With cargo** (Rust 1.89+; the source build also needs `protoc`):
+**With cargo** (Rust 1.91+; the source build also needs `protoc`):
 
 ```bash
 cargo binstall --git https://github.com/jburrow/fast_code_search fast_code_search   # downloads the release archive
