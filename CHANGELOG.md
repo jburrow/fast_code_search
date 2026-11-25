@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-25
+
+One port is enough: opt-in single-port mode serves the gRPC API on the web
+port next to the web UI, REST API and MCP, so a deployment exposes and
+proxies one port. `/api/ready` no longer answers ready in the middle of a
+first build, and the dependencies flagged by new security advisories are
+updated (`chrono` replaced by `jiff`, `url` 2.5.9, `pulldown-cmark` 0.13.6).
+Search results, ranking and the index format are unchanged.
+
+**Upgrading:** no config change and no index rebuild (the index format is
+still v13). Single-port mode is off unless you set `single_port = true`
+under `[server]` or pass `--single-port`. Diagnostics captures now write
+`captured_at` ending in `Z` instead of `+00:00`; `fcs diagnose` reads both,
+but your own scripts that parse the field may need to accept `Z`.
+
 ### Added
 
 - Single-port mode: `single_port = true` under `[server]` (or
@@ -2314,7 +2329,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/jburrow/fast_code_search/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/jburrow/fast_code_search/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jburrow/fast_code_search/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/jburrow/fast_code_search/compare/v0.18.0...v0.18.1
