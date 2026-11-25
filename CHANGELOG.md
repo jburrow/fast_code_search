@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Minimum supported Rust is now 1.91 (was 1.89), needed by notify 9 and
+  tree-sitter 0.27. The pinned toolchain (1.98.1) is unchanged.
+
+- File watching uses notify 9 (was 8). It brings upstream watcher fixes:
+  on Linux, large recursive watches no longer overflow the inotify queue
+  with directory access events, renames of subdirectories no longer send
+  extra events, and removing or renaming a watched folder costs time in
+  proportion to that folder rather than to every watch.
+
+- Symbol extraction uses tree-sitter 0.27 (was 0.26), with newer grammars
+  for Bash (0.25), C (0.24), C# (0.24), Go (0.25) and PHP (0.25).
+
+- Rust dependencies refreshed to their latest compatible releases (hyper,
+  regex, memchr, rayon, tonic, prost, clap, serde and others). The
+  semantic feature's `ort` is pinned to 2.0.0-rc.10, since later release
+  candidates change its API.
+
+- Security: updated the web UI's CSS build tools and the VS Code
+  extension's build and lint tools to clear every `npm audit` advisory
+  (postcss, picomatch, nanoid, source-map-js, postcss-selector-parser,
+  brace-expansion, flatted, js-yaml, minimatch, esbuild). esbuild goes from
+  0.20 to 0.28 and typescript-eslint from 7 to 8. These are build-time
+  tools only: the shipped `static/tailwind.css` is byte-for-byte the same
+  and the server binary is unaffected.
+
 ## [0.21.0] - 2026-11-25
 
 One port is enough: opt-in single-port mode serves the gRPC API on the web
@@ -43,31 +70,6 @@ but your own scripts that parse the field may need to accept `Z`.
   with 145,201 files still to index (#234).
 
 ### Changed
-
-- Minimum supported Rust is now 1.91 (was 1.89), needed by notify 9 and
-  tree-sitter 0.27. The pinned toolchain (1.98.1) is unchanged.
-
-- File watching uses notify 9 (was 8). It brings upstream watcher fixes:
-  on Linux, large recursive watches no longer overflow the inotify queue
-  with directory access events, renames of subdirectories no longer send
-  extra events, and removing or renaming a watched folder costs time in
-  proportion to that folder rather than to every watch.
-
-- Symbol extraction uses tree-sitter 0.27 (was 0.26), with newer grammars
-  for Bash (0.25), C (0.24), C# (0.24), Go (0.25) and PHP (0.25).
-
-- Rust dependencies refreshed to their latest compatible releases (hyper,
-  regex, memchr, rayon, tonic, prost, clap, serde and others). The
-  semantic feature's `ort` is pinned to 2.0.0-rc.10, since later release
-  candidates change its API.
-
-- Security: updated the web UI's CSS build tools and the VS Code
-  extension's build and lint tools to clear every `npm audit` advisory
-  (postcss, picomatch, nanoid, source-map-js, postcss-selector-parser,
-  brace-expansion, flatted, js-yaml, minimatch, esbuild). esbuild goes from
-  0.20 to 0.28 and typescript-eslint from 7 to 8. These are build-time
-  tools only: the shipped `static/tailwind.css` is byte-for-byte the same
-  and the server binary is unaffected.
 
 - Timestamps in diagnostics are formatted with `jiff` instead of the
   unmaintained `chrono` (RUSTSEC-2026-0543). A capture's `captured_at` now
