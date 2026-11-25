@@ -83,7 +83,7 @@ The contract walk's browser leg runs `scripts/e2e/web_walk.cjs` with
 Playwright. Locally:
 
 ```text
-npm install --no-save --prefix /tmp/pw playwright@1.56.1
+npm install --no-save --prefix /tmp/pw playwright@1.65.1
 /tmp/pw/node_modules/.bin/playwright install chromium
 NODE_PATH=/tmp/pw/node_modules FCS_REQUIRE_BROWSER=1 cargo test --release --test contract_walk
 ```
