@@ -7,33 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Minimum supported Rust is now 1.91 (was 1.89), needed by notify 9 and
-  tree-sitter 0.27. The pinned toolchain (1.98.1) is unchanged.
-
-- File watching uses notify 9 (was 8). It brings upstream watcher fixes:
-  on Linux, large recursive watches no longer overflow the inotify queue
-  with directory access events, renames of subdirectories no longer send
-  extra events, and removing or renaming a watched folder costs time in
-  proportion to that folder rather than to every watch.
-
-- Symbol extraction uses tree-sitter 0.27 (was 0.26), with newer grammars
-  for Bash (0.25), C (0.24), C# (0.24), Go (0.25) and PHP (0.25).
-
-- Rust dependencies refreshed to their latest compatible releases (hyper,
-  regex, memchr, rayon, tonic, prost, clap, serde and others). The
-  semantic feature's `ort` is pinned to 2.0.0-rc.10, since later release
-  candidates change its API.
-
-- Security: updated the web UI's CSS build tools and the VS Code
-  extension's build and lint tools to clear every `npm audit` advisory
-  (postcss, picomatch, nanoid, source-map-js, postcss-selector-parser,
-  brace-expansion, flatted, js-yaml, minimatch, esbuild). esbuild goes from
-  0.20 to 0.28 and typescript-eslint from 7 to 8. These are build-time
-  tools only: the shipped `static/tailwind.css` is byte-for-byte the same
-  and the server binary is unaffected.
-
 ## [0.21.0] - 2026-11-25
 
 One port is enough: opt-in single-port mode serves the gRPC API on the web
@@ -41,11 +14,15 @@ port next to the web UI, REST API and MCP, so a deployment exposes and
 proxies one port. `/api/ready` no longer answers ready in the middle of a
 first build, and the dependencies flagged by new security advisories are
 updated (`chrono` replaced by `jiff`, `url` 2.5.9, `pulldown-cmark` 0.13.6).
-Search results, ranking and the index format are unchanged.
+File watching moves to notify 9, symbol extraction to tree-sitter 0.27, the
+other Rust dependencies to their latest compatible releases, and every
+`npm audit` advisory in the build tools is cleared. Search results, ranking
+and the index format are unchanged.
 
-**Upgrading:** no config change and no index rebuild (the index format is
-still v13). Single-port mode is off unless you set `single_port = true`
-under `[server]` or pass `--single-port`. Diagnostics captures now write
+**Upgrading:** building from source needs Rust 1.91 or newer (was 1.89).
+No config change and no index rebuild (the index format is still v13).
+Single-port mode is off unless you set `single_port = true` under
+`[server]` or pass `--single-port`. Diagnostics captures now write
 `captured_at` ending in `Z` instead of `+00:00`; `fcs diagnose` reads both,
 but your own scripts that parse the field may need to accept `Z`.
 
@@ -81,6 +58,31 @@ but your own scripts that parse the field may need to accept `Z`.
   Since v0.20.0 RSS also counts mapped index pages the kernel can drop,
   which failed the nightly's branch-switch target without the server
   holding more memory (#234).
+
+- Minimum supported Rust is now 1.91 (was 1.89), needed by notify 9 and
+  tree-sitter 0.27. The pinned toolchain (1.98.1) is unchanged.
+
+- File watching uses notify 9 (was 8). It brings upstream watcher fixes:
+  on Linux, large recursive watches no longer overflow the inotify queue
+  with directory access events, renames of subdirectories no longer send
+  extra events, and removing or renaming a watched folder costs time in
+  proportion to that folder rather than to every watch.
+
+- Symbol extraction uses tree-sitter 0.27 (was 0.26), with newer grammars
+  for Bash (0.25), C (0.24), C# (0.24), Go (0.25) and PHP (0.25).
+
+- Rust dependencies refreshed to their latest compatible releases (hyper,
+  regex, memchr, rayon, tonic, prost, clap, serde and others). The
+  semantic feature's `ort` is pinned to 2.0.0-rc.10, since later release
+  candidates change its API.
+
+- Security: updated the web UI's CSS build tools and the VS Code
+  extension's build and lint tools to clear every `npm audit` advisory
+  (postcss, picomatch, nanoid, source-map-js, postcss-selector-parser,
+  brace-expansion, flatted, js-yaml, minimatch, esbuild). esbuild goes from
+  0.20 to 0.28 and typescript-eslint from 7 to 8. These are build-time
+  tools only: the shipped `static/tailwind.css` is byte-for-byte the same
+  and the server binary is unaffected.
 
 ## [0.20.0] - 2026-10-27
 
