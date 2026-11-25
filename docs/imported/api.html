@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-79f317c8.js";
+            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -184,7 +184,8 @@
                         <h1 id="api-and-configuration-reference"><a class="header" href="#api-and-configuration-reference">API and configuration reference</a></h1>
 <p>Everything the server exposes: the REST API served on <code>web_address</code>
 (default <code>127.0.0.1:8080</code>), the gRPC service on <code>address</code> (default
-<code>127.0.0.1:50051</code>), the server’s command line, and the configuration file.
+<code>127.0.0.1:50051</code>, or on <code>web_address</code> too with <code>single_port = true</code>), the
+server’s command line, and the configuration file.
 The web UI’s own <code>/docs.html</code> page carries the same REST reference with
 live examples.</p>
 <h2 id="rest-api"><a class="header" href="#rest-api">REST API</a></h2>
@@ -504,6 +505,7 @@ request timeout.</p>
   -i, --index &lt;PATH&gt;        Additional path to index (repeatable)
       --no-auto-index       Skip indexing on startup
       --no-grpc             Do not start the gRPC API (same as enable_grpc = false)
+      --single-port         Serve gRPC on the web port too (same as single_port = true)
       --init &lt;FILE&gt;         Write a documented template configuration and exit
       --static-dir &lt;DIR&gt;    Serve the UI from disk (development)
   -v, --verbose             Debug logging
@@ -521,6 +523,7 @@ template. The keys that matter most:</p>
 <pre><code class="language-toml">[server]
 address = "127.0.0.1:50051"       # gRPC
 enable_grpc = true                # false (or --no-grpc) for web UI / REST / fcs only
+single_port = false               # true (or --single-port): gRPC on web_address too, one port
 web_address = "127.0.0.1:8080"    # REST + web UI
 enable_web_ui = true
 max_concurrent_searches = 64      # shared by REST and gRPC; beyond it: 503 / RESOURCE_EXHAUSTED

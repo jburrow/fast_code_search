@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-79f317c8.js";
+            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -242,7 +242,9 @@ container image.</p>
 <p>Every release from v0.13.0 is also published as
 <code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.20</code>, <code>0.20.0</code>). The
 image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
-serves the web UI and REST API on port 8080 and gRPC on 50051:</p>
+serves the web UI and REST API on port 8080 and gRPC on 50051 (add
+<code>--single-port</code> to the command, or <code>single_port = true</code> in its config, to
+serve gRPC on 8080 as well):</p>
 <pre><code class="language-bash">docker run --rm -p 8080:8080 -v "$PWD:/src:ro" ghcr.io/jburrow/fast_code_search
 </code></pre>
 <p>To keep the index between runs mount a volume at

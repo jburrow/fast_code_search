@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-79f317c8.js";
+            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -198,6 +198,12 @@ address = "127.0.0.1:50051"
 # REST API and fcs CLI. If the gRPC port is busy at startup the server logs
 # an error and keeps running without gRPC rather than exiting.
 enable_grpc = true
+
+# Serve the gRPC API on web_address too, so the web UI, REST API, MCP and
+# gRPC all share one port (one port to expose, proxy or publish from a
+# container). `address` is then ignored. gRPC needs HTTP/2 end to end, so a
+# reverse proxy in front must pass HTTP/2 through (default: false).
+single_port = false
 
 # Address to bind the HTTP/Web UI server to (same caveat as above)
 web_address = "127.0.0.1:8080"

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-79f317c8.js";
+            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -213,7 +213,8 @@ the indexed trees, and serves two listeners:</p>
 </div>
 <p>Both bind to loopback by default because the server has no authentication
 and returns file contents. Turn gRPC off with <code>enable_grpc = false</code> (or
-<code>--no-grpc</code>) if nothing uses it. If one port cannot be bound the server
+<code>--no-grpc</code>) if nothing uses it, or serve it on the web port with
+<code>single_port = true</code> (see <a href="#one-port">One port</a>). If one port cannot be bound the server
 logs which one and keeps running on the other; it exits only when neither
 could start.</p>
 <p>The index is saved to <code>indexer.index_path</code> and reloaded on the next start,
@@ -330,6 +331,36 @@ listener needs WebSocket upgrades for <code>/ws/progress</code>; gRPC needs HTTP
     }
 }
 </code></pre>
+<h2 id="one-port"><a class="header" href="#one-port">One port</a></h2>
+<p>The web UI, the REST API, <code>/metrics</code> and MCP (<code>/mcp</code>) always share
+<code>web_address</code>. Only gRPC has a port of its own. To expose a single port,
+serve gRPC there too:</p>
+<pre><code class="language-toml">[server]
+web_address = "0.0.0.0:8080"
+single_port = true   # or --single-port; `address` is then ignored
+</code></pre>
+<p>The startup log then says
+<code>grpc=grpc://0.0.0.0:8080 (single port, shared with the web UI)</code>, and gRPC
+clients connect to <code>http://host:8080</code> (<code>grpcurl -plaintext ... host:8080 search.CodeSearch/Search</code>). Requests are told apart by their
+<code>content-type</code>: a gRPC call always sends <code>application/grpc</code>, which no
+browser, REST or MCP client does.</p>
+<p>Things to know:</p>
+<ul>
+<li>gRPC is HTTP/2. Without TLS the server takes it as cleartext HTTP/2
+(“prior knowledge”), which is what gRPC clients send; browsers and <code>fcs</code>
+keep using HTTP/1.1 on the same port. A proxy in front must pass HTTP/2
+through for gRPC: with nginx, keep the <code>grpc_pass</code> location above but point
+it at the same upstream as <code>proxy_pass</code> (<code>grpc://127.0.0.1:8080</code>).</li>
+<li>gRPC-Web (<code>application/grpc-web</code>) is not served, on either port.</li>
+<li><code>request_timeout_secs</code> applies to gRPC as on its own port (a call past it
+ends with <code>CANCELLED: Timeout expired</code>), and searches from both APIs share
+<code>max_concurrent_searches</code>. The separate gRPC port also caps calls per
+connection at <code>max_concurrent_searches</code>; the shared port does not, since
+the shared search cap already bounds the work.</li>
+<li>Turning <code>single_port</code> on with <code>enable_web_ui = false</code> is a config error,
+since there is no web port to share. With <code>enable_grpc = false</code> it does
+nothing (a startup warning says so).</li>
+</ul>
 <h2 id="container"><a class="header" href="#container">Container</a></h2>
 <p>Every release publishes an image built from the repository’s <code>Dockerfile</code>.
 It indexes <code>/src</code>, serves the web UI and REST API on 8080 and gRPC on
@@ -431,7 +462,9 @@ spec:
 </code></pre>
 <p><code>/api/ready</code> answers 503 until there is an index to search, so a pod
 receives traffic only once it can answer. A gRPC-native probe
-(<code>grpc: {port: 50051}</code>) works too: the standard health service is served.</p>
+(<code>grpc: {port: 50051}</code>) works too: the standard health service is served.
+With <code>single_port = true</code> drop the <code>grpc</code> ports from both objects; the
+gRPC probe then uses <code>port: 8080</code>.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
 <p>Most settings live in the TOML config (<code>--init</code> writes every key with its
@@ -453,7 +486,8 @@ export RAYON_NUM_THREADS=4
 </code></pre>
 <p>Listen addresses are <code>server.address</code> / <code>server.web_address</code> in the config or
 <code>--address</code> / <code>--web-address</code> on the command line; <code>server.enable_grpc</code> (or
-<code>--no-grpc</code>) turns gRPC off; the search concurrency cap is
+<code>--no-grpc</code>) turns gRPC off and <code>server.single_port</code> (or <code>--single-port</code>)
+serves it on the web port; the search concurrency cap is
 <code>server.max_concurrent_searches</code> and the request timeout
 <code>server.request_timeout_secs</code>. The configuration is validated at startup:
 unknown keys, unparseable addresses and zero limits are errors; a missing
@@ -480,7 +514,8 @@ covers the common symptoms. Deployment-specific ones:</p>
 <p>The log says <code>gRPC API NOT started</code> or <code>Web UI ... NOT started</code> with the
 port, and the server keeps running on the other API. Find the holder with
 <code>ss -ltnp | grep :8080</code> (or <code>lsof -i :8080</code>), then stop it, change the
-address, or set <code>enable_grpc = false</code>.</p>
+address, or set <code>enable_grpc = false</code>. With <code>single_port = true</code> there is
+only the web port: if it is busy, gRPC does not start either.</p>
 <h3 id="another-fast_code_search-server-is-already-using-this-index"><a class="header" href="#another-fast_code_search-server-is-already-using-this-index">“another fast_code_search server is already using this index”</a></h3>
 <p>Two servers share an <code>index_path</code>. The log names the other process’s PID
 and addresses (also in <code>&lt;index_path&gt;.lock.owner</code>). Stop it or give each

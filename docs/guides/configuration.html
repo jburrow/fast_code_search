@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-79f317c8.js";
+            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -253,6 +253,18 @@ yours speaks gRPC, turn it off (or pass <code>--no-grpc</code>):</p>
 <pre><code class="language-toml">[server]
 enable_grpc = false
 </code></pre>
+<h2 id="one-port-for-everything"><a class="header" href="#one-port-for-everything">One port for everything</a></h2>
+<p>The web UI, REST API, <code>fcs</code> and MCP already share the web port. To put gRPC
+on it too, so a container or proxy exposes one port:</p>
+<pre><code class="language-toml">[server]
+web_address = "127.0.0.1:8080"
+single_port = true   # or --single-port; `address` is ignored
+</code></pre>
+<p>gRPC clients then connect to the web address. A reverse proxy in front has
+to pass HTTP/2 through for gRPC; see
+<a href="../imported/deployment.html#one-port">One port</a> for that and the other
+details. Setting <code>address</code> and <code>web_address</code> to the same value without
+<code>single_port</code> is an error that points here.</p>
 <h2 id="change-a-rule-on-a-running-index"><a class="header" href="#change-a-rule-on-a-running-index">Change a rule on a running index</a></h2>
 <p>Edit the file and restart the server. Files that are no longer eligible
 under the new patterns, extensions, size cap or <code>.gitignore</code> are dropped

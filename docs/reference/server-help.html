@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-79f317c8.js";
+            window.path_to_searchindex_js = "../searchindex-0d5065a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -194,6 +194,7 @@ Options:
   -i, --index &lt;PATH&gt;        Additional paths to index (can be repeated, adds to config file paths)
       --no-auto-index       Skip automatic indexing on startup
       --no-grpc             Do not start the gRPC API (same as `enable_grpc = false` in the config)
+      --single-port         Serve the gRPC API on the web port, so the web UI, REST API, MCP and gRPC share one port (same as `single_port = true` in the config)
   -v, --verbose             Enable verbose logging
       --init &lt;FILE&gt;         Generate a template configuration file and exit
       --static-dir &lt;DIR&gt;    Serve static UI files from this directory instead of the embedded assets. Useful during development: UI changes are visible without recompiling. Example: --static-dir static
