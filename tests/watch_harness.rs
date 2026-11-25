@@ -23,7 +23,7 @@ use fast_code_search::search::{
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -37,6 +37,40 @@ const VOCAB: &[&str] = &[
 /// How long a change may take to show up in the live index. Generous: the
 /// macOS backend can deliver events seconds late.
 const CONVERGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+// ---------------------------------------------------------------------------
+// Tests that time the write lock run alone.
+//
+// The tests of this file run in parallel in one process. Tests that assert
+// how long a step holds the write lock compare wall-clock times, and the
+// install step runs part of its work on rayon's global pool
+// (`TrigramIndex::add_documents`). When another test was building a
+// 2,400-file index on that pool at the same moment, one step of
+// `burst_holds_the_write_lock_in_short_steps` waited behind it: on a
+// 4-core Windows runner one 512-file step held the lock for 1.23 s of a
+// 3.39 s burst (#257), against about 40 ms per step when the test runs
+// on its own. So a timing test holds this gate exclusively and every
+// other test holds it shared: timing tests never overlap any test, and
+// the rest still run in parallel with each other.
+
+static GATE: RwLock<()> = RwLock::new(());
+
+/// A test's hold on [`GATE`]; released when the [`Harness`] is dropped.
+enum Gate {
+    Shared(#[allow(dead_code)] RwLockReadGuard<'static, ()>),
+    Alone(#[allow(dead_code)] RwLockWriteGuard<'static, ()>),
+}
+
+impl Gate {
+    fn shared() -> Self {
+        // A test that failed while holding the gate poisons it; the next
+        // test still runs.
+        Gate::Shared(GATE.read().unwrap_or_else(|p| p.into_inner()))
+    }
+    fn alone() -> Self {
+        Gate::Alone(GATE.write().unwrap_or_else(|p| p.into_inner()))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Deterministic randomness (no extra dependency).
@@ -227,11 +261,23 @@ struct Harness {
     indexer: Option<JoinHandle<()>>,
     rng: Rng,
     log: Vec<String>,
+    // Last, so it is released after everything else is dropped.
+    _gate: Gate,
 }
 
 impl Harness {
     /// A tree of `files` generated files under a few directories.
     fn new(seed: u64, files: usize) -> Self {
+        Self::with_gate(seed, files, Gate::shared())
+    }
+
+    /// [`Harness::new`] for a test that times the write lock: no other test
+    /// of this file runs while it does (see [`GATE`]).
+    fn alone(seed: u64, files: usize) -> Self {
+        Self::with_gate(seed, files, Gate::alone())
+    }
+
+    fn with_gate(seed: u64, files: usize, gate: Gate) -> Self {
         let temp = TempDir::new().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let mut h = Self {
@@ -244,6 +290,7 @@ impl Harness {
             indexer: None,
             rng: Rng::new(seed),
             log: Vec::new(),
+            _gate: gate,
         };
         for i in 0..files {
             let dir = ["app", "app/core", "web/src", "web/src/ui"][i % 4];
@@ -752,7 +799,7 @@ fn rewrite_all(h: &mut Harness, files: usize) -> Vec<PathBuf> {
 #[test]
 fn burst_holds_the_write_lock_in_short_steps() {
     const FILES: usize = 2400;
-    let mut h = Harness::new(seed_from_env(31), FILES);
+    let mut h = Harness::alone(seed_from_env(31), FILES);
     build_index(&h.config, h.engine.clone());
     let changed = rewrite_all(&mut h, FILES);
     let changes: Vec<FileChange> = changed.into_iter().map(FileChange::Modified).collect();
@@ -781,7 +828,7 @@ fn burst_holds_the_write_lock_in_short_steps() {
 #[test]
 fn a_step_that_waited_for_searches_installs_more() {
     const FILES: usize = 2400;
-    let mut h = Harness::new(seed_from_env(43), FILES);
+    let mut h = Harness::alone(seed_from_env(43), FILES);
     build_index(&h.config, h.engine.clone());
     let changed = rewrite_all(&mut h, FILES);
     let changes: Vec<FileChange> = changed.into_iter().map(FileChange::Modified).collect();
@@ -827,7 +874,7 @@ fn a_step_that_waited_for_searches_installs_more() {
 #[test]
 fn searches_are_answered_while_a_burst_applies() {
     const FILES: usize = 1200;
-    let mut h = Harness::new(seed_from_env(57), FILES);
+    let mut h = Harness::alone(seed_from_env(57), FILES);
     h.start(false);
     h.assert_converges("initial build");
 
