@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-26
+
+Dependency upgrades: file watching moves to notify 9, which brings upstream
+fixes for large recursive watches on Linux, and symbol extraction moves to
+tree-sitter 0.27 with newer grammars. Rust dependencies are refreshed and
+every `npm audit` advisory in the build tools is cleared. Search results,
+ranking and the index format are unchanged, and the same-machine A/B found
+no metric slower.
+
+**Upgrading:** no config change and no index rebuild (the index format is
+still v13). Building from source now needs Rust 1.91 or later (was 1.89).
+
 ### Changed
 
 - Minimum supported Rust is now 1.91 (was 1.89), needed by notify 9 and
@@ -2331,7 +2343,8 @@ brew install protobuf
 cargo build --release
 ```
 
-[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/jburrow/fast_code_search/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/jburrow/fast_code_search/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/jburrow/fast_code_search/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/jburrow/fast_code_search/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jburrow/fast_code_search/compare/v0.18.1...v0.19.0
