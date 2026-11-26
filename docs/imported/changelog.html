@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "../searchindex-df8e8ffb.js";
+            window.path_to_searchindex_js = "../searchindex-2c490332.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e1b44905.js"></script>
@@ -185,7 +185,16 @@
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.21.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.22.0...HEAD">Unreleased</a></a></h2>
+<h2 id="0220---2026-11-26"><a class="header" href="#0220---2026-11-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.21.0...v0.22.0">0.22.0</a> - 2026-11-26</a></h2>
+<p>Dependency upgrades: file watching moves to notify 9, which brings upstream
+fixes for large recursive watches on Linux, and symbol extraction moves to
+tree-sitter 0.27 with newer grammars. Rust dependencies are refreshed and
+every <code>npm audit</code> advisory in the build tools is cleared. Search results,
+ranking and the index format are unchanged, and the same-machine A/B found
+no metric slower.</p>
+<p><strong>Upgrading:</strong> no config change and no index rebuild (the index format is
+still v13). Building from source now needs Rust 1.91 or later (was 1.89).</p>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
 <li>

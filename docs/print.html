@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-df8e8ffb.js";
+            window.path_to_searchindex_js = "searchindex-2c490332.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e1b44905.js"></script>
@@ -286,12 +286,12 @@ identity.
 The checksum proves the file is intact; the signature proves it was built
 by this repository’s release workflow for this tag, and not merely
 uploaded by someone holding the account.</p>
-<pre><code class="language-bash">sha256sum -c fast_code_search-v0.21.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+<pre><code class="language-bash">sha256sum -c fast_code_search-v0.22.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 cosign verify-blob \
-  --bundle fast_code_search-v0.21.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
+  --bundle fast_code_search-v0.22.0-x86_64-unknown-linux-gnu.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github.com/jburrow/fast_code_search/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  fast_code_search-v0.21.0-x86_64-unknown-linux-gnu.tar.gz
+  fast_code_search-v0.22.0-x86_64-unknown-linux-gnu.tar.gz
 </code></pre>
 <p><a href="https://docs.sigstore.dev/cosign/installation/"><code>cosign</code></a> is a single
 binary; no key management is involved because the signing is keyless.</p>
@@ -310,7 +310,7 @@ its repository exists; until then use the archive, <code>cargo binstall</code> o
 container image.</p>
 <h2 id="container-image"><a class="header" href="#container-image">Container image</a></h2>
 <p>Every release from v0.13.0 is also published as
-<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.21</code>, <code>0.21.0</code>). The
+<code>ghcr.io/jburrow/fast_code_search</code> (tags <code>latest</code>, <code>0.22</code>, <code>0.22.0</code>). The
 image indexes whatever is mounted at <code>/src</code>, watches it for changes, and
 serves the web UI and REST API on port 8080 and gRPC on 50051 (add
 <code>--single-port</code> to the command, or <code>single_port = true</code> in its config, to
@@ -6553,7 +6553,16 @@ targets and records its numbers for comparison with the previous release.</li>
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.21.0...HEAD">Unreleased</a></a></h2>
+<h2 id="unreleased"><a class="header" href="#unreleased"><a href="https://github.com/jburrow/fast_code_search/compare/v0.22.0...HEAD">Unreleased</a></a></h2>
+<h2 id="0220---2026-11-26"><a class="header" href="#0220---2026-11-26"><a href="https://github.com/jburrow/fast_code_search/compare/v0.21.0...v0.22.0">0.22.0</a> - 2026-11-26</a></h2>
+<p>Dependency upgrades: file watching moves to notify 9, which brings upstream
+fixes for large recursive watches on Linux, and symbol extraction moves to
+tree-sitter 0.27 with newer grammars. Rust dependencies are refreshed and
+every <code>npm audit</code> advisory in the build tools is cleared. Search results,
+ranking and the index format are unchanged, and the same-machine A/B found
+no metric slower.</p>
+<p><strong>Upgrading:</strong> no config change and no index rebuild (the index format is
+still v13). Building from source now needs Rust 1.91 or later (was 1.89).</p>
 <h3 id="changed"><a class="header" href="#changed">Changed</a></h3>
 <ul>
 <li>

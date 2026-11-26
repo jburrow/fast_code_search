@@ -1,6 +1,12 @@
 {
   "releases": [
     {
+      "version": "0.22.0",
+      "date": "2026-11-26",
+      "summary": "Dependency upgrades: file watching moves to notify 9, which brings upstream fixes for large recursive watches on Linux, and symbol extraction moves to tree-sitter 0.27 with newer grammars. Rust dependencies are refreshed and every `npm audit` advisory in the build tools is cleared. Search results...",
+      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.22.0"
+    },
+    {
       "version": "0.21.0",
       "date": "2026-11-25",
       "summary": "One port is enough: opt-in single-port mode serves the gRPC API on the web port next to the web UI, REST API and MCP, so a deployment exposes and proxies one port. `/api/ready` no longer answers ready in the middle of a first build, and the dependencies flagged by new security advisories are upda...",
@@ -41,12 +47,6 @@
       "date": "2026-10-14",
       "summary": "Watch mode keeps answering searches on very large trees, and Python projects whose imports were listed as external now resolve. Re-index a Python project to pick up the import fixes.",
       "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.16.2"
-    },
-    {
-      "version": "0.16.1",
-      "date": "2026-10-14",
-      "summary": "Existing indexes are rebuilt once on the first start.** The on-disk index format is now version 8 (case-insensitive search folds case like `rg -i`), and symbols are re-extracted for the new reference kinds and Python references; the rebuild also picks up the dependency-graph fixes for TypeScript,...",
-      "url": "https://github.com/jburrow/fast_code_search/releases/tag/v0.16.1"
     }
   ]
 }
