@@ -72,12 +72,14 @@ finished the whole job in 18 minutes, against 20 for the run before it.
   over every posting list, which a server never does (about 9 ms against
   about 2 ms on tokio + Django). The index save that follows is then of
   the checkpointed index, as a server's later saves are.
-- The files it rewrites are 20 files of 64 KB or less, spread evenly over
-  the corpus sorted by path, so every machine updates the same files.
-  Before 26 November 2026 they were spread over the order the file system
-  listed them in, so each runner updated different files and the
-  instruction count of the same commit moved from 41 million to 74
-  million between machines.
+- The benchmark indexes the corpus in path order, and the incremental
+  case rewrites 20 files of 64 KB or less spread evenly over that order,
+  so every machine counts the same work. Before 26 November 2026 both
+  followed the order the file system listed the files in, which differs
+  between machines: on the same commit the build moved from 68 to 82
+  billion instructions and the incremental update from 41 to 78 million
+  between GitHub runners. (A server indexes files in discovery order;
+  only the benchmark sorts them.)
 
 ## What the machine is
 

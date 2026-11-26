@@ -473,6 +473,29 @@ fn main() -> Result<()> {
         };
         FileDiscoveryIterator::new(&discovery).collect::<Vec<PathBuf>>()
     });
+    // Index and measure the files in the same order on every machine.
+    // Discovery returns them in the order the file system lists them, which
+    // differs between machines and file systems. That order sets the
+    // document ids, so it moved the instruction count of the same commit by
+    // up to 20% (index_build 68 to 82 billion, index_save 487 to 525
+    // million, on three GitHub runners, 2026-11-25), and it picked a
+    // different spread of files for the incremental update (41 to 78
+    // million). Sort by root (in argument order), then by the path below
+    // that root, so where the corpus sits on disk does not matter either.
+    // Not timed: a server indexes files in discovery order.
+    let mut files = files;
+    files.sort_by_cached_key(|p| {
+        let root = roots
+            .iter()
+            .position(|r| p.starts_with(r))
+            .unwrap_or(roots.len());
+        let rel = roots
+            .get(root)
+            .and_then(|r| p.strip_prefix(r).ok())
+            .unwrap_or(p.as_path())
+            .to_path_buf();
+        (root, rel)
+    });
 
     let rss_before = resident_bytes();
     let mut engine = SearchEngine::new();
@@ -505,7 +528,7 @@ fn main() -> Result<()> {
     // Incremental update: rewrite a spread of small files and apply each
     // change as the watcher would; restore afterwards.
     let mut incremental: Vec<Duration> = Vec::new();
-    let mut candidates: Vec<&PathBuf> = files
+    let candidates: Vec<&PathBuf> = files
         .iter()
         .filter(|p| {
             std::fs::metadata(p)
@@ -513,26 +536,6 @@ fn main() -> Result<()> {
                 .unwrap_or(false)
         })
         .collect();
-    // Pick the same files on every machine. Discovery returns files in the
-    // order the file system lists them, which differs between machines and
-    // file systems, so the spread taken below was a different set of files
-    // on each runner and the instruction-count gate's
-    // incremental/modify_file moved from 41M to 74M on one commit
-    // (2026-11-25). Sort by root (in argument order), then by the path
-    // below that root, so the absolute location of the corpus does not
-    // matter either.
-    candidates.sort_by_cached_key(|p| {
-        let root = roots
-            .iter()
-            .position(|r| p.starts_with(r))
-            .unwrap_or(roots.len());
-        let rel = roots
-            .get(root)
-            .and_then(|r| p.strip_prefix(r).ok())
-            .unwrap_or(p.as_path())
-            .to_path_buf();
-        (root, rel)
-    });
     let step = (candidates.len() / args.incremental_files.max(1)).max(1);
     for p in candidates.iter().step_by(step).take(args.incremental_files) {
         let Ok(original) = std::fs::read(p) else {
