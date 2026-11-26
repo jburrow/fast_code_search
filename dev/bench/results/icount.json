@@ -1,22 +1,22 @@
 {
  "schema": 1,
- "commit": "8f2978ca667925bd04a94981c6c9610272e8a4f1",
+ "commit": "c1dfcc5f8ae8da8bb2acd110783c401d6e8a392e",
  "instructions": {
-  "index_build": 75093937832,
-  "text/common": 244686820,
-  "text/identifier": 73066200,
+  "index_build": 68463862461,
+  "text/common": 245035983,
+  "text/identifier": 73258425,
   "text/no_match": 6233,
-  "text/short": 183623808,
-  "text/full_rank": 244643579,
-  "text/filtered": 104069154,
-  "regex/literal": 135844950,
-  "regex/case_insensitive": 34626933,
-  "regex/no_literal": 465420238,
-  "symbol/exact": 29741451,
-  "symbol/prefix": 18584111,
-  "symbol/references": 18968452,
-  "incremental/modify_file": 78225108,
-  "index_save": 508912187,
-  "index_load": 530508394
+  "text/short": 183185855,
+  "text/full_rank": 245074212,
+  "text/filtered": 104089182,
+  "regex/literal": 135482470,
+  "regex/case_insensitive": 34564411,
+  "regex/no_literal": 457820578,
+  "symbol/exact": 30837857,
+  "symbol/prefix": 19349990,
+  "symbol/references": 18996069,
+  "incremental/modify_file": 45081068,
+  "index_save": 486743163,
+  "index_load": 532868630
  }
 }
